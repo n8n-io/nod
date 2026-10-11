@@ -1,0 +1,119 @@
+---
+title: Apps with Composio
+description: Connect Gmail, Calendar, Slack and other apps, or use your own Composio project on a server.
+sidebar:
+  order: 2
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Otto uses [Composio](https://composio.dev) for these connections.
+
+Desktop and source/server installs use managed connections by default. You don't need a Composio account or project key. You still sign in to each app and choose what Otto can access.
+
+Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+
+```mermaid
+flowchart TD
+  otto[Otto plans<br/>an app action] --> trust{{Trust check}}:::accent
+  trust -- allowed --> server[Otto server]
+  trust -. held .-> you([You approve]):::accent
+  you -. yes .-> server
+  server --> connection[Managed connection service]
+  connection --> composio[Composio]
+  composio --> apps[Gmail · Calendar<br/>Slack · more]
+```
+
+## Connect your apps
+
+<Steps>
+
+1. Open **Apps**, search for an app and select **Connect**.
+2. If Otto shows a code, match it with the code in the browser and confirm there. Otto then shows that it's waiting for sign-in.
+3. Sign in on the app's consent screen and choose what Otto can access.
+4. Return to Otto when the app is connected.
+
+</Steps>
+
+![The Apps page with Gmail and Google Calendar connected, and Drive, Sheets, Docs and Slack ready to connect.](../../../assets/screens/apps-light.png)
+
+You can also ask Otto in chat. It searches the same catalog, then sends you a private link to connect.
+
+## Automatic app updates
+
+Managed connections check Gmail for new mail while Otto is running. They don't receive app webhooks, so apps such as Calendar and Slack don't wake Otto automatically. You can still ask Otto to work with them.
+
+Source/server installs using their own Composio project can configure webhooks with `COMPOSIO_WEBHOOK_SECRET`.
+
+## Use your own Composio project on a server
+
+On a source/server install, set `COMPOSIO_API_KEY` in the server environment or `.env`, then restart Otto. This connects directly through your project and doesn't show the managed pairing code.
+
+The desktop app always uses managed connections. There is no Composio key form in onboarding or settings.
+
+### Create a project key
+
+<Steps>
+
+1. In the [Composio Dashboard](https://dashboard.composio.dev), open **Platform → your project → Settings → API Keys**.
+2. Select **Create API Key** and create a scoped project key with the permissions in the table below.
+3. Leave **Tools**, **Triggers**, **Webhooks**, **Observability**, **MCP (Legacy)** and **Tool execution (Legacy)** at **No access**.
+4. Copy the key.
+
+</Steps>
+
+| Permission area        | Access         | Otto uses it to                                                     |
+| ---------------------- | -------------- | ------------------------------------------------------------------- |
+| Connected accounts     | Read and write | Check connections and disconnect accounts                           |
+| Session management     | Read and write | Create, restore and delete sessions, and open sign-in links         |
+| Session tool execution | Write only     | Find app actions, load their details and run them                   |
+| Toolkits               | Read only      | List the apps you can connect                                       |
+| Auth configs           | Read only      | Pick your custom Google sign-in setup                               |
+| Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and fetch sign-in emails |
+
+If you set `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**.
+
+:::caution[You can't edit a key's permissions]
+If a permission is missing, create a new key. A valid key with missing permissions can show an "Invalid API key" error.
+:::
+
+Keep using a key from the same project. Your connected accounts belong to that project, so a key from another project can't use them.
+
+:::danger[Keep the key private]
+The key grants access to the project's connected accounts outside Otto. Keep it in your trusted server environment and don't distribute it to other users.
+:::
+
+The catalog needs **Toolkits → Read**. An older project key without it keeps its existing connections and the featured apps.
+
+## Control what each app can access
+
+The app's consent screen decides what Otto can read or change in your account.
+
+If you run a server with your own Composio project, two things control access:
+
+- **The key's permissions** decide what Otto can do in Composio.
+- **The app's consent screen** decides what Otto can read or change in your account. The Composio auth config sets which scopes it asks for.
+
+To narrow an app's scopes, change them in its auth config, then reconnect the account. Changing the key doesn't change what you agreed to on the consent screen. See Composio's [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
+
+To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change managed connections or the direct Notion and Linear MCP connections.
+
+<details>
+<summary>How Otto picks a Google auth config</summary>
+
+When your server uses its own Composio project, Otto reads its enabled custom OAuth2 auth configs for Gmail, Calendar, Drive, Sheets or Docs. Without an explicit setting, it uses the one that's also enabled for Tool Router.
+
+If there are several, or none of them is enabled for Tool Router, sign-in stops with a configuration error. If the project has no enabled custom OAuth2 config, Composio's default applies. A setting in `.env` always wins.
+
+</details>
+
+## Every action goes through the trust check
+
+Reads and changes to your own data run directly. An action that reaches other people or deletes data runs directly only when it matches your request. Otherwise Otto asks you first. See [Approvals and the trust check](/trust/approvals/).
+
+## Related resources
+
+- [Models](/connect/models/)
+- [MCP servers, APIs and CLIs](/connect/mcp-api-cli/)
+- [Approvals and the trust check](/trust/approvals/)
+- [Configuration](/deploy/configuration/)

@@ -1,0 +1,110 @@
+---
+title: Architecture
+description: How Otto's parts fit together in local and hosted mode, and where each part lives in the code.
+sidebar:
+  order: 1
+---
+
+import { Card, CardGrid, FileTree } from '@astrojs/starlight/components';
+
+This page shows how Otto's parts fit together and where each one lives in the code. Start here before you change Otto or evaluate how it works.
+
+The short version: in local mode, Otto is one Node process plus a few Docker containers. Hosted mode runs the same code once per user, behind a gateway.
+
+## One process and a few containers
+
+In local mode, one Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
+
+```mermaid
+flowchart TD
+  web([Web client]):::accent --> api[API and server features]
+  channels([Telegram · WhatsApp]) --> api
+  api --> db[(PostgreSQL<br/>and pg-boss jobs)]
+  db --> worker[Thread-drain worker]
+  worker --> runtime[Agent runtime]
+  runtime --> pi[Pi session]:::accent
+  runtime --> browser[Browser container]:::muted
+  runtime --> workspace[Workspace container]:::muted
+```
+
+Every message, schedule fire and event becomes a row in PostgreSQL plus a `thread-drain` job. The worker picks up the job and asks the runtime to run a turn. The runtime opens a Pi agent session, and Pi calls tools that act in the workspace, the browser and your connected apps.
+
+`OTTO_MODE` selects which role the process plays:
+
+| `OTTO_MODE`       | What the process does                                                  |
+| ----------------- | ---------------------------------------------------------------------- |
+| `local` (default) | Runs everything for one owner on your computer.                        |
+| `gateway`         | Hosted front door: Google sign-in, tenant setup and signed forwarding. |
+| `tenant`          | Runs one user's Otto in hosted mode. Its owner never changes.          |
+
+See [Hosted mode](/how-it-works/hosted-mode/) for how `gateway` and `tenant` work together.
+
+## Main ideas
+
+<CardGrid>
+  <Card title="One thread per owner" icon="comment">
+    One conversation shared by web, Telegram and WhatsApp. Its ID keys one Pi session, one workspace
+    and one browser.
+  </Card>
+  <Card title="Everything is a turn" icon="list-format">
+    Messages, schedule fires, event wakes and resumes each run as a turn. Turns are never retried.
+  </Card>
+  <Card title="Policy lives on the server" icon="server">
+    The server checks app actions, Vault use and payments. The model's instructions sit on top of
+    those checks, not in place of them.
+  </Card>
+  <Card title="A sandboxed computer" icon="laptop">
+    Commands run in a locked-down container. Provider keys never enter it or the browser.
+  </Card>
+</CardGrid>
+
+## Where the code lives
+
+<FileTree>
+
+- src/
+  - ports/ capabilities as interfaces, without vendor types
+  - providers/ vendor SDKs and protocols, such as Pi, Docker, agent-browser and Composio
+  - runtime/ the agent's tools, prompts and turn loop
+  - server/ policy, storage and HTTP
+    - composition.ts the only place that selects providers and implementations
+  - shared/ browser-safe types for the server and the client
+  - web/ the React client
+- scripts/
+  - check-architecture.mjs enforces the import directions below
+
+</FileTree>
+
+[`scripts/check-architecture.mjs`](https://github.com/n8n-io/otto/blob/main/scripts/check-architecture.mjs) runs as part of `pnpm run check`. It fails when an import crosses a boundary:
+
+| Folder      | Can import from                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| `web`       | `web`, `shared`                                                                            |
+| `shared`    | `shared`                                                                                   |
+| `ports`     | `ports`, `shared`                                                                          |
+| `runtime`   | `runtime`, `ports`, `shared`                                                               |
+| `providers` | `providers`, `ports`, `shared`                                                             |
+| `server`    | `server`, `ports`, `shared`. Only `composition.ts` also imports `runtime` and `providers`. |
+
+The same check keeps vendor packages (Pi, Composio, chat adapters and agent-browser) inside `providers`. It also stops `runtime`, `ports`, `shared` and `web` from reading `process.env`. Configuration belongs in [`src/server/composition.ts`](https://github.com/n8n-io/otto/blob/main/src/server/composition.ts).
+
+## Computer providers
+
+The workspace and the browser are "the computer". `COMPUTER_PROVIDER` picks who runs it:
+
+| Provider           | Mode        | What runs                                                                                                |
+| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `docker` (default) | Local only  | Separate workspace and browser containers on your computer.                                              |
+| `cloudflare`       | Hosted only | Separate browser and workspace containers per owner, checkpointed to private R2.                         |
+| `e2b`              | Optional    | One combined E2B sandbox per owner, with separate Linux users for browser, workspace and connected CLIs. |
+
+Cloudflare is the selected hosted provider. E2B must pass its live acceptance check before you turn it on anywhere. See the [E2B notes](https://github.com/n8n-io/otto/blob/main/deployment/e2b/README.md).
+
+## In this section
+
+- [Threads and turns](/how-it-works/threads-and-turns/): how messages, schedules and events become turns, and how they share one thread.
+- [The agent runtime](/how-it-works/agent-runtime/): Pi sessions, tools, codemode, the turn guard and the system prompt.
+- [Sandbox and browser isolation](/how-it-works/sandbox-and-browser/): what the workspace and browser containers can and can't reach.
+- [Memory](/how-it-works/memory/): how Otto learns and keeps what it knows about you.
+- [Skills](/how-it-works/skills/): the trusted task guides Otto reads before it works.
+- [Hosted mode](/how-it-works/hosted-mode/): the gateway, per-user tenants and signed requests.

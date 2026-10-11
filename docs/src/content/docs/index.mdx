@@ -1,0 +1,176 @@
+---
+title: Otto docs
+description: Install Otto, learn what it can do, and see how it keeps your accounts and actions under your control.
+template: splash
+editUrl: false
+lastUpdated: false
+hero:
+  title: Otto docs
+  tagline: A personal assistant with its own computer. You give it the task. You keep control of your accounts and actions.
+---
+
+import { Card, CardGrid, LinkButton, LinkCard } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import chatLight from '../../assets/screens/card-chat-light.png';
+import chatDark from '../../assets/screens/card-chat-dark.png';
+import tasksLight from '../../assets/screens/card-tasks-light.png';
+import tasksDark from '../../assets/screens/card-tasks-dark.png';
+import vaultLight from '../../assets/screens/card-vault-light.png';
+import vaultDark from '../../assets/screens/card-vault-dark.png';
+
+<div class="otto-actions">
+  <LinkButton href="/get-started/install-desktop/" icon="right-arrow">
+    Install Otto
+  </LinkButton>
+  <LinkButton href="/get-started/what-is-otto/" variant="secondary">
+    What is Otto?
+  </LinkButton>
+</div>
+
+<div class="otto-gallery not-content">
+  <figure>
+    <Image
+      src={chatLight}
+      alt="Otto comparing three venues in a table and drafting a booking request it hasn't sent."
+      class="dark:sl-hidden"
+    />
+    <Image
+      src={chatDark}
+      alt="Otto comparing three venues in a table and drafting a booking request it hasn't sent."
+      class="light:sl-hidden"
+    />
+    <figcaption>Give it the whole task</figcaption>
+  </figure>
+  <figure>
+    <Image
+      src={tasksLight}
+      alt="The Tasks page with a weekday calendar check and a Friday recap scheduled."
+      class="dark:sl-hidden"
+    />
+    <Image
+      src={tasksDark}
+      alt="The Tasks page with a weekday calendar check and a Friday recap scheduled."
+      class="light:sl-hidden"
+    />
+    <figcaption>Keep watch on a schedule</figcaption>
+  </figure>
+  <figure>
+    <Image
+      src={vaultLight}
+      alt="Vault with saved logins and a card, and every use of the selected login."
+      class="dark:sl-hidden"
+    />
+    <Image
+      src={vaultDark}
+      alt="Vault with saved logins and a card, and every use of the selected login."
+      class="light:sl-hidden"
+    />
+    <figcaption>Sign in without sharing passwords</figcaption>
+  </figure>
+</div>
+
+## Start here
+
+<CardGrid>
+  <Card title="Get set up" icon="laptop">
+
+    - [Install the desktop app](/get-started/install-desktop/) on a Mac or Windows PC
+    - [Install from source](/get-started/install-from-source/) on macOS or Linux
+    - [Connect a model](/connect/models/) from OpenAI, Anthropic or OpenRouter
+
+  </Card>
+  <Card title="Try your first task" icon="rocket">
+
+    - [Your first conversation](/get-started/first-conversation/)
+    - [Chat with Otto](/use/chat/) from the app, Telegram or WhatsApp
+    - [Run work on a schedule](/use/schedules/)
+
+  </Card>
+  <Card title="Stay in control" icon="padlock">
+
+    - [Why you can trust Otto](/trust/principles/)
+    - [When Otto asks before acting](/trust/approvals/)
+    - [How Otto compares](/trust/compare/)
+
+  </Card>
+  <Card title="Understand Otto" icon="open-book">
+
+    - [What is Otto](/get-started/what-is-otto/)
+    - [Key concepts](/get-started/glossary/)
+    - [How Otto works](/how-it-works/architecture/)
+
+  </Card>
+</CardGrid>
+
+## Otto in one picture
+
+You talk to one Otto. It plans the work, then uses its own computer, the web and the apps you connect. Trust checks what it does. Vault keeps your secrets out of the model.
+
+```mermaid
+flowchart LR
+  you([You]):::accent --> chat[One conversation<br/>app · Telegram · WhatsApp]
+  chat --> otto[Otto plans the work]
+  otto --> computer[Its own computer<br/>files · commands · browser]
+  otto --> web[The web]
+  otto --> trust{{Trust check}}:::accent
+  trust --> apps[Your apps<br/>Gmail · Calendar · Slack]
+  computer --> vault[(Vault<br/>logins · cards)]:::accent
+```
+
+## What Otto can do
+
+<CardGrid>
+  <Card title="Research" icon="magnifier">
+    Search the web, read pages and PDFs, and compare sources.
+  </Card>
+  <Card title="Work on files" icon="document">
+    Write documents, sheets and code in its own Linux workspace.
+  </Card>
+  <Card title="Use your apps" icon="puzzle">
+    Read and draft in Gmail, Calendar, Slack, Notion, Linear and more.
+  </Card>
+  <Card title="Browse and sign in" icon="laptop">
+    Fill forms, sign in with saved logins and download what you need.
+  </Card>
+  <Card title="Keep watch" icon="clock">
+    Run on a schedule and notice new email that needs you.
+  </Card>
+  <Card title="Reply anywhere" icon="comment">
+    Pick up the same conversation on Telegram or WhatsApp.
+  </Card>
+</CardGrid>
+
+## Explore the docs
+
+<CardGrid>
+  <LinkCard
+    title="Use Otto"
+    href="/use/chat/"
+    description="Chat, tasks, schedules, files, the browser and memory."
+  />
+  <LinkCard
+    title="Trust and Vault"
+    href="/trust/"
+    description="Approvals, saved logins, payments and your data."
+  />
+  <LinkCard
+    title="Connect"
+    href="/connect/models/"
+    description="Models, Composio apps, MCP servers, APIs and CLIs."
+  />
+  <LinkCard
+    title="How Otto works"
+    href="/how-it-works/architecture/"
+    description="Threads, turns, the sandbox and hosted mode."
+  />
+  <LinkCard
+    title="Deploy and operate"
+    href="/deploy/configuration/"
+    description="Settings, the desktop app, Cloudflare and analytics."
+  />
+  <LinkCard
+    title="Contribute"
+    href="/contribute/"
+    description="Set up development, run checks and write docs."
+  />
+</CardGrid>

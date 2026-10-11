@@ -1,0 +1,357 @@
+---
+title: Write docs
+description: Run the Otto docs locally, write pages in the house style and use the components and diagrams the site supports.
+sidebar:
+  order: 8
+---
+
+import {
+  Aside,
+  Badge,
+  Card,
+  CardGrid,
+  FileTree,
+  LinkCard,
+  Steps,
+  TabItem,
+  Tabs,
+} from '@astrojs/starlight/components';
+
+This page explains how to run the Otto docs on your computer, how to write a page that reads like the rest of the site, and which components and diagrams you can use.
+
+The short version: write for a busy person who has never seen Otto's code. Lead with the answer. Use short sentences, "you", and a diagram whenever something moves between parts.
+
+## Run the docs locally
+
+The docs are an [Astro Starlight](https://starlight.astro.build) site in the `docs` folder. It has its own lockfile, like `desktop` and `deployment/cloudflare`.
+
+<Steps>
+
+1. Install the docs dependencies.
+
+   ```sh title="Terminal"
+   pnpm --dir docs install --frozen-lockfile
+   ```
+
+2. Start the dev server. It reloads when you save a page.
+
+   ```sh title="Terminal"
+   pnpm --dir docs dev
+   ```
+
+3. Open `http://localhost:4321/otto/` in your browser.
+
+4. Before you open a pull request, build the site. The build fails on a broken link or a missing heading anchor.
+
+   ```sh title="Terminal"
+   pnpm --dir docs build
+   ```
+
+</Steps>
+
+On every pull request that changes `docs/`, the **Docs** workflow builds the site, checks every internal link, and attaches the built site to the run as the `otto-docs` artifact.
+
+## Where pages live
+
+<FileTree>
+
+- docs/
+  - astro.config.mjs site settings, sidebar and plugins
+  - src/
+    - content/docs/ every page, one file per page
+      - index.mdx the home page
+      - get-started/
+      - use/
+      - trust/
+      - connect/
+      - how-it-works/
+      - deploy/
+      - contribute/
+    - assets/ images and screenshots
+    - styles/otto.css the Otto theme
+
+</FileTree>
+
+Each folder under `src/content/docs` is one sidebar section. The file name becomes the URL, so `trust/payments.md` is published at `/trust/payments/`. Set the order inside a section with `sidebar.order` in the front matter.
+
+Use `.md` for most pages. Use `.mdx` only when the page needs a component such as `<Steps>` or `<Tabs>`.
+
+## Start from this template
+
+```md title="src/content/docs/use/example.md"
+---
+title: Do the thing
+description: One sentence that says what this page helps you do. Search engines and link previews show it.
+sidebar:
+  order: 3
+---
+
+One sentence that answers the question this page is about.
+
+A short paragraph with the context a newcomer needs.
+
+## Do the thing
+
+1. Open **Settings → Example**.
+2. Turn on **Example**.
+
+## How it works
+
+A diagram, then two or three short paragraphs.
+
+## Related resources
+
+- [Parent page](/use/chat/)
+- [Sibling page](/use/tasks/)
+```
+
+## Write like the rest of the docs
+
+Otto's docs follow the [n8n docs style](https://docs.n8n.io/contribute/contribution-guide-for-n8n-docs/style-guide-for-n8n-docs), which builds on the Microsoft Writing Style Guide.
+
+### Plain language
+
+| Avoid                                         | Use instead            |
+| --------------------------------------------- | ---------------------- |
+| utilize, leverage                             | use                    |
+| in order to                                   | to                     |
+| functionality, capabilities                   | features, what it does |
+| It's important to note that X                 | X                      |
+| Otto provides a powerful, seamless way to ... | Otto lets you ...      |
+| The owner                                     | you                    |
+| Pi, the agent, the LLM (in user pages)        | Otto, or the model     |
+
+- **Lead with the answer.** Put one sentence under the title that says what the page lets you do.
+- **Keep sentences short.** One idea each, under 25 words. Split anything held together by a semicolon.
+- **Cut filler and marketing.** No "simply", "powerful", "robust" or "seamless". Say what happens.
+- **Be exact.** Write "for 90 days", not "for a while". Write "Otto asks you", not "Otto may ask".
+- **Lead with the action.** "To stop Otto, select **Stop**", not "There is a button that stops Otto".
+
+### Voice and person
+
+- Talk to the reader as "you". Name Otto in the third person: "Otto asks", not "we ask".
+- Use active voice: "The server checks the action", not "The action is checked".
+- Use contractions: "don't", "can't", "you'll".
+- Use "they" for an unknown person.
+
+### Formatting
+
+- Headings use sentence case and say what the section is about: "Approve a payment", not "Payments flow".
+- UI labels are bold and match the app exactly: **Settings → Trust & cost**, **Sign in without asking**.
+- File names, commands, settings and code are in `code`. Placeholders look like `<your-key>`.
+- Use the Oxford comma, one space between sentences, and no em dashes or ellipses.
+- Write numbers from zero to nine as words and 10 or more as numerals, except for versions, sizes and percentages.
+
+### Page shape
+
+- **One page, one job.** Split a page when it mixes how-to steps with a long explanation.
+- **Self-contained sections.** Someone may land on a heading from search. Restate the one fact the section needs instead of writing "as mentioned above".
+- **Landing pages list their children** under **In this section**, with one line each.
+- **Child pages end with Related resources**: a link to the parent and to sibling pages.
+- **Explain limits honestly.** If a check doesn't cover something, say so in a `caution` aside.
+
+## Link to other pages
+
+Write internal links as site paths that start and end with `/`, without the `/otto` prefix. The build adds the prefix and checks that every page and heading exists.
+
+```md
+See [Approve one payment](/trust/payments/#approve-one-payment).
+```
+
+Link to source files with full GitHub URLs, such as [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts). Link at the first useful mention only.
+
+## Components
+
+Import components at the top of an `.mdx` page:
+
+```mdx
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+```
+
+### Asides
+
+Use an aside for one thing the reader must not miss. Keep it to two sentences.
+
+:::note
+A **note** adds useful context.
+:::
+
+:::tip[Shortcut]
+A **tip** saves time. You can give any aside a custom title.
+:::
+
+:::caution
+A **caution** warns about a limit or a step that's easy to get wrong.
+:::
+
+:::danger
+A **danger** aside warns about data loss or a security risk.
+:::
+
+```md
+:::caution[Back up the Vault key]
+Saved logins can't be read without it.
+:::
+```
+
+Asides work in `.md` and `.mdx` pages.
+
+### Steps
+
+Wrap a numbered list in `<Steps>` for a procedure. Each step starts with a verb.
+
+<Steps>
+
+1. Open **Vault → Saved**.
+2. Select **New**, then **Login**.
+3. Enter the website, username and password, then select **Save**.
+
+</Steps>
+
+### Tabs
+
+Use tabs when the same task differs by platform or setup.
+
+<Tabs syncKey="platform">
+  <TabItem label="macOS" icon="apple">
+    Otto keeps the Vault key in the macOS Keychain.
+  </TabItem>
+  <TabItem label="Linux" icon="linux">
+    Set `OTTO_VAULT_KEY` in `.env` before the first start.
+  </TabItem>
+</Tabs>
+
+Tabs with the same `syncKey` switch together across the page.
+
+### Cards and link cards
+
+Use cards for a short grid of ideas, and link cards to send readers onward.
+
+<CardGrid>
+  <Card title="Card" icon="puzzle">
+    Two lines at most.
+  </Card>
+  <Card title="Another card" icon="padlock">
+    Starlight's icon names work here.
+  </Card>
+</CardGrid>
+
+<LinkCard title="Trust and Vault" href="/trust/" description="How Otto keeps you in control." />
+
+### Badges
+
+Mark status inline: <Badge text="Preview" variant="caution" /> <Badge text="Local only" variant="note" /> <Badge text="New" variant="success" />.
+
+```mdx
+<Badge text="Local only" variant="note" />
+```
+
+### Code blocks
+
+Give a code block a `title` when it's a file or a terminal. Mark lines to draw attention.
+
+```sh title=".env" {2} ins={3}
+PORT=4310
+OTTO_VAULT_KEY=<your-key>
+COMPOSIO_API_KEY=<your-key>
+```
+
+````md
+```sh title=".env" {2} ins={3}
+PORT=4310
+OTTO_VAULT_KEY=<your-key>
+COMPOSIO_API_KEY=<your-key>
+```
+````
+
+### Images
+
+Store screenshots in `src/assets/screens` and use synthetic data only. Write alt text that says what the image shows.
+
+```md
+![Vault with saved logins and the selected login's activity.](../../../assets/screens/vault-light.png)
+```
+
+## Diagrams
+
+Draw diagrams with [Mermaid](https://mermaid.js.org) in a `mermaid` code block. They follow the site's light and dark theme. Keep each diagram small: about eight boxes, short labels and one idea. Draw decisions as hexagons, `{{Like this?}}`, because diamonds grow very tall. Prefer `flowchart TD` when a left-to-right chart would be wider than about five boxes.
+
+Add a class to highlight a box:
+
+| Class       | Use it for                         |
+| ----------- | ---------------------------------- |
+| `:::accent` | The part the page is about, or you |
+| `:::muted`  | Background or optional parts       |
+| `:::go`     | A step that runs                   |
+| `:::stop`   | A step that is refused or held     |
+
+### Flowchart
+
+Use a flowchart for parts and the paths between them.
+
+```mermaid
+flowchart LR
+  action[App action] --> check{{Allowed?}}
+  check -- yes --> run[Run it]:::go
+  check -- not sure --> ask[Ask you]:::accent
+  ask -- no --> stop[Don't run]:::stop
+  ask -- yes --> run
+```
+
+````md
+```mermaid
+flowchart LR
+  action[App action] --> check{{Allowed?}}
+  check -- yes --> run[Run it]:::go
+  check -- not sure --> ask[Ask you]:::accent
+  ask -- no --> stop[Don't run]:::stop
+  ask -- yes --> run
+```
+````
+
+### Sequence diagram
+
+Use a sequence diagram when the order of messages matters.
+
+```mermaid
+sequenceDiagram
+  actor You
+  participant Otto
+  participant Server
+  participant Site as Website
+  You->>Otto: Read the report with my saved login
+  Otto->>Server: Use this account on this website
+  Server->>Server: Check task, account and website
+  Server->>Site: Fill in and submit privately
+  Site-->>Otto: Page after sign-in, secrets masked
+  Otto-->>You: Here is the report
+```
+
+### State diagram
+
+Use a state diagram for something that moves through a few states.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Running: claim saved
+  Running --> Submitted: entry finished
+  Running --> Uncertain: interrupted
+  Submitted --> [*]
+  Uncertain --> [*]
+```
+
+## Check your page
+
+- [ ] The first sentence answers what the page is for.
+- [ ] Every heading says what its section covers.
+- [ ] Steps start with a verb and match the labels in the app.
+- [ ] Diagrams have eight boxes or fewer and short labels.
+- [ ] No keys, real accounts or private data in text, code or screenshots.
+- [ ] `pnpm --dir docs build` passes.
+
+## Related resources
+
+- [Contribute to Otto](/contribute/)
+- [Checks and tests](/contribute/checks-and-tests/)
+- [Pull requests and releases](/contribute/pull-requests/)

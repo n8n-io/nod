@@ -1,0 +1,113 @@
+---
+title: Telegram and WhatsApp
+description: Chat with Otto from Telegram or WhatsApp, set up each channel, and finish private steps such as sign-in and payments in the Otto app.
+sidebar:
+  order: 7
+---
+
+import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+You can chat with Otto from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the Otto app.
+
+Otto replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the Otto app.
+
+## Before you start
+
+|                      | Telegram                                  | WhatsApp                                                     |
+| -------------------- | ----------------------------------------- | ------------------------------------------------------------ |
+| You need             | A Telegram bot, made with BotFather       | A Meta app with the WhatsApp Cloud API and a business number |
+| Works on a laptop    | Yes. Otto checks for new messages itself. | Needs a public HTTPS address that reaches Otto               |
+| Who can message Otto | Only the Telegram account you pair        | Only the number you enter                                    |
+| Files from Otto      | Sent as documents                         | Not sent. Open Otto to get them.                             |
+| When Otto can write  | Any time                                  | Only within 24 hours of your last message                    |
+
+Otto reads the text of your messages. To give Otto a file, attach it in the Otto app.
+
+## Set up a channel
+
+Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. Otto checks your details before it saves them, and keeps them encrypted, outside the chat.
+
+<Tabs syncKey="channel">
+<TabItem label="Telegram">
+
+<Steps>
+
+1. In Telegram, open [BotFather](https://t.me/BotFather) and send `/newbot`. Choose a name and a username.
+2. Paste BotFather's reply, or just the token, into **BotFather message or token**. Select **Connect bot**.
+3. Scan the code or select **Open Telegram**, then press **Start**. The link works for 15 minutes.
+4. Check that the name shown is yours, then select **Confirm**. Only this account can message Otto.
+5. Select **Start conversation** and say hello. Otto must be running to reply.
+
+</Steps>
+
+If the link doesn't work for you, select **Enter your user ID instead** and use the ID that [@userinfobot](https://t.me/userinfobot) sends you.
+
+</TabItem>
+<TabItem label="WhatsApp">
+
+<Steps>
+
+1. In **Before you begin**, check that you have a Meta app with WhatsApp, a business sender number and a public HTTPS callback. Confirm the WhatsApp terms.
+2. In **Choose the numbers**, enter the **Business phone number ID** from Meta and **Your WhatsApp number**, as digits without `+`.
+3. In **Verify your business app**, paste the **Business access token** and **Meta app secret**.
+4. In **Set up message delivery**, enter the **Public HTTPS callback** and choose a **Webhook verification token**. Select **Verify and save**.
+5. In Meta, enter the same callback URL and token, then subscribe the app to messages.
+
+</Steps>
+
+This connects a business number, not your personal WhatsApp inbox.
+
+:::caution[Keep Otto private]
+Expose only the `/api/webhooks/whatsapp` route to the internet, never the rest of Otto. The desktop app doesn't provide a public address, so WhatsApp suits Otto running on a server.
+:::
+
+</TabItem>
+</Tabs>
+
+<details>
+<summary>Configure channels in .env instead</summary>
+
+When you run Otto from source, you can set the `TELEGRAM_*` and `WHATSAPP_*` values listed in `.env.example` and restart. The **Channels** page is easier, because it checks your details and pairs your account.
+
+</details>
+
+## Private steps happen in the Otto app
+
+Passwords, saved logins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Otto asks you to open Otto. Finish the step there, and the task carries on and replies in the chat app.
+
+```mermaid
+sequenceDiagram
+  actor You
+  participant Chat as Telegram or WhatsApp
+  participant App as Otto app
+  participant Otto
+  You->>Chat: Book the table with my saved login
+  Chat->>Otto: Your request
+  Otto-->>Chat: Open Otto to continue securely
+  You->>App: Finish the private step
+  App->>Otto: Done
+  Otto-->>Chat: The result
+```
+
+If a website sends you a one-time sign-in code, you can reply with it in the chat where Otto asked. Otto uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the Otto app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
+
+Taking over [Otto's browser](/use/browser/) also needs the Otto app, because chat apps can't show the page.
+
+## Commands
+
+These commands answer straight away, without using the model or costing anything.
+
+| Send      | To get                                                       |
+| --------- | ------------------------------------------------------------ |
+| `/usage`  | This month's spending and app actions, with a PDF statement  |
+| `/memory` | A short summary of what Otto remembers, with the full export |
+
+Telegram receives the PDF and the export as documents. On WhatsApp, open Otto to get them.
+
+## Related resources
+
+- [Chat with Otto](/use/chat/)
+- [Spending and usage](/use/spending/)
+- [Memory](/use/memory/)
+- [Vault and saved logins](/trust/vault/)
+- [Your data and privacy](/trust/privacy/)

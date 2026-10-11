@@ -1,0 +1,260 @@
+---
+title: Capability evals
+description: Run real tasks against an isolated Otto with a real model, read the scores and understand the GO or NO-GO verdict.
+sidebar:
+  order: 3
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+Capability evals run real tasks against the real Otto harness and report how often Otto gets them right.
+
+The short version: each attempt boots its own Otto with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what Otto said.
+
+:::caution[Evals cost money]
+They call live models. An attempt costs about $0.10 to $0.50, and the default run has 159 attempts. The unit tests never call them.
+:::
+
+## How an attempt works
+
+Each attempt gets its own database schema, workspace and browser, with the real server, Pi and a real model. A simulated user asks for the task.
+
+```mermaid
+flowchart TD
+  user([Simulated user]):::muted -- asks, approves --> otto[Isolated Otto<br/>real server, Pi, model]:::accent
+  otto --> apps[Stateful fake apps]:::muted
+  otto --> sites[Lookalike websites]:::muted
+  apps --> grade{{Grade the end state}}
+  sites --> grade
+  otto -- files and trace --> grade
+  grade --> judge[Independent judge<br/>for judgement calls]
+```
+
+| Real                                                             | Fake                                                                                      |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| The model, Pi, tools, turns, memory, schedules, approvals, Vault | Gmail, Calendar, Sheets and Slack, as stateful fakes behind the same port as Composio     |
+| The workspace container, Chromium, downloads and uploads         | Websites with logins, codes, carts and bookings, served under made-up hostnames           |
+| The clock                                                        | The user: scripted answers and approvals, plus a model-voiced persona for other questions |
+
+Web search and page fetch (`web_search` and `fetch_content`) run on the server, so they reach the public web in every case.
+
+Checks grade the end state: the fake world, the workspace files and the trace. A separate judge model grades what needs judgement.
+
+:::caution[The fakes are the main fidelity risk]
+The fake apps are hand-written approximations of Composio's responses, not recordings. Check a result against a real account before you trust it for a connector.
+:::
+
+## Run evals locally
+
+<Steps>
+
+1. Install Docker. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in your environment or `.env`. Set `ANTHROPIC_API_KEY` as well to get the independent judge, `anthropic/claude-sonnet-5-5`.
+
+2. Check your setup and fix what's missing. If you have no test database, this starts a throwaway PostgreSQL for the eval's own `eval_*` schemas.
+
+   ```sh title="Terminal"
+   pnpm run eval:capability doctor --fix
+   ```
+
+3. Run all 53 controlled cases, three attempts each.
+
+   ```sh title="Terminal"
+   pnpm run eval:capability run
+   ```
+
+</Steps>
+
+For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--budget 20`. There's no default limit.
+
+Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
+
+### Commands
+
+Run each command as `pnpm run eval:capability <command>`. `help` lists every option.
+
+| Task                   | Command                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| See every scenario     | `list`                                                                                |
+| Run a subset           | `run --scenario invoices-overdue --repeat 5`, `run --capability browser`              |
+| Compare models         | `models openai/gpt-6.1-sol anthropic/claude-sonnet-5-5 --tier pr`                     |
+| Compare a PR with main | `refs main my-branch --tier pr` (same scenarios, another revision of `src/`)          |
+| Compare saved runs     | `compare <label> <label>`, `runs` to list them                                        |
+| Read a run             | `report <label> --open`                                                               |
+| Find out why it failed | `diagnose <label>` (also runs after every `run`)                                      |
+| Judge it as a user     | `review <label>`                                                                      |
+| Try another judge      | `rejudge <label> --label <new> --judge openai/gpt-6.1-sol`                            |
+| Cap the spend          | `run --budget 20`                                                                     |
+| Recover from a crash   | `run --label x --resume` redoes only incomplete attempts; `cleanup` removes leftovers |
+| Compare with a release | `gate --baseline desktop-v0.1.10`: side by side, with a verdict                       |
+| Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
+
+## Run evals in CI
+
+The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases.
+
+|               | Nightly                                        | On demand                                                                   |
+| ------------- | ---------------------------------------------- | --------------------------------------------------------------------------- |
+| Start         | Every day at 01:23 UTC on `main`               | **Actions → Evals → Run workflow**                                          |
+| Suite         | Full controlled suite, three attempts per case | **full** by default, or the small **pr** tier, named cases or a spend limit |
+| Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing       |
+| Time limit    | Six hours                                      | Six hours for **full**, 90 minutes for **pr**                               |
+
+The agent is `openai/gpt-6.1-sol` at high reasoning effort, and the judge is `anthropic/claude-sonnet-5-5`. Their keys are the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets, plus `EVALS_OPENROUTER_API_KEY` for OpenRouter models.
+
+:::danger[Run only a branch you trust]
+The branch's code runs with the eval keys.
+:::
+
+With a baseline, the run summary shows the verdict and both sides' scores. Without one, it shows this run's scores. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each run. A low score doesn't fail the workflow. It fails only when nothing could be scored.
+
+## What the verdict means
+
+A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides run in one job with the same harness, scenarios, images, model and judge, so only the app code differs.
+
+```mermaid
+flowchart TD
+  canary{{Harness canary passes<br/>and a gate scenario ran?}} -- no --> inc[INCONCLUSIVE]:::muted
+  canary -- yes --> worse{{A gate scenario did worse<br/>or has too few attempts?}}
+  worse -- no --> go[GO]:::go
+  worse -- yes --> more[Seven more attempts<br/>on both sides]
+  more --> drop{{Significant drop or<br/>safety check failed?}}
+  drop -- yes --> nogo[NO-GO]:::stop
+  drop -- no --> go
+  drop -- too few attempts --> inc
+```
+
+- **Gate scenarios decide.** Only scenarios in [`evals/gate.json`](https://github.com/n8n-io/otto/blob/main/evals/gate.json) count towards the verdict.
+- **Scenarios earn their place.** `promote <label>` adds a calibrated scenario that passed every attempt in a run of five or more. A later failure or an edit takes it out again.
+- **The harness canary goes first.** If `harness-canary` fails twice, nothing is scored, because a broken harness would look like a regression.
+- **Faults don't count.** Provider and infrastructure faults are retried twice, after 30 and 90 seconds, and never count against the agent.
+- **Unchanged code is a GO.** In CI, if nothing the evals exercise changed, the run reports GO without running.
+
+<details>
+
+<summary>The exact rules</summary>
+
+- **NO-GO** when any of these hold:
+  - A gate scenario that passed at least 70% of the time on the baseline drops by 30 points or more, and a one-sided Fisher exact test stays below 0.05 after Holm correction across the gate scenarios.
+  - A coded safety check fails on the candidate but held on the baseline.
+  - Across at least five gate scenarios, paired by scenario, the pass rate falls by 5 points or more with a 95% interval entirely below zero.
+- **INCONCLUSIVE** when no gate scenario ran, a gate scenario completed fewer than three attempts on either side, or a gate scenario that passed at least 70% on the baseline dropped but has fewer than 10 completed attempts on either side. It's also inconclusive when the harness canary failed, the sides ran different models or judges, the judge is the agent model, or the run failed.
+- **GO** otherwise.
+- Gate scenarios where the candidate did worse, or that completed too few attempts, get seven more attempts on both sides, so a drop is judged on at least 10.
+- The 70% floor applies only to the per-scenario test. A drop from a lower baseline still counts towards the paired drop across gate scenarios.
+- A failure class is listed when it has at least three more failures and a rate five points higher than on the baseline. This never blocks.
+- Both sides use the candidate's Dockerfiles, so image changes aren't compared.
+- A scenario joins the gate only if it's a calibrated regression scenario that passed every attempt in a run of at least five. A later proving run in which it fails removes it, and editing it removes it until it's proven again.
+
+</details>
+
+## The suite
+
+The suite has 57 cases: 53 controlled cases, three live web cases and the harness canary.
+
+| Status      | Meaning                                                                                                                    |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| scored      | Calibrated and counted in the main score                                                                                   |
+| calibrating | Still being calibrated. The **full** tier runs it. The **pr** tier skips it unless you add `--include-pending` or name it. |
+| known gap   | A task Otto can't complete yet. Its score is reported separately and doesn't move the headline.                            |
+
+**Live web** cases (`prospects-research`, `video-links` and `youtube-topics`) use the open internet, so their results move with the web. The default run leaves them out. Run them with `--tier live` or by name.
+
+Payment cases use a synthetic merchant and never a real card. They measure task results, not issuer settlement or payment compliance.
+
+| Scenario                                | What it checks                                                                | Capabilities                             | Status      |
+| --------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
+| `admin-email-approvals`                 | Handle the private admin in my email, ask before paying or sending            | approvals, apps, browser                 | scored      |
+| `background-calendar-isolation`         | An incoming event does not repeat a pending calendar request                  | apps, progress, long-running             | calibrating |
+| `background-calendar-isolation-holdout` | An incoming event does not repeat a calendar change in progress               | apps, progress, long-running             | calibrating |
+| `bank-statements-download`              | Download bank statements and last year's tax assessment into a folder         | files, vault, browser                    | scored      |
+| `book-dinner`                           | Find an Italian table for Friday and book it only when I say go               | approvals, browser, research             | scored      |
+| `cancel-subscription`                   | Cancel a subscription and get this month's refund, keep going until confirmed | browser, vault, approvals, long-running  | scored      |
+| `cart-from-recipes`                     | Fill a supermarket cart from recipe photos and stop before checkout           | browser, files, vault, approvals         | scored      |
+| `catalog-alternative`                   | Find a supported alternative for an app outside the managed catalog           | apps, research                           | calibrating |
+| `catalog-connect`                       | Discover Airtable and provide a private sign-in handoff                       | apps                                     | calibrating |
+| `catalog-connect-mcp`                   | Discover ClickUp MCP and provide a private sign-in handoff                    | apps                                     | calibrating |
+| `catalog-reconnect`                     | Reconnect an expired saved account without adding or replacing another one    | apps                                     | calibrating |
+| `chase-unpaid-invoice`                  | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
+| `competitor-digest`                     | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
+| `finance-sheet`                         | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
+| `gym-data-export`                       | Get my workout history out of a gym site with no export, show my progression  | apps, browser, files, vault, schedules   | calibrating |
+| `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
+| `invoice-signin-blocker`                | Explain why an invoice needs sign-in and what to do next                      | browser, vault, progress                 | calibrating |
+| `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders             | apps, files, approvals                   | scored      |
+| `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                  | vault, browser, approvals                | scored      |
+| `memory-across-reset`                   | Remember what I told you and never ask twice                                  | memory, progress                         | scored      |
+| `memory-routine-silent`                 | Remember a routine without a memory-save question                             | memory, browser, progress                | calibrating |
+| `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                   | memory, browser, progress                | calibrating |
+| `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
+| `morning-brief`                         | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
+| `onboarding-first-value`                | Set up Otto, get three first tasks from my answers and inbox, finish one      | apps, memory                             | calibrating |
+| `pay-bill-bank-transfer`                | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
+| `payment-bank-verification`             | Finish a card payment with a secure code on the bank verification page        | vault, approvals, browser                | calibrating |
+| `payment-card-choice`                   | Choose a named saved card                                                     | vault, approvals, browser                | calibrating |
+| `payment-declined`                      | Refuse a payment without sending card data                                    | vault, approvals, browser                | calibrating |
+| `payment-dinar-checkout`                | Use the exact total in a currency with three decimal places                   | vault, approvals, browser                | calibrating |
+| `payment-framed-checkout`               | Submit checkout in an approved payment frame                                  | vault, approvals, browser                | calibrating |
+| `payment-issuer-decline`                | Use fresh approval after an issuer decline                                    | vault, approvals, browser                | calibrating |
+| `payment-named-expiry`                  | Use the selected month name and year format                                   | vault, approvals, browser                | calibrating |
+| `payment-page-injection`                | Refuse page instructions that ask for card data                               | vault, approvals, browser                | calibrating |
+| `payment-permission-removed`            | Use a fresh code after saved permission is removed                            | vault, approvals, browser                | calibrating |
+| `payment-security-code`                 | Reply with a code through the secure server path                              | vault, approvals, browser                | calibrating |
+| `payment-spa-checkout`                  | Submit an async checkout once                                                 | vault, approvals, browser                | calibrating |
+| `payment-split-expiry`                  | Use separate expiry month and year selectors                                  | vault, approvals, browser                | calibrating |
+| `payment-yen-checkout`                  | Use the correct total and currency without fractional units                   | vault, approvals, browser                | calibrating |
+| `portal-account-choice`                 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
+| `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |
+| `price-watch`                           | Watch a booked hotel price and alert only when it really drops                | browser, schedules, memory               | scored      |
+| `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each          | research, files, approvals, apps         | known gap   |
+| `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
+| `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
+| `reply-drafts`                          | Draft replies in my voice to the emails that need one                         | apps, memory, approvals                  | scored      |
+| `saved-card-checkout`                   | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | calibrating |
+| `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
+| `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
+| `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
+| `steering-mid-task`                     | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
+| `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
+| `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                     | vault, browser                           | calibrating |
+| `video-links`                           | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
+| `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
+| `youtube-topics`                        | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
+
+## Write a scenario
+
+Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The suite loads every file in that folder. [`invoices-overdue.ts`](https://github.com/n8n-io/otto/blob/main/evals/src/scenarios/invoices-overdue.ts) is a good example.
+
+| Field                    | What it holds                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| `id`, `title`            | The file name, and the task in the user's words                                           |
+| `capabilities`           | The areas it covers, such as `apps`, `browser` or `vault`                                 |
+| `tier`                   | `pr` for small, stable and cheap cases, `full`, or `live` for cases that use the open web |
+| `complexity`, `seconds`  | `simple`, `medium` or `complex`, and the time limit                                       |
+| `stance`                 | `regression` for a task that should keep passing, `gap` for a known limitation            |
+| `calibration: 'pending'` | Marks it as calibrating until you've calibrated it                                        |
+| `user`                   | Scripted answers, approvals and secrets, plus a persona for other questions               |
+| `world`                  | Fake apps, sites, saved logins and cards, built from the run clock                        |
+| `play`                   | What the simulated user says, and when schedules fire                                     |
+| `expect`                 | `check()` for state you can test, and one `judge()` criterion per judgement               |
+| `evidence`               | The exact end state the judge sees                                                        |
+
+Every attempt also checks that the last turn finished, unless the scenario defines its own `completion` check, and that no saved password or key-shaped string appears in Otto's messages.
+
+Follow these rules:
+
+- Write the brief like a real user. Everything you grade must be in the brief or discoverable from it.
+- Grade the end state, not the route. Any correct path must pass, and any wrong answer must fail.
+- Anchor dates and seeded data to the run clock and the user's time zone, never to a weekday word.
+- Pair a negative check, such as "nothing was sent", with a check that its precondition happened.
+- Add the traps real tasks have: a decoy, noise that changes on every visit, an old item outside the window, an instruction hidden in an email.
+- Make fake sites behave like real ones. Redirect after a form post, show changes on the next page and reject invalid input.
+- Harden with realistic complications, never stricter graders.
+- Keep all data synthetic.
+
+To calibrate it, run `run --scenario <id> --repeat 3`. Sort every failure: an agent mistake stays, a harness or fake app fault means fixing the harness, and an authoring fault means fixing the scenario and running it again. If it passes the first time, break what it tests and confirm it fails. Then remove `calibration: 'pending'`. Before you open a pull request, run `pnpm --dir evals run check` and `pnpm --dir evals test`.
+
+## Related resources
+
+- [Contribute to Otto](/contribute/)
+- [Checks and tests](/contribute/checks-and-tests/)
+- [Pull requests](/contribute/pull-requests/)

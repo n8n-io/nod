@@ -1,0 +1,67 @@
+---
+title: One use, one result
+description: Why Otto never runs approved or private work twice, and what to do when a result is uncertain.
+sidebar:
+  order: 10
+---
+
+Otto never runs an approved action or a private entry twice. If it can't tell whether something happened, it says so, and you check before anyone tries again.
+
+## A claim before every private step
+
+Before the server enters a saved login, a code or a card, it saves a claim in its database. Each operation can be claimed once. Two open tabs, two replies or a lost response can't run it a second time.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Running: claim saved
+  Running --> Submitted: entry finished
+  Running --> Uncertain: interrupted or failed
+  Submitted --> [*]
+  Uncertain --> [*]
+```
+
+| State     | What it means                                                         | What happens next                       |
+| --------- | --------------------------------------------------------------------- | --------------------------------------- |
+| Running   | The server is entering and submitting the values                      | Otto waits                              |
+| Submitted | The values were entered, and any chosen submit button was pressed     | Otto reads the page to see if it worked |
+| Uncertain | The step may have reached the website, but the result wasn't recorded | Check the result before another attempt |
+
+**Submitted** doesn't mean the sign-in or payment succeeded. Only the website knows that, so Otto checks the page.
+
+**Uncertain** means the step may have reached the website. Otto keeps the claim and never replays it. Ask Otto to look at the page, the order or the account first. A new attempt is a new, explicit request.
+
+## Confirmed app actions work the same way
+
+When you say yes to an app action, the server runs that saved action once. If it fails or is interrupted, it becomes uncertain, and Otto asks you to check the app before trying again. It never runs again on its own.
+
+## Tasks and actions aren't retried
+
+| What                       | If it fails                                                                |
+| -------------------------- | -------------------------------------------------------------------------- |
+| A task                     | It ends with a message asking you to check what happened, or say continue  |
+| A tool call                | It isn't repeated                                                          |
+| A confirmed app action     | It becomes uncertain                                                       |
+| A private entry or payment | It becomes uncertain                                                       |
+| A model request            | The one exception: a temporary provider error is retried up to three times |
+
+## Stop and restarts
+
+**Stop** cancels running, queued and waiting tasks. A form or code you submit late can't restart them. Stop can't undo anything that already reached a website or app.
+
+After Otto restarts, any claim or confirmed action that was still running becomes uncertain. Nothing that was in progress runs again.
+
+:::tip
+When Otto says a result is uncertain, ask it to check: "Did the order go through?" It reads the page or app without submitting again.
+:::
+
+## Where this is enforced
+
+[`src/server/vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) (claims and states) · [`src/server/approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts) (confirmed actions) · [`src/server/payments.ts`](https://github.com/n8n-io/otto/blob/main/src/server/payments.ts) (payment outcomes)
+
+## Related resources
+
+- [Trust and Vault](/trust/)
+- [Approvals and the trust check](/trust/approvals/)
+- [Vault and saved logins](/trust/vault/)
+- [Payments](/trust/payments/)

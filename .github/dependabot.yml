@@ -6,6 +6,7 @@ updates:
       - /
       - /desktop
       - /deployment/cloudflare
+      - /docs
     schedule:
       interval: weekly
       day: monday
@@ -29,6 +30,8 @@ updates:
         patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
       tailwindcss:
         patterns: ['tailwindcss', '@tailwindcss/*']
+      docs:
+        patterns: ['astro', '@astrojs/*', 'astro-mermaid', 'mermaid', 'satteri', 'starlight-*']
       security:
         applies-to: security-updates
         patterns: ['*']

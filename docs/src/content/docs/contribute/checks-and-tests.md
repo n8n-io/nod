@@ -1,0 +1,130 @@
+---
+title: Checks and tests
+description: The commands to run before a pull request, the Git hooks, which tests to write and which checks CI runs for each change.
+sidebar:
+  order: 2
+---
+
+This page lists the checks to run before you open a pull request, the tests worth writing and what CI checks for each change.
+
+## Run the checks
+
+Run these four commands before you open a pull request:
+
+```sh title="Terminal"
+pnpm run check             # types, import boundaries, formatting
+pnpm test                  # deterministic tests; database cases skip without TEST_DATABASE_URL
+pnpm run test:integration  # every test in Linux with a disposable PostgreSQL and Chromium
+pnpm run build             # types and web bundle
+```
+
+`pnpm run format` fixes formatting. To run one test file while you work:
+
+```sh title="Terminal"
+pnpm exec tsx --test tests/approvals.test.ts
+```
+
+## Git hooks
+
+`pnpm install` sets up Git hooks with [Lefthook](https://github.com/evilmartians/lefthook).
+
+| Hook       | What runs                                                                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pre-commit | Prettier formats your staged files. If [Gitleaks](https://github.com/gitleaks/gitleaks) is installed, it scans them for secrets.                    |
+| Pre-push   | `pnpm run lint`: `pnpm run check` without formatting. It type-checks, checks import boundaries and checks that the workspace images share packages. |
+
+Secret scanning skips its generic keyword check in tests and fixtures. Known key formats fail everywhere, so keep test values synthetic.
+
+## Extra checks for some areas
+
+| If you change            | Also run                                                                                                                                                 |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `desktop/`               | `pnpm run desktop:test`                                                                                                                                  |
+| `evals/`                 | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                                 |
+| `deployment/cloudflare/` | `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](/deploy/cloudflare/)) |
+| `docs/`                  | `pnpm --dir docs build`                                                                                                                                  |
+
+The [capability evals](/contribute/evals/) call live models, so they aren't part of these checks. They run nightly and on request.
+
+## Integration tests
+
+`pnpm run test:integration` runs every test file in Linux, with Chromium and a throwaway PostgreSQL database. It never uses your local database or credentials.
+
+```mermaid
+flowchart LR
+  build[Build the web bundle<br/>and browser image] --> net[Create an internal<br/>Docker network]:::muted
+  net --> db[(Throwaway<br/>PostgreSQL)]
+  net --> run[Run every test<br/>with Chromium]:::accent
+  run --> clean[Remove containers<br/>and network]
+```
+
+The network has no internet access, and your source folders are mounted read-only. The run fails if any test is skipped.
+
+## Write tests that catch real regressions
+
+Add a test only when it would catch a real regression in one of these areas. Extend the existing file for that area instead of adding a new one.
+
+| Area                       | For example                                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Core harness               | One thread and Pi session per owner, turns one at a time, stop, interruption, reset, session rebase               |
+| Sandbox isolation          | Nothing on the host, no keys in the sandbox, contained paths                                                      |
+| Safety                     | Approvals, uncertain actions, Vault and sign-in fencing, credential guard, read-only turns, onboarding task cards |
+| Owner and tenant isolation | Gateway, signed envelopes, owner scoping, URL guards, redaction                                                   |
+| Integration contracts      | Channel delivery, schedule firing, downloads, OAuth completion                                                    |
+
+Leave out tautological tests, mocks that return what they were told, and tests of UI copy, wording, CSS, constants or configuration. For a change in `src/web`, check it in the running app instead.
+
+## Keep test data synthetic
+
+- Use made-up names, addresses such as `example.com` and fake keys.
+- Use disposable database schemas. Never reset or write to your normal local database.
+- Never call a live model, a connected account or a real recipient from a test.
+- Keep keys, real accounts and private content out of fixtures, logs and screenshots.
+
+## RTK workspace check
+
+The workspace image includes [RTK](https://github.com/rtk-ai/rtk), which shortens command output for the model. This check measures its savings and confirms that exports stay unfiltered. It runs 15 synthetic cases in disposable containers with networking off. It doesn't call a model or a connected account.
+
+```sh title="Terminal"
+docker build -f Dockerfile.workspace -t otto-eval-workspace:latest .
+pnpm exec tsx scripts/eval-rtk.ts --smoke
+```
+
+`--smoke` runs each case once. Leave it out for three repetitions. Results go to `.local/rtk-eval/candidate`.
+
+To compare with an image built without RTK, run `--phase baseline --baseline <commit> --image <baseline-image>` with the same case version and repetition count. Then run `node scripts/eval-rtk-report.mjs` for the chart and summary.
+
+## What CI checks
+
+CI reads the files a pull request changes and runs only the checks those files need. Formatting and secret scanning always run. The required **Checks, tests and build** result is present on every pull request, and fails if the scope check fails.
+
+```mermaid
+flowchart TD
+  files[Changed files] --> scope{{Select checks}}:::accent
+  scope -- docs and Markdown only --> light[Formatting<br/>and secrets]:::muted
+  scope -- src, tests, packages --> core[Full app checks]:::go
+  scope -- desktop --> desk[Desktop and<br/>Windows checks]
+  scope -- evals or deployment --> area[That area's checks]
+  scope -- unknown file type --> all[Every check]:::go
+```
+
+| You change                                                         | CI also runs                                                                                                                                       |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/`, Markdown files, `LICENSE` or `NOTICE`                     | Nothing more. This is the light path. A `docs/` change also runs the **Docs** workflow, which builds the site and checks its internal links.       |
+| Only a release's version, manifest and changelog                   | The release metadata and source check. Installers are built after merge.                                                                           |
+| `src/`, `public/` or `tests/`                                      | `pnpm run check`, the build, integration tests, image checks, and the desktop, Cloudflare, eval and Windows checks                                 |
+| Root package files, lockfile or Dockerfiles                        | All of the above, plus the E2B computer isolation and n8n delivery checks                                                                          |
+| Computer providers, `src/ports`, `src/shared` or `deployment/e2b/` | The `src/` checks plus the E2B computer isolation check                                                                                            |
+| `desktop/`                                                         | Desktop tests. Changes outside `desktop/test/` also run Windows build acceptance, and updater and build tooling changes run Mac update acceptance. |
+| `evals/`                                                           | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                           |
+| `deployment/cloudflare/`                                           | Adapter checks, both Wrangler dry runs and the image builds                                                                                        |
+| `deployment/n8n/`                                                  | The n8n delivery contract tests                                                                                                                    |
+
+A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The release workflow still builds and verifies all three installers after the version pull request merges, whatever CI selected. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/otto/blob/main/.github/scripts/ci-scope.mjs).
+
+## Related resources
+
+- [Contribute to Otto](/contribute/)
+- [Capability evals](/contribute/evals/)
+- [Pull requests](/contribute/pull-requests/)
+- [Desktop releases](/contribute/desktop-releases/)

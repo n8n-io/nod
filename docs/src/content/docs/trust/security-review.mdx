@@ -1,0 +1,95 @@
+---
+title: Security review guide
+description: What a security or IT team needs to assess Otto, with data flows, stored data, threats, controls and the code that enforces them.
+sidebar:
+  label: Security review guide
+  order: 4
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+This page gives a security or IT team what it needs to assess Otto: where it runs, what it stores, which threats it addresses and where to verify each control in the code.
+
+## Deployment options
+
+|                     | Desktop app                            | From source                     | Hosted                                          |
+| ------------------- | -------------------------------------- | ------------------------------- | ----------------------------------------------- |
+| Runs on             | The user's Mac or Windows PC           | A macOS or Linux machine        | Cloudflare containers, one runtime per user     |
+| Data stored         | On the device, in a private VM         | `.local/` and Docker volumes    | A database schema and R2 bucket per user        |
+| Encryption key held | macOS Keychain or OS-protected storage | Keychain or `OTTO_VAULT_KEY`    | Derived per user from the operator's master key |
+| Network exposure    | Loopback only, per-launch token        | Loopback only, owner access key | Google sign-in through a gateway                |
+| Saved cards         | Supported                              | Supported                       | <Badge text="Refused" variant="caution" />      |
+
+## How data flows
+
+```mermaid
+flowchart LR
+  user([User]):::accent --> server[Otto server<br/>policy and keys]
+  server --> model[Model provider<br/>chosen by the user]
+  server --> apps[Composio, MCP<br/>and app APIs]
+  server --> chat[Telegram<br/>WhatsApp]
+  server --> box[Workspace<br/>no keys]:::muted
+  server --> browser[Browser]:::muted --> sites[Websites]
+  server -. opt-in, masked .-> analytics[Usage analytics]:::muted
+```
+
+Model requests go only to the provider the user connects. App data goes only to the apps the user connects. The Otto team at n8n receives data only when the user sends feedback, or opts in to masked usage analytics.
+
+## What Otto stores
+
+| Data                               | Where                                      | Protection                                      | Kept                |
+| ---------------------------------- | ------------------------------------------ | ----------------------------------------------- | ------------------- |
+| Conversations, tasks and schedules | PostgreSQL                                 | Every query scoped to the owner                 | No automatic expiry |
+| Saved logins and cards             | PostgreSQL                                 | AES-256-GCM, bound to owner, record and purpose | Until removed       |
+| Model and app keys users save      | PostgreSQL                                 | AES-256-GCM, bound to owner, record and purpose | Until removed       |
+| Server-managed model and app keys  | Server configuration                       | Not stored by Otto; never sent to the sandbox   | Until unset         |
+| Vault activity                     | PostgreSQL                                 | Owner-scoped, no secret values                  | 90 days             |
+| Model costs and app actions        | PostgreSQL                                 | Owner-scoped                                    | Permanent           |
+| Memory                             | A private file outside the workspace       | Learns only from the user's own messages        | Until forgotten     |
+| Workspace files, browser profiles  | Local volumes, or R2 checkpoints if hosted | Separate containers per owner                   | Until removed       |
+
+## Threats and controls
+
+| Threat                                                       | Control                                                                                        | Verify in                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An email or web page tells Otto to send data or delete files | Server trust check on the action as sent; review never sees tool results; tripwire holds sends | [`trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts), [`untrusted.ts`](https://github.com/n8n-io/otto/blob/main/src/shared/untrusted.ts), [`approvals.test.ts`](https://github.com/n8n-io/otto/blob/main/tests/approvals.test.ts) |
+| The model leaks a password or card number                    | Secrets never enter its context; private entry; masking in output and screenshots              | [`vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts), [`browser-sign-in.test.ts`](https://github.com/n8n-io/otto/blob/main/tests/browser-sign-in.test.ts)                                                           |
+| A saved login is used on a lookalike site                    | Exact-origin check on the real field, including frames                                         | [`agent-browser`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser), [`vault.test.ts`](https://github.com/n8n-io/otto/blob/main/tests/vault.test.ts)                                                                                |
+| A payment or message runs twice                              | Durable claim before work; no automatic retries; uncertain state                               | [`vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts), [`approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)                                                                                  |
+| Code in the sandbox steals provider keys                     | Keys never enter the workspace; connected CLI tokens only reach a sealed install               | [`docker`](https://github.com/n8n-io/otto/tree/main/src/providers/docker), [`sandbox.test.ts`](https://github.com/n8n-io/otto/blob/main/tests/sandbox.test.ts)                                                                                          |
+| Another local process calls Otto's API                       | Owner access key on every request; loopback isn't treated as identity                          | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts)                                                                                                                                                                            |
+| One hosted user reaches another's data                       | Separate runtime, SQL role, schemas and key per user; signed gateway envelopes                 | [`gateway.ts`](https://github.com/n8n-io/otto/blob/main/src/server/gateway.ts), [`tenancy-auth.test.ts`](https://github.com/n8n-io/otto/blob/main/tests/tenancy-auth.test.ts)                                                                           |
+
+Tests use synthetic data and disposable databases. They never call a live model or a real account. Capability evals run the real agent against fake apps and lookalike websites. See [Checks and tests](/contribute/checks-and-tests/) and [Capability evals](/contribute/evals/).
+
+## Built on published research
+
+| Pattern                                      | Source                                                                                                             | In Otto                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| Privileged decisions from trusted input only | [CaMeL](https://arxiv.org/abs/2503.18813), [agent design patterns](https://arxiv.org/abs/2506.08837)               | The review sees user messages and the action only |
+| Review the proposed action, not the content  | [Chrome agent security](https://blog.google/security/architecting-security-for-agentic/)                           | Confirmations show the request as sent            |
+| Fill credentials outside the model           | [1Password agentic autofill](https://1password.com/blog/closing-the-credential-risk-gap-for-browser-use-ai-agents) | Private entry on a verified origin                |
+| No token passthrough                         | [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)                  | Connection secrets stay server-side               |
+| Classifiers are a layer, not the boundary    | [The Attacker Moves Second](https://arxiv.org/abs/2510.09023)                                                      | The tripwire only holds; the trust check decides  |
+
+## Common questions
+
+**Does n8n see our conversations?** Not in the desktop app or a source install, unless a user sends feedback with the diagnostic report. Usage analytics are opt-in and mask all content. In hosted mode, the operator of the deployment can decrypt stored data.
+
+**Does Otto train on our data?** Otto doesn't train models. The model provider you connect processes requests under its own terms.
+
+**Can we choose the model?** Yes. Users connect OpenAI, Anthropic, OpenRouter or a ChatGPT plan. Operators can also provide server-managed keys. There's no setting yet that limits which providers users can add.
+
+**Is there single sign-on or an admin console?** Not yet. Hosted mode uses Google sign-in, and each user has one private runtime. There are no organization accounts.
+
+**Which certifications does Otto have?** None. Otto is an early preview. Saved-card support is not a PCI DSS compliance claim.
+
+## Limits and reporting
+
+Read the honest limits in [Security model and limits](/trust/security-model/). Report a vulnerability privately through the [security policy](https://github.com/n8n-io/otto/blob/main/SECURITY.md). The team aims to acknowledge within three business days and to share an assessment within 10.
+
+## Related resources
+
+- [Our trust principles](/trust/principles/)
+- [How Otto compares](/trust/compare/)
+- [Your data and privacy](/trust/privacy/)

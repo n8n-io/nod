@@ -1,0 +1,201 @@
+---
+title: Desktop app internals
+description: What the Otto desktop app runs on your computer, where it keeps data, how it updates and how to build it.
+sidebar:
+  order: 2
+---
+
+import { Badge, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+This page explains what the desktop app runs on your computer, where it keeps your data and how it updates.
+
+The desktop app is the same Otto as a source install. It starts the same server and web app, and adds installation, credential storage and a native window. You don't need Node.js, Docker Desktop or PostgreSQL.
+
+## What runs on your computer
+
+```mermaid
+flowchart LR
+  window[Otto window]:::accent -- per-launch token --> server[Otto server<br/>Electron]
+  server --> provider[Model provider]:::muted
+  subgraph computer [Private Linux computer]
+    db[(PostgreSQL)]
+    workspace[Workspace<br/>container]
+    browser[Browser<br/>container]
+  end
+  server --> db
+  server --> workspace
+  server --> browser
+```
+
+<Tabs syncKey="os">
+<TabItem label="Mac" icon="apple">
+
+- Electron runs the app window and the Otto server.
+- Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. It gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used.
+- The VM holds PostgreSQL and separate workspace and browser containers. Docker runs only inside the VM.
+
+</TabItem>
+<TabItem label="Windows" icon="seti:windows">
+
+- Electron runs the app window and the Otto server.
+- A private WSL 2 distribution named `Otto-<profile>` holds PostgreSQL and separate workspace and browser containers. Docker runs only inside it.
+- Otto doesn't change your default WSL distribution or global WSL settings.
+
+</TabItem>
+</Tabs>
+
+The workspace and browser have separate networks, no access to your home folder, no Docker socket and no model keys. Models don't run on your computer. Requests go to the provider you connect.
+
+## The runtime pack
+
+The app download is small. On first launch, Otto downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
+
+- Otto checks the archive size and SHA-256 before it extracts anything, then checks every extracted file.
+- On a Mac, before it installs, Otto checks free space for the extracted files plus 512 MiB, and the archive size when it downloads.
+- On a Mac, verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only.
+- An app update reuses the runtime when it hasn't changed. Old versions stay on disk; Otto doesn't clean them up yet.
+
+If a download isn't available, you can import the matching `Otto-Runtime-darwin-<arch>-<id>.tar.gz` from the release page by hand.
+
+## Access and keys
+
+The server listens on a loopback port that needs a token, created again at every launch. Only the app's own windows receive it, so a website in your normal browser can't reach Otto.
+
+Electron `safeStorage` encrypts the Vault key. It uses the macOS key store on a Mac and DPAPI on Windows. Model connections and saved logins are encrypted with the Vault key. None of them enter the containers.
+
+App connections use the managed service without a Composio key. Notion and Linear connect directly to their hosted MCP servers. See [Apps](/connect/apps/).
+
+## Where your data lives
+
+<Tabs syncKey="os">
+<TabItem label="Mac" icon="apple">
+
+| What                            | Where                                                  |
+| ------------------------------- | ------------------------------------------------------ |
+| App settings and profile        | `~/Library/Application Support/Otto/profiles/local`    |
+| Private VM, database, workspace | `~/.otto-desktop/<profile>`                            |
+| Runtime packs                   | `~/Library/Application Support/Otto/runtime/<release>` |
+
+</TabItem>
+<TabItem label="Windows" icon="seti:windows">
+
+| What                          | Where                             |
+| ----------------------------- | --------------------------------- |
+| App settings and profile      | `%APPDATA%\Otto\profiles\local`   |
+| Private computer and database | WSL distribution `Otto-<profile>` |
+
+Windows file permissions protect the profile folder. Uninstalling removes the app but keeps the profile and the distribution.
+
+</TabItem>
+</Tabs>
+
+Your installation is the VM disks, database, workspace files, browser profiles, Otto sessions and encrypted settings together. Copying only the database isn't a backup.
+
+:::caution[No tested backup yet]
+There's no supported backup, restore or downgrade. Don't delete the profile, VM or runtime cache to fix a problem. Retry first, then [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+:::
+
+## Updates
+
+<Tabs syncKey="os">
+<TabItem label="Mac" icon="apple">
+
+On Apple silicon, Otto checks for updates when it starts, every six hours while open, and after your Mac wakes if a check is due. **Check for Updates…** in the Otto menu checks now.
+
+```mermaid
+flowchart TD
+  check[Check]:::muted --> ready[Update ready]
+  ready -- Later --> menu[Restart to update<br/>stays in the menu]
+  ready -- Restart --> busy{{Work running?}}
+  menu --> busy
+  busy -- no --> restart[Restart]:::go
+  busy -- yes --> ask[Ask you first]:::accent
+  ask -- Restart now --> restart
+```
+
+Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
+
+An Intel Mac doesn't update automatically yet. Quit Otto, then install the new DMG over the old app.
+
+</TabItem>
+<TabItem label="Windows" icon="seti:windows">
+
+Updates are manual in this preview. Quit Otto, download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into one folder, then run the installer. Keep the runtime pack compressed.
+
+Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
+
+</TabItem>
+</Tabs>
+
+## Windows preview
+
+<Badge text="Preview" variant="caution" /> The Windows app is a preview with a few extra needs.
+
+| Need    | Detail                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------- |
+| System  | Windows 11 x64 with hardware virtualization                                                  |
+| WSL     | WSL 2 with default localhost forwarding or mirrored networking. Otto offers **Install WSL**. |
+| Disk    | At least 20 GB free                                                                          |
+| Signing | Unsigned. Check both files against `SHA256SUMS` before you install.                          |
+
+Inside Otto's distribution, drive mounts and Windows process access are turned off. Closing the window keeps Otto in the tray. **Quit Otto** stops only its own distribution.
+
+## Current limits
+
+- Builds exist for Mac with Apple silicon or Intel, and Windows 11 x64. There are no Linux or Windows ARM builds.
+- Mac builds are self-signed, not notarized by Apple, so macOS asks you to approve the first launch.
+- Tasks run only while Otto is open and the computer is awake.
+- WhatsApp needs a public HTTPS callback. The app doesn't relay webhooks to your computer.
+- A new installation starts with a fresh profile. There's no sync between devices or migration from a source install.
+
+## Build the app
+
+These commands are for developers. Use the Node.js version in the root `package.json` and a local Docker builder.
+
+<Steps>
+
+1. Install dependencies and prepare the runtime.
+
+   ```sh title="Terminal"
+   pnpm install --frozen-lockfile
+   pnpm --dir desktop install --frozen-lockfile
+   pnpm run desktop:prepare
+   node desktop/scripts/runtime-pack.mjs --seed-cache
+   ```
+
+2. Build, test and package the app.
+
+   ```sh title="Terminal"
+   pnpm run build
+   pnpm run desktop:test
+   pnpm run desktop:build
+   ```
+
+</Steps>
+
+The app, DMG and matching runtime archive land in `dist/desktop`. `--seed-cache` installs the runtime on your Mac, and you can skip it.
+
+| To                                  | Run                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| Build a DMG with the runtime inside | `pnpm --dir desktop run build --full`                                                      |
+| Inspect the packaged engine only    | `pnpm --dir desktop run build --stage-only`, then look in `dist/desktop-staging/engine`    |
+| Run the app without packaging       | `pnpm run desktop:dev`                                                                     |
+| Replay onboarding                   | `pnpm --dir desktop start --onboarding`                                                    |
+| Use a fresh, throwaway profile      | `OTTO_DESKTOP_USER_DATA=/tmp/otto-onboarding-review pnpm --dir desktop start --onboarding` |
+
+`OTTO_DESKTOP_USER_DATA` works only in development. Packaged apps always use their normal profile.
+
+<details>
+<summary>Build for Windows</summary>
+
+Run `pnpm run desktop:windows:prepare` on a Linux x64 Docker builder. Then, on Windows x64 with Go 1.26.8 and NSIS, install the root and desktop dependencies from their lockfiles and run `pnpm run build` and `pnpm run desktop:windows:build`.
+
+</details>
+
+## Related resources
+
+- [Install the desktop app](/get-started/install-desktop/)
+- [Configuration reference](/deploy/configuration/)
+- [Troubleshooting](/deploy/troubleshooting/)
+- [Desktop releases](/contribute/desktop-releases/)
+- [Sandbox and browser](/how-it-works/sandbox-and-browser/)

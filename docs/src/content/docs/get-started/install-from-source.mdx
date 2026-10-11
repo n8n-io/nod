@@ -1,0 +1,122 @@
+---
+title: Install from source
+description: Run Otto from its source code on macOS or Linux, open it with your access link and keep it updated.
+sidebar:
+  order: 3
+---
+
+import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+Run Otto from its source code on macOS or Linux. Choose this if you use Linux or want to change Otto's code. On a Mac or Windows PC, the [desktop app](/get-started/install-desktop/) is quicker.
+
+## Requirements
+
+| You need         | Version or detail                                             |
+| ---------------- | ------------------------------------------------------------- |
+| Node.js          | 24.21.0 or newer                                              |
+| pnpm             | 10.34.5, enabled through Corepack                             |
+| Docker           | With Compose v2, running, for example Docker Desktop on a Mac |
+| Git              | Any recent version                                            |
+| Model connection | An OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan |
+
+## What `pnpm start` runs
+
+`pnpm start` installs dependencies, builds the web app and starts three Docker containers. Then it starts the Otto server, which serves the web app on `127.0.0.1`.
+
+```mermaid
+flowchart LR
+  you([Your browser]):::accent -- access link --> server[Otto server<br/>and web app]:::accent
+  server --> db[(PostgreSQL)]
+  server --> ws[Workspace<br/>container]
+  server --> br[Browser<br/>container]
+  server -.-> model[Your model<br/>provider]:::muted
+```
+
+The workspace is where Otto runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys.
+
+## Get the code
+
+```sh title="Terminal"
+git clone https://github.com/n8n-io/otto.git
+cd otto
+```
+
+## Set up the Vault key
+
+Otto encrypts your saved keys, logins and cards with a Vault key.
+
+<Tabs syncKey="platform">
+<TabItem label="macOS" icon="apple">
+
+Nothing to do. Otto creates a key and keeps it in the macOS Keychain item `dev.otto.vault`.
+
+</TabItem>
+<TabItem label="Linux" icon="linux">
+
+Create the settings file and a random key before the first start.
+
+```sh title="Terminal"
+cp .env.example .env
+chmod 600 .env
+sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
+```
+
+Keep a copy of `OTTO_VAULT_KEY` somewhere safe. Saved credentials can't be read without it.
+
+</TabItem>
+</Tabs>
+
+## Start Otto
+
+<Steps>
+
+1. Enable pnpm and start Otto. The first run takes a while.
+
+   ```sh title="Terminal"
+   corepack enable
+   pnpm start
+   ```
+
+2. When the server is ready, it prints a link such as `http://localhost:4310/#access=…`. Open it once. Your browser keeps the access cookie, so `http://localhost:4310` works from then on.
+
+3. Follow the onboarding to connect a model and try a first task. See [Your first conversation](/get-started/first-conversation/).
+
+</Steps>
+
+:::danger[Keep Otto on your computer]
+Otto serves one person on `127.0.0.1` with no account login. Don't expose it to a network or the internet, for example through port forwarding, a tunnel or a reverse proxy.
+:::
+
+## Run Otto day to day
+
+| To             | Do this                                                                                                                                |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop Otto      | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                   |
+| Update Otto    | Stop it, run `git pull` and `pnpm install --frozen-lockfile`, then `pnpm start`.                                                       |
+| Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.          |
+| Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `.env`, or in the Keychain item `dev.otto.vault` on macOS. |
+| Back up        | Stop Otto, then copy your data folder (`.local/` or `OTTO_DATA_ROOT`), the Docker volumes and the Vault key.                           |
+
+:::caution
+There's no tested restore procedure yet. Keep your Vault key with your backup, or your saved credentials can't be read.
+:::
+
+Settings live in `.env`, and you need to restart after you change them. See [Configuration](/deploy/configuration/).
+
+## Troubleshooting
+
+| You see                                       | Do this                                                                                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `Use Node.js 24.21.0 or newer.`               | Install a newer Node.js and run `pnpm start` again.                                                                            |
+| Docker errors on start                        | Make sure Docker is running and `docker compose version` reports v2.                                                           |
+| `Configure OTTO_VAULT_KEY…` when saving a key | Set `OTTO_VAULT_KEY` as shown in [Set up the Vault key](/get-started/install-from-source/#set-up-the-vault-key), then restart. |
+| Missing modules after `git pull`              | Run `pnpm install --frozen-lockfile`, then `pnpm start`.                                                                       |
+| The port is in use                            | Set another `PORT` in `.env`. The default is `4310`.                                                                           |
+
+## Related resources
+
+- [What is Otto](/get-started/what-is-otto/)
+- [Install the desktop app](/get-started/install-desktop/)
+- [Your first conversation](/get-started/first-conversation/)
+- [Configuration](/deploy/configuration/)
+- [Troubleshooting](/deploy/troubleshooting/)

@@ -1,0 +1,69 @@
+---
+title: How Otto compares
+description: Otto next to other personal assistants that act on your behalf, on where they run, who decides and what you can check.
+sidebar:
+  order: 3
+---
+
+This page compares Otto with other personal assistants that act for you, on the questions a security team asks first.
+
+The short version: most assistants run on their vendor's servers and ask you to trust that vendor. Otto runs where you choose, enforces its rules outside the model, and lets you read the code that makes each decision.
+
+## At a glance
+
+<div class="otto-compare">
+
+|                                  | Otto                                                                          | Instinct                                                                          | Meta Muse                                                 | OpenAI dots                                     |
+| -------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| Where it runs                    | ✅ Your computer, or your own hosting                                         | ❌ Vendor service, connected to your apps and devices [^1]                        | ❌ A dedicated VM on Meta's service [^3]                  | ⚠️ Not documented                               |
+| Who can access your data         | ✅ You, and the operator if hosted. The Otto team only sees feedback you send | ❌ Terms grant a "perpetual and irrevocable" licence, including for training [^1] | ⚠️ Meta, "to support, secure or operate the service" [^2] | ⚠️ Not documented                               |
+| Model                            | ✅ Your choice of provider                                                    | ⚠️ Not documented                                                                 | ❌ Meta's own model [^3]                                  | ❌ OpenAI's own models                          |
+| Rules enforced outside the model | ✅ Server trust check                                                         | ❌ Reported sending an email without asking [^1]                                  | ✅ A separate permission process [^2]                     | ⚠️ Rules exist; enforcement not documented [^4] |
+| Secrets kept out of the model    | ✅ Private entry and masking                                                  | ⚠️ Not documented                                                                 | ✅ Placeholder tokens swapped at the network edge [^2]    | ⚠️ Not documented                               |
+| A record of what it did          | ✅ Vault activity, plus every app change and send                             | ⚠️ Not documented                                                                 | ✅ "Complete audit trail" [^3]                            | ✅ Activity view [^4]                           |
+| Hard spending limit              | ✅ Monthly limit                                                              | ⚠️ Not documented                                                                 | ⚠️ Not documented                                         | ⚠️ Not documented                               |
+| Open source                      | ✅ Apache 2.0                                                                 | ❌                                                                                | ❌                                                        | ❌                                              |
+
+</div>
+
+✅ yes · ⚠️ partly, or not documented · ❌ no
+
+:::note[How we checked]
+Based on each vendor's public documentation and press reporting, checked on 11 October 2026. "Not documented" means we couldn't find it, not that it's missing. These products change quickly. If something here is out of date, [open an issue](https://github.com/n8n-io/otto/issues/new/choose).
+:::
+
+## Why these questions matter
+
+### Where it runs decides who can read your life
+
+An assistant that reads your email, calendar and documents holds a copy of your life. If it runs on a vendor's servers, that vendor's access policy is your privacy policy. Otto's desktop app keeps the server, database, workspace and browser on your computer, and model requests go to the provider you picked.
+
+### Rules a model can't talk its way around
+
+Models can be persuaded. A web page or an email can carry instructions written for an AI. Otto's trust check runs in the server, on the action as it will be sent. A separate review sees only your own messages, so injected text can't argue for itself. [See how approvals work](/trust/approvals/).
+
+### Checkable, not just promised
+
+Every Otto user gets the full record: each use of a saved login, each held action, each app action and its cost. And because the code is open, a security team can read the exact rule behind every decision. [Read the principles](/trust/principles/).
+
+## Where others are ahead
+
+Being honest about gaps is part of the deal.
+
+- **Single-use cards.** Muse pays with single-use card numbers tied to one merchant and amount [^2]. Otto stores a card locally and can't enforce the amount at the card issuer. [See payment limits](/trust/payments/).
+- **Bug bounty.** Meta offers rewards of up to $300,000 for Muse reports [^2]. Otto takes private reports through its [security policy](https://github.com/n8n-io/otto/blob/main/SECURITY.md), without a published bounty.
+- **Key isolation.** Muse swaps placeholder tokens at the network edge [^2]. Otto's server can read a saved value while it uses it. [See the limits](/trust/security-model/).
+
+## Related resources
+
+- [Trust and Vault overview](/trust/)
+- [Our trust principles](/trust/principles/)
+- [Security review guide](/trust/security-review/)
+
+[^1]: TechCrunch, [Instinct's powerful AI assistant is raising privacy and security concerns](https://techcrunch.com/2026/08/24/instincts-powerful-ai-assistant-is-raising-privacy-and-security-concerns/), 24 August 2026.
+
+[^2]: Meta, [Security and safety for AI agents: our approach with Muse](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse), September 2026.
+
+[^3]: Meta, [Introducing Muse](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/), September 2026.
+
+[^4]: OpenAI, [dots controls](https://learn.chatgpt.com/docs/dots/controls.md), October 2026.

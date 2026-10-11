@@ -1,0 +1,146 @@
+---
+title: Install the desktop app
+description: Install Otto on a Mac or Windows PC, get through the first launch and keep it running and up to date.
+sidebar:
+  order: 2
+---
+
+import { Badge, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+The desktop app is the quickest way to run Otto. You don't need Node.js, Docker or developer tools.
+
+Before you start, have a model connection ready: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan. Your provider bills you for use.
+
+```mermaid
+flowchart LR
+  dl[Download<br/>the installer] --> open[Open and<br/>approve it]
+  open --> prep[Otto prepares<br/>its computer]:::accent
+  prep --> ob[Onboarding]
+  ob --> chat([Start chatting]):::go
+```
+
+## Install Otto
+
+<Tabs syncKey="os">
+<TabItem label="Mac" icon="apple">
+
+You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime are about 2.6 GB to download.
+
+<Steps>
+
+1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-arm64.dmg` for Apple silicon or `Otto-x64.dmg` for Intel.
+
+2. Open the DMG, drag **Otto** to **Applications** and open it from there.
+
+3. If macOS blocks the first launch, open **System Settings → Privacy & Security** and select **Open Anyway**. Preview builds aren't notarized by Apple yet.
+
+4. On **Set up your computer**, choose whether to turn on **Open at login** and **Desktop notifications**, then select **Open Otto**. If macOS asks for your keychain password, approve it. Otto keeps your saved keys in Keychain.
+
+5. Keep your internet connection on while Otto prepares its workspace and browser. The first launch takes a few minutes.
+
+6. Follow the onboarding to connect a model and try a first task. See [Your first conversation](/get-started/first-conversation/).
+
+</Steps>
+
+<details>
+<summary>Install from Terminal instead</summary>
+
+On an Apple silicon Mac, you can install the latest release with one command. Quit Otto first, then paste this into Terminal:
+
+```sh title="Terminal"
+(
+  installer="$(mktemp)" || exit
+  trap 'rm -f "$installer"' EXIT
+  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
+)
+```
+
+Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/Otto.app` and keeps your existing data. You don't need a GitHub account.
+
+</details>
+
+</TabItem>
+<TabItem label="Windows" icon="seti:windows">
+
+<Badge text="Preview" variant="caution" /> You need Windows 11 x64, WSL 2 with hardware
+virtualization, and at least 20 GB of free disk space.
+
+<Steps>
+
+1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder. Keep the runtime file compressed.
+
+2. Run `Otto-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds Otto to the Start menu.
+
+3. If Otto says WSL is missing, select **Install WSL**, approve the administrator request and restart your PC. Then open Otto again.
+
+4. On **Set up your computer**, choose whether to turn on **Open at login** and **Desktop notifications**, then select **Open Otto**.
+
+5. Wait while Otto prepares its workspace and browser. The first launch takes a few minutes.
+
+6. Follow the onboarding to connect a model and try a first task. See [Your first conversation](/get-started/first-conversation/).
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+## Keep Otto running
+
+Closing the window keeps Otto running in the menu bar on a Mac, or the tray on Windows. **Quit Otto** stops Otto and its private computer.
+
+| Otto is                                 | What runs                                       |
+| --------------------------------------- | ----------------------------------------------- |
+| Open, or closed to the menu bar or tray | Chat, channels, schedules and background checks |
+| Quit, or your computer is asleep        | Nothing, until Otto is open and awake again     |
+
+If you rely on scheduled tasks, turn on **Open at login** in **Settings → General**.
+
+## Update Otto
+
+<Tabs syncKey="os">
+<TabItem label="Mac" icon="apple">
+
+On an Apple silicon Mac, Otto updates itself. It checks after it starts, every six hours while it's open and after your Mac wakes. To check now, select **Check for Updates…** in the **Otto** menu or the menu bar icon.
+
+When an update is ready, choose **Restart** to install it or **Later** to keep working. If Otto is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards.
+
+On an Intel Mac, automatic updates aren't available yet. Quit Otto, then install the new DMG over the old app. Your data stays.
+
+</TabItem>
+<TabItem label="Windows" icon="seti:windows">
+
+Updates are manual in the preview. Quit Otto, then run the new installer with its runtime file in the same folder. Otto keeps your profile, keys and data.
+
+</TabItem>
+</Tabs>
+
+## Where your data lives
+
+Everything Otto stores stays on your computer. Requests go to the model provider and apps you choose, and usage analytics leave only if you turn on **Share usage data**. Otto starts with a fresh profile and doesn't import data from a source install.
+
+|                       | Mac                                                 | Windows                                      |
+| --------------------- | --------------------------------------------------- | -------------------------------------------- |
+| App data and settings | `~/Library/Application Support/Otto/profiles/local` | `%APPDATA%\Otto\profiles\local`              |
+| Private computer      | `~/.otto-desktop/<profile id>`                      | A WSL distribution named `Otto-<profile id>` |
+| Saved keys            | Encrypted with the macOS key store                  | Encrypted with Windows DPAPI                 |
+
+## Troubleshooting
+
+| Problem                       | Try this                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| macOS blocks the first launch | Select **Open Anyway** in **System Settings → Privacy & Security**.                                             |
+| Setup stops with an error     | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon. |
+| Otto asks for a runtime file  | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                        |
+| A scheduled task didn't run   | Check that Otto was open and your computer was awake at that time.                                              |
+
+:::caution
+Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.
+:::
+
+## Related resources
+
+- [What is Otto](/get-started/what-is-otto/)
+- [Your first conversation](/get-started/first-conversation/)
+- [Install from source](/get-started/install-from-source/)
+- [The desktop app in depth](/deploy/desktop-app/)
+- [Troubleshooting](/deploy/troubleshooting/)

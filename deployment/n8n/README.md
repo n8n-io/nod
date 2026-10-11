@@ -1,88 +1,20 @@
-# Desktop release delivery
+# n8n workflows
 
-The **Otto Desktop Releases** workflow serves the fixed `n8n-io/otto` repository through `https://internal.users.n8n.cloud/webhook/otto-desktop`. **Otto Install** serves the current desktop installer at the existing `/webhook/otto/install` address. The legacy release and asset workflows are unchanged.
+This folder maintains three of Otto's workflows on the internal n8n instance. Each script here generates or embeds the exact workflow source, and each has synthetic contract tests.
 
-The GitHub credential stays in n8n. These routes follow the existing public download model: the repository stays private, but anyone with a download URL can fetch an allowed published asset. The workflow never returns repository source, accepts arbitrary upstream URLs, or streams archives through n8n.
-
-| GET route                                                                  | Result                                                                                                     |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `/releases`                                                                | Bounded GitHub-shaped list of published desktop and runtime releases                                       |
-| `/releases?installer=true`                                                 | Highest published desktop version, pinned release ID, DMG URL/hash/bytes and manifest URL                  |
-| `/releases/:releaseId`                                                     | Published release metadata and allowed asset metadata                                                      |
-| `/tags/:tag`                                                               | Exact published desktop or runtime release; supports old runtime packs outside the list window             |
-| `/releases/:releaseId/assets/:assetId/:filename`                           | Verified JSON metadata or a fresh GitHub asset redirect after exact release membership and filename checks |
-| `/releases/:releaseId/feed/:assetId?version=CURRENT&platform=darwin-arm64` | Default Squirrel feed for this exact app ZIP, or 204 when the installed version is at least the target     |
-
-Desktop tags use `desktop-vSEMVER`; runtime tags use `runtime-darwin-arm64-` followed by 64 lowercase hex characters. Drafts, legacy releases and unknown assets are not served. Feed URLs bind a release ID and ZIP asset ID, so publishing a newer release cannot change the selected update. The client validates the ZIP's declared hash and size against release metadata and prepares the verified runtime before invoking the native updater. It does not separately hash the downloaded app ZIP; the native updater verifies the app's signing identity.
-
-GitHub permits [direct 200 responses as well as redirects](https://docs.github.com/en/rest/releases/assets#get-a-release-asset). The broker fetches `release.json`, `runtime-release.json` and `update.json` only when GitHub advertises at most 2 MiB; a direct response must match its exact UTF-8 byte count and SHA-256 before JSON parsing. Other assets use HEAD and require a validated download redirect. A healthy directly served archive cannot be delivered by this redirect-only broker; verify the real archive redirect before publication.
-
-## Command-line installation
-
-After publishing the reviewed installer and broker versions, users can paste this into Terminal:
+| Workflow              | Source                 | What it does                                                                                      |
+| --------------------- | ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Otto Desktop Releases | `desktop-releases.mjs` | Serves published desktop releases, runtime packs and update feeds without exposing a GitHub token |
+| Otto Install          | `install-workflow.mjs` | Serves `install.sh`, the Terminal installer for Macs                                              |
+| Otto Feedback         | `feedback.mjs`         | Turns in-app feedback into a Linear issue with its reports attached                               |
 
 ```sh
-(
-  installer="$(mktemp)" || exit
-  trap 'rm -f "$installer"' EXIT
-  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
-)
+node --test deployment/n8n/*.test.mjs
 ```
 
-Downloading the entire script before running it avoids executing a partial response. The HTTPS n8n endpoint is the bootstrap trust boundary. No GitHub token, Node, Python or Homebrew is required. Otto must be closed. The installer supports Apple Silicon on macOS 14 or later, installs only to `/Applications/Otto.app`, and leaves keys, conversations and the workspace intact. Run it as your normal user with permission to install apps in `/Applications`; do not run the script with `sudo`. Open Otto from Applications after installation; its native updater handles subsequent releases.
+- The release broker only serves published `desktop-v*` and runtime releases from this repository, pins each asset by release and asset ID, and never streams archives through n8n.
+- The installer verifies the DMG's size, SHA-256 and code signature against the pinned certificate before it replaces `/Applications/Otto.app`, and keeps the old app until the new one is ready.
+- Feedback requests are versioned in `src/ports/feedback.ts`. The workflow checks every hash before it touches Linear, and repeated submissions with the same ID can't create a second issue. Execution data retention stays off.
+- Publish the broker before the installer. Before you replace a workflow, export its current version so you can roll back.
 
-The script chooses the highest published `desktop-vSEMVER`, including published alpha prereleases, and fixes that release and its asset IDs for the whole transaction. An incomplete latest release fails instead of silently selecting an older version. An already newer installed app is kept. It rejects another app at the destination, symbolic links, concurrent installers and destination changes during download.
-
-The DMG must match GitHub's size and SHA-256 and the release manifest. The DMG, mounted app and staged app must pass strict code-signature verification using the embedded public Otto Internal certificate fingerprint `bbfeebcf52e27c2294bd037f1a4d7eb4e31816f1eed385fa56db7340029346a7`. The app's bundle ID, version, source revision, architecture and update service must also match. The certificate pin is not learned from the download. The old app is kept until the verified copy is ready, and a failed replacement restores it. A failed disk-image detach preserves its temporary folder for manual ejection.
-
-This remains a self-signed alpha, not an Apple-notarized release. The installer neither removes quarantine nor changes Keychain trust. Terminal downloads may behave differently from browser downloads; if macOS blocks opening Otto, use **System Settings → Privacy & Security → Open Anyway**. The installer does not claim that no approval will be needed.
-
-Source is in `install.sh`; `install-workflow.mjs` embeds those exact bytes into the existing [Otto Install](https://internal.users.n8n.cloud/workflow/8xPKHTCl57er0udZ) workflow. `desktop-releases.mjs` generates [Otto Desktop Releases](https://internal.users.n8n.cloud/workflow/yHes8g8CIyObW0Zh). Publish the broker before the installer. Before replacing a workflow, save its full current export and active version; rollback republishes those previous versions. Keep workflow execution retention disabled and preserve its saved GitHub credential.
-
-Run `node --test deployment/n8n/*.test.mjs`. Installer fixtures run the real shell transaction with disposable home directories and synthetic download/OS adapters; they exercise rejection, staging failure, rollback, a changed destination, version ordering and failed detach. They assert the specific failure boundary as well as unchanged app/profile data. They do not establish real macOS signing, a physical install, onboarding or auto-update acceptance. A stock-tool physical installation from the hosted endpoint remains a separate acceptance case.
-
-## Frozen validation — N8ND01.v1
-
-Frozen on 2026-10-04 before implementation. Source task: distribute the private Otto desktop alpha through n8n while keeping its GitHub token private and retaining the legacy routes. Run once against deterministic synthetic GitHub records on local Node 26, with no model, network, credential or connected account. Model cost is zero. The required gate is all cases below passing in the same run; assertions inspect returned bodies/URLs and rejected inputs. Saved-credential access required a separate successful operational read of the published `desktop-v0.1.0` release. The 2026-10-04 read returned 404; access was unverified at that point. The successful 2026-10-05 follow-up is recorded below.
-
-| Check          | Frozen input/setup                                                                                                             | Required observable result                                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| N8ND-REQUEST   | Exact list, release, tag, asset and feed requests; unknown keys, array IDs, traversal and arbitrary URL holdouts               | Only fixed-repository requests are constructed; invalid inputs return 400 before HTTP                                                      |
-| N8ND-PUBLISHED | Mixed desktop/runtime/legacy/draft records                                                                                     | Only published desktop/runtime records and allowed asset fields leave the broker                                                           |
-| N8ND-PIN       | Asset belongs to another release, mismatched filename, missing asset, duplicate filenames, same-name replacement with a new ID | No redirect for mismatches; exact original asset succeeds                                                                                  |
-| N8ND-TAG       | A valid old runtime fingerprint tag absent from the release list                                                               | Exact fixed-repository tag lookup succeeds independently of list order/window                                                              |
-| N8ND-UPSTREAM  | 403/404, malformed response and a full fifth page of 100 records                                                               | Safe unavailable/not-found response; no upstream message, partial list or credential output                                                |
-| N8ND-FEED      | Newer exact ZIP, equal/older target, prerelease ordering, wrong platform, missing ZIP and runtime release                      | Only a newer compatible app yields the exact selected ZIP URL; no-update yields 204                                                        |
-| N8ND-REDIRECT  | Valid GitHub 302; HTTP, userinfo, hostile host, fragment, whitespace, extra redirect and unexpected 200 holdouts               | Only a fresh HTTPS `release-assets.githubusercontent.com` 302 is returned                                                                  |
-| N8ND-CONFIG    | Generated node configuration                                                                                                   | Credentials exist only on fixed GitHub API requests; redirect following is off; archive resolution uses HEAD; execution data saving is off |
-| N8ND-LEGACY    | Saved versions of the three legacy published workflows                                                                         | No mutation of their version IDs, nodes or routes                                                                                          |
-
-The workflow SDK validation and synthetic pinned workflow runs check n8n's actual node/expression wiring. Live acceptance is a separate bounded operational read: exact published release metadata plus an allowed small metadata asset and archive redirect headers, without downloading a large archive. If credential access is blocked, retain the reviewable draft and report that boundary.
-
-## Evidence
-
-The frozen `desktop-v0.1.0` operational read passed on 2026-10-05 at 09:55 UTC using the workflow's saved credential: its tag and release `403107162` metadata returned HTTP 200, and the app and runtime descriptors matched GitHub's byte counts and SHA-256 digests. The private receipt is `.local/desktop-update-validation/n8n-operational-release-read-2026-10-05.json`.
-
-On 2026-10-05, [Otto Desktop Releases](https://internal.users.n8n.cloud/workflow/yHes8g8CIyObW0Zh) was active at version `5b9c82ee-517c-4d70-98f5-056e50d95784`, and its saved GitHub PAT successfully served published private releases. Anonymous requests verified HTTP 200 for the official `desktop-v0.1.2` app and runtime release metadata, an exact `Otto 0.1.2` update feed, HTTP 204 for the current version, and a valid runtime-archive HTTP 302. The runtime redirect was not followed. The receipt is private at `.local/desktop-012-validation/anonymous-release-delivery.json`.
-
-A separate browser download completed for the official 0.1.2 DMG: 776,431,526 bytes, SHA-256 `c4a0ff6ad16b57e75bcea044bbd938f047fc6313b1c9be5f9c114cadddefd3ca`. This verifies anonymous delivery of the DMG; it does not establish a complete runtime-archive download, physical setup, or a successful 0.1.2 → 0.1.3 update.
-
-N8ND01.v4 adds N8ND-METADATA200 before implementation and its first run. GitHub documents both direct 200 content and 302 redirects for release assets; HEAD has no promised redirect. Freeze a UTF-8 JSON asset with its exact GitHub size and SHA-256, a valid metadata redirect, wrong-size and same-size wrong-digest bodies, malformed JSON, an oversized advertised asset and an archive served directly. Require GET only for the three allowlisted JSON metadata names at most 2 MiB, exact byte/digest verification before returning parsed JSON, rejection before fetching oversized metadata, and continued HEAD/redirect-only archives. Run the actual embedded Code node locally and with all HTTP nodes pinned in n8n to verify its available crypto module. No PAT request is part of this case. Archive delivery still needs a real redirect receipt before publication; a private direct archive response has no safe client redirect fallback.
-
-The first v4 run reproduced 503 for valid direct JSON. The correction passed all nine local tests. Pinned Cloud executions verified its real [built-in crypto module](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.code/#external-libraries): Unicode metadata returned 200 (`99707516`), a same-size hash mismatch returned 503 (`99707519`), and the archive redirect remained 302 (`99707523`). All HTTP nodes were pinned, no nodes were added, and manual retention was restored to false.
-
-N8ND01.v2 adds N8ND-ADAPTER before its first run: exercise the real desktop source adapter through the broker's request and response functions, with 101 published records and an older runtime available only through exact tag lookup. Require the adapter to use the actual empty-query list route, accept the broker's bounded list, follow allowed metadata redirects and return the exact release/ZIP feed and runtime asset identities. This reproduced the client's unsupported list query; fixing the client query and bound made all eight checks pass. The v1 checks and recorded attempts remain unchanged.
-
-N8ND01.v3 extends the adapter check before its first run to the native event interface: use the real updater controller, prepare the selected runtime, then emit the Squirrel completion values returned by the broker's actual feed. The broker's feed name must match the packaged `Otto VERSION` name accepted by the client. This corrects the v1 bare-version feed expectation to the shared packaging contract; it does not claim a real native install. The hypothesis was confirmed: the bare-version feed reached the controller's identity rejection despite valid metadata. Aligning the name made all eight checks pass. A pinned run of the updated draft (`99707353`) returned the exact ZIP URL and `Otto 0.2.0`; every external HTTP node was pinned, and manual retention was restored to false.
-
-Local synthetic checks: nine passed, none skipped. Run with `node --test deployment/n8n/desktop-releases.test.mjs`. SDK node and full workflow validation passed without warnings. The 2026-10-04 [workflow draft](https://internal.users.n8n.cloud/workflow/yHes8g8CIyObW0Zh) had 13 nodes and preserved all three legacy published workflow versions.
-
-Pinned workflow attempt 1 (`99706532`) returned a 30-second tool timeout; its execution could not be retrieved. This is an **error**, not a workflow pass. The recorded hypothesis was that disabling manual execution retention removed the result before the test tool could inspect it. Temporarily retaining only synthetic manual runs confirmed the hypothesis: the feed, asset redirect, replaced asset, invalid request, filtered list, no-update response and denied-upstream cases passed in executions `99706629`, `99706675`, `99706681`, `99706684`, `99706689`, `99706690` and `99706693`. Every external HTTP node was pinned. Manual retention was restored to false before the operational read; production success/error retention remains off.
-
-The broker was briefly published for an authorized operational read of `desktop-v0.1.0` at 17:15 UTC on 2026-10-04. It returned 404, although GitHub CLI independently confirmed that exact published release. The workflow was then unpublished and retained as a draft. At that point, access through the existing GitHub credential **Otto Releases** (`MMbt6yeENYWprLlw`) remained unverified; its token value was never retrieved. Required fine-grained **Contents: read** permission and repository selection are documented for [release lookup](https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name) and [release assets](https://docs.github.com/en/rest/releases/assets#get-a-release-asset). No archive or feed live pass was recorded on 2026-10-04.
-
-The 2026-10-04 operational receipt is stored privately in `.local/desktop-update-validation/n8n-operational-release-read.json`. The published Electron 0.1.0 release has a DMG and metadata; it has no native app-update ZIP, so it cannot exercise a successful update feed. Source generation is available through the exported `workflowCode()` and `workflowNodes()` in `desktop-releases.mjs`; set the exported privacy settings and existing credential references before any execution.
-
-The live n8n workflows remain unchanged. The existing installer route serves Mac ARM. Keep the required legacy runtime releases and their tags while that workflow is in use. New installers and runtime packs can be downloaded from each Otto GitHub release.
-
-The prepared broker accepts Mac ARM and Mac Intel downloads, plus Windows assets. It first checks an exact legacy runtime tag. Only a missing tag starts a search for a fingerprint metadata asset on an Otto version release. To enable this path, save the current workflow export and active version, publish the prepared broker, and verify the existing Mac ARM installer, metadata and runtime redirects. Add new public platform routes later. Keep the old routes until installed clients no longer use them. Before removing an old runtime release or tag, move its archive and a copy of its descriptor named `runtime-darwin-arm64-FINGERPRINT.json` to the matching Otto version release. Check the archive digest and the old download route before deletion.
+User-facing behaviour is documented in [Install the desktop app](../../docs/src/content/docs/get-started/install-desktop.mdx) and [Your data and privacy](../../docs/src/content/docs/trust/privacy.md).

@@ -1,0 +1,102 @@
+---
+title: Otto's browser
+description: What Otto can do in its own browser, how to take over when it needs you, and how it handles CAPTCHAs, passkeys, routines and downloads.
+sidebar:
+  order: 5
+---
+
+import { CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
+
+Otto has its own browser, so it can use websites the way you would.
+
+The browser runs on Otto's computer, separate from your own browser. It doesn't share your tabs, cookies or saved passwords.
+
+## What Otto can do
+
+- Open pages, click, type, fill forms and pick options.
+- Read the page and look at screenshots, including canvas and visual controls.
+- Run JavaScript on the page.
+- Download files and upload files from its [workspace](/use/workspace/).
+- Sign in with logins you saved in [Vault](/trust/vault/), without seeing the password.
+
+## Take over the browser
+
+When Otto needs you on a page, it asks in chat with an **Open browser** link.
+
+<Steps>
+
+1. Open Otto on the desktop or the web. The live page appears under Otto's message.
+2. Click, type and scroll on the page. Use **Back** and **Reload** if you need them, or **Enlarge browser** for a bigger view.
+3. When you're finished, select **Done**. Otto looks at the page again and carries on.
+
+</Steps>
+
+Otto doesn't watch or act while you have the browser. If you started on Telegram or WhatsApp, open Otto to take over, because chat apps can't show the page.
+
+## CAPTCHAs and human checks
+
+Otto tries a challenge first. It reads the instructions, looks at fresh screenshots and makes up to three informed attempts. It stops at a block, rate limit or lockout. Then it hands the browser to you and says what it tried.
+
+:::caution
+Solving a challenge is up to the model. Some challenges block automated browsers, and Otto won't always succeed.
+:::
+
+## Passkeys and sign-in on another device
+
+- **Passkeys.** Otto doesn't supply a passkey authenticator. Use another sign-in method, such as a password saved in Vault.
+- **Approval on your phone.** When a site asks you to approve on another device, Otto tells you what the page says. Then it checks the page every 15 seconds, up to eight times, and continues once the page confirms. It stops if the request is denied or expires, and asks you if the result stays unclear.
+
+## One holder at a time
+
+The browser has one holder: the conversation, a background task or you. Anyone else waits in line.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "Conversation" as conv
+  state "Background task" as bg
+  state "You" as you
+  [*] --> Free
+  Free --> conv: chat needs it
+  Free --> bg: a run needs it
+  conv --> you: Open browser
+  you --> conv: Done
+  conv --> Free: task ends
+  bg --> Free: run ends
+```
+
+While Otto waits for you, the conversation keeps the browser, so background work can't take it from under you. If you don't use it for 30 minutes, Otto lets it go.
+
+## Saved routines
+
+When Otto repeats the same steps on a website, it can save them as a routine and reuse it next time. A routine stops if a step fails, the browser leaves the website or the page doesn't match a saved check, so Otto can look and fix it.
+
+Routines never store passwords or codes. They're kept in `/workspace/.otto/browser-flows` and stay even if the chat is cleared. To make one, ask Otto to save what it just did as a routine.
+
+## Downloads
+
+Otto downloads files into its workspace, up to 12 MB each. In a conversation it also sends them to you in chat. Downloads from background work stay private until Otto shares them.
+
+## Sign in to websites
+
+<CardGrid>
+  <LinkCard
+    title="Vault and saved logins"
+    href="/trust/vault/"
+    description="Save a login once. Otto signs in without seeing it."
+  />
+  <LinkCard
+    title="Saved browser sessions"
+    href="/trust/browser-sessions/"
+    description="Reuse a signed-in browser on websites you allow."
+  />
+</CardGrid>
+
+After you sign in by hand, Otto may offer **Save login in Vault** for next time.
+
+## Related resources
+
+- [Chat with Otto](/use/chat/)
+- [Workspace and files](/use/workspace/)
+- [Payments](/trust/payments/)
+- [Sandbox and browser](/how-it-works/sandbox-and-browser/)
