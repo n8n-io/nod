@@ -82,19 +82,17 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     throw new Error('The browser inspector must be local.');
   signal?.throwIfAborted();
   const socket = new WebSocket(url);
+  let abort = () => {};
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('The browser inspector is unavailable.')),
       10_000,
     );
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
+    abort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     socket.addEventListener(
       'open',
       () => {
@@ -111,10 +109,12 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       },
       { once: true },
     );
-  }).catch((error: unknown) => {
-    socket.close();
-    throw error;
-  });
+  })
+    .finally(() => signal?.removeEventListener('abort', abort))
+    .catch((error: unknown) => {
+      socket.close();
+      throw error;
+    });
   let next = 0;
   const pending = new Map<number, Waiter>();
   const sessions = new Set<string>();
