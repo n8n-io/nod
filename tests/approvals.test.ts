@@ -907,12 +907,12 @@ test(
             /synthetic-mime-for-an-outsider/,
           );
           const oversized = reviews.length;
-          assert.deepEqual(
-            await trust.check(turn, 'CONNECTED_MCP_CALL', {
+          await assert.rejects(
+            trust.check(turn, 'CONNECTED_MCP_CALL', {
               tool: 'post_message',
-              input: { text: 'x'.repeat(50_000), channel: 'C-OUTSIDER' },
+              input: { text: 'x'.repeat(40_000), channel: 'C-OUTSIDER' },
             }),
-            { confirm: true, reason: 'unrequested' },
+            /too large/,
           );
           assert.equal(reviews.length, oversized);
           const hidden = {
