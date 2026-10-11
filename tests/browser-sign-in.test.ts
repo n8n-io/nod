@@ -220,6 +220,11 @@ test(
         [['session', 'https://example.test']],
       );
       assert.deepEqual(await other.sessions(), []);
+      await pool.query(
+        "UPDATE browser_connections SET start_url='https://example.test/login?token=synthetic-private#code' WHERE id=$1",
+        [connectionId],
+      );
+      assert.equal((await service.sessions())[0]!.url, 'https://example.test/login');
       await pool.query("UPDATE turns SET status='completed' WHERE id=$1", [second.turnId]);
       await assert.rejects(
         service.request({ action: 'use', url: 'https://example.test/', connectionId }, second),
@@ -227,6 +232,14 @@ test(
       );
       await service.disconnect(connectionId);
       assert.deepEqual(removed, [bindings[0]]);
+      await pool.query(
+        "INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state) VALUES($1,'owner-a','https://example.test','https://example.test','Synthetic', $2,'disconnecting')",
+        [connectionId, randomUUID()],
+      );
+      assert.equal(
+        await service.target({ action: 'use', url: 'https://example.test/', connectionId }),
+        undefined,
+      );
     } finally {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);

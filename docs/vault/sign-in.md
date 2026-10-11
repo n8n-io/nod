@@ -16,7 +16,7 @@ Email verification uses the exact owned mailbox and checks sender, recipient, ti
 
 `browser_session connect` creates a private profile. `save` records Pi's observed sign-in on the connection origin. `use` selects an owned profile and an exact destination. Opening a profile is not evidence of successful authentication.
 
-Both `connect` and `use` accept `destinations`, a list of extra exact origins for assets, APIs or sign-in redirects. One review covers the full set of origins and the selected session. Permission binds each exact origin and item. The browser proxy blocks all other network origins for that profile. Blocked origins appear in the observation so Pi can request the ones the task needs. Ordinary scripts and browser controls stay available.
+Both `connect` and `use` accept `destinations`, a list of extra exact origins for assets, APIs or sign-in redirects. `connect` creates an empty profile without a Vault permission review. For `use`, one review covers the full set of origins and the selected session. Permission binds each exact origin and item. The browser proxy blocks all other network origins for that profile. Blocked origins appear in the observation so Pi can request the ones the task needs. Ordinary scripts and browser controls stay available.
 
 The thread has one browser holder. A continuing task can keep its signed-in browser. A new task must pass the permission check for every origin and item used by that browser. Otherwise it starts signed out. Event and read-only work starts signed out. Sign-out closes the active browser and removes the thread profile, cache and downloads; saved profiles remain.
 

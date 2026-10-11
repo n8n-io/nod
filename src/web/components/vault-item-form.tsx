@@ -36,6 +36,7 @@ function VaultSecretField({
   saved = true,
   disabled,
   onChange,
+  required = false,
 }: {
   name: VaultSecretName;
   label: string;
@@ -43,6 +44,7 @@ function VaultSecretField({
   saved?: boolean;
   disabled: boolean;
   onChange?(): void;
+  required?: boolean;
 }) {
   const [removing, setRemoving] = useState(false);
   const id = useId();
@@ -60,7 +62,7 @@ function VaultSecretField({
       <div className="vault-field-heading">
         <label className="field-label" htmlFor={id}>
           {label}
-          {name === 'securityCode' || name === 'password' ? ' (optional)' : ''}
+          {!required && (name === 'securityCode' || name === 'password') ? ' (optional)' : ''}
         </label>
         {editing && name === 'securityCode' && saved && (
           <div className="vault-field-heading-actions">
@@ -101,7 +103,7 @@ function VaultSecretField({
           }
           maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
           pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
-          required={!editing && name === 'cardNumber'}
+          required={required || (!editing && name === 'cardNumber')}
           disabled={disabled}
         />
       )}
@@ -217,6 +219,7 @@ export function VaultFields({
               label="Security code"
               editing={Boolean(details)}
               saved={savedCode}
+              required={!savedCode}
               disabled={disabled}
               onChange={onSecretChange}
             />

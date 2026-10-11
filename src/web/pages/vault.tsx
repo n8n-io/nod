@@ -60,6 +60,10 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         ? 'card'
         : null;
   const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
+  const [savedOpened, setSavedOpened] = useState(Boolean(addRequested));
+  useEffect(() => {
+    if (view === 'saved') setSavedOpened(true);
+  }, [view]);
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
   const [website, setWebsite] = useState(false);
@@ -75,7 +79,9 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const openingDialog = useRef(false);
   const split = !phone;
   const logins = new Set(
-    (entries ?? []).flatMap((entry) => (entry.kind === 'login' ? [entry.origin] : [])),
+    (entries ?? []).flatMap((entry) =>
+      entry.kind === 'login' && !entry.unreadable ? [entry.origin] : [],
+    ),
   );
   const items: Item[] = [
     ...(entries ?? []),
@@ -130,7 +136,8 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   function opener(entry: VaultActivityEntry) {
     const item =
       items.find((value) => value.id === entry.itemId) ??
-      items.find((value) => value.kind !== 'card' && value.origin === entry.origin);
+      (!entry.itemId &&
+        items.find((value) => value.kind === 'session' && value.origin === entry.origin));
     return item ? () => open(item, 'activity') : undefined;
   }
 
@@ -238,22 +245,27 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
       }}
       onDeleted={removed}
     >
-      {selected.kind === 'login' && (
-        <VaultSiteAccess
-          origin={selected.origin}
-          sessions={sessionsFor(selected.origin)}
-          onSessionRemoved={(id) =>
-            sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
-          }
-          onAsk={onAsk}
-        />
-      )}
-      {selected.kind === 'card' && (
-        <VaultCardPayments
-          cardId={selected.id}
-          hosted={hosted}
-          onChanged={() => setRevision((current) => current + 1)}
-        />
+      {(details) => (
+        <>
+          {selected.kind === 'login' && (
+            <VaultSiteAccess
+              origin={selected.origin}
+              sessions={sessionsFor(selected.origin)}
+              onSessionRemoved={(id) =>
+                sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
+              }
+              onAsk={onAsk}
+            />
+          )}
+          {selected.kind === 'card' && (
+            <VaultCardPayments
+              cardId={selected.id}
+              hosted={hosted}
+              initialDoItForMe={details.kind === 'card' && details.doItForMe}
+              onChanged={() => setRevision((current) => current + 1)}
+            />
+          )}
+        </>
       )}
     </VaultDetails>
   ) : null;
@@ -375,22 +387,30 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         </>
       )}
       {loadError && <Notice>{loadError}</Notice>}
+      {sessions.error && (
+        <Notice>
+          {sessions.error}{' '}
+          <button type="button" onClick={() => void sessions.refresh()}>
+            Try again
+          </button>
+        </Notice>
+      )}
       <div
         role="tabpanel"
         id={`${tabsId}-panel`}
         aria-labelledby={`${tabsId}-tab-${view}`}
         className="vault-panel"
       >
-        {view === 'activity' ? (
-          activity.data ? (
+        {view === 'activity' &&
+          (activity.data ? (
             <VaultStatement activity={activity.data} opener={opener} />
           ) : activity.error ? (
             <Notice>{activity.error}</Notice>
           ) : (
             <Loading label="Opening activity…" />
-          )
-        ) : (
-          <div className="vault-layout">
+          ))}
+        {(view === 'saved' || savedOpened) && (
+          <div className="vault-layout" hidden={view !== 'saved'}>
             {!pageMode && (
               <div className="vault-browser">
                 <SearchField

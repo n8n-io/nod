@@ -60,7 +60,7 @@ export function VaultDetails({
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
   onDeleted(id: string): void;
-  children?: React.ReactNode;
+  children?: React.ReactNode | ((details: VaultEntryDetails) => React.ReactNode);
 }) {
   const [details, setDetails] = useState<VaultEntryDetails | null>(null);
   const [detailsError, setDetailsError] = useState(false);
@@ -623,8 +623,8 @@ export function VaultDetails({
       <p className={notice ? 'vault-detail-status' : 'sr-only'} role="status" aria-live="polite">
         {notice}
       </p>
-      {details && !editing && children}
-      {(editing || (!details && detailsError)) && (
+      {details && !editing && (typeof children === 'function' ? children(details) : children)}
+      {(editing || (!details && detailsError) || (hosted && isCard)) && (
         <button
           ref={deleteTrigger}
           type="button"

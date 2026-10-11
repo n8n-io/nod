@@ -41,6 +41,7 @@ function records(text: string) {
       start = false;
     }
   }
+  if (quoted) throw new Error('The CSV file has an incomplete quoted field. Export it again.');
   if (field || row.length) rows.push([...row, field]);
   return rows.filter((values) => values.some((value) => value.trim()));
 }

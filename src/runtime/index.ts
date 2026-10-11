@@ -228,7 +228,11 @@ export function createAgentRuntime(dependencies: {
     const takeBrowser = () =>
       (browserReady ??= claims
         .take(threadId, owner, signal)
-        .then(() => context.prepareBrowser?.())
+        .then(() => {
+          signal.throwIfAborted();
+          return context.prepareBrowser?.();
+        })
+        .then(() => signal.throwIfAborted())
         .catch((error: unknown) => {
           browserReady = undefined;
           throw error;
@@ -776,6 +780,7 @@ export function createAgentRuntime(dependencies: {
       } finally {
         clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
+        await browserReady?.catch(() => {});
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
         claims.release(threadId, owner, waitingForUser);

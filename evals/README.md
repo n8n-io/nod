@@ -10,7 +10,7 @@ These model evaluations run nightly and on request. They call live models and co
 
 ```sh
 pnpm run eval:capability doctor --fix      # checks Docker, images, database and keys; sets up what is missing
-pnpm run eval:capability run              # all 51 controlled cases, three attempts each
+pnpm run eval:capability run              # all 53 controlled cases, three attempts each
 ```
 
 You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images. Every run builds `otto-eval-workspace` and `otto-eval-browser` from this checkout first (Docker's cache makes an unchanged build quick), so results always measure the current Dockerfiles; set `OTTO_EVAL_WORKSPACE_IMAGE` and `OTTO_EVAL_BROWSER_IMAGE` to pin other images. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
@@ -31,7 +31,7 @@ You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in t
 | Compare with a release | `gate --baseline desktop-v0.1.10`: side by side, with a verdict                       |
 | Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
 
-Use `pnpm run eval:capability <command> [options]` for all commands. `help` lists the options. The default run selects all 51 controlled cases, including cases that need calibration, with three attempts per case: 153 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
+Use `pnpm run eval:capability <command> [options]` for all commands. `help` lists the options. The default run selects all 53 controlled cases, including cases that need calibration, with three attempts per case: 159 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
@@ -57,7 +57,7 @@ Both sides run in one job with the same harness, scenarios, images, model and ju
 
 ## The suite
 
-The suite has 54 cases: 51 controlled cases and three live web cases, plus the harness canary. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
+The suite has 57 cases: 53 controlled cases, three live web cases and one harness canary. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
 
 | Scenario                                | Linear  | What it checks                                                                | Capabilities                             | Status      |
 | --------------------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
@@ -89,6 +89,7 @@ The suite has 54 cases: 51 controlled cases and three live web cases, plus the h
 | `payment-dinar-checkout`                | LAB-367 | Use the exact total in a currency with three decimal places                   | vault, approvals, browser                | calibrating |
 | `payment-framed-checkout`               | LAB-367 | Submit checkout in an approved payment frame                                  | vault, approvals, browser                | calibrating |
 | `payment-issuer-decline`                | LAB-367 | Use fresh approval after an issuer decline                                    | vault, approvals, browser                | calibrating |
+| `payment-named-expiry`                  | LAB-367 | Use the selected month name and year format                                   | vault, approvals, browser                | calibrating |
 | `payment-page-injection`                | LAB-367 | Refuse page instructions that ask for card data                               | vault, approvals, browser                | calibrating |
 | `payment-permission-removed`            | LAB-367 | Use a fresh code after saved permission is removed                            | vault, approvals, browser                | calibrating |
 | `payment-security-code`                 | LAB-367 | Reply with a code through the secure server path                              | vault, approvals, browser                | calibrating |
@@ -107,6 +108,7 @@ The suite has 54 cases: 51 controlled cases and three live web cases, plus the h
 | `slack-catchup`                         | LAB-376 | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
 | `slack-screenshot-agenda`               | LAB-477 | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
 | `steering-mid-task`                     | LAB-374 | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
+| `vault-spa-two-accounts`                | —       | Read two accounts and sign out between live page sessions                     | vault, browser                           | calibrating |
 | `stop-and-continue`                     | LAB-445 | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
 | `video-links`                           |         | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
 | `video-to-three-platforms`              | LAB-396 | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
@@ -268,7 +270,7 @@ pnpm --dir evals test
 
 ## Payment tasks
 
-The thirteen card tasks share one synthetic merchant and receipt store. They use real Pi turns, Chromium, Vault entry and owned approval or code replies. They check the selected card, product, amount, currency, address, order count and model-visible data. Each attempt starts with a new database schema and browser profile. No real card, issuer or recipient is used.
+The fourteen card tasks share one synthetic merchant and receipt store. They use real Pi turns, Chromium, Vault entry and owned approval or code replies. They check the selected card, product, amount, currency, address, order count and model-visible data. Each attempt starts with a new database schema and browser profile. No real card, issuer or recipient is used.
 
 Approval checks use the stored action name and secure request kind. They do not infer consent from assistant text. An issuer refusal needs a new owner message and a new approval before another attempt. The bank verification case completes the order only after a secure code reply on a separate bank origin. Async checkout keeps the receipt on the server, so a document reload can recover the result. This case does not prove support for a result held only in page memory.
 

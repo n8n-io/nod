@@ -12,6 +12,6 @@ A sign-in that matches the current task runs under a task and item grant. Otherw
 
 Activity keeps separate uses, questions, held attempts and permission changes. Two sign-ins to the same site are two events. Payment activity reports card submission or uncertainty, with the approved amount. It does not infer a completed payment.
 
-A secure-form failure before use can remain editable. If a use may have reached the website, the form reports uncertainty and resumes inspection. It does not submit again automatically.
+A secure-form failure before use can remain editable. If a use may have reached the website, the form reports uncertainty. The owner must ask Otto to check the result before another attempt. It does not submit again automatically.
 
 Pi retains its normal tools after private entry. A blocked network origin for a saved session can be requested as an extra destination. An owner browser handoff remains available for native sign-in and website flows that require it.

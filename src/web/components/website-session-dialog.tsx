@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Field, Input } from './ui';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  Field,
+  Input,
+  Notice,
+} from './ui';
 
 export function WebsiteSessionDialog({
   open,
@@ -12,8 +21,19 @@ export function WebsiteSessionDialog({
 }) {
   const [url, setUrl] = useState('');
   const [label, setLabel] = useState('');
+  const [error, setError] = useState('');
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          setUrl('');
+          setLabel('');
+          setError('');
+        }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="vault-dialog">
         <DialogTitle>Sign in to a website</DialogTitle>
         <DialogDescription>
@@ -23,12 +43,31 @@ export function WebsiteSessionDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
+            let address: URL;
+            try {
+              address = new URL(url);
+              if (
+                url.length > 2048 ||
+                address.username ||
+                address.password ||
+                !['https:', 'http:'].includes(address.protocol) ||
+                (address.protocol === 'http:' &&
+                  !['localhost', '127.0.0.1', '[::1]'].includes(address.hostname))
+              )
+                throw new Error();
+            } catch {
+              setError('Use a secure website address without a username or password.');
+              return;
+            }
+            address.search = '';
+            address.hash = '';
             onAsk(
-              `Connect to ${url} in your private browser${label.trim() ? ` as ${label.trim()}` : ''}. Help me sign in through the secure form if needed, then save the browser session.`,
+              `Connect to ${address.href} in your private browser${label.trim() ? ` as ${label.trim()}` : ''}. Help me sign in through the secure form if needed, then save the browser session.`,
             );
             onOpenChange(false);
             setUrl('');
             setLabel('');
+            setError('');
           }}
         >
           <Field label="Website address">
@@ -39,6 +78,7 @@ export function WebsiteSessionDialog({
               placeholder="https://example.com/account"
               autoFocus
               required
+              maxLength={2048}
             />
           </Field>
           <Field label="Account name">
@@ -49,6 +89,7 @@ export function WebsiteSessionDialog({
               maxLength={100}
             />
           </Field>
+          {error && <Notice>{error}</Notice>}
           <Button type="submit">Continue in chat</Button>
         </form>
       </DialogContent>

@@ -14,10 +14,10 @@ type DomNode = {
 export type FocusedField = { origin: string; session: string; context: number };
 
 const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
-const focusScript = `(() => { const node = ${active}; return node ? node.tagName : ''; })()`;
+const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
 const blurScript = `(() => { const node = document.activeElement; if (node && node !== document.body && typeof node.blur === 'function') node.blur(); return ''; })()`;
 const armScript = (privateValue: boolean) =>
-  `(() => { const node = ${active}; if (!node) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
+  `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
 const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot: boolean) =>
   `(() => {
     const privateFields = [...(globalThis.__ottoPrivateFields ?? [])].filter(node => node.isConnected);
@@ -90,6 +90,9 @@ export async function openDevtools(url: string, targetId: string) {
       },
       { once: true },
     );
+  }).catch((error: unknown) => {
+    socket.close();
+    throw error;
   });
   let next = 0;
   const pending = new Map<number, Waiter>();
@@ -159,17 +162,23 @@ export async function openDevtools(url: string, targetId: string) {
       waiter.reject(new Error('The browser inspector closed.'));
     pending.clear();
   });
-  const { sessionId: page } = (await send('Target.attachToTarget', {
-    targetId,
-    flatten: true,
-  })) as {
-    sessionId: string;
-  };
-  void follow(page);
-  while (following.size) {
-    const batch = [...following];
-    following.clear();
-    await Promise.all(batch);
+  let page: string;
+  try {
+    ({ sessionId: page } = (await send('Target.attachToTarget', {
+      targetId,
+      flatten: true,
+    })) as {
+      sessionId: string;
+    });
+    void follow(page);
+    while (following.size) {
+      const batch = [...following];
+      following.clear();
+      await Promise.all(batch);
+    }
+  } catch (error) {
+    socket.close();
+    throw error;
   }
 
   const tree = async (session: string) => {
@@ -340,7 +349,7 @@ export async function openDevtools(url: string, targetId: string) {
         (await evaluate(
           field.session,
           field.context,
-          `(() => { const active = ${active}; const nodes = ${selector.startsWith('@') ? '[active]' : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`}; if (!active || !nodes.includes(active) || !nodes.length || nodes.length > ${value.length}) return false; const values = nodes.length === 1 ? [${JSON.stringify(value)}] : Array.from(${JSON.stringify(value)}); if (nodes.length !== values.length) return false; for (let index = 0; index < nodes.length; index++) { const node = nodes[index]; (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); node.focus(); if (${active} !== node) return false; if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); for (const character of values[index]) { if (${active} !== node || !document.execCommand('insertText', false, character)) return false; } } return true; })()`,
+          `(() => { const active = ${active}; const nodes = ${selector.startsWith('@') ? '[active]' : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`}; if (!active || active !== globalThis.__ottoFocused || !nodes.includes(active) || !nodes.length || nodes.length > ${value.length}) return false; const values = nodes.length === 1 ? [${JSON.stringify(value)}] : Array.from(${JSON.stringify(value)}); if (nodes.length !== values.length) return false; for (let index = 0; index < nodes.length; index++) { const node = nodes[index]; (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); node.focus(); if (${active} !== node) return false; if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); for (const character of values[index]) { if (${active} !== node || !document.execCommand('insertText', false, character)) return false; } } return true; })()`,
         )) === true
       );
     },

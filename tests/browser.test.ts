@@ -1049,6 +1049,7 @@ test('a card goes only into the approved fields on the approved sites and stays 
       computer.fillCard({ ...entry, document: 'loader-old' }),
       /checkout page changed/,
     );
+    await computer.act('shop', { action: 'reload' });
     entry = { ...entry, ...(await computer.cardDestinations('shop', fields)) };
     await assert.rejects(
       computer.fillCard({
@@ -1058,6 +1059,7 @@ test('a card goes only into the approved fields on the approved sites and stays 
       /not on a site approved/,
     );
     assert.equal(model.values.size, 0);
+    await computer.act('shop', { action: 'reload' });
     entry = { ...entry, ...(await computer.cardDestinations('shop', fields)) };
     await computer.fillCard(entry);
     const seen = (await computer.act('shop', { action: 'snapshot' })).text;
@@ -1540,6 +1542,7 @@ test('the browser has one holder, and the conversation keeps it for the user unt
   const turn = (
     background: boolean,
     script: (tools: Map<string, AgentTool>) => Promise<unknown>,
+    overrides: Partial<RuntimeContext> = {},
   ) => {
     const turnId = randomUUID();
     scripts.set(turnId, script);
@@ -1563,6 +1566,7 @@ test('the browser has one holder, and the conversation keeps it for the user unt
       requestCredential: async () => ({ filled: true }),
       integration: async () => ({}),
       manage: async () => ({}),
+      ...overrides,
     });
   };
   const open = (tools: Map<string, AgentTool>, url: string) =>
@@ -1603,6 +1607,36 @@ test('the browser has one holder, and the conversation keeps it for the user unt
     assert.equal((await nextHandoff).status, 'waiting_user');
     assert.equal(replies.at(-1), 'Continue in [Open browser](/browser).');
     assert.equal(runtime.holdBrowserForUser(threadId), true);
+    await turn(false, async () => {});
+    const preparing = deferred();
+    const prepared = deferred();
+    const controller = new AbortController();
+    let stalledFinished = false;
+    const stalled = turn(true, (tools) => open(tools, 'https://example.com/stalled'), {
+      signal: controller.signal,
+      limits: { maxToolCalls: 8, timeoutMs: 10000 },
+      prepareBrowser: async () => {
+        preparing.resolve();
+        await prepared.promise;
+      },
+    }).finally(() => {
+      stalledFinished = true;
+    });
+    const stopped = assert.rejects(stalled);
+    await preparing.promise;
+    controller.abort(new Error('Synthetic Stop'));
+    const beforeStall = opened.length;
+    const afterStall = turn(true, (tools) => open(tools, 'https://example.com/after-preparation'));
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(stalledFinished, false);
+      assert.equal(opened.length, beforeStall);
+    } finally {
+      prepared.resolve();
+      await stopped;
+      await afterStall;
+    }
+    assert.equal(opened.at(-1), 'https://example.com/after-preparation');
   } finally {
     handoff.resolve();
     backgroundDone.resolve();
@@ -5632,6 +5666,11 @@ test('failed private entry holds every Pi action until the filled document chang
       await assert.rejects(computer.act('private', input));
     await assert.rejects(computer.currentPage('private'));
     await assert.rejects(computer.screenshot('private'));
+    await assert.rejects(computer.download!('private', { selector: 'button' }));
+    await assert.rejects(computer.control!('private', { type: 'key', key: 'Enter' }));
+    await assert.rejects(
+      computer.cardDestinations('private', { number: '#account', expiry: '#account' }),
+    );
     assert.equal(fixture.pages.get('private')!.entered.length, before);
     failSubmit = false;
     await computer.act('private', { action: 'reload' });
@@ -5640,6 +5679,39 @@ test('failed private entry holds every Pi action until the filled document chang
       (await computer.act('private', { action: 'evaluate', script: 'document.title' })).text,
       /Script result/,
     );
+    const page = fixture.pages.get('private')!;
+    page.afterInspect = (script) => {
+      if (script.includes('globalThis.__ottoFocused = node')) page.search.focus();
+    };
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'private',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-focus-race',
+        usernameSelector: '#account',
+      }),
+    );
+    assert.equal(page.input.value, '');
+    assert.equal(page.search.value, '');
+    page.afterInspect = undefined;
+    await computer.act('private', { action: 'reload' });
+    page.afterInspect = (script) => {
+      if (script.includes("execCommand('insertText'")) page.document = 'navigated-during-entry';
+    };
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'private',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-navigation',
+        usernameSelector: '#account',
+        submitSelector: 'button',
+      }),
+      /checkout page changed/,
+    );
+    assert.equal(page.entered.length, before);
+    page.afterInspect = undefined;
   } finally {
     failSubmit = false;
     await computer.dispose();

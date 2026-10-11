@@ -4,6 +4,7 @@ import type { CredentialRequest, PaymentRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
 import { originLabel, suggestLoginName } from '../lib/vault-name';
 import { returnToChat } from '../lib/navigation';
+import { subscribeAppEvents } from '../lib/app-events';
 import { Button, Field, Input, Loading, Notice } from '../components/ui';
 import { BrandMark } from '../components/brand';
 
@@ -60,7 +61,7 @@ export function Payment({ id }: { id: string }) {
   }
   return (
     <main className="credential-page">
-      <a href="/" className="credential-brand" aria-label="Otto home">
+      <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Otto home">
         <BrandMark />
         <span>otto</span>
       </a>
@@ -122,6 +123,35 @@ function CredentialForm({ id }: { id: string }) {
   const [now, setNow] = useState(Date.now());
   const [enterNew, setEnterNew] = useState(false);
   const [loginName, setLoginName] = useState<string>();
+  useEffect(() => {
+    if (request?.status !== 'entering') return;
+    const controller = new AbortController();
+    let latest = 0;
+    const refresh = () => {
+      const version = ++latest;
+      void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(activeId)}`, {
+        signal: controller.signal,
+        cache: 'no-store',
+      })
+        .then((value) => {
+          if (!controller.signal.aborted && version === latest) setRequest(value);
+        })
+        .catch(() => {});
+    };
+    const unsubscribe = subscribeAppEvents(undefined, {
+      open: refresh,
+      error() {},
+      message: (event) => {
+        if (JSON.parse(event.data).type === 'refresh') refresh();
+      },
+    });
+    window.addEventListener('focus', refresh);
+    return () => {
+      controller.abort();
+      unsubscribe();
+      window.removeEventListener('focus', refresh);
+    };
+  }, [activeId, request?.status]);
   useEffect(() => {
     const current = ++generation.current;
     const controller = new AbortController();

@@ -341,7 +341,7 @@ export async function createBrowserConnections(
     }
     const row = (
       await pool.query<Pick<Row, 'origin'>>(
-        'SELECT origin FROM browser_connections WHERE id=$1 AND owner_id=$2',
+        "SELECT origin FROM browser_connections WHERE id=$1 AND owner_id=$2 AND state<>'disconnecting'",
         [parsed.data.connectionId, options.ownerId],
       )
     ).rows[0];
@@ -362,7 +362,12 @@ export async function createBrowserConnections(
       id: row.id,
       label: row.label,
       origin: row.origin,
-      url: row.start_url,
+      url: (() => {
+        const url = new URL(row.start_url);
+        url.search = '';
+        url.hash = '';
+        return url.href;
+      })(),
       state: row.state,
       ...(row.checked_at ? { checkedAt: row.checked_at.toISOString() } : {}),
     }));

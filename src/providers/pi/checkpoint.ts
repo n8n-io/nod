@@ -137,11 +137,11 @@ function legacyCredential(message: { role: string; toolName?: string; content?: 
 
 function holdsCredentials(manager: SessionManager) {
   return manager
-    .buildContextEntries()
+    .getEntries()
     .some((entry) => entry.type === 'message' && legacyCredential(entry.message));
 }
 
-function legacySecrets(context: ReturnType<SessionManager['buildContextEntries']>) {
+function legacySecrets(context: ReturnType<SessionManager['getEntries']>) {
   const values = new Set<string>();
   for (const entry of context)
     if (entry.type === 'message' && legacyCredential(entry.message))
@@ -149,16 +149,21 @@ function legacySecrets(context: ReturnType<SessionManager['buildContextEntries']
         if (part.type === 'text')
           try {
             const password: unknown = JSON.parse(part.text)?.password;
-            if (typeof password === 'string' && password.length >= 4) values.add(password);
+            if (typeof password === 'string' && password.length) values.add(password);
           } catch {}
-  return [...values].map((value) => JSON.stringify(value).slice(1, -1));
+  return [...values];
 }
 
 function scrub<T>(value: T, secrets: string[]): T {
   if (!secrets.length) return value;
-  return JSON.parse(
-    secrets.reduce((text, secret) => text.split(secret).join('[removed]'), JSON.stringify(value)),
-  ) as T;
+  if (typeof value === 'string')
+    return secrets.reduce((text, secret) => text.split(secret).join('[removed]'), value) as T;
+  if (Array.isArray(value)) return value.map((item) => scrub(item, secrets)) as T;
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, scrub(item, secrets)]),
+    ) as T;
+  return value;
 }
 
 export function openLocalSession(directory: string) {
@@ -178,7 +183,7 @@ export function openLocalSession(directory: string) {
 
 export function rebaseSession(source: SessionManager, next: SessionManager) {
   const context = source.buildContextEntries();
-  const secrets = legacySecrets(context);
+  const secrets = legacySecrets(source.getEntries());
   let images = context.reduce(
     (count, entry) =>
       entry.type === 'message' && entry.message.role === 'toolResult'
@@ -195,20 +200,40 @@ export function rebaseSession(source: SessionManager, next: SessionManager) {
         scrub(entry.details, secrets),
       );
     else if (entry.type === 'message') {
-      const message = scrub(entry.message, secrets);
+      const message = entry.message;
       next.appendMessage(
         (legacyCredential(message)
           ? { ...message, content: [{ type: 'text' as const, text: removedCredential }] }
-          : message.role === 'toolResult'
-            ? {
-                ...message,
-                content: message.content.map((part) =>
-                  part.type === 'image' && images-- > keptImages
-                    ? { type: 'text' as const, text: removedImage }
-                    : part,
-                ),
-              }
-            : message) as Parameters<typeof next.appendMessage>[0],
+          : {
+              ...message,
+              ...('details' in message ? { details: scrub(message.details, secrets) } : {}),
+              ...(message.role === 'bashExecution'
+                ? {
+                    command: scrub(message.command, secrets),
+                    output: scrub(message.output, secrets),
+                  }
+                : {}),
+              ...('content' in message
+                ? {
+                    content:
+                      typeof message.content === 'string'
+                        ? scrub(message.content, secrets)
+                        : message.content.map((part) =>
+                            part.type === 'text'
+                              ? { ...part, text: scrub(part.text, secrets) }
+                              : part.type === 'thinking'
+                                ? { ...part, thinking: scrub(part.thinking, secrets) }
+                                : part.type === 'toolCall'
+                                  ? { ...part, arguments: scrub(part.arguments, secrets) }
+                                  : part.type === 'image' &&
+                                      message.role === 'toolResult' &&
+                                      images-- > keptImages
+                                    ? { type: 'text' as const, text: removedImage }
+                                    : part,
+                          ),
+                  }
+                : {}),
+            }) as Parameters<typeof next.appendMessage>[0],
       );
     }
   }

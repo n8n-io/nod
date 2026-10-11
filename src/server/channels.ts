@@ -102,7 +102,7 @@ export function channelReply(
   appOrigin?: string,
 ) {
   const securePath =
-    '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault\\?add=(?:login|card)|(?:vault|credentials|payments|approvals)\\/[^\\s)]+)';
+    '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault\\?add=(?:login|card)[^\\s)]*|(?:vault|credentials|payments|approvals)\\/[^\\s)]+)';
   const safe = text
     .replace(
       /\[[^\]]*\]\((?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+\)|(?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+/g,

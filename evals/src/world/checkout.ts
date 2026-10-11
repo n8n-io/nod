@@ -116,7 +116,6 @@ function checkoutSites(state: State, mode: CheckoutMode) {
         address: form.get('address') ?? '',
         at: Date.now(),
       };
-      state.attempts.push(order);
       if (
         !order.address ||
         order.card.length < 13 ||
@@ -124,6 +123,7 @@ function checkoutSites(state: State, mode: CheckoutMode) {
         order.cvc.length < 3
       )
         return page('Payment incomplete', `${nav}<h2>Payment incomplete</h2>`, 422);
+      state.attempts.push(order);
       if (mode === 'rejected' && state.attempts.length === 1)
         return page(
           'Card declined',

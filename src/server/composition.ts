@@ -596,6 +596,7 @@ async function initializeApplication(
   });
   vault = await createVault(pool, {
     admission,
+    refresh,
     keyStore: adapters.keyStore,
     resume: resumeAfterCredentials,
     retry: retryCredentials,
@@ -746,7 +747,25 @@ async function initializeApplication(
       curator.configured ? curator.curate({ task: 'review', instructions, input }) : undefined,
   });
   await trust.initialize();
-  vaultAccess = await createVaultAccess(pool, { ownerId, check: trust.signIn, refresh });
+  vaultAccess = await createVaultAccess(pool, {
+    ownerId,
+    check: trust.signIn,
+    refresh,
+    account: async (itemKey) => {
+      const [kind, id] = itemKey.split(':');
+      if (kind === 'sign_in') {
+        const login = (await vault.list(ownerId)).find(
+          (entry) => entry.kind === 'login' && entry.id === id,
+        );
+        return login ? `${login.label} (${login.usernameHint})` : undefined;
+      }
+      return kind === 'session'
+        ? (await browserConnections.sessions()).find(
+            (entry) => entry.id === id && entry.state !== 'disconnecting',
+          )?.label
+        : undefined;
+    },
+  });
   payments = await createPayments(pool, {
     ownerId,
     uses: vault.uses,

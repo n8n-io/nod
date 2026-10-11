@@ -522,7 +522,7 @@ export function createAgentBrowserComputer(options: {
     if (!state.proxy)
       state.proxy = createBrowserProxy((origin) => {
         if (!state.origins || state.origins.has(origin)) return true;
-        state.blocked.add(origin);
+        if (state.blocked.size < 20) state.blocked.add(origin);
         return false;
       });
     const proxyUrl = await state.proxy.url();
@@ -750,6 +750,7 @@ export function createAgentBrowserComputer(options: {
         return undefined;
       const state = stateFor(id);
       state.saved = saved;
+      state.scripted = new Set(saved.scripted ?? []);
       state.socket = resolve(info.socketDir, `${browserSessionId(id)}.sock`);
       state.recovered = true;
       state.started = !saved.navigationFailed;
@@ -1158,7 +1159,11 @@ export function createAgentBrowserComputer(options: {
           let read;
           try {
             read = await devtools.readOnly(script);
-            if (!read) state.scripted.add(await devtools.document());
+            if (!read) {
+              state.scripted.add(await devtools.document());
+              state.saved.scripted = [...state.scripted];
+              await saveState(state);
+            }
           } finally {
             devtools.close();
           }
@@ -1236,6 +1241,7 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       markActivity(id);
+      if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
       let target = input.selector ? selector(input.selector) : undefined;
@@ -1358,6 +1364,8 @@ export function createAgentBrowserComputer(options: {
           state.saved.sensitive = true;
           await saveState(state);
           const result = await operation(devtools, document);
+          if (submitSelector && (await devtools.document()) !== document)
+            throw new BrowserActionError('browser_card_changed');
           if ((await devtools.document()) === document) {
             if (submitSelector) {
               const field = await focusField(state, devtools, selector(submitSelector));
@@ -1438,6 +1446,8 @@ export function createAgentBrowserComputer(options: {
     const devtools = await inspector(state).catch(() => undefined);
     try {
       state.scripted.add((await devtools?.document().catch(() => undefined)) ?? 'unknown');
+      state.saved.scripted = [...state.scripted];
+      await saveState(state);
     } finally {
       devtools?.close();
     }
@@ -1485,6 +1495,7 @@ export function createAgentBrowserComputer(options: {
     if (!state?.started) throw new Error('The checkout page is no longer open.');
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
+      if (state.injecting || (await privateDocumentOpen(state))) throw new BrowserLockedError();
       const devtools = await inspector(state);
       try {
         const document = await checkout(state, devtools);
@@ -1683,6 +1694,7 @@ export function createAgentBrowserComputer(options: {
     markActivity(id);
     await serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
+      if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const socket = await daemonSocket(state, signal);
       if (input.type === 'mouse') {
         const [width, height] = (state.pageSize ??= z

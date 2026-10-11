@@ -60,6 +60,9 @@ export function VaultSiteAccess({
         next ? { method: 'PUT', body: JSON.stringify({ origin }) } : { method: 'DELETE' },
       );
       setAlways(next);
+      setActivity(
+        await api<VaultActivity>(`/api/vault/activity?origin=${encodeURIComponent(origin)}`),
+      );
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -108,7 +111,7 @@ export function VaultSiteAccess({
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={busy || session.state === 'disconnecting'}
+                  disabled={busy}
                   onClick={() => void signOut(session)}
                 >
                   Sign out

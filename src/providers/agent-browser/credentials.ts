@@ -18,6 +18,7 @@ export function credentialFields(input: CredentialInput): CredentialField[] {
     Array.isArray(target) &&
     (kind !== 'otp' ||
       target.length !== characters.length ||
+      target.some((selector) => !/^@e\d+$/.test(selector)) ||
       new Set(target).size !== target.length)
   )
     throw new Error('Choose one distinct field for each code character, in code order.');

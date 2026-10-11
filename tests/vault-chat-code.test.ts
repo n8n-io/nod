@@ -355,12 +355,18 @@ test(
             (error: Error & { statusCode?: number }) =>
               error.statusCode === 409 && /secure payment link/.test(error.message),
           );
-          for (const text of ['73951', '2 hinges for 7395', '739 or 740'])
+          for (const text of [
+            '73951',
+            '2 hinges for 7395',
+            '739 or 740',
+            'The year is 2026',
+            'sure, it is 7395',
+          ])
             assert.equal((await send(text)).statusCode, 409, text);
           assert.deepEqual(entered, []);
           assert.equal((await send('wait, which card is that?')).statusCode, 200);
           assert.deepEqual(ordinary, ['wait, which card is that?']);
-          const response = await send('sure, it is 7395');
+          const response = await send('7395');
           assert.equal(response.statusCode, 200, response.body);
           assert.equal(response.json().messageText, 'Security code sent securely.');
           assert.equal(response.json().verificationStatus, 'submitted');

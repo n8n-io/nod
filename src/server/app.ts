@@ -607,7 +607,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
     const acting = body.data.inputs.some(
-      (input) => input.type !== 'wheel' && (input.type !== 'mouse' || input.event === 'down'),
+      (input) => input.type !== 'wheel' && (input.type !== 'mouse' || input.event !== 'move'),
     );
     const apply = async () => {
       for (const input of body.data.inputs) await control(thread.id, input);

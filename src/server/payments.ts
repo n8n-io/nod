@@ -34,12 +34,21 @@ type Row = {
   flagged: boolean;
 };
 
-const selector = z.string().min(1).max(2048);
+const selector = z.string().min(1).max(500);
+const locale = z
+  .string()
+  .min(1)
+  .max(35)
+  .refine((value) => {
+    try {
+      return Intl.getCanonicalLocales(value).length === 1;
+    } catch {
+      return false;
+    }
+  });
 const expiryField = z.union([
   selector,
-  z
-    .object({ selector, format: z.string().min(1).max(100), locale: z.string().max(35).optional() })
-    .strict(),
+  z.object({ selector, format: z.string().min(1).max(100), locale: locale.optional() }).strict(),
 ]);
 const input = z
   .object({
@@ -330,9 +339,9 @@ export async function createPayments(
       flagged: policy.flagged,
     };
     await pool.query(
-      `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2
+      `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
        AND status='pending'`,
-      [ownerId, turn.threadId],
+      [ownerId, turn.threadId, turn.turnId],
     );
     await pool.query(
       `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,flagged,submit_selector,card_version,expires_at)

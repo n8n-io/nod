@@ -127,6 +127,7 @@ export type VaultUse = {
   reason: 'entered' | 'picked';
 };
 type VaultOptions = {
+  refresh?(): void;
   admission?: WorkAdmission;
   onUse?(use: VaultUse, client: PoolClient): Promise<void>;
   onForget?(origin: string): Promise<void>;
@@ -1713,11 +1714,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           error: 'That saved login is no longer available. Enter a new login.',
         };
       }
-      await pool.query(
-        "UPDATE credential_requests SET failed_at=now() WHERE id=$1 AND status='pending'",
-        [row.id],
-      );
+      await pool
+        .query("UPDATE credential_requests SET failed_at=now() WHERE id=$1 AND status='pending'", [
+          row.id,
+        ])
+        .catch((failure: unknown) => logFailure('vault_failure_state', failure));
       throw error;
+    } finally {
+      options.refresh?.();
     }
   }
 
@@ -1746,7 +1750,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           409,
         );
       await client.query(
-        "UPDATE credential_requests SET status='retried',expires_at=least(expires_at,now()) WHERE turn_id=$1 AND owner_id=$2 AND status IN ('pending','consumed')",
+        "UPDATE credential_requests r SET status='retried',expires_at=least(expires_at,now()) WHERE turn_id=$1 AND owner_id=$2 AND (status='pending' OR (status='consumed' AND EXISTS(SELECT 1 FROM vault_uses v WHERE v.id=r.id AND v.owner_id=$2 AND v.status='uncertain')))",
         [request.turn_id, owner],
       );
       return request;

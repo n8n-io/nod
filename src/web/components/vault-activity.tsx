@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CircleHelp, CreditCard, Hash, KeyRound, Pause } from 'lucide-react';
 import type {
   VaultActivity,
@@ -156,12 +156,19 @@ export function VaultActivityPages({
   const [next, setNext] = useState(activity.next);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const request = useRef<AbortController | null>(null);
   useEffect(() => {
+    request.current?.abort();
+    request.current = null;
+    setLoading(false);
     setMore([]);
     setNext(activity.next);
+    return () => request.current?.abort();
   }, [activity]);
   async function load() {
     if (!next) return;
+    const controller = new AbortController();
+    request.current = controller;
     setLoading(true);
     setError('');
     try {
@@ -169,13 +176,15 @@ export function VaultActivityPages({
         `/api/vault/activity?at=${encodeURIComponent(next.at)}&id=${next.id}${
           origin ? `&origin=${encodeURIComponent(origin)}` : ''
         }${item ? `&item=${encodeURIComponent(item)}` : ''}`,
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted) return;
       setMore((current) => [...current, ...page.entries]);
       setNext(page.next);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (!controller.signal.aborted) setError(errorMessage(cause));
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }
   return (

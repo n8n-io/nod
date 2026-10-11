@@ -2144,12 +2144,20 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           }));
         const logins = connections.filter((connection) => connection.savedLogin);
         const matching = site
-          ? logins.filter((connection) =>
-              [connection.name, connection.accountName, connection.accessPaths?.[0]?.endpoint]
+          ? logins.filter((connection) => {
+              const origin = connection.accessPaths?.[0]?.endpoint;
+              if (site.includes('.') || site.includes(':')) {
+                try {
+                  return new URL(origin!).host.toLowerCase() === site;
+                } catch {
+                  return false;
+                }
+              }
+              return ` ${[connection.name, connection.accountName]
                 .join(' ')
                 .toLowerCase()
-                .includes(site),
-            )
+                .replace(/[^\p{L}\p{N}]+/gu, ' ')} `.includes(` ${site} `);
+            })
           : logins.slice(0, 20);
         return [
           ...connections.filter((connection) => !connection.savedLogin),

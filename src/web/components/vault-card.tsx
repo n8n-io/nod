@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { VaultActivity, VaultEntryDetails } from '../../shared/contracts';
+import type { VaultActivity } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { VaultActivityPages } from './vault-activity';
 import { Notice, Switch } from './ui';
@@ -7,34 +7,25 @@ import { Notice, Switch } from './ui';
 export function VaultCardPayments({
   cardId,
   hosted,
+  initialDoItForMe,
   onChanged,
 }: {
   cardId: string;
   hosted: boolean;
+  initialDoItForMe: boolean;
   onChanged(): void;
 }) {
-  const [doItForMe, setDoItForMe] = useState<boolean | null>(null);
+  const [doItForMe, setDoItForMe] = useState(initialDoItForMe);
+  useEffect(() => setDoItForMe(initialDoItForMe), [initialDoItForMe]);
   const [activity, setActivity] = useState<VaultActivity | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([
-      hosted
-        ? Promise.resolve(null)
-        : api<VaultEntryDetails>(`/api/vault/${encodeURIComponent(cardId)}/details`, {
-            method: 'POST',
-            body: '{}',
-            signal: controller.signal,
-          }),
-      api<VaultActivity>(`/api/vault/activity?item=${encodeURIComponent(cardId)}`, {
-        signal: controller.signal,
-      }),
-    ])
-      .then(([details, history]) => {
-        setDoItForMe(details?.kind === 'card' ? details.doItForMe : false);
-        setActivity(history);
-      })
+    void api<VaultActivity>(`/api/vault/activity?item=${encodeURIComponent(cardId)}`, {
+      signal: controller.signal,
+    })
+      .then(setActivity)
       .catch((cause) => {
         if (!controller.signal.aborted) setError(errorMessage(cause));
       });

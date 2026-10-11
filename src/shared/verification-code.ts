@@ -16,8 +16,9 @@ export function classifyVerificationReply(text: string): VerificationReply {
 }
 
 export function securityCodeIn(text: string) {
-  const numbers = text.match(/\d+/g) ?? [];
-  return numbers.length === 1 && /^\d{3,4}$/.test(numbers[0]!) ? numbers[0] : undefined;
+  const bare = /^\s*(\d{3,4})\s*[.!]?\s*$/.exec(text)?.[1];
+  const reply = classifyVerificationReply(text);
+  return bare ?? (reply.kind === 'code' && reply.code.length === 4 ? reply.code : undefined);
 }
 
 export function mayHoldSecurityCode(text: string) {

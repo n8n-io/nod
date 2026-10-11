@@ -150,6 +150,13 @@ test('password exports from Chrome, 1Password and other managers read the same w
     [login('Warden', 'https://warden.fixture.test', 'di', 'di-secret')],
   );
   assert.throws(() => parsePasswordCsv('date,amount\n2026-10-01,12\n'), /password manager/);
+  assert.throws(
+    () =>
+      parsePasswordCsv(
+        'url,username,password\nhttps://fixture.test,owner,"unfinished\nhttps://other.test,owner,synthetic\n',
+      ),
+    /incomplete quoted field/,
+  );
 });
 
 test('vault accepts exact HTTPS origins and explicit local development origins', () => {
@@ -1006,6 +1013,104 @@ test(
       await assert.rejects(f.vault.setDoItForMe(cardId, false));
       assert.equal((await f.vault.paymentCards())[0]!.choice, true);
       assert.equal((await access.activity({})).entries.length, 2);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test(
+  'a lost Vault claim acknowledgement and a failed uncertainty write never repeat browser work',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const { createVaultUses, VaultUseError } = await import('../src/server/vault-use.ts');
+    const f = await vaultFixture();
+    try {
+      let loseCommit = true;
+      const pool = new Proxy(f.pool, {
+        get(target, key) {
+          if (key === 'connect')
+            return async () => {
+              const client = await target.connect();
+              return new Proxy(client, {
+                get(connection, member) {
+                  if (member === 'query')
+                    return async (...args: Parameters<typeof client.query>) => {
+                      const result = await client.query(...args);
+                      if (args[0] === 'COMMIT' && loseCommit) {
+                        loseCommit = false;
+                        throw new Error('Synthetic lost commit acknowledgement');
+                      }
+                      return result;
+                    };
+                  const value = Reflect.get(connection, member);
+                  return typeof value === 'function' ? value.bind(connection) : value;
+                },
+              });
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const uses = await createVaultUses(pool, 'local-development');
+      const turn = await f.turn();
+      const use = {
+        id: randomUUID(),
+        ownerId: 'local-development',
+        ...turn,
+        origin: 'https://fixture.test',
+        kind: 'password',
+      };
+      let entries = 0;
+      const operation = {
+        perform: async () => {
+          entries++;
+        },
+      };
+      const uncertain = (error: unknown) =>
+        error instanceof VaultUseError && error.statusCode === 502;
+      await assert.rejects(uses.run(use, operation), uncertain);
+      assert.equal(entries, 0);
+      assert.equal(
+        (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [use.id])).rows[0].status,
+        'uncertain',
+      );
+      await assert.rejects(
+        uses.run(use, operation),
+        (error: unknown) => error instanceof VaultUseError && error.statusCode === 409,
+      );
+      await f.pool
+        .query(`CREATE FUNCTION reject_uncertain() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.status='uncertain' THEN RAISE EXCEPTION 'Synthetic uncertainty write failure'; END IF;
+      RETURN NEW; END $$; CREATE TRIGGER reject_uncertain BEFORE UPDATE ON vault_uses FOR EACH ROW EXECUTE FUNCTION reject_uncertain()`);
+      const failed = { ...use, id: randomUUID() };
+      await assert.rejects(
+        uses.run(failed, {
+          perform: async () => {
+            entries++;
+            throw new Error('Synthetic browser failure');
+          },
+        }),
+        uncertain,
+      );
+      assert.equal(entries, 1);
+      assert.equal(
+        (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [failed.id])).rows[0]
+          .status,
+        'running',
+      );
+      await assert.rejects(
+        uses.run(failed, operation),
+        (error: unknown) => error instanceof VaultUseError && error.statusCode === 409,
+      );
+      assert.equal(entries, 1);
+      await f.pool.query('DROP TRIGGER reject_uncertain ON vault_uses');
+      await createVaultUses(f.pool, 'local-development');
+      assert.equal(
+        (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [failed.id])).rows[0]
+          .status,
+        'uncertain',
+      );
     } finally {
       await f.close();
     }
@@ -2770,6 +2875,28 @@ test(
         name: '@e3',
       };
       const order = { amount: '43.20', currency: 'eur', fields };
+      for (const invalid of [
+        { ...order, submitSelector: 'x'.repeat(501) },
+        {
+          ...order,
+          fields: { ...fields, expiry: { selector: '@e5', format: 'MMM YYYY', locale: '' } },
+        },
+        {
+          ...order,
+          fields: {
+            ...fields,
+            expiry: { selector: '@e5', format: 'MMM YYYY', locale: 'not_a_locale' },
+          },
+        },
+      ])
+        await assert.rejects(payments.request(turn, invalid));
+      assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      const parallel = { threadId: turn.threadId, turnId: randomUUID() };
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,background) VALUES($1,'local-development',$2,true)",
+        [parallel.turnId, parallel.threadId],
+      );
+      await payments.request(parallel, order);
       const latest = async () =>
         (
           await pool.query<{ id: string; status: string }>(
@@ -2781,7 +2908,16 @@ test(
       const studio = async () => (await vault.paymentCards()).find((item) => item.id === card.id)!;
       const shop = 'https://shop.fixture.test';
 
+      recorded.length = 0;
       const first = await payments.request(turn, order);
+      assert.equal(
+        (await pool.query('SELECT status FROM vault_payments WHERE turn_id=$1', [parallel.turnId]))
+          .rows[0].status,
+        'pending',
+      );
+      await pool.query("UPDATE vault_payments SET status='superseded' WHERE turn_id=$1", [
+        parallel.turnId,
+      ]);
       assert.equal(first.paymentId, undefined);
       assert.deepEqual([...first.image], [255, 216, 255]);
       assert.equal(
@@ -4499,6 +4635,73 @@ async function vaultPage(
     },
   };
 }
+
+test('private dialogs discard stale imports and keep credentials and URL tokens out of chat', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost/vault',pretendToBeVisual:true});
+Object.assign(globalThis, {
+  window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true,
+  getComputedStyle:dom.window.getComputedStyle.bind(dom.window),
+  requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),
+  cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window),
+  ...Object.fromEntries(['Node','NodeFilter','Event','CustomEvent','Element','HTMLElement','HTMLInputElement','MutationObserver'].map(name => [name,dom.window[name]])),
+});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+const {act,createElement,useState}=await import('react');
+const {createRoot}=await import('react-dom/client');
+const {VaultImportDialog}=await import('./src/web/components/vault-import-dialog.tsx');
+const {WebsiteSessionDialog}=await import('./src/web/components/website-session-dialog.tsx');
+const writes=[];
+globalThis.fetch=async (_path,init) => {writes.push(JSON.parse(init.body));return Response.json({imported:1,existing:0,skipped:0});};
+const root=createRoot(document.querySelector('#root'));
+let finish;
+function Import() {
+  const [open,setOpen]=useState(true);
+  return createElement('div',null,createElement('button',{'data-reopen':true,onClick:()=>setOpen(true)},'Open'),createElement(VaultImportDialog,{open,onOpenChange:setOpen,onImported(){}}));
+}
+const choose=async (name,text) => {
+  const input=document.querySelector('input[type="file"]');
+  assert.ok(input);
+  Object.defineProperty(input,'files',{configurable:true,value:[{name,text}]});
+  await act(async()=>input.dispatchEvent(new Event('change',{bubbles:true})));
+};
+try {
+  await act(async()=>root.render(createElement(Import)));
+  await choose('old.csv',()=>new Promise(resolve=>{finish=resolve;}));
+  await act(async()=>document.querySelector('[aria-label="Close"]').click());
+  await act(async()=>finish('url,username,password\nhttps://old.test,owner,synthetic-old\n'));
+  await act(async()=>document.querySelector('[data-reopen]').click());
+  await choose('older.csv',()=>new Promise(resolve=>{finish=resolve;}));
+  await choose('new.csv',async()=>'url,username,password\nhttps://new.test,owner,synthetic-new\n');
+  await act(async()=>finish('url,username,password\nhttps://older.test,owner,synthetic-older\n'));
+  await act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+  assert.deepEqual(writes,[{logins:[{label:'',origin:'https://new.test',username:'owner',password:'synthetic-new'}]}]);
+  const requests=[];
+  await act(async()=>root.render(createElement(WebsiteSessionDialog,{open:true,onOpenChange(){},onAsk:text=>requests.push(text)})));
+  const input=document.querySelector('input[type="url"]');
+  assert.ok(input);
+  for(const value of ['https://owner:synthetic-private@example.test','http://example.test','https://example.test/account?token=synthetic-token#synthetic-fragment']) {
+    await act(async()=>{
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    await act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+  }
+  assert.equal(requests.length,1);
+  assert.match(requests[0],/https:\/\/example.test\/account/);
+  assert.doesNotMatch(requests[0],/synthetic-private|synthetic-token|synthetic-fragment/);
+} finally {
+  await act(async()=>root.unmount());
+  dom.window.close();
+}
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
 
 test(
   'Vault add links save only values entered in an empty owned form',

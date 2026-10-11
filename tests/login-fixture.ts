@@ -16,6 +16,7 @@ export class LoginPage {
   document = 'loader-0';
   isolated: Record<string, unknown> = {};
   focused?: HTMLInputElement;
+  afterInspect?(expression: string): void;
   refs = new Map<string, Element>();
   constructor() {
     this.dom.window.HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
@@ -125,8 +126,8 @@ export function stagedLoginBrowser() {
         },
         frameOf: {},
         values: new Map(),
-        evaluate: (expression) =>
-          new Function(
+        evaluate: (expression) => {
+          const value = new Function(
             'document',
             'globalThis',
             'Event',
@@ -139,7 +140,10 @@ export function stagedLoginBrowser() {
             target.dom.window.Event,
             target.dom.window.NodeFilter,
             target.dom.window.getComputedStyle.bind(target.dom.window),
-          ),
+          );
+          target.afterInspect?.(expression);
+          return value;
+        },
       });
       inspectors.set(id, inspector);
     }

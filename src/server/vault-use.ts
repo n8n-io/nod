@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { logFailure } from './failure-log.ts';
 
 export class VaultUseError extends Error {
   constructor(
@@ -21,6 +22,9 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
   CREATE UNIQUE INDEX IF NOT EXISTS vault_uses_attempt ON vault_uses(owner_id,attempt_key);
   CREATE INDEX IF NOT EXISTS vault_uses_owner ON vault_uses(owner_id,created_at DESC);`);
   await pool.query(
+    'CREATE INDEX IF NOT EXISTS vault_uses_root ON vault_uses(owner_id,root_turn_id,origin,kind,item_id)',
+  );
+  await pool.query(
     "UPDATE vault_uses SET status='uncertain' WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
@@ -33,7 +37,7 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       throw error;
     } finally {
       client.release();
@@ -61,6 +65,11 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
     if (use.ownerId !== ownerId)
       throw new VaultUseError('This private operation belongs to another owner.', 409);
     const id = use.id ?? randomUUID();
+    const uncertain = () =>
+      new VaultUseError(
+        'The private operation did not finish. It may have reached the website. Check its result before another attempt.',
+        502,
+      );
     const ready = await transaction(async (client) => {
       if ((await operation.prepare?.(client)) === false) return false;
       const claimed = await client.query(
@@ -84,6 +93,20 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
           409,
         );
       return true;
+    }).catch(async (error: unknown) => {
+      if (error instanceof VaultUseError) throw error;
+      try {
+        const recovered = await pool.query(
+          "UPDATE vault_uses SET status='uncertain',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",
+          [id, use.ownerId],
+        );
+        if (recovered.rowCount) throw uncertain();
+      } catch (recoveryError) {
+        if (!(recoveryError instanceof VaultUseError))
+          logFailure('vault_claim_recovery', recoveryError);
+        throw uncertain();
+      }
+      throw error;
     });
     if (!ready) return;
     try {
@@ -97,14 +120,13 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       });
       return result;
     } catch {
-      await pool.query(
-        "UPDATE vault_uses SET status='uncertain',finished_at=now() WHERE id=$1 AND owner_id=$2",
-        [id, use.ownerId],
-      );
-      throw new VaultUseError(
-        'The private operation did not finish. It may have reached the website. Check its result before another attempt.',
-        502,
-      );
+      await pool
+        .query(
+          "UPDATE vault_uses SET status='uncertain',finished_at=now() WHERE id=$1 AND owner_id=$2",
+          [id, use.ownerId],
+        )
+        .catch((error: unknown) => logFailure('vault_use_uncertain', error));
+      throw uncertain();
     }
   }
 

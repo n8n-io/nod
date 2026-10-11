@@ -679,7 +679,7 @@ test('a durable saved session above the rebase size is rebased on load with the 
   }
 });
 
-function legacyLogin(manager: SessionManager) {
+function legacyLogin(manager: SessionManager, password = 'synthetic-legacy-password') {
   const usage = {
     input: 0,
     output: 0,
@@ -708,19 +708,14 @@ function legacyLogin(manager: SessionManager) {
     content: [
       {
         type: 'text',
-        text: JSON.stringify({ username: 'fixture-user', password: 'synthetic-legacy-password' }),
+        text: JSON.stringify({ username: 'fixture-user', password }),
       },
     ],
     details: {},
     isError: false,
     timestamp: 3,
   });
-  call(
-    'typed',
-    'browser',
-    { action: 'fill', selector: '@e2', text: 'synthetic-legacy-password' },
-    4,
-  );
+  call('typed', 'browser', { action: 'fill', selector: '@e2', text: password }, 4);
   manager.appendMessage({
     role: 'toolResult',
     toolCallId: 'typed',
@@ -777,6 +772,66 @@ test('a saved session loses old plaintext logins from model context and storage 
       (await readFile(join(local, files[0]!), 'utf8')).includes('synthetic-legacy-password'),
       false,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test('short legacy passwords are removed after compaction without changing message types', async () => {
+  const f = await fixture();
+  try {
+    const manager = SessionManager.inMemory(f.directory);
+    legacyLogin(manager, 'q');
+    const kept = manager.getLeafId()!;
+    manager.appendCompaction('The saved password was q.', kept, 50, { value: 'q' });
+    manager.appendMessage({ role: 'user', content: 'Use the password q.', timestamp: 6 });
+    manager.appendMessage({
+      role: 'bashExecution',
+      command: 'printf q',
+      output: 'q',
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 7,
+    });
+    manager.appendMessage({
+      role: 'assistant',
+      api: 'openai-responses',
+      provider: 'openai',
+      model: 'fixture',
+      timestamp: 8,
+      stopReason: 'stop',
+      content: [{ type: 'thinking', thinking: 'The password was q.' }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    await f.store.write(
+      `sessions/${f.threadId}.jsonl`,
+      Buffer.from(
+        [manager.getHeader(), ...manager.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
+      ),
+      { expectedVersion: null },
+    );
+    const restored = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'new'),
+    });
+    assert.doesNotMatch(
+      JSON.stringify(restored.manager.buildSessionContext().messages),
+      /password (?:was )?q/,
+    );
+    assert.ok(
+      restored.manager.buildSessionContext().messages.some((message) => message.role === 'user'),
+    );
+    await restored.checkpoint();
+    assert.doesNotMatch(await savedText(f), /get_credential|"value":"q"|password (?:was )?q/);
   } finally {
     await f.close();
   }

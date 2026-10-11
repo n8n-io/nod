@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { VaultImportResult } from '../../shared/contracts';
 import { parsePasswordCsv, type ImportedLogin } from '../../shared/password-import';
 import { api, errorMessage } from '../lib/api';
@@ -27,10 +27,12 @@ export function VaultImportDialog({
   const [result, setResult] = useState<VaultImportResult | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const reading = useRef(0);
 
   function close(next: boolean) {
     if (busy) return;
     if (!next) {
+      reading.current++;
       setFile(null);
       setResult(null);
       setUnreadable(0);
@@ -40,13 +42,16 @@ export function VaultImportDialog({
   }
 
   async function choose(chosen: File | undefined) {
+    const generation = ++reading.current;
     setFile(null);
     setError('');
     if (!chosen) return;
     try {
-      setFile({ name: chosen.name, ...parsePasswordCsv(await chosen.text()) });
+      const text = await chosen.text();
+      if (generation !== reading.current) return;
+      setFile({ name: chosen.name, ...parsePasswordCsv(text) });
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (generation === reading.current) setError(errorMessage(cause));
     }
   }
 

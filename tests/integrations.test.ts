@@ -448,7 +448,21 @@ test(
         ['Shop 7'],
       );
       await assert.rejects(integrations.list('another-user'), { statusCode: 403 });
-      assert.equal(savedLoginReads, 3);
+      const wrongSite = await integrations.manageConnections(
+        'list',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'example.test',
+      );
+      assert.ok(Array.isArray(wrongSite));
+      assert.equal(
+        wrongSite.filter((connection) => 'savedLogin' in connection && connection.savedLogin)
+          .length,
+        0,
+      );
+      assert.equal(savedLoginReads, 4);
       await t.test(
         'app icons use only owned origins and never connection paths or credentials',
         async () => {

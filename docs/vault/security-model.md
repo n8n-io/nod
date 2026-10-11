@@ -19,7 +19,7 @@ Page content, email, files and tool results cannot create permission. The review
 - Event, read-only and onboarding turns do not sign in. An injection flag holds use until the next owner message.
 - A secure form binds owner, turn, origin, selected fields and expiry. Code replies are consumed before chat persistence.
 - The browser checks the selected field's actual frame origin and document. Login fields must have the login's exact origin. Card fields must have the origins in the approved request.
-- Secret entry uses an isolated browser context and field-bound input. It never sends a code through global keyboard input.
+- Secret entry uses an isolated JavaScript world in the same page and field-bound input. It never sends a code through global keyboard input.
 - Pi chooses the submit control before entry. The provider enters and submits in one private operation. Pi cannot observe or act during that operation.
 - Chrome checks JavaScript reads for side effects. A document changed by Pi JavaScript requires a reload before private entry. This removes listeners that Pi could use to copy values.
 - After successful entry and submission, Pi keeps the live page. If entry fails, the observation lock remains until the filled document changes.

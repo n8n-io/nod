@@ -56,6 +56,7 @@ export async function createVaultAccess(
   pool: Pool,
   options: {
     ownerId: string;
+    account?(itemKey: string): Promise<string | undefined>;
     check(
       turn: TurnRef,
       target: { origin: string; account?: string; destinations?: string[] },
@@ -137,7 +138,7 @@ export async function createVaultAccess(
   async function grant(chain: Chain, origin: string, itemKey = '') {
     const { rows } = await pool.query<{ id: string; source: VaultActivityReason; scope: string }>(
       `SELECT id,source,scope FROM vault_grants WHERE owner_id=$1 AND origin=$2 AND (scope='standing'
-         OR (scope='task' AND root_turn_id=$3 AND item_key=$4))
+         OR (scope='task' AND root_turn_id=$3 AND item_key=$4 AND created_at>now()-interval '7 days'))
        ORDER BY scope='standing' DESC LIMIT 1`,
       [ownerId, origin, chain.id, itemKey],
     );
@@ -321,7 +322,13 @@ export async function createVaultAccess(
     const passed: Array<() => Promise<void>> = [];
     for (const { origin, item_key } of rows) {
       const granted = await grant(chain, origin, item_key);
-      const verdict = await options.check(turn, { origin }, granted?.reason);
+      const account = item_key ? await options.account?.(item_key) : undefined;
+      if (item_key && !granted && !account) return false;
+      const verdict = await options.check(
+        turn,
+        { origin, ...(account ? { account } : {}) },
+        granted?.reason,
+      );
       if (!('allowed' in verdict) || !verdict.allowed) return false;
       if (!granted) passed.push(() => remember(chain, origin, verdict.reason, item_key));
     }

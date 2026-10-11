@@ -31,4 +31,4 @@ The card revision is a hash of the encrypted record and its permission setting. 
 
 Saved accounts, staged accounts, secure forms and email codes prepare the same sign-in operation. Cards use the same executor instance. It starts once, before the application accepts turns. Legacy attempt fences and outcomes move to `vault_uses`; the old attempt table is removed.
 
-Owner activity lasts 90 days. Task grants expire through cleanup after seven days. Do not remove use claims in a way that permits replay of an old request.
+Startup cleanup removes owner activity older than 90 days and task grants older than seven days. Task-grant lookup also refuses grants older than seven days. Do not remove use claims in a way that permits replay of an old request.

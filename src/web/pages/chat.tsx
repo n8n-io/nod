@@ -12,7 +12,7 @@ import type {
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
 import { integrationServices } from '../../shared/integrations';
-import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
+import { classifyVerificationReply, mayHoldSecurityCode } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
@@ -460,7 +460,7 @@ export function Chat({
     let privateVerification =
       (classifyVerificationReply(value).kind !== 'ordinary' &&
         verificationRequests.some((request) => request.kind === 'otp')) ||
-      (Boolean(securityCodeIn(value)) &&
+      (mayHoldSecurityCode(value) &&
         verificationRequests.some((request) => request.kind === 'payment'));
     const verificationRequestId =
       privateVerification && verificationRequests.length === 1

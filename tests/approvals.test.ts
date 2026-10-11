@@ -671,10 +671,15 @@ test(
         'Vault grants bind the current task, item and destination, with no authority from a domain mention',
         async () => {
           const { createVaultAccess } = await import('../src/server/vault-access.ts');
-          const access = await createVaultAccess(db.pool, { ownerId, check: trust.signIn });
           const site = 'https://bank.example.test';
           const first = randomUUID();
           const second = randomUUID();
+          const access = await createVaultAccess(db.pool, {
+            ownerId,
+            check: trust.signIn,
+            account: async (key) =>
+              key === `sign_in:${first}` ? 'Personal account' : 'Work account',
+          });
           aligned = false;
           for (const text of [
             'Do not sign in to bank.example.test. Compare public prices.',
@@ -789,6 +794,30 @@ test(
             firstVisit = true;
           });
           assert.equal(firstVisit, false);
+          await access.record(requested, {
+            action: 'sign_in',
+            origin: site,
+            itemId: first,
+            itemKind: 'login',
+            reason: 'asked',
+          });
+          aligned = (input) => input.signIn?.account === 'Work account';
+          const wrongAccount = await begin('Read my work bank account.');
+          let wrongRetained = false;
+          await access.prepare(wrongAccount, async () => {
+            wrongRetained = true;
+          });
+          assert.equal(wrongRetained, true);
+          assert.equal(reviews.at(-1)?.signIn.account, 'Personal account');
+          await db.pool.query(
+            "UPDATE vault_grants SET created_at=now()-interval '8 days' WHERE owner_id=$1 AND root_turn_id=$2",
+            [ownerId, task.turnId],
+          );
+          aligned = false;
+          assert.ok(
+            'question' in
+              (await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first })),
+          );
           aligned = false;
           await access.always({ origin: site });
           const later = await begin('Check what is due.');

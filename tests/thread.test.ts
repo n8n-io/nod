@@ -678,6 +678,9 @@ test(
         await assert.rejects(operation(completed, false));
         assert.equal(entries, 2);
         await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [source]);
+        const beforeLate = await db.pool.query('SELECT count(*) FROM turns');
+        await thread.resumeAfterCredentials(source);
+        assert.deepEqual((await db.pool.query('SELECT count(*) FROM turns')).rows, beforeLate.rows);
       });
 
       await t.test('parallel source dispatch creates one turn and one drain job', async () => {

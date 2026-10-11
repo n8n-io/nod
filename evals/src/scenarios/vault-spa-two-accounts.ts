@@ -24,15 +24,22 @@ export default scenario({
   seconds: 600,
   user: { approve: true },
   world() {
-    const state = { logins: [] as string[], failures: 0, loads: 0 };
-    const site: Site = ({ url, form }) => {
-      if (url.pathname === '/login') {
+    const state = { logins: [] as string[], events: [] as string[], failures: 0, loads: 0 };
+    const site: Site = ({ url, form, request }) => {
+      if (url.pathname === '/logout' && request.method === 'POST') {
+        state.events.push('logout');
+        return { headers: { 'content-type': 'application/json' }, body: '{}' };
+      }
+      if (url.pathname === '/login' && request.method === 'POST') {
         const account = accounts.find(
           (item) =>
             item.username === form.get('username') && item.password === form.get('password'),
         );
         if (!account) state.failures++;
-        else state.logins.push(account.username);
+        else {
+          state.logins.push(account.username);
+          state.events.push(account.username);
+        }
         return {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(
@@ -57,7 +64,7 @@ export default scenario({
             const result = await fetch('/login', {method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({username,password})}).then(response => response.json());
             if (result.error) { app.innerHTML = '<p>Sign-in failed</p>'; return; }
             app.innerHTML = '<h1>' + result.name + '</h1><p>Weekly active users: ' + result.count + '</p><button>Sign out</button>';
-            app.querySelector('button').onclick = start;
+            app.querySelector('button').onclick = async () => { await fetch('/logout', {method:'POST'}); start(); };
           };
         };
       }
@@ -94,6 +101,15 @@ export default scenario({
       check('no-failed-sign-in', () => world.state.failures === 0, {
         aspect: 'process',
         failure: 'tool',
+      }),
+      check('sign-out-between-accounts', () => {
+        const first = world.state.events.indexOf(world.state.logins[0]!);
+        const second = world.state.events.indexOf(world.state.logins[1]!);
+        return (
+          first >= 0 &&
+          second > first &&
+          world.state.events.slice(first + 1, second).includes('logout')
+        );
       }),
       check(
         'private-values-absent-from-tools',

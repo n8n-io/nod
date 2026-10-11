@@ -568,6 +568,7 @@ export async function resumeAfterCredentials(turnId: string) {
     turnId,
     `credentials:${turnId}`,
     'The secure credential step has completed. Inspect the current browser and continue the request you were working on. Do not repeat completed external actions.',
+    true,
   );
 }
 
@@ -1083,7 +1084,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ? {
             requestPayment: fenced((input: unknown) =>
               dependencies.requestPayment!(ref, input, async (image) => {
-                await attach(image, 'checkout.jpg', 'image/jpeg', '', true, 'browser_screenshot');
+                if (turn.channel === 'web')
+                  await attach(image, 'checkout.jpg', 'image/jpeg', '', true, 'browser_screenshot');
               }),
             ),
           }

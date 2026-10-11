@@ -916,6 +916,7 @@ test('PIN and semantic login identifier requests never reach chat', async () => 
     'Enter the API key to continue.',
     'What is your card number?',
     'Send me your card details and the CVC.',
+    'Enter your CVC2.',
     "What's your card's expiry date?",
   ];
   for (const text of requests) assert.equal(requestsPrivateInput(text), true, text);

@@ -38,6 +38,8 @@ import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
 import { daysAgo, inDays, localDate, localTime, nextWeekOn } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
+import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
+import { paymentScenario } from '../src/world/checkout.ts';
 
 const manifest: RunManifest = {
   label: 't',
@@ -839,6 +841,88 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
   }
   assert.equal(dns.promises.lookup, originalLookup);
   assert.equal(globalThis.fetch, originalFetch);
+});
+
+test('the two-account fixture serves navigation and requires a logout between accepted logins', async () => {
+  const world = twoAccounts.world({ now: Date.now });
+  const sites = await serveSites(world.sites!);
+  const host = Object.keys(world.sites!)[0]!;
+  const request = (path: string, form?: { username: string; password: string }) =>
+    fetch(`http://127.0.0.1:${sites.port}${path}`, {
+      headers: { 'x-fixture-host': host },
+      ...(form ? { method: 'POST', body: new URLSearchParams(form) } : {}),
+    });
+  const signOut = twoAccounts.expect(world).find((item) => item.id === 'sign-out-between-accounts');
+  assert.ok(signOut?.kind === 'check');
+  const noFailures = twoAccounts.expect(world).find((item) => item.id === 'no-failed-sign-in');
+  assert.ok(noFailures?.kind === 'check');
+  try {
+    assert.match(await (await request('/login')).text(), /Summit reports/);
+    assert.equal((await noFailures.check({} as Run)).pass, true);
+    for (const account of world.logins!)
+      await request('/login', { username: account.username, password: account.password });
+    assert.equal((await signOut.check({} as Run)).pass, false);
+    const next = twoAccounts.world({ now: Date.now });
+    const nextSites = await serveSites(next.sites!);
+    try {
+      for (const [index, account] of next.logins!.entries()) {
+        if (index)
+          await fetch(`http://127.0.0.1:${nextSites.port}/logout`, {
+            method: 'POST',
+            headers: { 'x-fixture-host': host },
+          });
+        await fetch(`http://127.0.0.1:${nextSites.port}/login`, {
+          method: 'POST',
+          headers: { 'x-fixture-host': host },
+          body: new URLSearchParams({ username: account.username, password: account.password }),
+        });
+      }
+      const passed = twoAccounts.expect(next).find((item) => item.id === signOut.id);
+      assert.ok(passed?.kind === 'check');
+      assert.equal((await passed.check({} as Run)).pass, true);
+    } finally {
+      await nextSites.close();
+    }
+  } finally {
+    await sites.close();
+  }
+});
+
+test('incomplete checkout posts do not count as accepted card submissions', async () => {
+  const scenario = paymentScenario('fixture', 'Fixture');
+  const world = scenario.world({ now: Date.now });
+  const sites = await serveSites(world.sites!);
+  const host = Object.keys(world.sites!)[0]!;
+  const request = (fields: Record<string, string>) =>
+    fetch(`http://127.0.0.1:${sites.port}/checkout`, {
+      method: 'POST',
+      headers: { 'x-fixture-host': host },
+      body: new URLSearchParams(fields),
+      redirect: 'manual',
+    });
+  try {
+    assert.equal((await request({ id: 'c-100' })).status, 422);
+    assert.match(scenario.evidence!({ interactions: [] } as unknown as Run, world), /Attempts: 0/);
+    const card = world.cards![0]!;
+    assert.equal(
+      (
+        await request({
+          id: 'c-100',
+          card: card.cardNumber,
+          expiry: '1230',
+          cvc: card.securityCode!,
+          address: 'Synthetic address',
+        })
+      ).status,
+      303,
+    );
+    assert.match(
+      scenario.evidence!({ interactions: [] } as unknown as Run, world),
+      /Orders: 1\. Attempts: 1/,
+    );
+  } finally {
+    await sites.close();
+  }
 });
 
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
