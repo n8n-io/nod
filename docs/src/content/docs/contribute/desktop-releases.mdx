@@ -66,7 +66,7 @@ Private releases use the configured n8n download service for first-run downloads
 
 </Steps>
 
-There's no daily release, and a normal merge to `main` doesn't publish one. The [capability evals](/contribute/evals/) don't gate publication.
+There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
 ## Inspect or recover a build
 
