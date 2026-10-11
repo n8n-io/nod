@@ -5,7 +5,7 @@ import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { VaultDetails } from '../src/web/components/vault-details.tsx';
-import { Credentials } from '../src/web/pages/credentials.tsx';
+import { Credentials, Payment } from '../src/web/pages/credentials.tsx';
 import { Vault } from '../src/web/pages/vault.tsx';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
@@ -26,6 +26,7 @@ import {
   openCredential,
   sealCredential,
   type CredentialInjection,
+  type VaultUse,
 } from '../src/server/vault.ts';
 import type {
   CredentialRequest,
@@ -253,7 +254,7 @@ test(
           secondSettled = true;
         });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      assert.equal(secondSettled, false);
+      assert.equal(secondSettled, true);
       complete();
       assert.equal((await first).statusCode, 200);
       assert.equal((await second).statusCode, 409);
@@ -327,7 +328,7 @@ test(
 );
 
 test(
-  'OTP failures return safe errors, allow fresh input, and never persist the code',
+  'OTP failures are uncertain, cannot replay, and never persist the code',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
@@ -364,11 +365,24 @@ test(
         passwordSelector: '#code',
       });
       await wait(otpTask);
-      const url = request.url.replace('/vault/', '/api/credential-requests/');
+      let url = request.url.replace('/vault/', '/api/credential-requests/');
       const failed = await app.inject({ method: 'POST', url, payload: { code: '123456' } });
       assert.equal(failed.statusCode, 502);
       assert.equal(failed.body.includes('123456'), false);
-      assert.equal((await app.inject({ url })).json().status, 'pending');
+      assert.equal((await app.inject({ url })).json().status, 'uncertain');
+      assert.equal(
+        (await app.inject({ method: 'POST', url, payload: { code: '789012' } })).statusCode,
+        409,
+      );
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [otpTask.turnId]);
+      const fresh = await vault.request(otpTask, 'local-development', {
+        origin: 'https://example.com',
+        label: 'Verification',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      url = fresh.url.replace('/vault/', '/api/credential-requests/');
+      await wait(otpTask);
       assert.equal(
         (await app.inject({ method: 'POST', url, payload: { code: '789012' } })).statusCode,
         200,
@@ -485,13 +499,14 @@ test(
         200,
       );
       assert.equal(attempts, 3);
+      const continued = await resume(taskInterrupted);
+      assert.equal(
+        await restarted.fillSaved(continued, 'local-development', saved.json().id, input),
+        true,
+      );
+      assert.equal(attempts, 4);
       await assert.rejects(
-        restarted.fillSaved(
-          await resume(taskInterrupted),
-          'local-development',
-          saved.json().id,
-          input,
-        ),
+        restarted.fillSaved(continued, 'local-development', saved.json().id, input),
         /fresh credentials/,
       );
     } finally {
@@ -664,21 +679,34 @@ test(
   },
 );
 
-async function vaultFixture() {
+async function vaultFixture(
+  max = 10,
+  onOwnerUse?: NonNullable<Parameters<typeof createVault>[1]['onOwnerUse']>,
+) {
   const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
     options: `-c search_path=${schema}`,
+    max,
+    connectionTimeoutMillis: 1000,
   });
   const seeded = await seedTurns(pool);
   const app = Fastify();
   const calls = { injected: 0, resumed: [] as string[], retried: [] as string[] };
   let hold = Promise.resolve();
   let entered = () => {};
+  let used = async (_use: VaultUse, _client: pg.PoolClient) => {};
+  let inspecting = async () => ({
+    origin: 'https://example.com',
+    url: 'https://example.com/login',
+  });
   const vault = await createVault(pool, {
+    onOwnerUse,
+    onUse: (use, client) => used(use, client),
     keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
+    page: () => inspecting(),
     inject: async () => {
       calls.injected++;
       entered();
@@ -717,7 +745,26 @@ async function vaultFixture() {
     calls,
     link,
     submit,
+    recordUse: (record: typeof used) => {
+      used = record;
+    },
     status: async (url: string) => (await app.inject({ url })).json().status,
+    holdInspection: () => {
+      let release!: () => void;
+      let reached!: () => void;
+      const started = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      inspecting = async () => {
+        reached();
+        await hold;
+        return { origin: 'https://example.com', url: 'https://example.com/login' };
+      };
+      return { started, release };
+    },
     holdInjection: () => {
       let release = () => {};
       hold = new Promise<void>((resolve) => {
@@ -808,7 +855,7 @@ test(
 );
 
 test(
-  'credential submission and creation serialize on the thread lock',
+  'credential claims commit before browser entry and do not hold the thread row lock',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const f = await vaultFixture();
@@ -826,24 +873,139 @@ test(
         return value;
       });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      assert.equal(created, false);
+      assert.equal(created, true);
       gate.release();
       assert.equal((await submitted).statusCode, 200);
       const nextUrl = await creating;
       assert.deepEqual(
         (
-          await f.pool.query('SELECT turn_id,status FROM credential_requests ORDER BY turn_id=$1', [
-            next.turnId,
-          ])
+          await f.pool.query(
+            'SELECT r.turn_id,coalesce(v.status,r.status) AS status FROM credential_requests r LEFT JOIN vault_uses v ON v.id=r.id ORDER BY r.turn_id=$1',
+            [next.turnId],
+          )
         ).rows,
         [
-          { turn_id: waiting.turnId, status: 'filled' },
+          { turn_id: waiting.turnId, status: 'submitted' },
           { turn_id: next.turnId, status: 'pending' },
         ],
       );
       await f.wait(next);
       assert.equal(await f.status(nextUrl), 'pending');
       assert.equal(await f.status(url), 'filled');
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test(
+  'credential preflight releases database locks and failed completion has one durable outcome',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const f = await vaultFixture();
+    try {
+      const turn = await f.turn();
+      const url = await f.link(turn);
+      await f.wait(turn);
+      const gate = f.holdInspection();
+      const submitting = f.submit(url);
+      await gate.started;
+      const client = await f.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM turns WHERE id=$1 FOR UPDATE NOWAIT', [turn.turnId]);
+        await client.query('ROLLBACK');
+        await f.pool
+          .query(`CREATE FUNCTION reject_selection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Synthetic completion failure'; END $$;
+      CREATE TRIGGER reject_selection BEFORE INSERT ON credential_account_selections FOR EACH ROW EXECUTE FUNCTION reject_selection()`);
+      } finally {
+        client.release();
+        gate.release();
+      }
+      assert.equal((await submitting).statusCode, 502);
+      assert.equal(f.calls.injected, 1);
+      assert.equal(await f.status(url), 'uncertain');
+      assert.deepEqual(
+        (
+          await f.pool.query(
+            'SELECT r.status AS request_status,v.status AS operation_status FROM credential_requests r JOIN vault_uses v ON v.id=r.id',
+          )
+        ).rows,
+        [{ request_status: 'consumed', operation_status: 'uncertain' }],
+      );
+      assert.equal((await f.submit(url)).statusCode, 409);
+      assert.equal(f.calls.injected, 1);
+      assert.deepEqual(f.calls.resumed, []);
+      assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 200);
+      assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
+      assert.equal(await f.status(url), 'expired');
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test(
+  'credential completion and card permission record activity with one connection and roll back on failure',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const { createVaultAccess } = await import('../src/server/vault-access.ts');
+    let access: Awaited<ReturnType<typeof createVaultAccess>>;
+    const f = await vaultFixture(1, (entry, client) => access.ownerUse(entry, client));
+    try {
+      await f.pool.query(
+        "ALTER TABLE turns ADD COLUMN prompt text NOT NULL DEFAULT 'Synthetic sign-in'",
+      );
+      access = await createVaultAccess(f.pool, {
+        ownerId: 'local-development',
+        check: async () => ({ allowed: true, reason: 'asked' }),
+      });
+      f.recordUse((use, client) =>
+        access.used(use, { origin: use.origin, reason: use.reason, itemId: use.entryId }, client),
+      );
+      const turn = await f.turn();
+      const url = await f.link(turn);
+      await f.wait(turn);
+      assert.equal((await f.submit(url)).statusCode, 200);
+      assert.equal(await f.status(url), 'filled');
+      assert.equal((await access.activity({})).entries.length, 1);
+      await f.pool
+        .query(`CREATE FUNCTION reject_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.status='submitted' THEN RAISE EXCEPTION 'Synthetic outcome failure'; END IF;
+        RETURN NEW; END $$;
+        CREATE TRIGGER reject_outcome BEFORE UPDATE ON vault_uses FOR EACH ROW EXECUTE FUNCTION reject_outcome()`);
+      const next = await f.turn();
+      const nextUrl = await f.link(next);
+      await f.wait(next);
+      assert.equal((await f.submit(nextUrl)).statusCode, 502);
+      assert.equal(await f.status(nextUrl), 'uncertain');
+      assert.equal((await access.activity({})).entries.length, 1);
+      assert.equal(f.calls.injected, 2);
+      assert.deepEqual(f.calls.resumed, [turn.turnId]);
+      const saved = await f.app.inject({
+        method: 'POST',
+        url: '/api/vault',
+        payload: {
+          kind: 'card',
+          label: 'Synthetic card',
+          cardholder: 'Synthetic Owner',
+          cardNumber: '4242424242424242',
+          expiryMonth: 8,
+          expiryYear: new Date().getUTCFullYear() + 3,
+        },
+      });
+      assert.equal(saved.statusCode, 200, saved.body);
+      const cardId = saved.json<VaultCardEntry>().id;
+      await f.vault.setDoItForMe(cardId, true);
+      assert.equal((await access.activity({})).entries.length, 2);
+      await f.pool
+        .query(`CREATE FUNCTION reject_permission() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.action='permission' THEN RAISE EXCEPTION 'Synthetic permission failure'; END IF;
+        RETURN NEW; END $$;
+        CREATE TRIGGER reject_permission BEFORE INSERT ON vault_activity FOR EACH ROW EXECUTE FUNCTION reject_permission()`);
+      await assert.rejects(f.vault.setDoItForMe(cardId, false));
+      assert.equal((await f.vault.paymentCards())[0]!.choice, true);
+      assert.equal((await access.activity({})).entries.length, 2);
     } finally {
       await f.close();
     }
@@ -1090,6 +1252,78 @@ test(
       );
 
       await t.test(
+        'one task can use two saved accounts after each sign-in completes without replay',
+        async () => {
+          await addTask('two-accounts', 'password');
+          const turn = task('two-accounts');
+          const combined = { ...input('password'), usernameSelector: '#account' };
+          const before = injections.length;
+          assert.equal(await vault.fillSaved(turn, 'local-development', first.id, combined), true);
+          assert.equal(await vault.fillSelected(turn, 'local-development', combined), undefined);
+          assert.equal(await vault.fillSaved(turn, 'local-development', second.id, combined), true);
+          assert.deepEqual(
+            injections.slice(before).map((entry) => entry.username),
+            ['same-first@example.test', 'same-second@example.test'],
+          );
+          await assert.rejects(vault.fillSaved(turn, 'local-development', first.id, combined));
+          await assert.rejects(vault.fillSaved(turn, 'local-development', second.id, combined));
+          assert.equal(injections.length, before + 2);
+          await addTask('staged-account');
+          await vault.fillSaved(task('staged-account'), 'local-development', first.id, input());
+          await assert.rejects(
+            vault.fillSaved(
+              task('staged-account'),
+              'local-development',
+              second.id,
+              input('password'),
+            ),
+          );
+          assert.equal(injections.length, before + 3);
+        },
+      );
+
+      await t.test(
+        'a completed account does not restrict the next secure account choice',
+        async () => {
+          await addTask('next-secure-account', 'password');
+          const turn = task('next-secure-account');
+          const combined = { ...input('password'), usernameSelector: '#account' };
+          await vault.fillSaved(turn, 'local-development', first.id, combined);
+          const request = await vault.request(turn, 'local-development', combined);
+          await pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
+            [turn.turnId],
+          );
+          const url = request.url.replace('/vault/', '/api/credential-requests/');
+          const available = (await describe(url)).savedEntries;
+          assert.ok(available?.some((entry) => entry.id === second.id));
+          assert.equal(
+            available?.some((entry) => entry.id === first.id),
+            false,
+          );
+          const before = injections.length;
+          const response = await app.inject({
+            method: 'POST',
+            url: `${url}/saved`,
+            payload: { entryId: second.id },
+          });
+          assert.equal(response.statusCode, 200);
+          assert.equal(injections.length, before + 1);
+          assert.equal(injections.at(-1)?.username, 'same-second@example.test');
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: `${url}/saved`,
+                payload: { entryId: second.id },
+              })
+            ).statusCode,
+            409,
+          );
+        },
+      );
+
+      await t.test(
         'combined sign-in pages allow a different account than the saved one already chosen',
         async () => {
           await addTask('combined-different');
@@ -1228,51 +1462,64 @@ test(
       (await pool.query('SELECT id,selectors FROM credential_requests WHERE turn_id=$1', [turnId]))
         .rows[0];
     try {
-      for (const kind of ['identifier', 'password', 'otp'] as const) {
-        await t.test(`${kind} fills the chosen field after a restart`, async () => {
-          pageOrigin = origin;
-          const turn = await turns.turn();
-          const raw = {
-            origin,
-            label: 'Synthetic sign-in',
-            kind,
-            ...(kind !== 'otp' ? { usernameSelector: '@e3' } : {}),
-            ...(kind !== 'identifier'
-              ? { passwordSelector: kind === 'otp' ? '.code-digit' : '#entry' }
-              : {}),
-          };
-          const request = await vault.request(turn, 'local-development', raw);
-          await turns.wait(turn);
-          const before = await stored(turn.turnId);
-          const selectedKey = kind === 'identifier' ? 'usernameSelector' : 'passwordSelector';
-          assert.equal(before.selectors[selectedKey], raw[selectedKey]);
-          await app.close();
-          app = Fastify();
-          vault = await createVault(pool, options);
-          vault.registerRoutes(app);
-          const url = request.url.replace('/vault/', '/api/credential-requests/');
-          if (kind === 'otp')
-            assert.deepEqual(
-              await vault.submitChatCode('local-development', turn.turnId, '001234', before.id),
-              { status: 'submitted' },
-            );
-          else {
-            const response = await app.inject({
-              method: 'POST',
-              url,
-              payload: {
-                username: 'synthetic-member',
-                ...(kind === 'password'
-                  ? { label: 'Fixture login', password: 'synthetic-password' }
-                  : {}),
-              },
-            });
-            assert.equal(response.statusCode, 200, response.body);
-          }
-          assert.equal(injections.at(-1)?.kind, kind);
-          assert.equal(injections.at(-1)?.[selectedKey], raw[selectedKey]);
-          if (kind === 'password') assert.equal(injections.at(-1)?.usernameSelector, '@e3');
-        });
+      for (const { kind, passwordSelector } of [
+        { kind: 'identifier' },
+        { kind: 'password', passwordSelector: '#entry' },
+        { kind: 'otp', passwordSelector: '.code-digit' },
+        { kind: 'otp', passwordSelector: ['@e1', '@e2', '@e3', '@e4', '@e5', '@e6'] },
+      ] as const) {
+        await t.test(
+          `${kind} fills the chosen fields after a restart: ${passwordSelector}`,
+          async () => {
+            pageOrigin = origin;
+            const turn = await turns.turn();
+            const raw = {
+              origin,
+              label: 'Synthetic sign-in',
+              kind,
+              ...(kind !== 'otp' ? { usernameSelector: '@e3' } : {}),
+              ...(kind !== 'identifier'
+                ? {
+                    passwordSelector:
+                      typeof passwordSelector === 'string'
+                        ? passwordSelector
+                        : [...passwordSelector!],
+                  }
+                : {}),
+            };
+            const request = await vault.request(turn, 'local-development', raw);
+            await turns.wait(turn);
+            const before = await stored(turn.turnId);
+            const selectedKey = kind === 'identifier' ? 'usernameSelector' : 'passwordSelector';
+            assert.deepEqual(before.selectors[selectedKey], raw[selectedKey]);
+            await app.close();
+            app = Fastify();
+            vault = await createVault(pool, options);
+            vault.registerRoutes(app);
+            const url = request.url.replace('/vault/', '/api/credential-requests/');
+            if (kind === 'otp')
+              assert.deepEqual(
+                await vault.submitChatCode('local-development', turn.turnId, '001234', before.id),
+                { status: 'submitted' },
+              );
+            else {
+              const response = await app.inject({
+                method: 'POST',
+                url,
+                payload: {
+                  username: 'synthetic-member',
+                  ...(kind === 'password'
+                    ? { label: 'Fixture login', password: 'synthetic-password' }
+                    : {}),
+                },
+              });
+              assert.equal(response.statusCode, 200, response.body);
+            }
+            assert.equal(injections.at(-1)?.kind, kind);
+            assert.deepEqual(injections.at(-1)?.[selectedKey], raw[selectedKey]);
+            if (kind === 'password') assert.equal(injections.at(-1)?.usernameSelector, '@e3');
+          },
+        );
       }
       await t.test('a page on another origin blocks requests and submission', async () => {
         pageOrigin = origin;
@@ -1317,6 +1564,7 @@ test(
           for (const selectors of [
             {},
             { usernameSelector: '#entry', passwordSelector: '#entry' },
+            { passwordSelector: ['@e1', '@e2'] },
           ]) {
             await assert.rejects(
               vault.request(turn, 'local-development', {
@@ -1325,9 +1573,18 @@ test(
                 kind: 'password',
                 ...selectors,
               }),
-              /visible sign-in field|different fields/,
+              /visible sign-in field|different fields|each code field/,
             );
           }
+          await assert.rejects(
+            vault.request(turn, 'local-development', {
+              origin,
+              label: 'Synthetic code',
+              kind: 'otp',
+              passwordSelector: ['@e1', '@e1'],
+            }),
+            /each code field/,
+          );
           assert.equal(await stored(turn.turnId), undefined);
           assert.equal(injections.length, before);
         },
@@ -1511,28 +1768,12 @@ test(
             headers,
             payload: { ...input, label: 'Hosted', securityCode: '123' },
           });
-          assert.equal(created.statusCode, 200);
+          assert.equal(created.statusCode, 403);
           assert.equal(
-            (await read(created.json().id, 'details', hosted)).json().hasSecurityCode,
-            false,
+            (await pool.query("SELECT id FROM vault_cards WHERE label='Hosted'")).rowCount,
+            0,
           );
-          assert.equal((await read(created.json().id, 'security-code', hosted)).statusCode, 404);
-          const edited = await update(
-            remembered.id,
-            {
-              kind: 'card',
-              label: 'Remembered',
-              cardholder: input.cardholder,
-              expiryMonth: 12,
-              expiryYear,
-            },
-            hosted,
-          );
-          assert.equal(edited.statusCode, 200, edited.body);
-          assert.equal(
-            (await read(remembered.id, 'details', hosted)).json().hasSecurityCode,
-            false,
-          );
+          assert.equal((await update(remembered.id, input, hosted)).statusCode, 403);
         } finally {
           await hosted.close();
         }
@@ -2049,13 +2290,9 @@ test(
         async () => {
           await begin('interrupted');
           unavailable = true;
-          assert.equal(
-            await vault.fillSelected(
-              task('interrupted'),
-              'local-development',
-              requestInput('password'),
-            ),
-            false,
+          await assert.rejects(
+            vault.fillSelected(task('interrupted'), 'local-development', requestInput('password')),
+            /private operation did not finish/,
           );
           unavailable = false;
           const selected = (
@@ -2170,7 +2407,7 @@ test(
         const before = injections.length;
         assert.equal(
           await vault.fillSelected(turn, 'local-development', requestInput('password')),
-          false,
+          undefined,
         );
         assert.equal(injections.length, before);
       });
@@ -2244,9 +2481,9 @@ test(
           const turn = task(name);
           const before = injections.length;
           unavailableIdentifier = true;
-          assert.equal(
-            await vault.fillSelected(turn, 'local-development', requestInput('identifier')),
-            false,
+          await assert.rejects(
+            vault.fillSelected(turn, 'local-development', requestInput('identifier')),
+            /private operation did not finish/,
           );
           unavailableIdentifier = false;
           assert.equal(injections.length, before + 1);
@@ -2412,6 +2649,8 @@ test(
     const pool = new pg.Pool({
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
+      max: 1,
+      connectionTimeoutMillis: 1000,
     });
     const headers = {
       host: 'localhost:4310',
@@ -2424,7 +2663,7 @@ test(
     try {
       await pool.query(`
         CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
-        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running');
+        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
       `);
       const vault = await createVault(pool, {
@@ -2447,9 +2686,11 @@ test(
       let elsewhere: string | undefined;
       let captureFails = false;
       let failFill = false;
+      let duringFill = async () => {};
       const make = (local: boolean) =>
         createPayments(pool, {
           ownerId: 'local-development',
+          uses: vault.uses,
           local,
           policy: async () => policy,
           page: async () => ({ origin: new URL(url).origin, url }),
@@ -2471,12 +2712,17 @@ test(
           },
           cards: vault.paymentCards,
           card: vault.paymentCard,
-          remember: async (id, on, securityCode) => {
+          remember: async (id, on) => {
             remembered.push([id, on]);
-            return vault.setDoItForMe(id, on, securityCode);
+            return vault.setDoItForMe(id, on);
+          },
+          keepCode: async (id, code, version) => {
+            remembered.push([id, true]);
+            return vault.keepSecurityCode(id, code, version);
           },
           fill: async (input) => {
             if (failFill) throw new Error('Synthetic stale field.');
+            await duringFill();
             fills.push(input);
           },
           resume: async (_turnId, prompt) => {
@@ -2487,6 +2733,7 @@ test(
           },
         });
       const payments = await make(true);
+      payments.registerRoutes(app);
       const expiryYear = new Date().getUTCFullYear() + 3;
       const save = async (label: string, cardNumber: string) => {
         const saved = await app.inject({
@@ -2507,12 +2754,26 @@ test(
       };
       const card = await save('Studio card', '4242 4242 4242 4242');
       const turn = { threadId: randomUUID(), turnId: randomUUID() };
-      const fields = { number: '@e4', expiry: '@e5', securityCode: '@e6', name: '@e3' };
+      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
+        turn.threadId,
+        'local-development',
+      ]);
+      await pool.query('INSERT INTO turns(id,owner_id,thread_id) VALUES($1,$2,$3)', [
+        turn.turnId,
+        'local-development',
+        turn.threadId,
+      ]);
+      const fields = {
+        number: '@e4',
+        expiry: { selector: '@e5', format: 'YYYY-MM' },
+        securityCode: '@e6',
+        name: '@e3',
+      };
       const order = { amount: '43.20', currency: 'eur', fields };
       const latest = async () =>
         (
           await pool.query<{ id: string; status: string }>(
-            'SELECT id,status FROM vault_payments ORDER BY created_at DESC LIMIT 1',
+            'SELECT p.id,coalesce(v.status,p.status) AS status FROM vault_payments p LEFT JOIN vault_uses v ON v.id=p.id::text ORDER BY p.created_at DESC LIMIT 1',
           )
         ).rows[0]!;
       const reply = async (code: string) =>
@@ -2531,13 +2792,23 @@ test(
         (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
         'unavailable',
       );
-      assert.equal(await reply('737'), 'submitted');
+      const firstPaymentId = (await latest()).id;
+      const responses = await Promise.all([
+        payments.submitCode(turn.turnId, '737', firstPaymentId),
+        payments.submitCode(turn.turnId, '737', firstPaymentId),
+      ]);
+      assert.deepEqual(responses.map((result) => result.status).sort(), [
+        'submitted',
+        'unavailable',
+      ]);
+      assert.equal(resumed.length, 1);
       assert.deepEqual(fills, [
         {
           threadId: turn.threadId,
           fields,
           document: 'loader-1',
           destinations: { number: shop, expiry: shop, securityCode: shop, name: shop },
+          submitSelector: undefined,
           card: {
             cardholder: 'Synthetic Cardholder',
             cardNumber: '4242424242424242',
@@ -2548,7 +2819,6 @@ test(
         },
       ]);
       assert.match(resumed.at(-1)!, /entered Visa ••4242 for €43\.20 at shop\.fixture\.test/);
-      assert.match(resumed.at(-1)!, /ask the owner once whether a yes should be enough/);
       assert.equal((await studio()).choice, null);
       assert.equal(await reply('737'), 'unavailable');
 
@@ -2559,19 +2829,20 @@ test(
       failFill = true;
       assert.equal(await reply('737'), 'unavailable');
       failFill = false;
-      assert.equal((await latest()).status, 'failed');
-      assert.match(resumed.at(-1)!, /nothing was entered/);
+      assert.equal((await latest()).status, 'uncertain');
+      assert.match(resumed.at(-1)!, /may have reached/);
       assert.equal(fills.length, 1);
 
+      await assert.rejects(payments.setting(turn, { doItForMe: true }), /confirmation/);
+      assert.equal((await studio()).doItForMe, false);
       assert.match(
-        await payments.setting(turn, { doItForMe: true }),
-        /keeps its security code the next time/,
+        await payments.setting(turn, { doItForMe: true }, true),
+        /keeps its security code at the next/,
       );
       const keep = await payments.request(turn, order);
       assert.match(keep.question, /Otto will keep it, so next time a yes is enough\.$/);
       assert.equal(await reply('737'), 'submitted');
       assert.equal((await studio()).doItForMe, true);
-      assert.doesNotMatch(resumed.at(-1)!, /ask the owner once/);
 
       elsewhere = 'https://pay.fixture.test';
       const yes = await payments.request(turn, order);
@@ -2592,7 +2863,7 @@ test(
       const failed = await payments.approve(turn, { paymentId: broken.paymentId! });
       failFill = false;
       assert.equal(failed.entered, false);
-      assert.match(failed.message, /nothing was entered/);
+      assert.match(failed.message, /may have reached/);
       elsewhere = 'null';
       await assert.rejects(payments.request(turn, order));
       elsewhere = undefined;
@@ -2612,12 +2883,38 @@ test(
       assert.equal(await reply('1234'), 'submitted');
       assert.equal(fills.at(-1)?.card.securityCode, '1234');
       assert.equal(remembered.length, changes);
-      await assert.rejects(payments.setting(turn, { doItForMe: true }), /only from a message/);
+      await assert.rejects(
+        payments.setting(turn, { doItForMe: true }, true),
+        /only from a message/,
+      );
 
       policy = { allowed: true, flagged: false, inOtto: false };
-      await assert.rejects(payments.request(turn, order), /approved only in the Otto app/);
-      await assert.rejects(payments.setting(turn, { doItForMe: true }), /only from a message/);
-      assert.match(await payments.setting(turn, { doItForMe: false }), /off for Visa ••4242/);
+      const linked = await payments.request(turn, order);
+      const linkedId = linked.url!.split('/').at(-1)!;
+      const securePath = `/api/payment-requests/${linkedId}`;
+      assert.equal(
+        (await app.inject({ method: 'GET', url: securePath, headers: { host: headers.host } }))
+          .statusCode,
+        401,
+      );
+      const described = await app.inject({ method: 'GET', url: securePath, headers });
+      assert.equal(described.statusCode, 200);
+      assert.equal(described.json().needsCode, false);
+      assert.equal(described.body.includes('4242424242424242'), false);
+      const beforeLink = fills.length;
+      const replies = await Promise.all([
+        app.inject({ method: 'POST', url: securePath, headers, payload: {} }),
+        app.inject({ method: 'POST', url: securePath, headers, payload: {} }),
+      ]);
+      assert.deepEqual(replies.map((response) => response.statusCode).sort(), [200, 409]);
+      assert.equal(fills.length, beforeLink + 1);
+      assert.match(resumed.at(-1)!, /Check whether the shop accepted/);
+      assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
+      await assert.rejects(
+        payments.setting(turn, { doItForMe: true }, true),
+        /only from a message/,
+      );
+      assert.match(await payments.setting(turn, { doItForMe: false }, true), /off for Visa ••4242/);
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
       policy = { allowed: false, reason: 'background' };
       await assert.rejects(payments.request(turn, order), /never pays/);
@@ -2642,28 +2939,332 @@ test(
       const asked = recorded.length;
       const hosted = await make(false);
       await assert.rejects(hosted.request(turn, { ...order, card: '4242' }), /Hosted Otto/);
-      await assert.rejects(hosted.setting(turn, { doItForMe: true }), /Hosted Otto/);
+      await assert.rejects(hosted.setting(turn, { doItForMe: true }, true), /Hosted Otto/);
       assert.equal(recorded.length, asked);
 
       assert.deepEqual(
         recorded.map((entry) => [entry.action, entry.reason]),
         [
           ['asked', 'payment'],
-          ['paid', 'code_typed'],
+          ['card', 'code_typed'],
           ['asked', 'payment'],
           ['asked', 'payment'],
+          ['uncertain', 'payment'],
           ['asked', 'payment'],
-          ['paid', 'code_typed'],
+          ['card', 'code_typed'],
           ['asked', 'payment'],
-          ['paid', 'said_yes'],
+          ['card', 'said_yes'],
           ['asked', 'payment'],
+          ['uncertain', 'payment'],
           ['asked', 'payment'],
-          ['paid', 'code_typed'],
-          ['held', 'chat_app'],
+          ['card', 'code_typed'],
+          ['asked', 'payment'],
+          ['card', 'said_yes'],
           ['held', 'background'],
           ['asked', 'payment'],
           ['asked', 'payment'],
         ],
+      );
+      policy = { allowed: true, flagged: false, inOtto: false };
+      const privateCode = await payments.request(turn, { ...order, card: card.id });
+      const codeId = privateCode.url!.split('/').at(-1)!;
+      const codePath = `/api/payment-requests/${codeId}`;
+      assert.equal(
+        (await app.inject({ method: 'POST', url: codePath, headers, payload: {} })).statusCode,
+        409,
+      );
+      const invalidCode = await app.inject({
+        method: 'POST',
+        url: codePath,
+        headers,
+        payload: { code: 'synthetic-invalid-code' },
+      });
+      assert.equal(invalidCode.statusCode, 400);
+      assert.doesNotMatch(invalidCode.body, /synthetic-invalid-code/);
+      const requests = new Set<Promise<Response>>();
+      const settle = async () => {
+        while (requests.size) await act(async () => void (await Promise.all(requests)));
+      };
+      setRequestAccount('local-development');
+      const view = await vaultPage(createElement(Payment, { id: codeId }), (path, init) => {
+        const request = (async () => {
+          const response = await app.inject({
+            method: (init.method ?? 'GET') as 'GET' | 'POST',
+            url: path,
+            headers,
+            ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
+          });
+          return new Response(response.body, {
+            status: response.statusCode,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        })();
+        requests.add(request);
+        void request.catch(() => undefined).finally(() => requests.delete(request));
+        return request;
+      });
+      try {
+        await settle();
+        const form = view.document.querySelector<HTMLFormElement>('form');
+        const code = form?.querySelector<HTMLInputElement>('input[name="code"]');
+        assert.ok(form);
+        assert.ok(code);
+        assert.equal(code.type, 'password');
+        code.value = '737';
+        const beforeCode = fills.length;
+        await act(async () => {
+          form.dispatchEvent(new view.window.Event('submit', { bubbles: true, cancelable: true }));
+        });
+        assert.equal(code.value, '');
+        await settle();
+        assert.equal(fills.length, beforeCode + 1);
+        assert.equal(fills.at(-1)?.card.securityCode, '737');
+        assert.equal(view.document.querySelector('form'), null);
+        assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
+        assert.doesNotMatch(resumed.at(-1)!, /737/);
+        assert.equal(
+          (await app.inject({ method: 'POST', url: codePath, headers, payload: { code: '737' } }))
+            .statusCode,
+          409,
+        );
+      } finally {
+        await view.close();
+        await Promise.allSettled(requests);
+        setRequestAccount(null);
+      }
+      const concurrent = await payments.request(turn, { ...order, card: card.id });
+      const concurrentId = concurrent.url!.split('/').at(-1)!;
+      const concurrentPath = `/api/payment-requests/${concurrentId}`;
+      const beforeConcurrent = { fills: fills.length, resumes: resumed.length };
+      const concurrentReplies = await Promise.all(
+        Array.from({ length: 16 }, () =>
+          app.inject({
+            method: 'POST',
+            url: concurrentPath,
+            headers,
+            payload: { code: '737' },
+          }),
+        ),
+      );
+      assert.equal(concurrentReplies.filter((response) => response.statusCode === 200).length, 1);
+      assert.equal(concurrentReplies.filter((response) => response.statusCode === 409).length, 15);
+      assert.deepEqual(
+        { fills: fills.length, resumes: resumed.length },
+        { fills: beforeConcurrent.fills + 1, resumes: beforeConcurrent.resumes + 1 },
+      );
+      assert.deepEqual(
+        (await pool.query('SELECT status FROM vault_uses WHERE id=$1', [concurrentId])).rows,
+        [{ status: 'submitted' }],
+      );
+      assert.ok(concurrentReplies.every((response) => !response.body.includes('737')));
+
+      const lost = await payments.request(turn, { ...order, card: card.id });
+      const lostPath = `/api/payment-requests/${lost.url!.split('/').at(-1)!}`;
+      const beforeLost = { fills: fills.length, resumes: resumed.length };
+      setRequestAccount('local-development');
+      const lostRequests = new Set<Promise<Response>>();
+      const settleLost = async () => {
+        while (lostRequests.size)
+          await act(async () => void (await Promise.allSettled(lostRequests)));
+      };
+      const lostView = await vaultPage(
+        createElement(Payment, { id: lost.url!.split('/').at(-1)! }),
+        (path, init) => {
+          const pending = (async () => {
+            const response = await app.inject({
+              method: (init.method ?? 'GET') as 'GET' | 'POST',
+              url: path,
+              headers,
+              ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
+            });
+            if (init.method === 'POST') {
+              assert.equal(response.statusCode, 200);
+              throw new TypeError('Synthetic lost response');
+            }
+            return Response.json(response.json(), { status: response.statusCode });
+          })();
+          lostRequests.add(pending);
+          void pending.catch(() => undefined).finally(() => lostRequests.delete(pending));
+          return pending;
+        },
+      );
+      try {
+        await settleLost();
+        const form = lostView.document.querySelector<HTMLFormElement>('form')!;
+        const code = form.querySelector<HTMLInputElement>('input[name="code"]')!;
+        code.value = '737';
+        await act(async () => {
+          form.dispatchEvent(
+            new lostView.window.Event('submit', { bubbles: true, cancelable: true }),
+          );
+        });
+        assert.equal(code.value, '');
+        await settleLost();
+        assert.equal(lostView.document.querySelector('form'), null);
+        assert.deepEqual(
+          { fills: fills.length, resumes: resumed.length },
+          { fills: beforeLost.fills + 1, resumes: beforeLost.resumes + 1 },
+        );
+        assert.equal(
+          (await app.inject({ method: 'POST', url: lostPath, headers, payload: { code: '737' } }))
+            .statusCode,
+          409,
+        );
+        assert.equal(fills.length, beforeLost.fills + 1);
+      } finally {
+        await lostView.close();
+        setRequestAccount(null);
+      }
+      const expired = await payments.request(turn, { ...order, card: card.id });
+      const expiredId = expired.url!.split('/').at(-1)!;
+      await pool.query(
+        "UPDATE vault_payments SET expires_at=now()-interval '1 second' WHERE id=$1",
+        [expiredId],
+      );
+      const beforeExpiry = fills.length;
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${expiredId}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        409,
+      );
+      assert.equal(fills.length, beforeExpiry);
+      await vault.setDoItForMe(card.id, true);
+      await payments.request(turn, { ...order, card: card.id });
+      duringFill = async () => {
+        await vault.setDoItForMe(card.id, false);
+      };
+      assert.equal(await reply('737'), 'submitted');
+      duringFill = async () => {};
+      assert.equal((await studio()).choice, false);
+      assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
+
+      await payments.request(turn, { ...order, card: card.id });
+      const changedPayment = (await latest()).id;
+      const changedCard = await app.inject({
+        method: 'PATCH',
+        url: `/api/vault/${card.id}`,
+        headers,
+        payload: {
+          kind: 'card',
+          label: 'Replacement card',
+          cardholder: 'Synthetic Cardholder',
+          cardNumber: '5555555555554444',
+          expiryMonth: 8,
+          expiryYear,
+        },
+      });
+      assert.equal(changedCard.statusCode, 200, changedCard.body);
+      const beforeChange = fills.length;
+      assert.equal(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/payment-requests/${changedPayment}`,
+            headers,
+          })
+        ).statusCode,
+        409,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${changedPayment}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        409,
+      );
+      assert.equal(fills.length, beforeChange);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM vault_uses WHERE id=$1', [changedPayment])).rowCount,
+        0,
+      );
+      const beforeStop = { fills: fills.length, resumes: resumed.length };
+      await payments.request(turn, { ...order, card: card.id });
+      const obsoletePayment = (await latest()).id;
+      const laterTurn = randomUUID();
+      await pool.query('INSERT INTO turns(id,owner_id,thread_id,status) VALUES($1,$2,$3,$4)', [
+        laterTurn,
+        'local-development',
+        turn.threadId,
+        'queued',
+      ]);
+      assert.equal(
+        (await app.inject({ url: `/api/payment-requests/${obsoletePayment}`, headers })).statusCode,
+        409,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${obsoletePayment}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        409,
+      );
+      assert.deepEqual({ fills: fills.length, resumes: resumed.length }, beforeStop);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM vault_uses WHERE id=$1', [obsoletePayment])).rowCount,
+        0,
+      );
+      await pool.query("UPDATE turns SET source='resume' WHERE id=$1", [laterTurn]);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${obsoletePayment}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        200,
+      );
+      await pool.query("UPDATE turns SET source='user' WHERE id=$1", [laterTurn]);
+      await pool.query('UPDATE turns SET background=true WHERE id=$1', [turn.turnId]);
+      await payments.request(turn, { ...order, card: card.id });
+      const parallelPayment = (await latest()).id;
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${parallelPayment}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        200,
+      );
+      await pool.query('DELETE FROM turns WHERE id=$1', [laterTurn]);
+      await pool.query('UPDATE turns SET background=false WHERE id=$1', [turn.turnId]);
+      const beforeCancelled = { fills: fills.length, resumes: resumed.length };
+      await payments.request(turn, { ...order, card: card.id });
+      const stoppedPayment = (await latest()).id;
+      await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${stoppedPayment}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        409,
+      );
+      assert.deepEqual({ fills: fills.length, resumes: resumed.length }, beforeCancelled);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM vault_uses WHERE id=$1', [stoppedPayment])).rowCount,
+        0,
       );
       assert.doesNotMatch(
         JSON.stringify(
@@ -3098,7 +3699,8 @@ test(
       false,
       true,
     ]);
-    assert.equal(read, 2);
+    assert.equal(injected.filter((value) => value.code).length, 2);
+    const afterConcurrentReads = read;
     for (const [id, change] of [
       [
         'wrong-recipient',
@@ -3152,11 +3754,11 @@ test(
       await start(id);
       await change(id);
       assert.equal(await fill(id), false, id);
-      assert.equal(read, 2, id);
+      assert.equal(read, afterConcurrentReads, id);
     }
     await start('wrong-owner');
     assert.equal(await vault.fillEmailCode(task('wrong-owner'), 'other', otpInput), false);
-    assert.equal(read, 2);
+    assert.equal(read, afterConcurrentReads);
     for (const [id, recipient] of [
       ['masked', 'o***@example.com'],
       ['masked-bullets', 'ow•••@example.com'],
@@ -3289,7 +3891,7 @@ test(
     await start('uncertain-submission');
     injectionFailure = true;
     const attemptsBeforeUncertain = injected.length;
-    assert.equal(await fill('uncertain-submission'), false);
+    await assert.rejects(fill('uncertain-submission'), /private operation did not finish/);
     assert.equal(await fill('uncertain-submission'), false);
     assert.equal(injected.length, attemptsBeforeUncertain + 1);
     injectionFailure = false;
@@ -3383,7 +3985,7 @@ test(
     const persisted = JSON.stringify([
       (await pool.query('SELECT * FROM credential_requests')).rows,
       (await pool.query('SELECT * FROM credential_account_selections')).rows,
-      (await pool.query('SELECT * FROM credential_autofill_attempts')).rows,
+      (await pool.query('SELECT * FROM vault_uses')).rows,
     ]);
     for (const secret of [
       code,
@@ -3899,7 +4501,7 @@ async function vaultPage(
 }
 
 test(
-  'a Vault save link opens an empty secure form and saves only the submitted owned login',
+  'Vault add links save only values entered in an empty owned form',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_vault_link_${randomUUID().replaceAll('-', '')}`;
@@ -3997,6 +4599,51 @@ test(
       }
       assert.deepEqual(await vault.list('another-owner'), []);
       assert.equal((await pool.query('SELECT * FROM credential_requests')).rowCount, 0);
+      await view.close();
+      view = undefined;
+      pageDataCache.clear();
+      view = await vaultPage(
+        createElement(Vault),
+        (path, init) => {
+          const request = (async () => {
+            const response = await app.inject({
+              method: (init.method ?? 'GET') as 'GET' | 'POST',
+              url: path,
+              ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
+            });
+            return Response.json(response.json(), { status: response.statusCode });
+          })();
+          requests.add(request);
+          void request.catch(() => undefined).finally(() => requests.delete(request));
+          return request;
+        },
+        'http://localhost:4310/vault?add=card',
+      );
+      const cardForm = view.document.querySelector<HTMLFormElement>('.vault-add-form');
+      assert.ok(cardForm);
+      assert.equal(view.window.location.search, '');
+      for (const [name, value] of Object.entries({
+        label: 'Synthetic manual card',
+        cardholder: 'Synthetic Owner',
+        cardNumber: '4242424242424242',
+        expiry: '12/30',
+      })) {
+        const field: HTMLInputElement | null = cardForm.querySelector(`input[name="${name}"]`);
+        assert.ok(field, name);
+        assert.equal(field.value, '');
+        field.value = value;
+      }
+      await act(async () => {
+        cardForm.dispatchEvent(
+          new view!.window.Event('submit', { bubbles: true, cancelable: true }),
+        );
+      });
+      await settle();
+      const cards = await vault.paymentCards();
+      assert.equal(cards.length, 1);
+      assert.equal((await vault.paymentCard(cards[0]!.id)).cardNumber, '4242424242424242');
+      assert.doesNotMatch(JSON.stringify(await vault.list()), /4242424242424242/);
+      assert.equal(cardForm.querySelector<HTMLInputElement>('input[name="cardNumber"]')!.value, '');
     } finally {
       await view?.close();
       await Promise.allSettled(requests);
@@ -4013,7 +4660,7 @@ test(
 test('Vault does not open or prefill a login from arbitrary query data', async () => {
   for (const query of [
     '',
-    '?add=card',
+    '?add=card&cardNumber=4242424242424242',
     '?add=login&origin=https%3A%2F%2Fexample.test',
     '?add=login&password=synthetic',
     '?add=login&add=login',
@@ -4477,3 +5124,67 @@ process.exit(0);
   });
   assert.equal(result.exitCode, 0, result.stderr);
 });
+
+test(
+  'a legacy Vault proves the old key before it creates a key check and concurrent saves keep one account',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    const schema = `test_vault_key_${randomUUID().replaceAll('-', '')}`;
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    try {
+      await seedTurns(pool);
+      const key = randomBytes(32);
+      const vault = await createVault(pool, {
+        keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
+        inject: async () => {},
+        resume: async () => {},
+        retry: async () => {},
+      });
+      vault.registerRoutes(app);
+      const input = {
+        origin: 'https://legacy.example.test',
+        label: 'Synthetic account',
+        username: 'synthetic@example.test',
+        password: 'Synthetic legacy value',
+      };
+      const first = await vault.saveLogin(input);
+      const wrong = checkedKeyStore(pool, {
+        id: 'wrong',
+        configured: true,
+        getKey: async () => randomBytes(32),
+      });
+      await assert.rejects(wrong.getKey(), /does not match existing data/);
+      assert.equal(
+        (await pool.query("SELECT to_regclass('vault_key_check') AS table_name")).rows[0]
+          .table_name,
+        null,
+      );
+      const valid = checkedKeyStore(pool, {
+        id: 'correct',
+        configured: true,
+        getKey: async () => key,
+      });
+      assert.deepEqual(await valid.getKey(), key);
+      assert.equal((await vault.readCredential(first.id)).secret.password, input.password);
+      await assert.rejects(wrong.getKey(), /does not match/);
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          vault.saveLogin({ ...input, password: `Synthetic replacement ${index}` }),
+        ),
+      );
+      assert.deepEqual(new Set(results.map((item) => item.id)), new Set([first.id]));
+      assert.equal((await pool.query('SELECT id FROM vault_entries')).rowCount, 1);
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);

@@ -605,7 +605,8 @@ async function initializeApplication(
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
     securityCodes: runtimeMode === 'local',
-    onUse: (use) =>
+    onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
+    onUse: (use, client) =>
       vaultAccess.used(
         { threadId: use.threadId, turnId: use.turnId },
         {
@@ -613,6 +614,7 @@ async function initializeApplication(
           reason: use.reason,
           ...(use.entryId ? { itemId: use.entryId } : {}),
         },
+        client,
       ),
     onForget: (origin) => vaultAccess.forget(origin),
   });
@@ -634,28 +636,31 @@ async function initializeApplication(
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
         : action === 'OTTO_vault_allow'
           ? vaultAccess.allow(provenance, args)
-          : action === 'OTTO_payment_approve'
-            ? payments.approve(provenance, args)
-            : action.startsWith('OTTO_')
-              ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-              : (async () => {
-                  const result = await integrations.executeApproved(ownerId, action, args, {
-                    threadId: provenance.threadId,
-                    turnId: provenance.turnId,
-                  });
-                  await ledger.action(provenance.turnId, action, args);
-                  const write = workspace.writeArtifact?.bind(workspace);
-                  const save =
-                    write &&
-                    (async (file: { name: string; bytes: Uint8Array }) => {
-                      const name = `${randomUUID()}-${basename(file.name)}`;
-                      await write(provenance.threadId, name, file.bytes);
-                      return name;
+          : action === 'OTTO_payment_setting'
+            ? payments.setting(provenance, args, true)
+            : action === 'OTTO_payment_approve'
+              ? payments.approve(provenance, args)
+              : action.startsWith('OTTO_')
+                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                : (async () => {
+                    const result = await integrations.executeApproved(ownerId, action, args, {
+                      threadId: provenance.threadId,
+                      turnId: provenance.turnId,
                     });
-                  return (await saveIntegrationFiles(result, save)).value;
-                })(),
+                    await ledger.action(provenance.turnId, action, args);
+                    const write = workspace.writeArtifact?.bind(workspace);
+                    const save =
+                      write &&
+                      (async (file: { name: string; bytes: Uint8Array }) => {
+                        const name = `${randomUUID()}-${basename(file.name)}`;
+                        await write(provenance.threadId, name, file.bytes);
+                        return name;
+                      });
+                    return (await saveIntegrationFiles(result, save)).value;
+                  })(),
     async (action, args) => {
-      if (action === 'OTTO_vault_allow' || action === 'OTTO_payment_approve') return;
+      if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
+        return;
       if (action.startsWith('OTTO_'))
         await personal.validateReview(action.slice('OTTO_'.length), args);
       else await integrations.prepare(ownerId, action, args);
@@ -704,20 +709,30 @@ async function initializeApplication(
     );
   async function permitVault(
     turn: TurnRef,
-    target: { origin: string; kind: 'sign_in' | 'session' | 'form'; account?: string },
+    target: {
+      origin: string;
+      kind: 'sign_in' | 'session' | 'form';
+      account?: string;
+      itemId?: string;
+      destinations?: string[];
+    },
   ): Promise<{ reason: VaultActivityReason } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);
     if (access.ok) return { reason: access.reason };
     if ('message' in access) throw new Error(access.message);
-    const result = await approvals.request(
-      turn,
-      'OTTO_vault_allow',
-      { origin: target.origin },
-      { confirm: true, question: access.question },
-    );
+    const args = {
+      origin: target.origin,
+      kind: target.kind,
+      ...(target.itemId ? { itemId: target.itemId } : {}),
+      ...(target.destinations?.length ? { destinations: target.destinations } : {}),
+    };
+    const result = await approvals.request(turn, 'OTTO_vault_allow', args, {
+      confirm: true,
+      question: access.question,
+    });
     if (result && typeof result === 'object' && 'requiresConfirmation' in result)
       return { question: String(result.question) };
-    await vaultAccess.allow(turn, { origin: target.origin });
+    await vaultAccess.allow(turn, args);
     return { reason: 'allowed' };
   }
   const trust = createTrust({
@@ -734,17 +749,19 @@ async function initializeApplication(
   vaultAccess = await createVaultAccess(pool, { ownerId, check: trust.signIn, refresh });
   payments = await createPayments(pool, {
     ownerId,
+    uses: vault.uses,
     local: runtimeMode === 'local',
     policy: trust.payment,
     page: (threadId) => computer.currentPage(threadId),
     destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
     capture: (threadId) => computer.checkoutImage(threadId),
     cards: () => vault.paymentCards(),
-    card: (id) => vault.paymentCard(id),
-    remember: (id, on, securityCode) => vault.setDoItForMe(id, on, securityCode),
+    card: (id, version, client) => vault.paymentCard(id, version, client),
+    remember: vault.setDoItForMe,
+    keepCode: vault.keepSecurityCode,
     fill: (input) => computer.fillCard(input),
     resume: resumeAfterPayment,
-    record: (turn, entry) => vaultAccess.record(turn, entry),
+    record: (turn, entry, client) => vaultAccess.record(turn, entry, client),
   });
   const userMessages = createUserMessageService({ confirmAction: approvals.acceptChat });
   if (options.workers !== false) {
@@ -792,9 +809,10 @@ async function initializeApplication(
         if (!target) return browserConnections.request(request, turn, signal, launch);
         const access = await permitVault(turn, target);
         if ('question' in access) return { [appConfirmation]: access.question };
-        await vaultAccess.track(turn.threadId, target.origin);
+        for (const origin of [target.origin, ...target.destinations])
+          await vaultAccess.track(turn.threadId, origin, `${target.kind}:${target.itemId}`);
         const result = await browserConnections.request(request, turn, signal, launch);
-        if (target.kind === 'session' && result.status === 'session_opened')
+        if (result.status === 'session_opened')
           await vaultAccess.record(turn, {
             action: 'session',
             origin: target.origin,
@@ -843,11 +861,20 @@ async function initializeApplication(
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
-      paymentSetting: (turn, input) => payments.setting(turn, input),
+      paymentSetting: async (turn, input) => {
+        const { args, question } = await payments.requestSetting(turn, input);
+        const result = await approvals.request(turn, 'OTTO_payment_setting', args, {
+          confirm: true,
+          question,
+        });
+        if (result && typeof result === 'object' && 'requiresConfirmation' in result)
+          return { [appConfirmation]: String(result.question) };
+        return String(result);
+      },
       requestPayment: async (turn, input, show) => {
         const result = await payments.request(turn, input);
         await show(result.image);
-        if (!result.paymentId) return { question: result.question };
+        if (!result.paymentId) return { question: result.question, url: result.url };
         const confirmation = await approvals.request(
           turn,
           'OTTO_payment_approve',
@@ -884,7 +911,12 @@ async function initializeApplication(
               : chosen
                 ? 'sign_in'
                 : 'form',
-          ...(chosen?.usernameHint ? { account: chosen.usernameHint } : {}),
+          ...(chosen
+            ? {
+                itemId: chosen.id,
+                ...(chosen.usernameHint ? { account: chosen.usernameHint } : {}),
+              }
+            : {}),
         });
         if ('question' in access) return { [appConfirmation]: access.question };
         const filled = async (itemId?: string) => {
@@ -907,9 +939,7 @@ async function initializeApplication(
         const selected = await vault.fillSelected(turn, ownerId, request);
         if (selected) return filled();
         if (selected === undefined && chosen) {
-          try {
-            if (await vault.fillSaved(turn, ownerId, chosen.id, request)) return filled(chosen.id);
-          } catch {}
+          if (await vault.fillSaved(turn, ownerId, chosen.id, request)) return filled(chosen.id);
         }
         return vault.request(turn, ownerId, request);
       },
@@ -1066,6 +1096,7 @@ async function initializeApplication(
     }).registerRoutes(app);
   }
   vault.registerRoutes(app);
+  payments.registerRoutes(app);
   vaultAccess.registerRoutes(app);
   browserConnections.registerRoutes(app);
   integrations.registerRoutes(app);

@@ -1,23 +1,12 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 
-function seal(key: Buffer, owner: string, id: string, value: string) {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(Buffer.from(JSON.stringify(['otto-app-grant-v1', owner, id])));
-  const bytes = Buffer.concat([cipher.update(value), cipher.final()]);
-  return Buffer.concat([nonce, cipher.getAuthTag(), bytes]).toString('base64');
-}
-
-function open(key: Buffer, owner: string, id: string, value: string) {
-  const bytes = Buffer.from(value, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
-  decipher.setAAD(Buffer.from(JSON.stringify(['otto-app-grant-v1', owner, id])));
-  decipher.setAuthTag(bytes.subarray(12, 28));
-  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString();
-}
+const seal = (key: Buffer, owner: string, id: string, value: string) =>
+  sealVaultValue(key, ['otto-app-grant-v1', owner, id], value);
+const open = (key: Buffer, owner: string, id: string, value: string) =>
+  openVaultValue(key, ['otto-app-grant-v1', owner, id], value);
 
 export async function createAppGrantVault(
   pool: Pool,

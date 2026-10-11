@@ -216,6 +216,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                     label: 'Example',
                     kind: 'password',
                     passwordSelector: '#password',
+                    submitSelector: '#submit',
                     message: 'Example needs your password.',
                     action: 'Add password',
                   },
@@ -1728,60 +1729,20 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
 
 // Runtime: credential guard in observations, one active turn, stop and shutdown drain.
 
-function browserFixture() {
-  const commands: string[][] = [];
-  const launches: string[][] = [];
-  const png = Buffer.from('fixture-png');
-  const dom = new JSDOM('<input id="password" type="password">', {
-    url: 'https://1.1.1.1/',
-    runScripts: 'outside-only',
-  });
-  dom.window.HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
-  const run: typeof runProcess = async (_executable, args, options) => {
-    launches.push(args);
-    const command = args.slice(args.indexOf('--idle-timeout') + 2);
-    commands.push(command);
-    let data: Record<string, unknown> = {};
-    if (command[0] === 'get')
-      data =
-        command[1] === 'url'
-          ? { url: 'https://1.1.1.1/' }
-          : {
-              value:
-                dom.window.document.querySelector(command[2])?.getAttribute(command[3]) ?? null,
-            };
-    if (command[0] === 'eval') data = { result: dom.window.eval(options?.input ?? '') };
-    if (command[0] === 'fill') {
-      const node = dom.window.document.querySelector<HTMLInputElement>(command[1]);
-      if (node) node.value = command[2];
-    }
-    if (command[0] === 'snapshot')
-      data = {
-        snapshot:
-          '- paragraph: Readable article body. fixture-secret\n- textbox "Password" [ref=e1]: fixture-secret\n- button "Continue" [ref=e2]',
-        refs: {
-          e1: { role: 'textbox', name: 'Password' },
-          e2: { role: 'button', name: 'Continue' },
-        },
-      };
-    if (command[0] === 'screenshot') await writeFile(command[1], png);
-    return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
-  };
-  return { run, commands, launches, png, dom };
-}
-
-test('computer observations retain body text, normalize controls, protect credentials and return screenshot bytes', async () => {
+test('computer observations normalize controls, protect credentials and return cached screenshot bytes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-computer-'));
-  const fixture = browserFixture();
+  const fixture = stagedLoginBrowser();
   const protocol: Record<string, unknown>[] = [];
   const computer = createAgentBrowserComputer({
     dataRoot: directory,
     run: fixture.run,
-    onDaemonCommand: (command) => protocol.push(command),
+    onDaemonCommand: (command) => {
+      protocol.push(command);
+    },
   });
   try {
     const page = await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/' });
-    assert.match(page.text, /Readable article body/);
+    assert.match(page.text, /textbox/);
     assert.deepEqual(
       protocol.filter((command) => command.action === 'snapshot'),
       [{ action: 'snapshot', compact: true }],
@@ -1789,30 +1750,30 @@ test('computer observations retain body text, normalize controls, protect creden
     await computer.injectCredentials({
       threadId: 'fixture',
       origin: 'https://1.1.1.1',
-      password: 'fixture-secret',
-      passwordSelector: '#password',
+      kind: 'identifier',
+      username: 'fixture-secret@example.test',
+      usernameSelector: '#account',
+      submitSelector: 'button',
     });
-    assert.equal(
-      fixture.dom.window.document.querySelector<HTMLInputElement>('#password')!.value,
-      'fixture-secret',
-    );
+    assert.equal(fixture.pages.get('fixture')!.entered.at(-1), 'fixture-secret@example.test');
     assert.equal(
       (await computer.act('fixture', { action: 'snapshot' })).text.includes('fixture-secret'),
       false,
     );
     for (const action of ['fill', 'type'] as const)
       await assert.rejects(
-        computer.act('fixture', { action, selector: '#password', text: 'other' }),
+        computer.act('fixture', { action, selector: '#account', text: 'other' }),
         /secure credential/,
       );
-    assert.deepEqual(await computer.screenshot('fixture'), fixture.png);
+    const image = await computer.screenshot('fixture');
+    assert.ok(image?.length);
+    assert.equal(image.includes(Buffer.from('fixture-secret')), false);
     await computer.close('fixture');
-    assert.deepEqual(await computer.screenshot('fixture'), fixture.png);
+    assert.deepEqual(await computer.screenshot('fixture'), image);
     assert.equal(computer.screenStatus?.('fixture').state, 'last_known');
-    assert.equal(fixture.commands.filter((command) => command[0] === 'close').length, 1);
+    assert.equal(fixture.pages.size, 0);
   } finally {
     await computer.dispose();
-    fixture.dom.window.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -11,6 +11,7 @@ import { originLabel } from '../lib/vault-name';
 import { Button, Notice } from './ui';
 
 const reasons: Record<VaultActivityReason, string> = {
+  owner: 'You requested it',
   asked: 'You asked',
   schedule: 'Schedule',
   always: 'Always for this site',
@@ -39,7 +40,10 @@ const icons = {
   code: Hash,
   held: Pause,
   asked: CircleHelp,
-  paid: CreditCard,
+  card: CreditCard,
+  uncertain: Pause,
+  permission: KeyRound,
+  reveal: KeyRound,
 };
 
 function title(entry: VaultActivityEntry) {
@@ -47,8 +51,16 @@ function title(entry: VaultActivityEntry) {
   const amount = entry.amount ? `${formatMoney(entry.amount)} ` : '';
   const card = entry.itemKind === 'card';
   switch (entry.action) {
-    case 'paid':
-      return `Paid ${amount}at ${site}`;
+    case 'card':
+      return `Submitted card for ${amount}at ${site}`;
+    case 'uncertain':
+      return `Result unknown at ${site}`;
+    case 'permission':
+      return card ? 'Changed payment permission' : `Changed access to ${site}`;
+    case 'reveal':
+      return card ? 'Revealed a saved card value' : `Revealed a saved value for ${site}`;
+    case 'session':
+      return `Opened a saved session on ${site}`;
     case 'code':
       return `Entered a code on ${site}`;
     case 'held':
@@ -56,7 +68,7 @@ function title(entry: VaultActivityEntry) {
     case 'asked':
       return card ? `Asked to pay ${amount}at ${site}` : `Asked to sign in to ${site}`;
     default:
-      return `Signed in to ${site}`;
+      return `Submitted a login to ${site}`;
   }
 }
 
@@ -196,17 +208,17 @@ export function VaultStatement({
             {signIns > 0 && (
               <>
                 {' '}
-                signed in <b>{times(signIns)}</b>
+                submitted logins <b>{times(signIns)}</b>
               </>
             )}
             {signIns > 0 && payments > 0 && ' and'}
             {payments > 0 && (
               <>
                 {' '}
-                paid <b>{times(payments)}</b>
+                submitted cards <b>{times(payments)}</b>
               </>
             )}
-            , all on your say-so.
+            . Check the site for each final result.
           </>
         ) : (
           'Otto hasn’t used your Vault this week.'

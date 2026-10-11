@@ -84,13 +84,15 @@ export interface CredentialInput {
   password?: string;
   code?: string;
   usernameSelector?: string;
-  passwordSelector?: string;
+  passwordSelector?: string | string[];
+  submitSelector?: string;
 }
+export type CardExpiryField = string | { selector: string; format: string; locale?: string };
 export interface CardFields {
   number: string;
-  expiry?: string;
-  expiryMonth?: string;
-  expiryYear?: string;
+  expiry?: CardExpiryField;
+  expiryMonth?: CardExpiryField;
+  expiryYear?: CardExpiryField;
   securityCode?: string;
   name?: string;
 }
@@ -99,6 +101,7 @@ export interface CardEntry {
   fields: CardFields;
   document: string;
   destinations: Partial<Record<keyof CardFields, string>>;
+  submitSelector?: string;
   card: {
     cardNumber: string;
     expiryMonth: number;
@@ -112,7 +115,7 @@ export interface CredentialSubmission {
 }
 export interface Computer {
   currentSession?(): { threadId: string; lastActivityAt: string } | undefined;
-  bindProfile?(threadId: string, profileId: string): Promise<void>;
+  bindProfile?(threadId: string, profileId: string, origins?: string[]): Promise<void>;
   deleteProfile?(profileId: string): Promise<void>;
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
   download?(

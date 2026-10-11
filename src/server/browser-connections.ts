@@ -15,6 +15,7 @@ const requestSchema = z.discriminatedUnion('action', [
       action: z.literal('connect'),
       url: z.url().max(2048),
       label: z.string().trim().min(1).max(100).optional(),
+      destinations: z.array(z.url().max(2048)).max(20).optional(),
     })
     .strict(),
   z
@@ -25,7 +26,14 @@ const requestSchema = z.discriminatedUnion('action', [
       signedIn: z.literal(true),
     })
     .strict(),
-  z.object({ action: z.literal('use'), url: z.url().max(2048), connectionId: idSchema }).strict(),
+  z
+    .object({
+      action: z.literal('use'),
+      url: z.url().max(2048),
+      connectionId: idSchema,
+      destinations: z.array(z.url().max(2048)).max(20).optional(),
+    })
+    .strict(),
 ]);
 
 type Row = {
@@ -140,8 +148,17 @@ export async function createBrowserConnections(
     if (!parsed.success)
       return { status: 'rejected' as const, code: 'invalid_browser_connection_arguments' };
     let address: URL;
+    let origins: string[];
     try {
       address = site(parsed.data.url);
+      origins = [
+        ...new Set([
+          address.origin,
+          ...('destinations' in parsed.data ? (parsed.data.destinations ?? []) : []).map(
+            (value) => site(value).origin,
+          ),
+        ]),
+      ];
     } catch {
       return { status: 'rejected' as const, code: 'invalid_browser_connection_arguments' };
     }
@@ -166,7 +183,7 @@ export async function createBrowserConnections(
       );
       let bound = false;
       try {
-        await browser.bindProfile(turn.threadId, profileId);
+        await browser.bindProfile(turn.threadId, profileId, origins);
         bound = true;
         const observation = await browser.act(
           turn.threadId,
@@ -221,9 +238,7 @@ export async function createBrowserConnections(
       }
       if (!['saved', 'needs_sign_in', 'pending'].includes(row.state) || !browser.bindProfile)
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-      if (name(address.origin) !== name(row.origin))
-        return { status: 'rejected' as const, code: 'browser_connection_origin_mismatch' };
-      await browser.bindProfile(turn.threadId, row.profile_id);
+      await browser.bindProfile(turn.threadId, row.profile_id, origins);
       const observation = await browser.act(
         turn.threadId,
         { action: 'open', url: address.href, ...launch },
@@ -309,23 +324,30 @@ export async function createBrowserConnections(
 
   async function target(
     raw: unknown,
-  ): Promise<{ origin: string; kind: 'session' | 'form' } | undefined> {
+  ): Promise<
+    { origin: string; kind: 'session'; itemId: string; destinations: string[] } | undefined
+  > {
     const parsed = requestSchema.safeParse(raw);
-    if (!parsed.success || parsed.data.action === 'save') return undefined;
+    if (!parsed.success || parsed.data.action !== 'use') return undefined;
     let address: URL;
+    let destinations: string[];
     try {
       address = site(parsed.data.url);
+      destinations = [
+        ...new Set((parsed.data.destinations ?? []).map((value) => site(value).origin)),
+      ].filter((origin) => origin !== address.origin);
     } catch {
       return undefined;
     }
-    if (parsed.data.action === 'connect') return { origin: address.origin, kind: 'form' };
     const row = (
       await pool.query<Pick<Row, 'origin'>>(
         'SELECT origin FROM browser_connections WHERE id=$1 AND owner_id=$2',
         [parsed.data.connectionId, options.ownerId],
       )
     ).rows[0];
-    return row ? { origin: row.origin, kind: 'session' } : undefined;
+    return row
+      ? { origin: address.origin, kind: 'session', itemId: parsed.data.connectionId, destinations }
+      : undefined;
   }
 
   async function sessions(): Promise<VaultSession[]> {

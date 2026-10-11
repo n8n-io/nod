@@ -13,4 +13,4 @@ Check before sharing:
 - DOCX and PPTX: use python-docx or python-pptx to check text, tables and slide count. For layout, convert with `soffice --headless --convert-to pdf --outdir .otto FILE`, then render pages as for PDF.
 - Charts: read the source data and inspect the PNG with read.
 
-Call share_file for each final file. Claim delivery only after success. Briefly describe the content and use in the final answer; include filenames only if requested.
+Call share_file for each final file. Claim delivery only after success. In the final answer, identify each requested document and where to find it. Use file names or clear descriptions; a file count alone does not describe the result.

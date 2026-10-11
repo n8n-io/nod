@@ -33,8 +33,14 @@ export type RuntimeObservation =
   | ModelUsageObservation;
 
 export type BrowserConnectionRequest =
-  | { action: 'connect'; url: string; connectionId?: string; label?: string }
-  | { action: 'use'; url: string; connectionId: string }
+  | {
+      action: 'connect';
+      url: string;
+      connectionId?: string;
+      label?: string;
+      destinations?: string[];
+    }
+  | { action: 'use'; url: string; connectionId: string; destinations?: string[] }
   | { action: 'save'; url: string; connectionId: string; signedIn: true };
 
 interface MessageAttachment {
@@ -130,13 +136,16 @@ export interface RuntimeContext {
     label: string;
     kind: CredentialKind;
     usernameSelector?: string;
-    passwordSelector?: string;
+    passwordSelector?: string | string[];
+    submitSelector?: string;
     emailCode?: boolean;
     emailRecipient?: string;
     savedLoginId?: string;
   }): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
-  requestPayment?(input: unknown): Promise<{ question: string } | { [appConfirmation]: string }>;
-  paymentSetting?(input: unknown): Promise<string>;
+  requestPayment?(
+    input: unknown,
+  ): Promise<{ question: string; url?: string } | { [appConfirmation]: string }>;
+  paymentSetting?(input: unknown): Promise<string | { [appConfirmation]: string }>;
   integration(
     action: string,
     args: Record<string, unknown>,

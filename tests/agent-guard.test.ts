@@ -620,6 +620,7 @@ test('attachments and credential reads mark the thread', async () => {
         label: 'Example',
         kind: 'password',
         passwordSelector: '@password',
+        submitSelector: '@submit',
         message: 'Example needs your password.',
         action: 'Sign in',
       });
@@ -641,6 +642,7 @@ test('attachments and credential reads mark the thread', async () => {
         label: 'Example',
         kind: 'password',
         passwordSelector: '@password',
+        submitSelector: '@submit',
         message: 'Example needs your password.',
         action: 'Sign in',
       });
@@ -1010,12 +1012,14 @@ test('secure credential pause prevents subsequent tools in the same execution se
       label: 'Example',
       kind: 'password' as const,
       passwordSelector: '@password',
+      submitSelector: '@submit',
     },
     {
       origin: 'https://example.com',
       label: 'Example',
       kind: 'otp' as const,
       passwordSelector: '@verification',
+      submitSelector: '@submit',
       emailCode: true,
     },
   ]) {
@@ -1065,6 +1069,7 @@ test('a chosen saved login reaches the credential broker without pausing the tur
     kind: 'password' as const,
     usernameSelector: '@account',
     passwordSelector: '@password',
+    submitSelector: '@submit',
     savedLoginId: randomUUID(),
   };
   let requested = false;
@@ -1098,6 +1103,7 @@ test('sign_in never returns a saved value to Pi and pauses for the owner when Ot
     label: 'Example',
     kind: 'password' as const,
     passwordSelector: '@password',
+    submitSelector: '@submit',
     message: 'Example needs your password.',
     action: 'Sign in',
   };
@@ -1145,6 +1151,7 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
     amount: '43.20',
     currency: 'EUR',
     fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+    submitSelector: '@submit',
   };
   const requests: unknown[] = [];
   const asked = await fixture(

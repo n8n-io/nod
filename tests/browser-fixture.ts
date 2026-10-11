@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { BrowserActionError } from '../src/ports/computer.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
 import {
@@ -12,7 +13,7 @@ import {
 import type { ProcessOptions } from '../src/providers/process.ts';
 
 type Options = Parameters<typeof createAgentBrowserComputer>[0] & {
-  onDaemonCommand?(command: Record<string, unknown>): void;
+  onDaemonCommand?(command: Record<string, unknown>): unknown;
 };
 
 export function createBrowserFixture(options: Options, preferRealSocket = false) {
@@ -68,7 +69,7 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
       return run(executable, args, input);
     },
     daemonCommand: async (path, command, signal, timeoutMs) => {
-      onDaemonCommand?.(structuredClone(command));
+      await onDaemonCommand?.(structuredClone(command));
       const session = [...sessions].find(([id]) => path === resolve(socketDir, `${id}.sock`))?.[1];
       if (!session) return existingDaemonCommand(path, command, signal, timeoutMs);
       if (command.action === 'tab_list') {
@@ -158,9 +159,11 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
                                                 ? [command.promptText]
                                                 : []),
                                             ]
-                                          : command.action === 'close'
-                                            ? ['close']
-                                            : null;
+                                          : command.action === 'reload'
+                                            ? ['reload']
+                                            : command.action === 'close'
+                                              ? ['close']
+                                              : null;
       if (!args) throw new Error('Unsupported synthetic browser action.');
       const result = await run(session.executable, [...session.args, ...args], {
         ...session.options,
@@ -190,8 +193,10 @@ export type DevtoolsModel = {
   armed?: string;
   frameOf: Record<string, string>;
   values: Map<string, string>;
+  evaluate?(expression: string): unknown;
   selects?: Set<string>;
   masked?: boolean;
+  failMasks?: boolean;
   steal?: { after: number; field: string };
 };
 
@@ -215,9 +220,10 @@ export async function fakeDevtools(model: DevtoolsModel) {
       socket.write(Buffer.concat([header, data]));
     };
     const evaluate = (frame: DevtoolsFrame, expression: string) => {
+      if (model.evaluate) return model.evaluate(expression);
       const here = model.focused === frame.id;
-      if (expression.includes('otto-mask')) {
-        model.masked = expression.includes('if (true)');
+      if (expression.includes('globalThis.__ottoMaskedStyles')) {
+        model.masked = expression.includes("if (!true) return ''");
         return '';
       }
       if (expression.includes('.blur()')) {
@@ -233,13 +239,25 @@ export async function fakeDevtools(model: DevtoolsModel) {
       }
       if (expression.includes("execCommand('insertText'")) {
         if (!here || model.armed !== model.field) return false;
-        const text = JSON.parse(/false, ("(?:[^"\\]|\\.)*")\)/.exec(expression)![1]!) as string;
-        model.values.set(model.field!, `${model.values.get(model.field!) ?? ''}${text}`);
-        if (model.steal && !--model.steal.after) {
-          model.field = model.steal.field;
-          model.focused = model.frameOf[model.steal.field];
-        }
-        return true;
+        const field = model.field!;
+        const node = { tagName: 'INPUT', isConnected: true };
+        return runInNewContext(expression, {
+          __ottoField: node,
+          document: {
+            hasFocus: () => model.focused === frame.id,
+            get activeElement() {
+              return model.field === field ? node : null;
+            },
+            execCommand: (_command: string, _showUI: boolean, text: string) => {
+              model.values.set(field, `${model.values.get(field) ?? ''}${text}`);
+              if (model.steal && !--model.steal.after) {
+                model.field = model.steal.field;
+                model.focused = model.frameOf[model.steal.field];
+              }
+              return true;
+            },
+          },
+        });
       }
       if (expression.includes('choices.includes')) {
         if (!here || model.armed !== model.field) return false;
@@ -260,6 +278,9 @@ export async function fakeDevtools(model: DevtoolsModel) {
       const session = message.sessionId;
       const frames = model.frames.filter((frame) => frame.session === session);
       const reply = (result: unknown) => send({ id: message.id, result, sessionId: session });
+      if (message.method === 'Network.enable') return reply({});
+      if (message.method === 'DOM.getDocument') return reply({ root: { backendNodeId: 1 } });
+      if (message.method === 'Runtime.releaseObjectGroup') return reply({});
       if (message.method === 'Target.attachToTarget') return reply({ sessionId: 'page' });
       if (message.method === 'Target.getTargets')
         return reply({ targetInfos: [{ targetId: 'fixture-target', type: 'page' }] });
@@ -295,13 +316,25 @@ export async function fakeDevtools(model: DevtoolsModel) {
             (frame) => frame.id === message.params.frameId,
           ),
         });
+      if (message.method === 'Runtime.evaluate' && message.params.throwOnSideEffect)
+        return reply({ exceptionDetails: { text: 'Side-effect checks need a real browser.' } });
+      if (
+        message.method === 'Runtime.evaluate' &&
+        model.failMasks &&
+        String(message.params.expression).includes('globalThis.__ottoMaskedStyles') &&
+        String(message.params.expression).includes("if (!true) return ''")
+      )
+        return reply({ exceptionDetails: { text: 'Synthetic mask failure.' } });
       if (message.method === 'Runtime.evaluate')
         return reply({
           result: {
-            value: evaluate(
-              model.frames[Number(message.params.contextId)]!,
-              String(message.params.expression),
-            ),
+            value:
+              message.params.expression === 'globalThis.__ottoRoots = [];'
+                ? ''
+                : evaluate(
+                    model.frames[Number(message.params.contextId)]!,
+                    String(message.params.expression),
+                  ),
           },
         });
       send({ id: message.id, error: { message: 'Unsupported' }, sessionId: session });

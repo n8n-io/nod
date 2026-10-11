@@ -1,82 +1,45 @@
 # Security model
 
-## Trust boundaries
+## Boundaries
 
-| Component                          | Trusted with                                                                  | Never trusted with                        |
-| ---------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------- |
-| Owner                              | Everything they own                                                           | —                                         |
-| Keeper                             | Outer key, data key, decryption                                               | Deciding grants; reading pages            |
-| Otto server                        | Grants, policy, one released value at a time on its way to a sink             | Keys; bulk decryption                     |
-| Pi and its web extension           | References, page content, tool results                                        | Any secret value; creating grants         |
-| Review model                       | The owner's recent messages, the message they answered, the requested release | Page content, tool results, secret values |
-| Browser                            | Typed values for the current page                                             | Deciding where values go                  |
-| Pages, emails, files, tool results | Nothing                                                                       | Instructions or permission                |
+| Component        | Authority                                                                     |
+| ---------------- | ----------------------------------------------------------------------------- |
+| Owner            | Chooses accounts, approves actions and changes permissions                    |
+| Server           | Holds the key, checks policy, decrypts and records uses                       |
+| Browser provider | Verifies origins and documents, enters values and submits                     |
+| Pi               | Chooses methods, accounts and controls; receives metadata and website results |
+| Review model     | Matches an action to owner messages or a schedule instruction                 |
+| Website          | Receives values submitted to its origin                                       |
 
-The keeper is a separate process. In Docker and hosted runtimes it runs as its own user, and the server never receives the outer key. On a local macOS install without containers it runs as the same OS user, so it protects against code inside the server process but not against other programs the user runs. That is the same limit as any password manager without OS app binding.
+Page content, email, files and tool results cannot create permission. The review model receives owner messages and the message being answered, with no tool results. A domain mention is not consent. A cancelled task or a request to remain signed out must not authorize sign-in.
 
-## Invariants
+## Enforced rules
 
-These describe the finished design; [migration](migration.md#steps) says which step brings each one. Tests cite them by number.
+- A task grant binds the owner, root turn, exact origin and selected item. A standing site grant requires an explicit owner setting.
+- Event, read-only and onboarding turns do not sign in. An injection flag holds use until the next owner message.
+- A secure form binds owner, turn, origin, selected fields and expiry. Code replies are consumed before chat persistence.
+- The browser checks the selected field's actual frame origin and document. Login fields must have the login's exact origin. Card fields must have the origins in the approved request.
+- Secret entry uses an isolated browser context and field-bound input. It never sends a code through global keyboard input.
+- Pi chooses the submit control before entry. The provider enters and submits in one private operation. Pi cannot observe or act during that operation.
+- Chrome checks JavaScript reads for side effects. A document changed by Pi JavaScript requires a reload before private entry. This removes listeners that Pi could use to copy values.
+- After successful entry and submission, Pi keeps the live page. If entry fails, the observation lock remains until the filled document changes.
+- Back-forward document caching is disabled, so Back loads a fresh document. Private fields have autocomplete disabled.
+- Normal browser scripts, typing, screenshots and other tools work after that boundary. Native WebAuthn remains enabled.
+- A saved profile has an ephemeral set of permitted exact network origins. Navigation, HTTP, HTTPS tunnels and WebSocket connections pass the profile proxy. Extra origins for APIs, assets and sign-in redirects require permission. A restored profile must receive a new scope.
+- A new empty profile does not use a saved account and does not need Vault authority. Secret entry, saved-profile reuse and owner browser input retain their own checks. An anonymous checkout can continue after the owner adds a card.
+- One executor claims each durable use before browser work. Forms and payments read its outcome. A claimed ID is never run twice. Interrupted or failed work is uncertain. There is no automatic retry.
+- Ciphertext binds owner, record and purpose. The key check authenticates existing data before it can create a check for a legacy Vault.
 
-1. **No values to the model.** No tool returns a secret value to Pi, and no secret value is written to the Pi session.
-2. **Keys stay in the keeper.** Only the keeper holds the outer key and the data key. The server never receives either.
-3. **Every decryption is a release.** The keeper decrypts for use only through `release(item, destination, grant)`, and writes the use row before the value leaves.
-4. **Exact destination.** A login is typed only into a field whose top origin and frame origin are among the item's origins, re-read from the browser in the same step as typing. A token is sent only to its connection's base URL and path prefix, CLI path or provider.
-5. **Trusted grants.** Grants come only from the owner's messages, schedule instructions, the owner's answers and the owner's approvals. Page content and tool results never create or widen one.
-6. **No background secrets.** Event, read-only and onboarding turns hold no grants, standing grants included.
-7. **Tripwire suspends.** A tripwire flag suspends every grant until the owner's next message. Questions still work.
-8. **Mandated payments.** A payment needs a mandate approved by the owner in Otto web or desktop, with the card's security code or, with Do it for me, a yes, or in the card issuer. A chat app reply cannot approve one. A mandate is used once, is bound to merchant, amount, currency, card and the verified sites of the card fields, and expires after ten minutes. The card is entered only into the verified field's own document, never on a page Pi ran a script on.
-9. **Security codes by consent.** A card's security code is stored only on an own install, only when the owner chose to remember it for that card, and never in hosted mode. Otherwise it exists only for the use that consumes it.
-10. **No repeats.** A release that may have happened becomes uncertain and is never repeated.
-11. **Fail closed.** A key that cannot unwrap existing data locks the Vault. No key is created over existing data.
-12. **Visible.** Every release, question, held attempt and grant change appears in the activity. No activity row contains a value.
-13. **Sessions are credentials.** Opening a saved browser session needs the same grant as signing in.
-14. **Owner scope.** Every row, query and route is owner-scoped.
-15. **Egress.** A released value registered for a thread is blocked on every outbound path except its destination.
+Tool output replaces known values, and screenshots mask them. These checks do not detect all encodings.
 
-## Policy
+## Limits
 
-|                                              | Conversation   | Schedule                           | Event                 | Read-only, onboarding |
-| -------------------------------------------- | -------------- | ---------------------------------- | --------------------- | --------------------- |
-| Sign in or open a saved session, granted     | Direct         | Direct                             | No                    | No                    |
-| Sign in or open a saved session, not granted | Question       | Question, expires after 30 minutes | No; tells the owner   | No                    |
-| New values                                   | Secure form    | Secure form, waits                 | No                    | No                    |
-| Pay                                          | Mandate        | Mandate, waits                     | Draft only            | No                    |
-| Connected-app action with a stored token     | Trust check    | Trust check                        | Reads and drafts only | Reads only            |
-| Tripwire active                              | Questions only | Questions only                     | No                    | No                    |
+The server and browser provider can read values. There is no isolated key service, hardware-backed release policy or proof of information-flow isolation.
 
-A connected app's token is released under the connection the owner made, and every action still passes the existing trust check.
+The destination website receives the secret and can store, encode or reflect it. An isolated JavaScript context does not hide a value from the page DOM. The live document remains available after submission, so website transformations can reach Pi.
 
-## Threats
+The provider submits once. It does not use a fixed delay or network activity to infer success. Pi must inspect the result and wait for the page state that the task requires. This preserves state held only in page memory.
 
-| Threat                                                                  | Stopped by                                                                                                             |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| A page tells Otto to sign in elsewhere and send the password            | 1, 4, 5: Pi never has the password, release goes only to the login's origins, and an unmentioned site needs a question |
-| A page tells Otto to buy something                                      | 8, 6, 7                                                                                                                |
-| A lookalike site                                                        | 4: exact origins; a new origin needs a question that shows it                                                          |
-| A login form inside a frame from another site                           | 4: the frame origin must match too                                                                                     |
-| A secret in a screenshot                                                | Filled fields are masked; screenshots are refused after a card fill                                                    |
-| Otto repeats a secret                                                   | 1 and 15                                                                                                               |
-| Code in the server process reading keys, including the Pi web extension | 2 and 3: it can only request single releases, each recorded                                                            |
-| A copied database                                                       | 2: the outer key is outside the database; lookups are keyed; 9                                                         |
-| A lost or changed key                                                   | 11                                                                                                                     |
-| A ciphertext moved between rows                                         | The associated data binds version, key, kind, owner and item                                                           |
-| A replayed form or mandate                                              | Hashed single-use tokens; 8; 10                                                                                        |
-| Background misuse                                                       | 6 and 13                                                                                                               |
-| Otto uses a permission without the owner noticing                       | 12                                                                                                                     |
+Once signed in, Pi can act on the permitted site. Vault permission does not review each browser click or prevent a harmful action within that site. App actions still use the separate trust check. Network origin permission also permits the site's own scripts to contact that origin.
 
-## Residual risks
-
-Stated plainly, so that nothing claims more than it does:
-
-- **Actions inside a granted site.** Once signed in, Otto can act on that site through the browser. The Vault does not judge those actions, and the trust check covers connected apps, not browser clicks. Signed-in turns review new destinations for data leaving the site. A purchase still needs a mandate.
-- **A wrong match by the review model.** It may grant a site the owner did not mean. The release still goes only to the login's own origins, and the activity shows it.
-- **Say-so in use.** A yes, or the owner's own entry, lets the conversation use that site until 30 minutes after its last use, so a page met in that time could steer Otto there. The tripwire, the question on any other site and the activity view are the backstops.
-- **Sign-ins Otto cannot see.** Magic links and single sign-on hops are not tracked. They last only as long as the conversation that made them stays active; everything else starts with a signed-out browser.
-- **Old sessions.** Plaintext from the old `get_credential` tool is removed from saved Pi sessions when they load, including passwords Pi later typed. A compaction summary written before that may still paraphrase one.
-- **Values in transit.** A released value passes through the server process on its way to a sink. It is never stored there and never sent to Pi.
-- **Same-user programs on local installs.** Without containers, the keeper runs as the owner's OS user.
-- **Stored-card amounts.** With a stored card, the amount is what the owner approved; only one-time cards enforce it at the issuer.
-- **Remembered security codes.** On an own install, a copied database together with the outer key gives a complete card for each card whose code the owner chose to remember.
-- **Two factors in one place.** An authenticator seed next to the password is one factor held by Otto. Only the owner adds one.
-- **Hosted card numbers.** See [payments](payments.md#hosted-mode-and-pci).
+A saved-card approval records amount and currency. It does not enforce settlement at the card issuer. A review model can make a wrong intent match. Tests cover known failure cases; they do not prove absence of all prompt injection or browser exploits.

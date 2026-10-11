@@ -183,7 +183,7 @@ export async function createApprovals(
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(
         "UPDATE approvals SET status='completed',result=$2 WHERE id=$1 AND owner_id=$3 AND status='executing'",
-        [approval.id, snapshot, ownerId],
+        [approval.id, JSON.stringify(snapshot), ownerId],
       );
       return snapshot;
     } catch (error) {

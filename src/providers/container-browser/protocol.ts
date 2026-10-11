@@ -71,59 +71,63 @@ const browserAction = z
     locale: z.string().max(35).optional(),
   })
   .strict();
-const credential = z
-  .object({
-    threadId: thread,
-    origin: z.string().max(2048),
-    kind: z.enum(['identifier', 'password', 'otp']).optional(),
-    username: z.string().max(8192).optional(),
-    password: z.string().max(8192).optional(),
-    code: z.string().max(8192).optional(),
-    usernameSelector: selector.optional(),
-    passwordSelector: selector.optional(),
-  })
-  .strict();
+export const browserCredentialInput = z.object({
+  threadId: thread,
+  origin: z.string().max(2048),
+  kind: z.enum(['identifier', 'password', 'otp']).optional(),
+  username: z.string().max(8192).optional(),
+  password: z.string().max(8192).optional(),
+  code: z.string().max(8192).optional(),
+  usernameSelector: selector.optional(),
+  passwordSelector: z.union([selector, z.array(selector).min(1).max(100)]).optional(),
+  submitSelector: selector.optional(),
+});
 
+const expiryField = z.union([
+  selector,
+  z
+    .object({ selector, format: z.string().min(1).max(100), locale: z.string().max(35).optional() })
+    .strict(),
+]);
 const cardFields = z
   .object({
     number: selector,
-    expiry: selector.optional(),
-    expiryMonth: selector.optional(),
-    expiryYear: selector.optional(),
+    expiry: expiryField.optional(),
+    expiryMonth: expiryField.optional(),
+    expiryYear: expiryField.optional(),
     securityCode: selector.optional(),
     name: selector.optional(),
   })
   .strict();
 
-const card = z
-  .object({
-    threadId: thread,
-    fields: cardFields,
-    document: z.string().min(1).max(200),
-    destinations: z
-      .object({
-        number: z.string().max(2048).optional(),
-        expiry: z.string().max(2048).optional(),
-        expiryMonth: z.string().max(2048).optional(),
-        expiryYear: z.string().max(2048).optional(),
-        securityCode: z.string().max(2048).optional(),
-        name: z.string().max(2048).optional(),
-      })
-      .strict(),
-    card: z
-      .object({
-        cardNumber: z.string().regex(/^\d{12,19}$/),
-        expiryMonth: z.number().int().min(1).max(12),
-        expiryYear: z.number().int().min(2000).max(9999),
-        cardholder: z.string().max(200),
-        securityCode: z
-          .string()
-          .regex(/^\d{3,4}$/)
-          .optional(),
-      })
-      .strict(),
-  })
-  .strict();
+export const browserCardInput = z.object({
+  threadId: thread,
+  fields: cardFields,
+  submitSelector: selector.optional(),
+  document: z.string().min(1).max(200),
+  destinations: z
+    .object({
+      number: z.string().max(2048).optional(),
+      expiry: z.string().max(2048).optional(),
+      expiryMonth: z.string().max(2048).optional(),
+      expiryYear: z.string().max(2048).optional(),
+      securityCode: z.string().max(2048).optional(),
+      name: z.string().max(2048).optional(),
+    })
+    .strict(),
+  card: z
+    .object({
+      cardNumber: z.string().regex(/^\d{12,19}$/),
+      expiryMonth: z.number().int().min(1).max(12),
+      expiryYear: z.number().int().min(2000).max(9999),
+      cardholder: z.string().max(200),
+      securityCode: z
+        .string()
+        .regex(/^\d{3,4}$/)
+        .optional(),
+    })
+    .strict(),
+});
 
 export const browserRequest = z.discriminatedUnion('method', [
   z
@@ -135,6 +139,7 @@ export const browserRequest = z.discriminatedUnion('method', [
       method: z.literal('bindProfile'),
       threadId: thread,
       profileId: z.uuid(),
+      origins: z.array(z.string().max(2048)).max(100).optional(),
     })
     .strict(),
   z.object({ ...identity, method: z.literal('deleteProfile'), profileId: z.uuid() }).strict(),
@@ -170,8 +175,16 @@ export const browserRequest = z.discriminatedUnion('method', [
   z.object({ ...identity, method: z.literal('screenshot'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('view'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('currentPage'), threadId: thread }).strict(),
-  z.object({ ...identity, method: z.literal('injectCredentials'), input: credential }).strict(),
-  z.object({ ...identity, method: z.literal('fillCard'), input: card }).strict(),
+  z
+    .object({
+      ...identity,
+      method: z.literal('injectCredentials'),
+      input: browserCredentialInput.strict(),
+    })
+    .strict(),
+  z
+    .object({ ...identity, method: z.literal('fillCard'), input: browserCardInput.strict() })
+    .strict(),
   z
     .object({
       ...identity,

@@ -97,7 +97,7 @@ export function registerLocalAccess(
     const pageNavigation =
       request.method === 'GET' &&
       (pages.has(path) ||
-        /^\/(vault|credentials|browser-connect)\/[A-Za-z0-9_-]+\/?$/.test(path)) &&
+        /^\/(vault|credentials|payments|browser-connect)\/[A-Za-z0-9_-]+\/?$/.test(path)) &&
       request.headers['sec-fetch-mode'] === 'navigate' &&
       request.headers['sec-fetch-dest'] === 'document';
     const state = new URLSearchParams(request.url.split('?')[1]).getAll('state');

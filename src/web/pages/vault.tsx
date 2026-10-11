@@ -52,14 +52,20 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const activity = usePageData<VaultActivity>('/api/vault/activity');
   const phone = usePhone();
   const tabsId = useId();
-  const addRequested = window.location.search === '?add=login' && !window.location.hash;
+  const addRequested = window.location.hash
+    ? null
+    : window.location.search === '?add=login'
+      ? 'login'
+      : window.location.search === '?add=card' && !hosted
+        ? 'card'
+        : null;
   const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
   const [website, setWebsite] = useState(false);
   const [importing, setImporting] = useState(false);
   const [revision, setRevision] = useState(0);
-  const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested ? 'login' : null);
+  const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested);
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [savingNew, setSavingNew] = useState(false);
   const [chosen, setChosen] = useState(false);
@@ -329,10 +335,12 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
                       <Globe size={16} aria-hidden="true" />
                       New login
                     </button>
-                    <button type="button" className="menu-item" onClick={() => start('card')}>
-                      <CreditCard size={16} aria-hidden="true" />
-                      New payment card
-                    </button>
+                    {!hosted && (
+                      <button type="button" className="menu-item" onClick={() => start('card')}>
+                        <CreditCard size={16} aria-hidden="true" />
+                        New payment card
+                      </button>
+                    )}
                     {onAsk && (
                       <button
                         type="button"

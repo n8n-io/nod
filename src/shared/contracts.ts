@@ -112,11 +112,21 @@ export type VaultActivityReason =
   | 'payment'
   | 'chat_app'
   | 'code_typed'
-  | 'said_yes';
+  | 'said_yes'
+  | 'owner';
 export interface VaultActivityEntry {
   id: string;
   at: string;
-  action: 'sign_in' | 'session' | 'code' | 'held' | 'asked' | 'paid';
+  action:
+    | 'sign_in'
+    | 'session'
+    | 'code'
+    | 'held'
+    | 'asked'
+    | 'card'
+    | 'uncertain'
+    | 'permission'
+    | 'reveal';
   origin: string;
   itemId?: string;
   itemKind?: 'login' | 'session' | 'card';
@@ -131,6 +141,7 @@ export interface VaultActivity {
 }
 export interface VaultPaymentCard {
   id: string;
+  version: string;
   label: string;
   brand: string;
   last4: string;
@@ -164,7 +175,7 @@ export interface CredentialRequest {
   label: string;
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
-  status: 'pending' | 'filled' | 'expired';
+  status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
   expiresAt: string;
   savedEntries?: VaultLoginEntry[];
   selectedEntryId?: string;
@@ -305,4 +316,12 @@ export interface ChannelSetupSummary {
   allowedUserId?: string;
   pairingCandidate?: { id: string; name: string; username?: string };
   pairingExpiresAt?: string;
+}
+export interface PaymentRequest {
+  origin: string;
+  amount: string;
+  card: string;
+  destinations: string[];
+  needsCode: boolean;
+  keepCode: boolean;
 }

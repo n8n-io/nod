@@ -140,7 +140,11 @@ function SetupAction({
       data-setup={setup}
       href={href}
       target={href.startsWith('/apps?connect=') ? undefined : '_blank'}
-      rel={setup === 'vault' && vaultLink.test(href) ? 'opener' : 'noopener noreferrer'}
+      rel={
+        setup === 'vault' && (vaultLink.test(href) || href.startsWith('/payments/'))
+          ? 'opener'
+          : 'noopener noreferrer'
+      }
       referrerPolicy="no-referrer"
       title={href.startsWith('https://') ? new URL(href).host : undefined}
     >

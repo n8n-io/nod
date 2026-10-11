@@ -11,15 +11,15 @@ const browserErrors = {
   browser_observation_failed:
     'The browser could not read the updated page. Take a fresh screenshot before requesting another snapshot. Keep the current page open and check its state before repeating any click or submission.',
   browser_card_paused:
-    'Card details are on a page in this browser, so typing, scripts, dragging and screenshots are paused. Use snapshot and click until that page is gone.',
+    'A private entry document is still open. Reload it before Pi reads or controls it. Check the result before another attempt.',
   browser_card_reload:
-    'A script ran on this checkout page, so Otto will not enter a card on it. Reload the checkout, take a fresh snapshot and call pay again.',
+    'A script ran on this document, so Otto will not enter a saved value on it. Reload the page and take a fresh snapshot before a new private operation.',
   browser_card_field:
-    'Otto could not verify a card field, so nothing more was entered. Take a fresh snapshot and call pay with the current fields.',
+    'Otto could not verify a card field, so nothing more was entered. Check the result before another attempt.',
   browser_card_site:
-    'A card field is not on a site approved for this payment, so nothing more was entered. Inspect the page and ask again.',
+    'A card field is not on a site approved for this payment, so nothing more was entered. Check the result before another attempt.',
   browser_card_changed:
-    'The checkout page changed, so nothing more was entered. Take a fresh snapshot and call pay again.',
+    'The checkout page changed. The operation may have reached the site. Check the result before another attempt.',
 } as const;
 
 export type BrowserErrorCode = keyof typeof browserErrors;

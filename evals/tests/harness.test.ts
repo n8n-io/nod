@@ -33,6 +33,7 @@ import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, waitUntil } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
+import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
 import { daysAgo, inDays, localDate, localTime, nextWeekOn } from '../src/world/time.ts';
@@ -49,6 +50,55 @@ const manifest: RunManifest = {
   k: 3,
   provenance: {},
 };
+
+test('fixture browser profiles keep separate production network guards across a profile switch', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-eval-proxy-'));
+  const guards = [
+    createServer((_request, response) => response.writeHead(403).end('first guard')),
+    createServer((_request, response) => response.end('second guard')),
+  ];
+  const proxy = await createFixtureProxy(
+    directory,
+    ['fixture.example.test'],
+    (_request, response) => response.end('fixture'),
+  );
+  try {
+    const urls: string[] = [];
+    for (const guard of guards) {
+      await new Promise<void>((resolve) => guard.listen(0, '127.0.0.1', resolve));
+      const address = guard.address();
+      assert.ok(address && typeof address !== 'string');
+      const result = await proxy.run(
+        process.execPath,
+        [
+          '-e',
+          'process.stdout.write(process.argv[process.argv.indexOf("--proxy")+1])',
+          '--',
+          '--proxy',
+          `http://127.0.0.1:${address.port}`,
+          '--args',
+          '',
+        ],
+        {},
+      );
+      assert.equal(result.exitCode, 0);
+      urls.push(result.stdout);
+    }
+    assert.notEqual(urls[0], urls[1]);
+    const first = await fetch(urls[0]!);
+    assert.equal(first.status, 403);
+    assert.equal(await first.text(), 'first guard');
+    assert.equal(await (await fetch(urls[1]!)).text(), 'second guard');
+    assert.equal(await (await fetch(urls[0]!)).text(), 'first guard');
+  } finally {
+    await proxy.close();
+    for (const guard of guards) {
+      guard.closeAllConnections();
+      await new Promise<void>((resolve) => guard.close(() => resolve()));
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 function attempt(
   scenario: string,

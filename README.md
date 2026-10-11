@@ -89,6 +89,7 @@ Settings live in the ignored `.env`. `.env.example` lists the common ones. Shell
 ## How Otto works
 
 - [Architecture](docs/architecture.md): one thread per owner, turns, the workspace and browser, and hosted mode.
+- [Vault](docs/vault/README.md): saved logins, cards and browser sessions, private entry, permissions and limits.
 - [Security policy](SECURITY.md#how-otto-protects-your-data): what stays on your computer, approvals and how to report a vulnerability.
 - [Model connections](docs/model-connections.md), [skill library](docs/skill-library.md) and [analytics](docs/analytics.md).
 - [Hosted deployment](deployment/cloudflare/README.md) on Cloudflare, for operators.

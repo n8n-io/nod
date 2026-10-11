@@ -13,6 +13,8 @@ import type { CommandProcess } from '../command-process.ts';
 import { browserUrl } from '../agent-browser/network.ts';
 import {
   browserFrame,
+  browserCredentialInput,
+  browserCardInput,
   browserRequest,
   browserResponse,
   imageBytes,
@@ -299,8 +301,8 @@ export function createBridgeComputer(options: {
       return result;
     },
     currentSession: () => currentSession,
-    bindProfile: async (id, profileId) => {
-      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId });
+    bindProfile: async (id, profileId, origins) => {
+      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId, origins });
       screens.delete(threadIdentity(id));
     },
     deleteProfile: async (profileId) => {
@@ -372,10 +374,10 @@ export function createBridgeComputer(options: {
         .object({ origin: z.string().max(2048), url: z.string().max(8192) })
         .strict()
         .parse(await call({ method: 'currentPage', threadId: threadIdentity(id) })),
-    fillCard: async ({ threadId: id, fields, document, destinations, card }) => {
+    fillCard: async (input) => {
       await call({
         method: 'fillCard',
-        input: { threadId: threadIdentity(id), fields, document, destinations, card },
+        input: browserCardInput.parse({ ...input, threadId: threadIdentity(input.threadId) }),
       });
     },
     cardDestinations: async (id, fields) =>
@@ -401,16 +403,6 @@ export function createBridgeComputer(options: {
       return new Uint8Array(Buffer.from(value, 'base64'));
     },
     injectCredentials: async (input) => {
-      const {
-        threadId: id,
-        origin,
-        kind,
-        username,
-        password,
-        code,
-        usernameSelector,
-        passwordSelector,
-      } = input;
       return (
         z
           .object({ status: z.literal('submitted') })
@@ -419,16 +411,10 @@ export function createBridgeComputer(options: {
           .parse(
             await call({
               method: 'injectCredentials',
-              input: {
-                threadId: threadIdentity(id),
-                origin,
-                kind,
-                username,
-                password,
-                code,
-                usernameSelector,
-                passwordSelector,
-              },
+              input: browserCredentialInput.parse({
+                ...input,
+                threadId: threadIdentity(input.threadId),
+              }),
             }),
           ) ?? undefined
       );

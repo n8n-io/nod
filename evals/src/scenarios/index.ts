@@ -21,8 +21,17 @@ export const scenarios: Scenario[] = await Promise.all(
 );
 
 export function fingerprint(id: string) {
+  const world = join(directory, '../world');
   return createHash('sha256')
     .update(readFileSync(join(directory, `${id}.ts`), 'utf8'))
+    .update(
+      JSON.stringify(
+        readdirSync(world)
+          .filter((name) => name.endsWith('.ts'))
+          .sort()
+          .map((name) => [name, readFileSync(join(world, name), 'utf8')]),
+      ),
+    )
     .digest('hex')
     .slice(0, 12);
 }

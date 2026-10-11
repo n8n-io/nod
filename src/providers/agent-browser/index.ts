@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -11,6 +11,7 @@ import type {
   Computer,
   CardEntry,
   CardFields,
+  CardExpiryField,
   CredentialInput,
   CredentialSubmission,
   BrowserPage,
@@ -47,9 +48,12 @@ interface BrowserState {
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
   protectedSelectors: Set<string>;
-  payment?: string;
+  privateDocument?: string;
   scripted: Set<string>;
   uploads: Set<string>;
+  origins?: Set<string>;
+  blocked: Set<string>;
+  proxy?: ReturnType<typeof createBrowserProxy>;
   started: boolean;
   lastUsed: number;
   busy: number;
@@ -75,21 +79,6 @@ const streamFrame = z.object({
   data: z.string().max(4 * 1024 * 1024),
   metadata: z.object({ deviceWidth: z.number().positive(), deviceHeight: z.number().positive() }),
 });
-
-const withoutPasskeys = `(() => {
-  const credentials = navigator.credentials;
-  if (!credentials) return;
-  const unavailable = () =>
-    Promise.reject(new DOMException('Passkeys are not available in this browser.', 'NotAllowedError'));
-  const get = credentials.get.bind(credentials);
-  const create = credentials.create.bind(credentials);
-  credentials.get = (options) => (options && options.publicKey ? unavailable() : get(options));
-  credentials.create = (options) => (options && options.publicKey ? unavailable() : create(options));
-  if (window.PublicKeyCredential) {
-    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
-    PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(false);
-  }
-})();`;
 
 class BrowserLockedError extends Error {
   statusCode = 423;
@@ -127,13 +116,6 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
   return result.replace(
     /((?:password|card ?number|security code|cvc|cvv|csc)[^\n]*?)(?:value=|: )[^\n]*/gi,
     '$1 [redacted]',
-  );
-}
-
-function hideFieldValues(text: string) {
-  return text.replace(
-    /^(\s*- (?:textbox|combobox|spinbutton|searchbox)\b[^\n]*?): [^\n]*$/gm,
-    '$1: [redacted]',
   );
 }
 
@@ -313,7 +295,6 @@ export function createAgentBrowserComputer(options: {
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
-  const proxy = createBrowserProxy();
   let disposed = false;
   let activeCalls = 0;
   let allocationQueue: Promise<void> = Promise.resolve();
@@ -384,6 +365,7 @@ export function createAgentBrowserComputer(options: {
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
         scripted: new Set(),
+        blocked: new Set(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -525,14 +507,25 @@ export function createAgentBrowserComputer(options: {
           options.maxBytes,
         ),
       );
+      if (args[0] === 'close') {
+        const started = Date.now();
+        while (await stat(state.socket!).catch(() => null)) {
+          if (Date.now() - started > 5000) throw new Error('The previous browser did not stop.');
+          await delay(50);
+        }
+      }
       return result;
     }
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
-    const initScript = resolve(runtimeRoot, 'browser-init.js');
-    await writeFile(initScript, withoutPasskeys, { mode: 0o600 });
-    const proxyUrl = await proxy.url();
+    if (!state.proxy)
+      state.proxy = createBrowserProxy((origin) => {
+        if (!state.origins || state.origins.has(origin)) return true;
+        state.blocked.add(origin);
+        return false;
+      });
+    const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
     const timeZone = browserTimeZone(state.saved.timeZone);
     const locale = browserLocale(state.saved.locale);
@@ -551,15 +544,13 @@ export function createAgentBrowserComputer(options: {
           ...(state.browserExecutable ? ['--executable-path', state.browserExecutable] : []),
           ...(headed ? ['--headed'] : []),
           '--no-webmcp',
-          '--init-script',
-          initScript,
           '--json',
           '--proxy',
           proxyUrl,
           '--proxy-bypass',
           '<-loopback>',
           '--args',
-          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled' +
+          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled,--disable-features=BackForwardCache' +
             `,--disk-cache-dir=${cachePath(state)},--disk-cache-size=67108864` +
             (locale ? `,--accept-lang=${locale}` : '') +
             (sandbox ? '' : ',--no-sandbox') +
@@ -808,7 +799,8 @@ export function createAgentBrowserComputer(options: {
     signal?: AbortSignal,
     input?: BrowserAction,
   ): Promise<BrowserObservation> {
-    if (state.injecting) throw new BrowserLockedError();
+    if (state.injecting || (await privateDocumentOpen(state, signal)))
+      throw new BrowserLockedError();
     let url: string;
     try {
       url = await currentUrl(state, signal);
@@ -830,21 +822,32 @@ export function createAgentBrowserComputer(options: {
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
     if (!Number.isInteger(offset) || offset < 0 || offset > 100_000)
       throw new Error('Choose a page offset of at most 100000 characters.');
-    const paused = await cardOnPage(state, signal);
-    const snapshot = () =>
-      observationCommand(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
-        signal,
-        maxBytes: 1024 * 1024,
-      });
+    const snapshot = async () => {
+      const devtools = state.secrets.size ? await inspector(state) : undefined;
+      try {
+        await devtools?.mask(true, [], false, true);
+        return await observationCommand(
+          state,
+          scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'],
+          {
+            signal,
+            maxBytes: 1024 * 1024,
+          },
+        );
+      } finally {
+        await devtools?.mask(false, [], false).catch(() => {});
+        devtools?.close();
+      }
+    };
     let data = await snapshot();
     for (let attempt = 0; attempt < 4 && !String(data.snapshot ?? '').trim(); attempt++) {
       await delay(750, undefined, { signal });
       data = await snapshot();
     }
-    const text = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
-    const page = paused || (await cardOnPage(state, signal)) ? hideFieldValues(text) : text;
+    if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
+    const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     return {
-      text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
+      text: `${state.blocked.size ? `Blocked network destinations: ${[...state.blocked].join(', ')}. Use browser_session use with this connection and destinations set to the required exact origins to request access.\n` : ''}Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
     };
   }
@@ -907,10 +910,15 @@ export function createAgentBrowserComputer(options: {
     const existing = input.action === 'open' ? browsers.get(id) : undefined;
     if (
       existing &&
-      (existing.recovered || existing.closed || existing.closing || existing.saved.navigationFailed)
+      (existing.recovered ||
+        existing.closed ||
+        existing.closing ||
+        existing.saved.navigationFailed ||
+        existing.privateDocument)
     )
       await closeBrowser(id);
     const state = stateFor(id);
+    state.origins ??= existing?.origins;
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
       state.saved.restoreSession = savedProfile.restoreSession;
@@ -925,6 +933,13 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       if (input.action === 'open') {
+        if (
+          state.saved.profileId &&
+          (!state.origins || !state.origins.has(browserUrl(input.url ?? '').origin))
+        )
+          throw new Error(
+            'This saved session needs a grant for that destination. Use browser_session use.',
+          );
         const url = browserUrl(input.url ?? '');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -991,10 +1006,7 @@ export function createAgentBrowserComputer(options: {
         }
         if (!state.started) throw new BrowserActionError('browser_not_open');
         markActivity(id);
-        if (
-          ['fill', 'type', 'press', 'drag', 'evaluate'].includes(input.action) &&
-          (await cardOnPage(state, signal))
-        )
+        if (input.action !== 'reload' && (await privateDocumentOpen(state, signal)))
           throw new BrowserActionError('browser_card_paused');
         if (!['snapshot', 'accept_dialog', 'dismiss_dialog'].includes(input.action))
           await currentUrl(state, signal);
@@ -1142,17 +1154,26 @@ export function createAgentBrowserComputer(options: {
           if (!script.trim() || script.length > 20_000)
             throw new Error('Provide a script of at most 20,000 characters.');
           const url = await currentUrl(state, signal);
-          await markScripted(state);
-          const value = await evaluate(
-            state,
-            `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
-            signal,
-          );
-          if (await cardOnPage(state, signal))
+          const devtools = await inspector(state);
+          let read;
+          try {
+            read = await devtools.readOnly(script);
+            if (!read) state.scripted.add(await devtools.document());
+          } finally {
+            devtools.close();
+          }
+          const value = read
+            ? read.value
+            : await evaluate(
+                state,
+                `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
+                signal,
+              );
+          if (await privateDocumentOpen(state, signal))
             throw new Error(
               'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
             );
-          await markScripted(state);
+          if (!read) await markScripted(state);
           if (value && typeof value === 'object' && '__ottoTimedOut' in value)
             throw new Error('The script did not finish within 5 seconds.');
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
@@ -1184,7 +1205,8 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
-      if (await cardOnPage(state, signal)) throw new BrowserActionError('browser_card_paused');
+      if (await privateDocumentOpen(state, signal))
+        throw new BrowserActionError('browser_card_paused');
       if (state.uploads.size >= 8)
         throw new Error('Close this browser before uploading more files.');
       markActivity(id);
@@ -1319,61 +1341,92 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function injectCredentials(input: CredentialInput): Promise<CredentialSubmission> {
-    const state = browsers.get(threadIdentity(input.threadId));
-    if (!state?.started) throw new Error('The browser session has expired. Reopen the login page.');
+  async function privateEntry<T>(
+    state: BrowserState,
+    submitSelector: string | undefined,
+    operation: (devtools: Awaited<ReturnType<typeof openDevtools>>, document: string) => Promise<T>,
+    submitOrigins: string[] = [],
+  ): Promise<T> {
     if (state.injecting) throw new BrowserLockedError();
-    if (browserUrl(input.origin).origin !== input.origin)
-      throw new Error('An exact login origin is required.');
-    const fields = credentialFields(input);
     state.injecting = true;
-    markActivity(input.threadId);
     try {
       return await serialize(state, async () => {
-        const onOrigin = async () => {
-          if (new URL(await currentUrl(state)).origin !== input.origin)
-            throw new Error(
-              'The page is not on the website for this login. Inspect the page and request the credential again.',
-            );
-        };
-        await onOrigin();
-        const socket = await daemonSocket(state);
-        const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
-        for (const field of fields) {
-          state.secrets.add(field.value);
-          secrets.add(field.value);
-        }
-        state.secretsByOrigin.set(input.origin, secrets);
-        await saveState(state);
-        for (const field of fields) {
-          await onOrigin();
-          await requestDaemon(socket, {
-            action: 'fill',
-            selector: field.selector,
-            value: field.code ? '' : field.value,
-          });
-          if (field.code)
-            for (const key of field.value) {
-              await onOrigin();
-              await requestDaemon(socket, { action: 'press', key });
+        const devtools = await inspector(state);
+        try {
+          const document = await checkout(state, devtools);
+          state.privateDocument = document;
+          state.saved.sensitive = true;
+          await saveState(state);
+          const result = await operation(devtools, document);
+          if ((await devtools.document()) === document) {
+            if (submitSelector) {
+              const field = await focusField(state, devtools, selector(submitSelector));
+              const origin = new URL(await currentUrl(state)).origin;
+              if (
+                (field.origin !== origin && !submitOrigins.includes(field.origin)) ||
+                (await devtools.document()) !== document
+              )
+                throw new Error('The submit control is not on this page.');
+              await command(state, ['click', selector(submitSelector)]);
             }
-          if (!field.selector.startsWith('@')) state.protectedSelectors.add(field.selector);
+          }
+          state.privateDocument = undefined;
+          return result;
+        } finally {
+          devtools.close();
         }
-        await onOrigin();
-        return { status: 'submitted' as const };
       });
     } finally {
       state.injecting = false;
     }
   }
 
-  async function cardOnPage(state: BrowserState, signal?: AbortSignal) {
-    if (!state.payment) return false;
+  async function injectCredentials(input: CredentialInput): Promise<CredentialSubmission> {
+    const state = browsers.get(threadIdentity(input.threadId));
+    if (!state?.started) throw new Error('The browser session has expired. Reopen the login page.');
+    if (browserUrl(input.origin).origin !== input.origin)
+      throw new Error('An exact login origin is required.');
+    const fields = credentialFields(input);
+    markActivity(input.threadId);
+    return privateEntry(state, input.submitSelector, async (devtools, document) => {
+      if (new URL(await currentUrl(state)).origin !== input.origin)
+        throw new Error('The page is not on the website for this login.');
+      const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
+      for (const step of fields) {
+        const secret = input.kind === 'otp' ? input.code! : step.value;
+        state.secrets.add(secret);
+        secrets.add(secret);
+        const field = await focusField(state, devtools, step.selector);
+        if (field.origin !== input.origin)
+          throw new Error('The login field is on a different origin.');
+        if (step.code) {
+          if (!(await devtools.code(field, step.selector, step.value)))
+            throw new Error('The code fields changed during private entry.');
+          continue;
+        }
+        if (!(await devtools.arm(field)))
+          throw new Error('The login field is no longer available.');
+        if ((await devtools.document()) !== document || !(await devtools.insert(field, step.value)))
+          throw new Error(
+            'The login field changed during entry. Check the result before another attempt.',
+          );
+        if (!step.selector.startsWith('@')) state.protectedSelectors.add(step.selector);
+      }
+      state.secretsByOrigin.set(input.origin, secrets);
+      await saveState(state);
+      return { status: 'submitted' as const };
+    });
+  }
+
+  async function privateDocumentOpen(state: BrowserState, signal?: AbortSignal) {
+    if (!state.privateDocument) return false;
     signal?.throwIfAborted();
     const devtools = await inspector(state).catch(() => undefined);
     if (!devtools) return true;
     try {
-      return await devtools.alive(state.payment);
+      const alive = await devtools.alive(state.privateDocument);
+      if (!alive) state.privateDocument = undefined;
+      return alive;
     } catch {
       return true;
     } finally {
@@ -1436,8 +1489,13 @@ export function createAgentBrowserComputer(options: {
       try {
         const document = await checkout(state, devtools);
         const destinations: Partial<Record<keyof CardFields, string>> = {};
-        for (const [name, selector] of Object.entries(fields) as Array<[keyof CardFields, string]>)
-          if (selector) destinations[name] = (await focusField(state, devtools, selector)).origin;
+        for (const [name, field] of Object.entries(fields) as Array<
+          [keyof CardFields, CardExpiryField]
+        >)
+          if (field)
+            destinations[name] = (
+              await focusField(state, devtools, typeof field === 'string' ? field : field.selector)
+            ).origin;
         await devtools.blur();
         if ((await devtools.document()) !== document)
           throw new BrowserActionError('browser_card_changed');
@@ -1453,7 +1511,7 @@ export function createAgentBrowserComputer(options: {
     if (!state?.started) throw new Error('The checkout page is no longer open.');
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
-      if (await cardOnPage(state)) throw new BrowserActionError('browser_card_paused');
+      if (await privateDocumentOpen(state)) throw new BrowserActionError('browser_card_paused');
       await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
       const path = resolve(runtimeRoot, `checkout-${state.id}.jpg`);
       const devtools = await inspector(state);
@@ -1485,11 +1543,29 @@ export function createAgentBrowserComputer(options: {
       throw new Error('The security code is needed for this card.');
     const month = String(card.expiryMonth).padStart(2, '0');
     const year = String(card.expiryYear);
+    const expiry = (field: CardExpiryField | undefined, defaults: string[]) => {
+      if (!field || typeof field === 'string') return defaults;
+      return [
+        field.format.replace(/MMMM|MMM|MM|M|YYYY|YY/g, (token) => {
+          if (token === 'M') return String(card.expiryMonth);
+          if (token === 'MM') return month;
+          if (token === 'YYYY') return year;
+          if (token === 'YY') return year.slice(-2);
+          return new Intl.DateTimeFormat(field.locale ?? 'en', {
+            month: token === 'MMM' ? 'short' : 'long',
+            timeZone: 'UTC',
+          }).format(new Date(Date.UTC(card.expiryYear, card.expiryMonth - 1, 1)));
+        }),
+      ];
+    };
     const plan: Array<{ field: keyof CardFields; values: string[] }> = [
       { field: 'number', values: [card.cardNumber] },
-      { field: 'expiry', values: [`${month}/${year.slice(-2)}`] },
-      { field: 'expiryMonth', values: [month, String(card.expiryMonth)] },
-      { field: 'expiryYear', values: [year, year.slice(-2)] },
+      { field: 'expiry', values: expiry(fields.expiry, [`${month}/${year.slice(-2)}`]) },
+      {
+        field: 'expiryMonth',
+        values: expiry(fields.expiryMonth, [month, String(card.expiryMonth)]),
+      },
+      { field: 'expiryYear', values: expiry(fields.expiryYear, [year, year.slice(-2)]) },
       { field: 'securityCode', values: card.securityCode ? [card.securityCode] : [] },
       { field: 'name', values: [card.cardholder] },
     ];
@@ -1497,43 +1573,38 @@ export function createAgentBrowserComputer(options: {
     for (const step of steps)
       if (!input.destinations[step.field])
         throw new Error('The approved card destinations are missing.');
-    state.injecting = true;
     markActivity(input.threadId);
-    try {
-      await serialize(state, async () => {
-        const devtools = await inspector(state);
-        try {
-          const document = await checkout(state, devtools);
-          if (document !== input.document) throw new BrowserActionError('browser_card_changed');
-          state.payment = document;
-          state.secrets.add(card.cardNumber);
-          for (const step of steps) {
-            const field = await focusField(state, devtools, fields[step.field]!);
-            if (field.origin !== input.destinations[step.field])
-              throw new BrowserActionError('browser_card_site');
-            const tag = await devtools.arm(field);
-            if (!tag) throw new BrowserActionError('browser_card_field');
-            if (tag === 'SELECT') {
-              if (!(await devtools.choose(field, step.values)))
-                throw new BrowserActionError('browser_card_field');
-            } else
-              for (const character of step.values[0]!) {
-                if ((await devtools.document()) !== document)
-                  throw new BrowserActionError('browser_card_changed');
-                if (!(await devtools.insert(field, character)))
-                  throw new BrowserActionError('browser_card_site');
-              }
-          }
-          await devtools.blur();
-          if ((await devtools.document()) !== document)
-            throw new BrowserActionError('browser_card_changed');
-        } finally {
-          devtools.close();
+    await privateEntry(
+      state,
+      input.submitSelector,
+      async (devtools, document) => {
+        if (document !== input.document) throw new BrowserActionError('browser_card_changed');
+        for (const step of steps) {
+          const privateValue =
+            step.field === 'number' || step.field === 'securityCode' || step.field === 'name';
+          if (privateValue) for (const value of step.values) state.secrets.add(value);
+          const selection = fields[step.field]!;
+          const field = await focusField(
+            state,
+            devtools,
+            typeof selection === 'string' ? selection : selection.selector,
+          );
+          if (field.origin !== input.destinations[step.field])
+            throw new BrowserActionError('browser_card_site');
+          const tag = await devtools.arm(field, privateValue);
+          if (!tag) throw new BrowserActionError('browser_card_field');
+          if (tag === 'SELECT') {
+            if (!(await devtools.choose(field, step.values)))
+              throw new BrowserActionError('browser_card_field');
+          } else if (
+            (await devtools.document()) !== document ||
+            !(await devtools.insert(field, step.values[0]!))
+          )
+            throw new BrowserActionError('browser_card_site');
         }
-      });
-    } finally {
-      state.injecting = false;
-    }
+      },
+      steps.map((step) => input.destinations[step.field]!),
+    );
   }
 
   async function currentPage(id: string): Promise<BrowserPage> {
@@ -1544,6 +1615,7 @@ export function createAgentBrowserComputer(options: {
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
+      if (await privateDocumentOpen(state)) throw new BrowserLockedError();
       const url = await currentUrl(state);
       return {
         origin: browserUrl(url).origin,
@@ -1572,12 +1644,19 @@ export function createAgentBrowserComputer(options: {
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
       throw new Error('Reopen the login page before continuing this browser session.');
     const url = await currentUrl(state, signal);
-    if (await cardOnPage(state, signal)) throw new BrowserLockedError();
+    if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
-    await observationCommand(state, ['screenshot', path], { signal });
-    if (await cardOnPage(state, signal)) {
-      await rm(path, { force: true });
-      throw new BrowserLockedError();
+    const devtools = state.secrets.size ? await inspector(state) : undefined;
+    try {
+      await devtools?.mask(true, [...state.secrets], false);
+      await observationCommand(state, ['screenshot', path], { signal });
+      if (await privateDocumentOpen(state, signal)) {
+        await rm(path, { force: true });
+        throw new BrowserLockedError();
+      }
+    } finally {
+      await devtools?.mask(false).catch(() => {});
+      devtools?.close();
     }
     const buffer = await screens.accept(state.id, path);
     state.saved.capturedAt = new Date().toISOString();
@@ -1704,7 +1783,8 @@ export function createAgentBrowserComputer(options: {
           continue;
         }
         state.pageSize = [frame.metadata.deviceWidth, frame.metadata.deviceHeight];
-        if (!state.injecting) yield Buffer.from(frame.data, 'base64');
+        if (!state.injecting && !(await privateDocumentOpen(state, signal)))
+          yield Buffer.from(frame.data, 'base64');
         if (socket.readyState === WebSocket.OPEN)
           socket.send(JSON.stringify({ type: 'ack', seq: frame.seq }));
       }
@@ -1748,6 +1828,7 @@ export function createAgentBrowserComputer(options: {
       state.closed = true;
       if (state.started || state.saved.navigationFailed) await command(state, ['close']);
       state.started = false;
+      await state.proxy?.dispose();
       await saveState(state);
       state.secrets.clear();
       state.secretsByOrigin.clear();
@@ -1771,13 +1852,16 @@ export function createAgentBrowserComputer(options: {
     await pending;
   }
 
-  async function bindProfile(id: string, rawProfileId: string): Promise<void> {
+  async function bindProfile(id: string, rawProfileId: string, origins?: string[]): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
+    const granted = new Set(origins?.map((origin) => browserUrl(origin).origin));
+    if (!granted.size) throw new Error('A saved browser profile needs an exact destination grant.');
     assertNotDiscarded(id);
     await allocate(async () => {
       assertNotDiscarded(id);
       const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (previous?.saved.profileId === profileId) {
+        for (const origin of granted) (previous.origins ??= new Set()).add(origin);
         if (!previous.saved.restoreSession) {
           previous.saved.restoreSession = true;
           previous.saved.sensitive = true;
@@ -1799,6 +1883,7 @@ export function createAgentBrowserComputer(options: {
         await closeBrowser(otherId);
       }
       const state = stateFor(id);
+      state.origins = granted;
       state.saved = {
         version: 1,
         url: '',
@@ -1925,7 +2010,6 @@ export function createAgentBrowserComputer(options: {
       const results = await Promise.allSettled([...browsers.keys()].map((id) => closeBrowser(id)));
       if (results.some((result) => result.status === 'rejected'))
         throw new Error('The browser service could not finish closing its sessions.');
-      await proxy.dispose();
     },
   };
 }

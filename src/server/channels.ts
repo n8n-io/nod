@@ -99,8 +99,10 @@ export function channelReply(
   hasAttachments = false,
   deliversAttachments = false,
   privateLinks: { name: string; url: string }[] = [],
+  appOrigin?: string,
 ) {
-  const securePath = '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault|credentials|approvals)\\/[^\\s)]+';
+  const securePath =
+    '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault\\?add=(?:login|card)|(?:vault|credentials|payments|approvals)\\/[^\\s)]+)';
   const safe = text
     .replace(
       /\[[^\]]*\]\((?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+\)|(?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+/g,
@@ -111,8 +113,18 @@ export function channelReply(
           : 'Open Otto to view this file.',
     )
     .replace(
-      new RegExp(`\\[[^\\]]*\\]\\(${securePath}\\)|${securePath}`, 'g'),
-      'Open Otto to continue securely.',
+      new RegExp(`\\[[^\\]]*\\]\\((${securePath})\\)|(${securePath})`, 'g'),
+      (match, linked: string | undefined, plain: string | undefined) => {
+        try {
+          const url = new URL(linked ?? plain!);
+          if (
+            url.origin !== appOrigin &&
+            !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+          )
+            return match;
+        } catch {}
+        return 'Open Otto to continue securely.';
+      },
     );
   const files = privateLinks.length
     ? `Files:\n${privateLinks.map(({ name, url }) => `${name.replace(/[\r\n]/g, ' ')}: ${url}`).join('\n')}`
@@ -544,6 +556,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             Boolean(row.attachments?.length) && !attachments,
             Boolean(attachments),
             privateLinks,
+            options.appOrigin,
           ),
           ...(attachments ? { attachments } : {}),
         });

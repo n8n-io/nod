@@ -70,6 +70,10 @@ test(
       assert.equal(opened.status, 'profile_opened');
       assert.ok('connectionId' in opened);
       const connectionId = opened.connectionId;
+      assert.deepEqual(
+        await service.target({ action: 'use', url: 'https://example.test/login', connectionId }),
+        { origin: 'https://example.test', kind: 'session', itemId: connectionId, destinations: [] },
+      );
       assert.equal(
         (
           await service.request(
@@ -177,7 +181,7 @@ test(
       assert.equal(
         (await service.request({ action: 'use', url: 'https://other.test/', connectionId }, second))
           .status,
-        'rejected',
+        'session_opened',
       );
       assert.equal((await service.list())[0].browserState, 'needs_sign_in');
       assert.equal(
@@ -200,12 +204,12 @@ test(
       );
       assert.deepEqual(
         await service.target({ action: 'use', url: 'https://other.test/deep', connectionId }),
-        { origin: 'https://example.test', kind: 'session' },
+        { origin: 'https://other.test', kind: 'session', itemId: connectionId, destinations: [] },
       );
-      assert.deepEqual(await service.target({ action: 'connect', url: 'https://new.test/a' }), {
-        origin: 'https://new.test',
-        kind: 'form',
-      });
+      assert.equal(
+        await service.target({ action: 'connect', url: 'https://new.test/a' }),
+        undefined,
+      );
       assert.equal(await service.target(save), undefined);
       assert.equal(
         await other.target({ action: 'use', url: 'https://example.test/', connectionId }),

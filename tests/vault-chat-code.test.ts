@@ -15,11 +15,13 @@ test(
   },
   async (t) => {
     const schema = `test_chat_codes_${randomUUID().replaceAll('-', '')}`;
+    const bossSchema = `test_boss_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
+    process.env.PGBOSS_SCHEMA = bossSchema;
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
     process.env.OTTO_DATA_ROOT = runtimeRoot;
@@ -29,6 +31,7 @@ test(
     const { createApp } = await import('../src/server/app.ts');
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     await db.initializeDatabase();
+    await thread.initializeThreads();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
     owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending',
@@ -40,9 +43,13 @@ test(
     let hold: Promise<void> | undefined;
     let started: (() => void) | undefined;
     let throwPrivateError = false;
+    let beforePayment = async () => {};
+    let duringPayment = async () => {};
     const { createPayments } = await import('../src/server/payments.ts');
+    const { createVaultUses } = await import('../src/server/vault-use.ts');
     const paymentCard = {
       id: randomUUID(),
+      version: 'synthetic-card-version',
       label: 'Studio card',
       brand: 'Visa',
       last4: '4242',
@@ -53,6 +60,7 @@ test(
     const kept: Array<[string, boolean, string | undefined]> = [];
     const payments = await createPayments(db.pool, {
       ownerId,
+      uses: await createVaultUses(db.pool, ownerId),
       local: true,
       policy: async () => ({ allowed: true, flagged: false, inOtto: true }),
       page: async () => ({
@@ -71,19 +79,26 @@ test(
         expiryMonth: 8,
         expiryYear: 2031,
       }),
-      remember: async (id, on, code) => {
-        kept.push([id, on, code]);
+      remember: async (id, on) => {
+        kept.push([id, on, undefined]);
+      },
+      keepCode: async (id, code) => {
+        kept.push([id, true, code]);
       },
       fill: async (input) => {
         entered.push(input.card.securityCode ?? '');
+        await duringPayment();
       },
-      resume: async () => {},
+      resume: thread.resumeAfterPayment,
       record: async () => {},
     });
     const verification = await createChatVerification(db.pool, {
       ownerId,
       keyStore: { getKey: async () => Buffer.alloc(32, 61) },
-      submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
+      submitPayment: async (turnId, code, paymentId) => {
+        await beforePayment();
+        return payments.submitCode(turnId, code, paymentId);
+      },
       refresh() {},
       async submitCode(owner, turnId, code, requestId) {
         injected.push({ owner, turnId, code, requestId });
@@ -188,6 +203,75 @@ test(
     }
     try {
       await t.test(
+        'Stop cancels a waiting payment before or during entry without restarting the task',
+        async () => {
+          for (const afterEntry of [false, true]) {
+            await reset();
+            const pending = await seed();
+            await payments.request(pending, {
+              amount: '43.20',
+              currency: 'EUR',
+              fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+            });
+            const paymentId = (await db.pool.query('SELECT id FROM vault_payments')).rows[0].id;
+            let reached!: () => void;
+            let release!: () => void;
+            const started = new Promise<void>((resolve) => {
+              reached = resolve;
+            });
+            const gate = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            const pause = async () => {
+              reached();
+              await gate;
+            };
+            if (afterEntry) duringPayment = pause;
+            else beforePayment = pause;
+            const reply = verification.accept('737', {
+              clientMessageId: randomUUID(),
+              threadId: pending.threadId,
+              verificationRequestId: paymentId,
+            });
+            try {
+              await started;
+              const stopped = await app.inject({
+                method: 'POST',
+                url: '/api/thread/stop',
+                headers,
+              });
+              assert.equal(stopped.statusCode, 200, stopped.body);
+            } finally {
+              release();
+              beforePayment = async () => {};
+              duringPayment = async () => {};
+            }
+            assert.equal(
+              (await reply)!.verificationStatus,
+              afterEntry ? 'submitted' : 'unavailable',
+            );
+            assert.deepEqual(entered, afterEntry ? ['737'] : []);
+            assert.equal(
+              (await db.pool.query('SELECT status FROM turns WHERE id=$1', [pending.turnId]))
+                .rows[0].status,
+              'cancelled',
+            );
+            assert.equal(
+              (await db.pool.query('SELECT 1 FROM vault_uses WHERE id=$1', [paymentId])).rowCount,
+              afterEntry ? 1 : 0,
+            );
+            assert.equal(
+              (
+                await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
+                  `credentials:${pending.turnId}`,
+                ])
+              ).rowCount,
+              0,
+            );
+          }
+        },
+      );
+      await t.test(
         'concise code replies bypass ordinary routing and save only a masked acknowledgement',
         async () => {
           for (const [text, code] of [
@@ -269,7 +353,7 @@ test(
               channel: 'telegram:synthetic',
             }),
             (error: Error & { statusCode?: number }) =>
-              error.statusCode === 409 && /approved only in the Otto app/.test(error.message),
+              error.statusCode === 409 && /secure payment link/.test(error.message),
           );
           for (const text of ['73951', '2 hinges for 7395', '739 or 740'])
             assert.equal((await send(text)).statusCode, 409, text);
@@ -282,6 +366,22 @@ test(
           assert.equal(response.json().verificationStatus, 'submitted');
           assert.deepEqual(entered, ['7395']);
           assert.deepEqual(kept, []);
+          assert.equal((await send('7395')).statusCode, 409);
+          await db.pool.query(
+            `INSERT INTO credential_requests(id,owner_id,thread_id,turn_id,kind,status,expires_at)
+             SELECT 'old-code-'||n,$1,$2,$3,'otp','filled',now()-interval '1 minute'
+             FROM generate_series(1,12) n`,
+            [ownerId, threadId, turnId],
+          );
+          assert.equal((await send('739')).statusCode, 409);
+          assert.deepEqual(ordinary, ['wait, which card is that?']);
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,started_at)
+             VALUES($1,$2,$3,'user','A new numeric request','web','running',clock_timestamp())`,
+            [randomUUID(), ownerId, threadId],
+          );
+          assert.equal((await send('Order 100 hinges')).statusCode, 200);
+          assert.deepEqual(ordinary, ['wait, which card is that?', 'Order 100 hinges']);
           const persisted = await db.pool.query(
             `SELECT text AS value FROM messages UNION ALL SELECT prompt FROM turns
              UNION ALL SELECT fields::text||status FROM vault_payments`,
@@ -609,8 +709,10 @@ test(
       );
     } finally {
       await app.close();
+      await thread.boss.stop();
       await db.pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.query(`DROP SCHEMA ${bossSchema} CASCADE`);
       await admin.end();
     }
   },

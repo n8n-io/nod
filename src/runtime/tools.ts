@@ -34,6 +34,17 @@ export const personalActions = [
 const uuid = Type.String({
   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 });
+const cardExpiryField = Type.Union([
+  Type.String({ minLength: 1, maxLength: 500 }),
+  Type.Object(
+    {
+      selector: Type.String({ minLength: 1, maxLength: 500 }),
+      format: Type.String({ minLength: 1, maxLength: 100 }),
+      locale: Type.Optional(Type.String({ maxLength: 35 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 function literals<const T extends readonly string[]>(values: T) {
   return Type.Union(values.map((value) => Type.Literal(value)) as TLiteral<T[number]>[]);
@@ -261,13 +272,16 @@ export const toolDefinitions = {
   ),
   sign_in: defineTool(
     'sign_in',
-    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Submit with browser and inspect the result.',
+    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
       origin: Type.String({ minLength: 1, maxLength: 2048 }),
       label: Type.String({ minLength: 1, maxLength: 100 }),
       kind: literals(['identifier', 'password', 'otp']),
       usernameSelector: Type.Optional(Type.String()),
-      passwordSelector: Type.Optional(Type.String()),
+      passwordSelector: Type.Optional(
+        Type.Union([Type.String(), Type.Array(Type.String(), { minItems: 1, maxItems: 100 })]),
+      ),
+      submitSelector: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
       emailCode: Type.Optional(Type.Boolean()),
       emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
       savedLoginId: Type.Optional(uuid),
@@ -277,16 +291,17 @@ export const toolDefinitions = {
   ),
   pay: defineTool(
     'pay',
-    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Otto shows the user the checkout and asks for a yes or the card’s security code, which you never see. Stop and wait. After Otto enters the card, place the order and check the result.',
+    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. For another expiry layout, use {selector, format, locale?}: M or MM for the numeric month, MMM or MMMM for its short or full name, and YY or YYYY for the year. For example, format can be YYYY-MM or MMM with locale en. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Otto shows the user the checkout and asks for a yes or the card’s security code, which you never see. Stop and wait. Pass submitSelector for the control that submits the payment. Otto enters and submits in one private operation and keeps the live page. Check the result; do not submit again. Finish all other checkout fields first. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
       amount: Type.String({ pattern: '^\\d{1,9}(\\.\\d{1,3})?$' }),
       currency: Type.String({ minLength: 3, maxLength: 3 }),
       card: Type.Optional(Type.String({ maxLength: 100 })),
+      submitSelector: Type.String({ minLength: 1, maxLength: 2048 }),
       fields: Type.Object({
         number: Type.String({ minLength: 1 }),
-        expiry: Type.Optional(Type.String({ minLength: 1 })),
-        expiryMonth: Type.Optional(Type.String({ minLength: 1 })),
-        expiryYear: Type.Optional(Type.String({ minLength: 1 })),
+        expiry: Type.Optional(cardExpiryField),
+        expiryMonth: Type.Optional(cardExpiryField),
+        expiryYear: Type.Optional(cardExpiryField),
         securityCode: Type.Optional(Type.String({ minLength: 1 })),
         name: Type.Optional(Type.String({ minLength: 1 })),
       }),
@@ -302,13 +317,16 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens an existing profile without verifying sign-in. Inspect the current page to determine the outcome. save {url, connectionId, signedIn:true} records that you observed a successful sign-in on this origin. Only connect accepts label.',
+    'Browser profiles for website accounts. connect {url, label?, destinations?} opens a new private profile. use {url, connectionId, destinations?} opens an existing profile without verifying sign-in. destinations lists additional exact origins needed for assets, APIs or sign-in redirects. Network access with a saved profile requires permission for each origin. If a destination is blocked, request it with use. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
       Type.Object(
         {
           action: Type.Literal('connect'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+          destinations: Type.Optional(
+            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -317,6 +335,9 @@ export const toolDefinitions = {
           action: Type.Literal('use'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           connectionId: uuid,
+          destinations: Type.Optional(
+            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -602,13 +623,18 @@ export function ottoTools(
       const result = await context.requestPayment(p);
       if (appConfirmation in result)
         return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
-      await turn.invite(result.question);
+      await turn.invite(
+        result.url ? `${result.question} [Approve payment](${result.url})` : result.question,
+      );
       await pause('credentials', undefined, { post: false });
-      return 'Waiting for the user to reply with the security code.';
+      return 'Waiting for private payment approval.';
     }),
     bind(toolDefinitions.payment_setting, async (p) => {
       if (!context.paymentSetting) throw new Error('Payments are unavailable.');
-      return context.paymentSetting(p);
+      const result = await context.paymentSetting(p);
+      return typeof result === 'object'
+        ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
+        : result;
     }),
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');

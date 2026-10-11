@@ -49,6 +49,8 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
     'https://example.com:9222',
     'https://example.com/vault/opaque',
     'https://example.com/%63redentials/opaque',
+    'https://example.com/payments/opaque',
+    'https://example.com/api/payment-requests/opaque',
     'https://example.com/approvals/opaque',
     'https://example.com/approval/token',
     'https://example.com/consent/token',
@@ -271,12 +273,15 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
-test('Vault save links open only the local empty login form without accepting credential query data', () => {
-  const expected = { href: '/vault?add=login', kind: 'setup', setup: 'vault' };
-  assert.deepEqual(safeMessageLink('/vault?add=login', origin), expected);
-  assert.deepEqual(safeMessageLink(`${origin}/vault?add=login`, origin), expected);
+test('Vault save links open only an empty local form without accepting secret query data', () => {
+  for (const kind of ['login', 'card']) {
+    const path = `/vault?add=${kind}`;
+    const expected = { href: path, kind: 'setup', setup: 'vault' };
+    assert.deepEqual(safeMessageLink(path, origin), expected);
+    assert.deepEqual(safeMessageLink(`${origin}${path}`, origin), expected);
+  }
   for (const query of [
-    '?add=card',
+    '?add=card&cardNumber=4242424242424242',
     '?add=login&origin=https%3A%2F%2Fexample.test',
     '?add=login&username=synthetic',
     '?add=login&password=synthetic',
@@ -294,6 +299,14 @@ test('Vault save links open only the local empty login form without accepting cr
   const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
   assert.equal(link?.getAttribute('href'), '/vault?add=login');
   assert.equal(link?.getAttribute('rel'), 'noopener noreferrer');
+});
+
+test('an owned payment link remains an action in the desktop conversation', () => {
+  const path = '/payments/9a7fc76a-9f96-4890-8865-1157048f47bc';
+  const result = render(`[Approve payment](${path})`);
+  const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
+  assert.equal(link?.getAttribute('href'), path);
+  assert.equal(previewableUrl(`https://example.com${path}`), null);
 });
 
 test('an existing native account does not hide authorization for another account', () => {

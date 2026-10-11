@@ -32,7 +32,8 @@ const texts = {
   payment: {
     masked: 'Security code sent securely.',
     pending: 'Security code received securely.',
-    failed: 'The security code could not be used for this payment.',
+    failed:
+      'The payment result is not confirmed. Check the order and payment status before another attempt.',
   },
 };
 const unavailableMessage =
@@ -197,6 +198,7 @@ export async function createChatVerification(
         `SELECT r.id,r.turn_id,r.kind FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
          WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2 AND r.thread_id=$5
            AND r.status='pending' AND r.expires_at>now()
+           AND (r.kind<>'payment' OR u.channel='web')
            AND ${waitingTurnSql('u', 'credentials')}
            AND ($3::uuid IS NULL OR r.turn_id=$3) AND ($4::text IS NULL OR r.id=$4)
            ORDER BY r.expires_at,r.id LIMIT 2`,
@@ -207,18 +209,18 @@ export async function createChatVerification(
         const waiting = await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
           `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
            WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$4
-             AND (r.kind<>'payment' OR r.status='pending')
-             AND (r.expires_at>now() OR $3::uuid IS NOT NULL OR
+             AND ((r.status='pending' AND r.expires_at>now()) OR $3::uuid IS NOT NULL OR
                NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.owner_id=$1 AND newer.thread_id=$4
                  AND newer.source='user' AND newer.id<>u.id AND newer.started_at>u.started_at))
-             AND ($3::uuid IS NULL OR r.turn_id=$3) LIMIT 10`,
-          [options.ownerId, channel, turnId ?? null, thread.id],
+             AND ($3::uuid IS NULL OR r.turn_id=$3)
+             AND ((r.kind='payment' AND $5::boolean) OR (r.kind='otp' AND $6::boolean)) LIMIT 1`,
+          [options.ownerId, channel, turnId ?? null, thread.id, paymentLike, Boolean(codes.otp)],
         );
-        const late = waiting.rows.find((row) => (row.kind === 'payment' ? paymentLike : codes.otp));
+        const late = waiting.rows[0];
         if (late)
           throw conflict(
             late.kind === 'payment' && late.channel !== channel
-              ? 'Payments are approved only in the Otto app. Otto did not use this code.'
+              ? 'Open the secure payment link in Otto. Otto did not use this code.'
               : unavailableMessage,
           );
         await input.persistOrdinary?.(client);

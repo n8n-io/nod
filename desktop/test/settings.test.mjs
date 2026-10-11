@@ -704,7 +704,9 @@ async function runningDesktop(
         this.sent = [];
         this.visible = true;
         this.webContents = Object.assign(new EventEmitter(), {
-          setWindowOpenHandler() {},
+          setWindowOpenHandler(handler) {
+            this.openWindow = handler;
+          },
           isLoadingMainFrame: () => Boolean(this.loading),
           getURL: () => this.webContents.mainFrame.url,
           send: (channel, value) => {
@@ -865,6 +867,16 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const window = f.windows.at(-1);
   const frame = { url: 'http://127.0.0.1:4310/' };
   window.webContents.mainFrame = frame;
+  const paymentURL = 'http://127.0.0.1:4310/payments/synthetic-request';
+  const opened = window.webContents.openWindow({ url: paymentURL });
+  assert.equal(opened.action, 'allow');
+  assert.equal(opened.overrideBrowserWindowOptions.webPreferences.partition, 'persist:otto-app');
+  window.webContents.emit(
+    'will-navigate',
+    { preventDefault: () => assert.fail('The owned payment page stays in the app.') },
+    paymentURL,
+  );
+  assert.equal(window.webContents.openWindow({ url: 'file:///synthetic' }).action, 'deny');
   const event = { sender: window.webContents, senderFrame: frame };
   const invoke = (channel, target, ...args) =>
     Promise.resolve().then(() => f.handlers.get(channel)(target, ...args));
@@ -1457,6 +1469,7 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
     assert.throws(() => capture(rejected), /unavailable/);
   for (const path of [
     '/credentials/synthetic',
+    '/payments/synthetic',
     '/vault',
     '/browser',
     '/browser-connect/synthetic',
