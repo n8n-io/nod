@@ -307,10 +307,15 @@ test(
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
-      assert.deepEqual(touched, [`${next.id}:before:0`, `${next.id}:after:1`]);
+      assert.deepEqual(touched, [
+        `${next.id}:before:0`,
+        `${next.id}:after:1`,
+        `${next.id}:before:1`,
+        `${next.id}:after:2`,
+      ]);
       const scroll = { type: 'wheel', deltaX: 0, deltaY: 120 };
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
-      assert.equal(touched.length, 2);
+      assert.equal(touched.length, 4);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
       assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
