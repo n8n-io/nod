@@ -31,11 +31,10 @@ The server scans the full text of every untrusted result, error and block agains
 
 On a hit, the block gets a warning that names what was found, and Otto is told not to follow it. Until your next message, the server also holds:
 
-| Action                                        | While the tripwire is set                      |
-| --------------------------------------------- | ---------------------------------------------- |
-| App sends, deletions and unclassified actions | Wait for your yes or no                        |
-| Sign-in with a saved login or session         | Waits for you                                  |
-| Payment                                       | Needs the card's security code, not just a yes |
+| Action                                | While the tripwire is set                      |
+| ------------------------------------- | ---------------------------------------------- |
+| Sign-in with a saved login or session | Waits for you                                  |
+| Payment                               | Needs the card's security code, not just a yes |
 
 Your next message clears the hold, because it's fresh authority from you.
 
@@ -44,10 +43,10 @@ flowchart TD
   source[Web page, email<br/>or app result] --> wrap[Marked as data]
   wrap --> trip{{Tripwire<br/>match?}}
   trip -- no --> model[Otto reads it]
-  trip -- yes --> flag[Labeled, sends held]:::stop
+  trip -- yes --> flag[Labeled, sign-in and<br/>payments held]:::stop
   flag --> model
-  model -- send or delete --> check{{Trust check}}:::accent
-  check -- held --> you([Asks you]):::accent
+  model -- app action --> check{{Trust check:<br/>did you ask?}}:::accent
+  check -- no --> you([Asks you]):::accent
 ```
 
 ## Memory ignores outside content
@@ -59,14 +58,14 @@ Automatic memory learning reads only your own short messages without attachments
 | Protected                                                   | Not protected                                                     |
 | ----------------------------------------------------------- | ----------------------------------------------------------------- |
 | A page or email can't approve an action or grant permission | The model can still be persuaded. It isn't immune to injection    |
-| Sends and deletions still pass the trust check              | The tripwire reads text only. Images aren't scanned               |
+| Every app action passes the trust check                     | The tripwire reads text only. Images aren't scanned               |
 | Vault never gives the model a saved password, code or card  | New wording can slip past a short pattern list                    |
 | Payments always need your approval                          | Clicks on websites in Otto's browser aren't checked by the server |
 
 The tripwire is a security alarm, not a page parser. It never changes or acts on the page. What limits the damage is the server: whatever the model believes, the trust check, Vault and payment checks still apply.
 
 :::caution
-The server doesn't check changes to your own data, data sent to recipients you already trust, or links Otto opens or fetches. Text that fools the model could still use those paths.
+The server doesn't check what Otto reads or types on websites in its browser, or the links it opens or fetches. Text that fools the model could still use those paths.
 :::
 
 ## Where this is enforced

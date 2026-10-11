@@ -163,17 +163,12 @@ function collect(value: unknown, inside: boolean, found: Set<string>) {
   return found;
 }
 
-export function actionRecipients(action: string, args: Record<string, unknown>) {
+function actionRecipients(action: string, args: Record<string, unknown>) {
   const found = collect(actionPayload(action, args), false, new Set());
   if (action === 'CONNECTED_HTTP')
     for (const [key, value] of sentUrl(String(args.path ?? '')).searchParams)
       collect({ [key]: value }, false, found);
   return found;
-}
-
-export function draftAction(action: string, args: Record<string, unknown>) {
-  const words = actionWords(action, args);
-  return effectOf(words) === 'change' && words.some(draft);
 }
 
 export function actionEffect(action: string, args: Record<string, unknown>): ActionEffect {

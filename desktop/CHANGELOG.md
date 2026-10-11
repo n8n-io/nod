@@ -1,5 +1,50 @@
 # Desktop changelog
 
+## 0.1.12 - 2026-10-11
+
+### Features
+
+- **vault:** Keep secret entry private and preserve browser tasks. [commit](https://github.com/n8n-io/otto/commit/0e46930fd07a6e32b74d2535960b26c823f5abba) (0e46930)
+
+### Fixes
+
+- **release:** Select fixture targets and correct setup steps. [#217](https://github.com/n8n-io/otto/pull/217) (0380c67)
+
+### Documentation
+
+- Add the Otto docs site and move the docs into it. [#219](https://github.com/n8n-io/otto/pull/219) (9be032b)
+
+<details>
+<summary>Maintenance (15 changes)</summary>
+
+- **deps:** Bump rust in /. [#225](https://github.com/n8n-io/otto/pull/225) (00ef8d4)
+- **deps:** Bump actions/github-script from 8.0.0 to 9.0.0. [#223](https://github.com/n8n-io/otto/pull/223) (0fc01e3)
+- **deps:** Bump actions/setup-go from 6.5.0 to 7.0.0. [#222](https://github.com/n8n-io/otto/pull/222) (ba9c538)
+- **deps:** Bump pnpm/action-setup from 4.3.0 to 6.1.0. [#224](https://github.com/n8n-io/otto/pull/224) (494b19e)
+- **deps:** Bump the actions group with 3 updates. [#221](https://github.com/n8n-io/otto/pull/221) (01b0bad)
+- **deps-dev:** Bump vite from 7.3.6 to 8.3.4. [#231](https://github.com/n8n-io/otto/pull/231) (f8d18a6)
+- **deps-dev:** Bump @napi-rs/canvas from 1.0.9 to 1.0.10. [#230](https://github.com/n8n-io/otto/pull/230) (aea6715)
+- **deps:** Bump @radix-ui/react-dialog from 1.1.23 to 1.2.0. [#228](https://github.com/n8n-io/otto/pull/228) (7b6c126)
+- **deps:** Bump parse5 from 7.3.0 to 8.0.1. [#227](https://github.com/n8n-io/otto/pull/227) (3a57195)
+- **deps:** Bump agent-browser from 0.38.1 to 0.38.2. [#233](https://github.com/n8n-io/otto/pull/233) (be5c553)
+- **deps:** Bump @fastify/multipart from 9.4.0 to 10.1.3. [#226](https://github.com/n8n-io/otto/pull/226) (8ab91e9)
+- **deps:** Bump better-auth from 1.7.6 to 1.7.7. [#232](https://github.com/n8n-io/otto/pull/232) (95ad6d1)
+- **deps:** Bump pg-boss from 12.34.0 to 12.37.0. [#229](https://github.com/n8n-io/otto/pull/229) (9ec5740)
+- **deps:** Bump the pi group across 1 directory with 2 updates. [#220](https://github.com/n8n-io/otto/pull/220) (07bf5a8)
+- Cache Docker layers, add Git hooks and scope secret scanning in tests. [#213](https://github.com/n8n-io/otto/pull/213) (b397eef)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.11...00ef8d4a6dc3fb2a4a61a26c8579e42d5a954fd2)
+
+<details>
+<summary>Build details</summary>
+
+Source: `00ef8d4a6dc3fb2a4a61a26c8579e42d5a954fd2`
+Previous release: `desktop-v0.1.11`
+
+</details>
+
 ## 0.1.11 - 2026-10-09
 
 ### Features

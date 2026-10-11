@@ -440,13 +440,11 @@ test(
       const trust = createTrust({
         pool: db.pool,
         ownerId,
-        ownAddresses: async () => ['owner@example.test', null],
         review: async (_instructions, input) => {
           reviews.push(input as Record<string, any>);
-          return {
-            aligned:
-              typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned,
-          };
+          const yes =
+            typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
+          return 'signIn' in input ? { aligned: yes } : { run: yes };
         },
       });
       await trust.initialize();
@@ -474,29 +472,34 @@ test(
       };
 
       await t.test(
-        'an outside app action the owner did not ask for waits for one confirmation and runs once',
+        'the checker sees only the owner words and the action, and what it does not run waits for one confirmation',
         async () => {
           const turn = await begin('Summarise my inbox.');
-          aligned = false;
+          aligned = (input) => input.action.name === 'GMAIL_FETCH_EMAILS';
           assert.deepEqual(await trust.check(turn, 'GMAIL_FETCH_EMAILS', {}), { confirm: false });
           assert.deepEqual(
-            await trust.check(turn, 'GMAIL_CREATE_EMAIL_DRAFT', email('stranger@example.test')),
-            { confirm: false },
+            Object.keys(reviews.at(-1)!).filter(
+              (key) =>
+                !['userMessages', 'assistantMessageBeforeLatestUserMessage', 'action'].includes(
+                  key,
+                ),
+            ),
+            [],
           );
+          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Summarise my inbox.');
           assert.deepEqual(
             await trust.check(turn, 'GMAIL_SEND_EMAIL', email('stranger@example.test')),
             { confirm: true, reason: 'unrequested' },
           );
-          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Summarise my inbox.');
-          assert.deepEqual(reviews.at(-1)?.action.recipients, ['stranger@example.test']);
-          assert.deepEqual(
-            await trust.check(turn, 'GMAIL_DELETE_MESSAGE', { message_id: 'synthetic' }),
-            { confirm: true, reason: 'unrequested' },
-          );
-          assert.deepEqual(
-            await trust.check(turn, 'CONNECTED_MCP_CALL', { tool: 'get_and_delete_message' }),
-            { confirm: true, reason: 'unrequested' },
-          );
+          assert.match(JSON.stringify(reviews.at(-1)?.action), /stranger@example\.test/);
+          aligned = () => {
+            throw new Error('Synthetic checker failure.');
+          };
+          assert.deepEqual(await trust.check(turn, 'GMAIL_FETCH_EMAILS', {}), {
+            confirm: true,
+            reason: 'unrequested',
+          });
+          aligned = false;
           const before = calls.length;
           const result = await askFor(turn, email('stranger@example.test'));
           assert.equal(result.requiresConfirmation, true);
@@ -521,27 +524,6 @@ test(
           const later = await begin('Summarise my inbox again.');
           assert.deepEqual(
             await trust.check(later, 'GMAIL_SEND_EMAIL', email('stranger@example.test')),
-            { confirm: false },
-          );
-          assert.equal(reviews.length, reviewed);
-        },
-      );
-
-      await t.test(
-        'recipients the owner named or owns run directly and a matching request needs no confirmation',
-        async () => {
-          aligned = false;
-          const reviewed = reviews.length;
-          const turn = await begin('Email ana.named@example.test the synthetic notes.');
-          for (const to of ['ana.named@example.test', 'OWNER@example.test'])
-            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', email(to)), {
-              confirm: false,
-            });
-          assert.deepEqual(
-            await trust.check(turn, 'GMAIL_SEND_EMAIL', {
-              recipient_email: 'ana.named@example.test',
-              cc: ['outsider@example.test'],
-            }),
             { confirm: true, reason: 'unrequested' },
           );
           assert.equal(reviews.length, reviewed + 1);
@@ -552,17 +534,6 @@ test(
               thread_id: 'synthetic-thread',
               message_body: 'YES',
             }),
-            { confirm: false },
-          );
-          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Yes, reply YES to the dentist.');
-          await trust.flag(reply, ['ignore_instructions']);
-          assert.deepEqual(
-            await trust.check(reply, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
-            { confirm: true, reason: 'injection' },
-          );
-          const next = await begin('Email ana.named@example.test the notes now.');
-          assert.deepEqual(
-            await trust.check(next, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
             { confirm: false },
           );
         },
@@ -611,52 +582,55 @@ test(
       );
 
       await t.test(
-        'background and read-only turns cannot take outside app actions without the owner',
+        'background work shows the checker no owner words and read-only turns refuse what it does not run',
         async () => {
+          aligned = false;
+          const event = await begin('Synthetic event', { source: 'event' });
+          assert.deepEqual(
+            await trust.check(event, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
+            { confirm: true, reason: 'background' },
+          );
+          assert.equal(reviews.at(-1)?.userMessages, undefined);
+          assert.equal(reviews.at(-1)?.scheduledTaskInstruction, undefined);
+          const scheduled = await begin('Synthetic scheduled work', { source: 'schedule' });
+          assert.deepEqual(
+            await trust.check(scheduled, 'GOOGLECALENDAR_PATCH_EVENT', {
+              event_id: 'synthetic-shared',
+              start_time: '10:00',
+            }),
+            { confirm: true, reason: 'schedule' },
+          );
+          const instruction = 'Every Monday, move the synthetic standup to 10:00.';
+          const authorized = await begin('Synthetic scheduled work', { source: 'schedule' });
+          await db.pool.query(
+            `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+             VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,now(),'UTC',$6)`,
+            [randomUUID(), ownerId, randomUUID(), randomUUID(), authorized.turnId, instruction],
+          );
+          aligned = (input) => input.scheduledTaskInstruction === instruction;
+          assert.deepEqual(
+            await trust.check(authorized, 'GOOGLECALENDAR_PATCH_EVENT', {
+              event_id: 'synthetic-standup',
+              start_time: '10:00',
+            }),
+            { confirm: false },
+          );
+          assert.equal(reviews.at(-1)?.userMessages, undefined);
           aligned = true;
-          for (const source of ['event', 'schedule'] as const) {
-            const turn = await begin('Synthetic background work', { source });
-            assert.deepEqual(
-              await trust.check(turn, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
-              { confirm: true, reason: source === 'event' ? 'background' : 'schedule' },
-            );
-            assert.deepEqual(
-              await trust.check(turn, 'GMAIL_CREATE_EMAIL_DRAFT', email('ana.named@example.test')),
-              { confirm: false },
-            );
-          }
-          const writes: Array<[string, Record<string, unknown>]> = [
-            ['GOOGLECALENDAR_PATCH_EVENT', { event_id: 'synthetic-shared', start_time: '10:00' }],
-            ['CONNECTED_HTTP', { method: 'PATCH', path: 'v1/items/synthetic', body: {} }],
-            ['GMAIL_SEND_DRAFT', { draft_id: 'synthetic-draft' }],
-          ];
-          for (const [action, args] of writes)
-            assert.deepEqual(
-              await trust.check(await begin('Synthetic event', { source: 'event' }), action, args),
-              { confirm: true, reason: 'background' },
-            );
-          for (const [action, args] of writes.slice(0, 2))
-            for (const source of [undefined, 'schedule'] as const)
-              assert.deepEqual(
-                await trust.check(
-                  await begin('Update my synthetic item.', source ? { source } : {}),
-                  action,
-                  args,
-                ),
-                { confirm: false },
-              );
+          assert.deepEqual(
+            await trust.check(event, 'GMAIL_CREATE_EMAIL_DRAFT', email('ana.named@example.test')),
+            { confirm: false },
+          );
           const onboarding = await begin('', { source: 'onboarding' });
+          assert.deepEqual(await trust.check(onboarding, 'GMAIL_FETCH_EMAILS', {}), {
+            confirm: false,
+          });
+          assert.equal(reviews.at(-1)?.readOnly, true);
+          aligned = false;
           await assert.rejects(
             trust.check(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test')),
             /only read/,
           );
-          await assert.rejects(
-            trust.check(onboarding, 'GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND', {}),
-            /only read/,
-          );
-          assert.deepEqual(await trust.check(onboarding, 'GMAIL_FETCH_EMAILS', {}), {
-            confirm: false,
-          });
           await assert.rejects(
             approvals.request(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test'), {
               confirm: true,
@@ -664,6 +638,7 @@ test(
             }),
             /read-only/,
           );
+          aligned = true;
         },
       );
 
@@ -917,32 +892,6 @@ test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
         async () => {
           aligned = false;
-          const event = await begin('Synthetic event work', { source: 'event' });
-          const disguised: Array<[string, Record<string, unknown>]> = [
-            ['CONNECTED_HTTP', { method: 'POST', path: 'list/../messages/send', body: {} }],
-            ['CONNECTED_HTTP', { method: 'POST', path: 'v1/charges?list=1#get', body: {} }],
-            ['CONNECTED_CLI', { argv: ['api', '-H', 'X-Get: 1', '-X', 'DELETE', 'repos/o/r'] }],
-            ['CONNECTED_CLI', { argv: ['api', 'graphql', '-f', 'query=mutation { deleteRepo }'] }],
-            ['CONNECTED_CLI', { argv: ['api', 'graphql', 'query=mutation { deleteRepo }'] }],
-            [
-              'CONNECTED_HTTP',
-              { method: 'POST', path: 'events/create?attendee=outsider@example.test' },
-            ],
-          ];
-          for (const [action, args] of disguised)
-            assert.deepEqual(await trust.check(event, action, args), {
-              confirm: true,
-              reason: 'background',
-            });
-          const reads: Array<[string, Record<string, unknown>]> = [
-            ['CONNECTED_CLI', { argv: ['pr', 'list', '--state', 'open'] }],
-            ['CONNECTED_CLI', { argv: ['api', 'graphql', '-f', 'query={ viewer { login } }'] }],
-            ['CONNECTED_HTTP', { method: 'POST', path: 'v1/search', body: { query: 'notes' } }],
-          ];
-          for (const [action, args] of reads)
-            assert.deepEqual(await trust.check(event, action, args), { confirm: false });
-
-          const reviewed = reviews.length;
           const turn = await begin('Summarise my inbox.');
           assert.deepEqual(
             await trust.check(turn, 'CONNECTED_HTTP', {
@@ -953,8 +902,19 @@ test(
             }),
             { confirm: true, reason: 'unrequested' },
           );
-          assert.equal(reviews.length, reviewed + 1);
-          assert.deepEqual(reviews.at(-1)?.action.recipients, []);
+          assert.match(
+            JSON.stringify(reviews.at(-1)?.action.arguments),
+            /synthetic-mime-for-an-outsider/,
+          );
+          const oversized = reviews.length;
+          await assert.rejects(
+            trust.check(turn, 'CONNECTED_MCP_CALL', {
+              tool: 'post_message',
+              input: { text: 'x'.repeat(40_000), channel: 'C-OUTSIDER' },
+            }),
+            /too large/,
+          );
+          assert.equal(reviews.length, oversized);
           const hidden = {
             tool: 'post_message',
             input: { text: 'x'.repeat(6000), note: 'y'.repeat(6000), channel: 'C-OUTSIDER' },
@@ -973,7 +933,7 @@ test(
             /--repo outsider\/r/,
           );
           await trust.check(turn, 'CONNECTED_MCP_CALL', hidden);
-          assert.match(JSON.stringify(reviews.at(-1)?.action.request), /C-OUTSIDER/);
+          assert.match(JSON.stringify(reviews.at(-1)?.action.arguments), /C-OUTSIDER/);
 
           const asked = await begin('Email the synthetic notes to the team.');
           await approvals.request(asked, 'GMAIL_SEND_EMAIL', email('team@example.test'), {

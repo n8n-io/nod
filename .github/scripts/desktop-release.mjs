@@ -183,7 +183,7 @@ async function plan() {
   const source = run('git', ['rev-parse', 'HEAD']);
   if (!shaPattern.test(source) || source !== sourceRevision)
     throw new Error('Release checkout does not match the workflow revision.');
-  if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
+  if (process.env.GITHUB_EVENT_NAME === 'push') {
     const pulls = api(`repos/${sourceRepository}/commits/${source}/pulls`);
     if (
       !Array.isArray(pulls) ||
@@ -292,7 +292,7 @@ async function plan() {
   const tag = `desktop-v${release.version}`;
   const existing = releaseByTag(releaseRepository, tag);
   if (existing && !existing.draft) {
-    if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
+    if (process.env.GITHUB_EVENT_NAME === 'push') {
       await outputValues({ release_needed: 'false' });
       return;
     }

@@ -751,10 +751,10 @@ test('automatic delivery requires current exact-main CI and publishes only its c
   assert.equal((await f.readState()).created, 1);
 });
 
-test('CI completion publishes only a merged release PR and keeps the tested source when main moves', async (t) => {
+test('a release manifest push publishes only a merged release PR and keeps the tested source when main moves', async (t) => {
   const f = await releaseFixture(t, { plan: true, publish: true });
   const environment = {
-    GITHUB_EVENT_NAME: 'workflow_run',
+    GITHUB_EVENT_NAME: 'push',
     GITHUB_SHA: 'b'.repeat(40),
     OTTO_RELEASE_SOURCE: f.source,
   };

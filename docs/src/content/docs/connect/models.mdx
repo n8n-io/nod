@@ -95,7 +95,7 @@ Otto uses the same model choice in the app, Telegram and WhatsApp. A task that's
 
 If a model request fails, Otto doesn't switch to another connection. It retries a temporary provider error, such as an overload or rate limit, up to three times.
 
-Background work, such as memory upkeep and reviews of app actions, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model. Either way, it turns reasoning off when the model allows it, and uses low or medium effort when it doesn't.
+Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-4-5`. Otherwise it uses your model. The [trust check](/trust/approvals/) always uses your model. Both use the lightest reasoning the model offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
 
 :::note[Voice needs its own key]
 Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An OpenAI key in **Models** or a ChatGPT plan doesn't turn on voice.

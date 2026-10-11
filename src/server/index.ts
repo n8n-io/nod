@@ -40,7 +40,7 @@ if (runtimeMode !== 'tenant' && !desktopMode && process.env.NODE_ENV !== 'produc
   const vite = await createServer({
     server: {
       middlewareMode: true,
-      hmr: { server: app.server },
+      ws: { server: app.server },
       watch: { ignored: ['**/.local/**', '**/.env*'] },
       fs: {
         deny: [

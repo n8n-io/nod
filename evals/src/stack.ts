@@ -345,6 +345,12 @@ export async function startStack(options: {
       keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
       relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
       memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
+      onboardingCurator: createPiMemoryCurator({
+        provider: model.provider,
+        apiKey: model.apiKey,
+        model: model.name,
+        lightest: true,
+      }),
       linkPreviews: createPublicLinkPreviewProvider(),
       model: { provider: model.provider, name: model.name, configured: true },
     });

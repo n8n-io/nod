@@ -52,8 +52,8 @@ flowchart LR
 |                  | Trust                                                    | Vault                                                   |
 | ---------------- | -------------------------------------------------------- | ------------------------------------------------------- |
 | Protects         | Actions in your connected apps                           | Saved logins, verification codes and cards              |
-| Checks           | The exact action, recipients and payload                 | The task, the saved account and the exact website       |
-| Asks you when    | An action reaches other people or deletes data           | Otto wants an account you haven't allowed for this task |
+| Checks           | The action and its arguments as Otto sends them          | The task, the saved account and the exact website       |
+| Asks you when    | An action beyond a read or draft isn't in your request   | Otto wants an account you haven't allowed for this task |
 | The model sees   | The action and its result                                | Account names and status, never the secret              |
 | You review it in | The confirmation in chat and **Settings → Trust & cost** | **Vault → Activity**                                    |
 
@@ -77,10 +77,9 @@ flowchart LR
 | You ask Otto to                                        | What happens                                                                                     |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | Read your calendar or inbox                            | It runs.                                                                                         |
-| Add an event to your own calendar                      | It runs.                                                                                         |
-| Email an address you wrote in your message             | It runs, because the recipient came from you.                                                    |
-| Email an address it found on a web page                | A review checks it against your request. If it doesn't match, Otto asks.                         |
-| Delete files in your Drive                             | A review checks it matches your request. If it doesn't, Otto asks.                               |
+| Draft a reply                                          | It runs.                                                                                         |
+| Add an event, send an email or delete files            | A review checks it matches your request, then it runs. If it doesn't match, Otto asks.           |
+| Email an address it found on a web page                | The review doesn't find it in your request, so Otto asks.                                        |
 | Sign in to a site with a saved login                   | Vault checks the account and website, then fills in the password privately.                      |
 | Pay at a checkout                                      | You approve that one payment with your card's security code, or a yes if **Do it for me** is on. |
 | Do something while it reacts to a new email on its own | It only reads and drafts. Anything else waits for you.                                           |

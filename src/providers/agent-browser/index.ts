@@ -1071,14 +1071,20 @@ export function createAgentBrowserComputer(options: {
             );
         }
         if (['back', 'forward', 'reload'].includes(input.action)) {
-          const devtools = state.saved.scripted
-            ? await inspector(state).catch(() => undefined)
-            : undefined;
+          const devtools =
+            state.saved.scripted || input.action !== 'reload'
+              ? await inspector(state, signal).catch(() => undefined)
+              : undefined;
           try {
             const before = await devtools?.document().catch(() => undefined);
-            await command(state, [input.action], { signal });
+            const failure = await command(state, [input.action], { signal }).then(
+              () => undefined,
+              (error: unknown) => error,
+            );
             const after = await devtools?.document().catch(() => undefined);
-            if (before && after && before !== after) {
+            const moved = Boolean(before && after && before !== after);
+            if (failure && !(failure instanceof DaemonCommandError && moved)) throw failure;
+            if (state.saved.scripted && moved) {
               delete state.saved.scripted;
               await saveState(state);
             }
@@ -1356,17 +1362,17 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  async function inspector(state: BrowserState) {
+  async function inspector(state: BrowserState, signal?: AbortSignal) {
     const { cdpUrl } = z
       .object({ cdpUrl: z.string() })
       .passthrough()
-      .parse(await command(state, ['get', 'cdp-url']));
+      .parse(await command(state, ['get', 'cdp-url'], { signal }));
     const tab = z
       .array(z.object({ active: z.boolean(), targetId: z.string() }).passthrough())
-      .parse((await command(state, ['tab', 'list'])).tabs)
+      .parse((await command(state, ['tab', 'list'], { signal })).tabs)
       .find((item) => item.active);
     if (!tab) throw new Error('The checkout tab is no longer open.');
-    return openDevtools(cdpUrl, tab.targetId);
+    return openDevtools(cdpUrl, tab.targetId, signal);
   }
 
   async function focusField(

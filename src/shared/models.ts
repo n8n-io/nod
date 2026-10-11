@@ -2,6 +2,10 @@ export type ModelProvider = 'openai' | 'anthropic' | 'openrouter';
 export type ModelMethod = 'api_key' | 'subscription' | 'oauth';
 export type ModelEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export function lightestEffort(efforts: ModelEffort[]) {
+  return efforts.find((level) => ['off', 'minimal', 'low', 'medium'].includes(level)) ?? efforts[0];
+}
+
 export interface ModelChoice {
   id: string;
   name: string;

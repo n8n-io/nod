@@ -1,10 +1,9 @@
 name: Build desktop release
 
 on:
-  workflow_run:
-    workflows: [CI]
+  push:
     branches: [main]
-    types: [completed]
+    paths: [desktop/release.json]
   workflow_dispatch:
     inputs:
       automatic:
@@ -21,7 +20,7 @@ permissions:
   pull-requests: read
 
 env:
-  OTTO_RELEASE_SOURCE: ${{ github.event.workflow_run.head_sha || github.sha }}
+  OTTO_RELEASE_SOURCE: ${{ github.sha }}
 
 concurrency:
   group: desktop-build-release
@@ -31,14 +30,9 @@ concurrency:
 jobs:
   plan:
     name: Check release prerequisites
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-        (github.event.workflow_run.conclusion == 'success' &&
-         github.event.workflow_run.head_repository.full_name == github.repository &&
-         (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 60
     environment:
       name: release
       deployment: false
@@ -71,9 +65,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
+      - name: Wait for CI on the release commit
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          until run=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yml -b main -c "$OTTO_RELEASE_SOURCE" -L 1 --json databaseId --jq '.[0].databaseId // empty') && [ -n "$run" ]; do sleep 10; done
+          gh run watch "$run" -R "$GITHUB_REPOSITORY" --exit-status --interval 30 > /dev/null
       - name: Require tested source, signing configuration and runtime integrity
         id: plan
         env:
@@ -85,7 +86,7 @@ jobs:
         run: node .github/scripts/desktop-release.mjs plan
       - name: Save source-bound release metadata
         if: steps.plan.outputs.metadata_sha256 != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-release-plan
           path: .local/desktop-release-plan.json
@@ -93,7 +94,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: Save reusable Mac runtime descriptors
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-reused-runtime-descriptors
           path: .local/desktop-runtime-release
@@ -125,9 +126,9 @@ jobs:
           ref: ${{ needs.plan.outputs.source }}
           persist-credentials: false
       - name: Set up pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
           cache: pnpm
@@ -158,7 +159,7 @@ jobs:
       - name: Verify and export the native images
         run: node desktop/scripts/prepare-runtime.mjs --images-only --prebuilt-images
       - name: Transfer compressed image archives
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-runtime-images-${{ matrix.arch }}
           path: |
@@ -191,7 +192,7 @@ jobs:
       OTTO_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       OTTO_RUNTIME_RELEASE_TAG: desktop-v${{ needs.plan.outputs.version }}
-      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'workflow_run' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_base_url || '' }}
+      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'push' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_base_url || '' }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -199,9 +200,9 @@ jobs:
           ref: ${{ needs.plan.outputs.source }}
           persist-credentials: false
       - name: Set up pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
           cache: pnpm
@@ -215,7 +216,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
       - name: Download image archives
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-runtime-images-${{ matrix.arch }}
           path: .local/desktop-runtime-assets
@@ -238,7 +239,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: node .github/scripts/with-apple-signing.mjs node desktop/scripts/runtime-pack.mjs --release
       - name: Save the checked runtime descriptor
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-runtime-descriptor-${{ matrix.arch }}
           path: .local/desktop-runtime-release/runtime-release.json
@@ -246,7 +247,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
       - name: Save the checked runtime pack
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-runtime-pack-${{ matrix.arch }}
           path: .local/desktop-runtime-release/*.tar.gz
@@ -286,9 +287,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
           cache: pnpm
@@ -307,13 +308,13 @@ jobs:
           pnpm run build
       - name: Download the verified runtime descriptor
         if: matrix.runtime_reused != 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-runtime-descriptor-${{ matrix.arch }}
           path: .local/desktop-runtime-release
       - name: Download the reused runtime descriptors
         if: matrix.runtime_reused == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-reused-runtime-descriptors
           path: .local/reused-runtime-descriptors
@@ -323,11 +324,11 @@ jobs:
           mkdir -p .local/desktop-runtime-release
           cp ".local/reused-runtime-descriptors/${{ matrix.arch }}/runtime-release.json" .local/desktop-runtime-release/runtime-release.json
       - name: Bind the checked runtime descriptor
-        if: (github.event_name == 'workflow_run' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_reused != 'true'
+        if: (github.event_name == 'push' || inputs.publish) && matrix.runtime_public == 'true' && matrix.runtime_reused != 'true'
         run: echo "OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256=$(shasum -a 256 .local/desktop-runtime-release/runtime-release.json | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
       - name: Download source-bound release metadata
         if: needs.plan.outputs.metadata_sha256 != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-release-plan
           path: .local
@@ -347,7 +348,7 @@ jobs:
           pnpm --dir desktop run build --release
           --runtime-descriptor "$GITHUB_WORKSPACE/.local/desktop-runtime-release/runtime-release.json" --no-runtime-archive
       - name: Save the release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-macos-${{ matrix.arch }}
           path: |
@@ -379,14 +380,14 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.source }}
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node desktop/scripts/prepare-windows-runtime.mjs
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-windows-runtime
           path: |
@@ -409,12 +410,12 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.source }}
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
           cache: pnpm
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
           cache: false
@@ -422,7 +423,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
           choco install nsis --yes --no-progress
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-windows-runtime
           path: .local/windows-runtime-assets
@@ -430,7 +431,7 @@ jobs:
           pnpm run build
           node desktop/scripts/build-windows.mjs
           node desktop/scripts/check-windows.mjs
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-windows-x64
           path: |
@@ -467,44 +468,44 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.21.0'
       - name: Download the Apple Silicon app assets
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-macos-arm64
           path: dist/desktop/arm64
       - name: Download the Intel app assets
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-macos-x64
           path: dist/desktop/x64
       - name: Download the new Apple Silicon runtime pack
         if: fromJSON(needs.plan.outputs.mac_matrix).include[0].runtime_reused != 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-runtime-pack-arm64
           path: .local/desktop-runtime-release/arm64
       - name: Download the new Intel runtime pack
         if: fromJSON(needs.plan.outputs.mac_matrix).include[1].runtime_reused != 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-runtime-pack-x64
           path: .local/desktop-runtime-release/x64
       - name: Download the Windows app assets
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-windows-x64
           path: dist/desktop/win32-x64
       - name: Download source-bound release metadata
         if: needs.plan.outputs.metadata_sha256 != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-release-plan
           path: .local
       - name: Verify GitHub asset digests and download the DMG and ZIP again
         env:
           GH_TOKEN: ${{ github.token }}
-          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'workflow_run' || inputs.publish }}
+          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft-all

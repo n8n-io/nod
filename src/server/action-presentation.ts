@@ -45,8 +45,6 @@ const reasons: Record<TrustReason, string> = {
   background: 'this came up in background work, not from a message of yours.',
   schedule: 'your scheduled task does not clearly ask for this.',
   unrequested: 'I could not confirm that you asked for exactly this.',
-  injection:
-    'something I read since your last message looked like instructions aimed at an AI assistant.',
 };
 
 function abbreviated(value: string, limit: number) {
@@ -129,14 +127,6 @@ function fitted(render: (limit: number) => string[], limits: number[], budget: n
   return shown.length < lines.length
     ? [...shown, `…and ${lines.length - shown.length} more fields`]
     : shown;
-}
-
-export function reviewedRequest(action: string, args: Record<string, unknown>) {
-  return fitted(
-    (limit) => actionDetails(action, args, limit).map(([name, value]) => `${name}: ${value}`),
-    [300, 100],
-    16_000,
-  );
 }
 
 export function actionTitle(action: string) {

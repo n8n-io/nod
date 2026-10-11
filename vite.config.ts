@@ -10,10 +10,15 @@ export default defineConfig({
   build: {
     outDir: 'dist/web',
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          markdown: ['react-markdown', 'remark-gfm', 'rehype-raw', 'rehype-sanitize'],
+        codeSplitting: {
+          groups: [
+            {
+              name: 'markdown',
+              test: /node_modules[\\/](react-markdown|remark-gfm|rehype-raw|rehype-sanitize)[\\/]/,
+            },
+          ],
         },
       },
     },
