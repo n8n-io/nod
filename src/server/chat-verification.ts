@@ -2,11 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
-import {
-  classifyVerificationReply,
-  mayHoldSecurityCode,
-  securityCodeIn,
-} from '../shared/verification-code.ts';
+import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { waitingTurnSql } from './vault.ts';
 
@@ -113,8 +109,7 @@ export async function createChatVerification(
       otp: reply.kind === 'code' ? reply.code : undefined,
       payment: options.submitPayment ? securityCodeIn(text) : undefined,
     };
-    const paymentLike = Boolean(options.submitPayment) && mayHoldSecurityCode(text);
-    if (reply.kind === 'ordinary' && !paymentLike && !input.verificationRequestId) return;
+    if (reply.kind === 'ordinary' && !codes.payment && !input.verificationRequestId) return;
     if (!codes.otp && !codes.payment && input.verificationRequestId)
       throw conflict('Send the code by itself.');
     const incompatible = Boolean(input.attachmentIds?.length || input.forceNew);
@@ -212,7 +207,13 @@ export async function createChatVerification(
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
                AND r.status='pending' AND r.expires_at>now()
                AND ((r.kind='payment' AND $4::boolean) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
-            [options.ownerId, channel, thread.id, paymentLike, reply.kind !== 'ordinary'],
+            [
+              options.ownerId,
+              channel,
+              thread.id,
+              Boolean(codes.payment),
+              reply.kind !== 'ordinary',
+            ],
           )
         ).rows[0];
         if (waiting)

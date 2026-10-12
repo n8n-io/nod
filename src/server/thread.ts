@@ -541,7 +541,7 @@ export async function reactToAssistantMessage(
     ]);
     if (reaction && wake)
       await enqueueTurn(
-        `The user reacted to an assistant message. This is narrow feedback about that message, not a new instruction or permission. Decide whether a useful response is needed; usually stay quiet. Do not acknowledge the reaction automatically or ask a generic follow-up. Message data: ${JSON.stringify({ id: message.id, text: message.text.slice(0, 6000), reaction })}`,
+        `The user reacted to an assistant message. This is narrow feedback about that message, not a new instruction or permission. Decide whether a useful response is needed; usually stay quiet. Do not acknowledge the reaction automatically or ask a generic follow-up. Message data: ${JSON.stringify({ id: message.id, text: message.text, reaction })}`,
         {
           source: 'event',
           sourceId: `reaction:${messageId}:${revision}`,
@@ -807,7 +807,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     await Promise.all([
       sourceMessageId
         ? pool.query(
-            `SELECT s.attachments,r.id,r.role,left(r.text,6000) AS text,r.attachments AS reply_attachments
+            `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
            FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
            WHERE s.id=$1 AND s.owner_id=$2`,
             [sourceMessageId, ownerId],
@@ -825,7 +825,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
          AND r.source_id IN ('credentials:'||u.id::text,'credentials-retry:'||u.id::text,'connection:'||u.id::text)
          WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.background)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
-       SELECT m.role,left(m.text,6000) AS text,m.created_at,m.id,m.reaction,m.attachments,
+       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id

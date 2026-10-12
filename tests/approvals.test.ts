@@ -2482,7 +2482,7 @@ test(
           );
           for (const [field, value, quote] of [
             ['location', 'Braga', 'I live near Porto.'],
-            ['name', 'my password', 'My name is my password'],
+            ['name', 'sk-fixturefixture1234', 'My name is sk-fixturefixture1234'],
           ]) {
             const statement = await thread.submitUserMessage(quote!);
             await assert.rejects(

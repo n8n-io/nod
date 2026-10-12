@@ -26,7 +26,3 @@ export function securityCodeIn(text: string) {
     bare ?? explicit ?? (reply.kind === 'code' && reply.code.length === 4 ? reply.code : undefined)
   );
 }
-
-export function mayHoldSecurityCode(text: string) {
-  return /(?<!\d)\d{3,4}(?!\d)/.test(text);
-}

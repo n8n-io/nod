@@ -3,7 +3,7 @@ import type { Artifact } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { classifyVerificationReply, mayHoldSecurityCode } from '../shared/verification-code.ts';
+import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
@@ -326,7 +326,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         return;
       }
       if (
-        (classifyVerificationReply(text).kind !== 'ordinary' || mayHoldSecurityCode(text)) &&
+        (classifyVerificationReply(text).kind !== 'ordinary' || securityCodeIn(text)) &&
         options.acceptVerification
       ) {
         try {

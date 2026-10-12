@@ -26,24 +26,28 @@ export function createTrust(options: {
   const { pool, ownerId } = options;
 
   async function conversation(threadId: string) {
-    const rows = (
-      await pool.query<{ role: string; text: string; created_at: Date }>(
-        `SELECT role,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2
-         AND role IN ('user','assistant') AND text<>'' AND created_at>now()-interval '24 hours'
-         AND NOT (role='user' AND text IN (
+    const users = (
+      await pool.query<{ id: string; text: string; created_at: Date }>(
+        `SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
+         AND text<>'' AND created_at>now()-interval '24 hours'
+         AND text NOT IN (
            SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
-           WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL))
-         ORDER BY created_at DESC,id DESC LIMIT 40`,
+           WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL)
+         ORDER BY created_at DESC,id DESC LIMIT 5`,
         [ownerId, threadId],
       )
     ).rows;
-    const latest = rows.findIndex((row) => row.role === 'user');
-    if (latest < 0) return undefined;
-    const before = rows.slice(latest + 1).find((row) => row.role === 'assistant');
+    const latest = users[0];
+    if (!latest) return undefined;
+    const before = (
+      await pool.query<{ text: string }>(
+        `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
+         AND (created_at,id)<($3,$4) ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [ownerId, threadId, latest.created_at, latest.id],
+      )
+    ).rows[0];
     return {
-      userMessages: rows
-        .filter((row) => row.role === 'user')
-        .slice(0, 5)
+      userMessages: users
         .reverse()
         .map((row) => ({ at: row.created_at.toISOString(), text: row.text })),
       ...(before ? { assistantMessageBeforeLatestUserMessage: before.text } : {}),

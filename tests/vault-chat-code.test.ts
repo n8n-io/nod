@@ -337,7 +337,7 @@ test(
         },
       );
       await t.test(
-        'while a payment is pending any 3 or 4 digit number is held back, and afterwards numbers are ordinary',
+        'a security code sent by itself pays in Otto while numbers in other messages stay ordinary',
         async () => {
           await reset();
           const threadId = (await thread.activeThread(db.pool, ownerId)).id;
@@ -358,33 +358,26 @@ test(
           const state = (await app.inject({ url: '/api/state', headers })).json();
           assert.equal(state.verificationRequests[0].kind, 'payment');
           await assert.rejects(
-            verification.accept('here you go 7395', {
+            verification.accept('7395', {
               clientMessageId: randomUUID(),
               channel: 'telegram:synthetic',
             }),
             (error: Error & { statusCode?: number }) =>
               error.statusCode === 409 && /secure payment link/.test(error.message),
           );
-          for (const text of [
-            '73951',
-            '2 hinges for 7395',
-            '739 or 740',
-            'The year is 2026',
-            'sure, it is 7395',
-          ])
-            assert.equal((await send(text)).statusCode, 409, text);
+          assert.equal((await send('73951')).statusCode, 409);
+          const prose = ['2 hinges for room 212', '739 or 740', 'The year is 2026'];
+          for (const text of prose) assert.equal((await send(text)).statusCode, 200, text);
+          assert.deepEqual(ordinary, prose);
           assert.deepEqual(entered, []);
-          assert.equal((await send('wait, which card is that?')).statusCode, 200);
-          assert.deepEqual(ordinary, ['wait, which card is that?']);
           const response = await send('7395');
           assert.equal(response.statusCode, 200, response.body);
           assert.equal(response.json().messageText, 'Security code sent securely.');
           assert.equal(response.json().verificationStatus, 'submitted');
           assert.deepEqual(entered, ['7395']);
           assert.deepEqual(kept, []);
-          const prose = ['2026', '2 hinges for room 212'];
-          for (const text of prose) assert.equal((await send(text)).statusCode, 200, text);
-          assert.deepEqual(ordinary, ['wait, which card is that?', ...prose]);
+          assert.equal((await send('2026')).statusCode, 200);
+          assert.deepEqual(ordinary, [...prose, '2026']);
           assert.deepEqual(entered, ['7395']);
           const persisted = await db.pool.query(
             `SELECT text AS value FROM messages UNION ALL SELECT prompt FROM turns

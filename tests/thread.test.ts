@@ -3323,7 +3323,7 @@ test(
       );
       const secret = await post('I prefer email updates. Also reset my password on the store.');
       await assert.rejects(
-        memory.save({ area: 'about', text: 'Store password is hunter2.' }, secret),
+        memory.save({ area: 'about', text: 'Store key is sk-fixturefixture1234.' }, secret),
         /cannot be remembered/,
       );
       await assert.rejects(
@@ -3416,13 +3416,13 @@ test(
       const path = join(root, 'memory', 'MEMORY.md');
       const document = JSON.parse(await readFile(path, 'utf8'));
       document.entries.push(
-        { ...document.entries[0], slug: 'leak', text: 'The store password is hunter2.' },
+        { ...document.entries[0], slug: 'leak', text: 'The store key is sk-fixturefixture1234.' },
         { slug: 'broken' },
       );
       await writeFile(path, JSON.stringify(document));
-      assert.doesNotMatch(await memory.context(), /hunter2|broken/);
+      assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
       await memory.save({ area: 'about', text: 'Plays chess on Sundays.' }, first);
-      assert.doesNotMatch(await readFile(path, 'utf8'), /hunter2|broken/);
+      assert.doesNotMatch(await readFile(path, 'utf8'), /sk-fixture|broken/);
 
       await writeFile(
         path,
@@ -3504,7 +3504,7 @@ test(
         await assert.rejects(memory.learn({ area: 'preferences', quote }, provenance));
         await assert.rejects(memory.control({ enabled: false, quote }, provenance));
       }
-      const secret = 'My password is hunter2.';
+      const secret = 'My key is sk-fixturefixture1234.';
       await assert.rejects(memory.learn({ area: 'about', quote: secret }, await post(secret)));
       assert.equal((await memory.load()).entries.length, 2);
       assert.equal(await memory.enabled(), true);
@@ -3666,7 +3666,7 @@ test(
         attachments: '[{"name":"receipt.pdf"}]',
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
-      await post('My password is hunter2 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
+      await post('My card is 4111 1111 1111 1111 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
       for (const [status, text] of [
         ['declined', 'Remember that refunds go to account 1.'],
         ['pending', 'Remember that I prefer window seats.'],

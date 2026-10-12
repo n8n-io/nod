@@ -786,7 +786,6 @@ export async function createDiscoveredConnections(
     const row = await account(connectionId);
     const path = row.paths.find((item) => item.id === pathId);
     if (!path) throw error('This access path is unavailable.', 404);
-    if (JSON.stringify(args).length > 32_768) throw error('The app request is too large.');
     return { row, path };
   }
   async function execute(

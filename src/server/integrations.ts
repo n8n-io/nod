@@ -1231,8 +1231,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       throw new IntegrationError('Choose a connected account for this action.', 409);
     const slug = await actionToolkit(ownerId, action, connectionId.data);
     const row = await selectConnection(ownerId, slug, connectionId.data);
-    if (JSON.stringify(args).length > 32_768)
-      throw new IntegrationError('The integration request is too large.');
     return row;
   }
 
@@ -1513,8 +1511,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
     const connectionId = z.string().uuid().optional().parse(args.connectionId);
     const slug = await actionToolkit(ownerId, action, connectionId);
-    if (JSON.stringify(args).length > 32_768)
-      throw new IntegrationError('The integration request is too large.');
     const row = await selectConnection(ownerId, slug, connectionId);
     if (hasWorkspaceFiles(args)) {
       const read = options.readWorkspaceFile;
