@@ -138,8 +138,8 @@ importers:
         specifier: 1.435.9
         version: 1.435.9(@types/react@19.3.0)(react@19.3.0)
       posthog-node:
-        specifier: 5.55.0
-        version: 5.55.0
+        specifier: 5.55.1
+        version: 5.55.1
       qrcode.react:
         specifier: 4.2.0
         version: 4.2.0(react@19.3.0)
@@ -1025,8 +1025,14 @@ packages:
   '@posthog/core@1.55.3':
     resolution: {integrity: sha512-XnmG9jo7WlxTeN4oCNWH4ESLQHR6ZPZ+mcq+8JxU62k5i1BAe3BSrybnmXHjqKp7e3rUvLK2bOzGZGSlfHvlNA==}
 
+  '@posthog/core@1.57.4':
+    resolution: {integrity: sha512-JM2r3ab7D8HvxquB06jesAM7EBLf3pXIwYIOj/wwq59cML0aicSoJRZdDREruhbIHzc7iFgSgAqTqJQZxxvq9w==}
+
   '@posthog/types@1.413.0':
     resolution: {integrity: sha512-tYAVzNojWckuG/wxBB0fwE70sFruQQq4xbhkci7eH2ARU3mMfUTkvpN1HwBMpm0AtbxidLiH0IFvagmdJ8opPw==}
+
+  '@posthog/types@1.415.2':
+    resolution: {integrity: sha512-BIIHPyXcPZuNTImrR1qLqLKFw7j9o8co6LG/9OpLtpWJ3RT0y89Lx6VCtd37N9/dkr/qW7y0uPjJxAxjsALHtw==}
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -3489,8 +3495,8 @@ packages:
       react:
         optional: true
 
-  posthog-node@5.55.0:
-    resolution: {integrity: sha512-8dFtlDTqs0CKGZ8t4mUnk4NdShAgzru3B9D0MfM/NTBzlRyAjctivzWINLtMLRQxYjvgBohxy7RTwiQf4mPycQ==}
+  posthog-node@5.55.1:
+    resolution: {integrity: sha512-YLnILmFn1zxGYBuCaBldqMjTq9OZBNNbHIr2F0am3iLfU+6ZTvuRmUbTmys//+LnCA6DfZNGgqTb4goFa93u+Q==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -5199,14 +5205,20 @@ snapshots:
 
   '@posthog/browser-common@0.9.1':
     dependencies:
-      '@posthog/core': 1.55.3
-      '@posthog/types': 1.413.0
+      '@posthog/core': 1.57.4
+      '@posthog/types': 1.415.2
 
   '@posthog/core@1.55.3':
     dependencies:
-      '@posthog/types': 1.413.0
+      '@posthog/types': 1.415.2
+
+  '@posthog/core@1.57.4':
+    dependencies:
+      '@posthog/types': 1.415.2
 
   '@posthog/types@1.413.0': {}
+
+  '@posthog/types@1.415.2': {}
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -7909,9 +7921,9 @@ snapshots:
     transitivePeerDependencies:
       - preact-render-to-string
 
-  posthog-node@5.55.0:
+  posthog-node@5.55.1:
     dependencies:
-      '@posthog/core': 1.55.3
+      '@posthog/core': 1.57.4
 
   preact@10.29.8: {}
 
