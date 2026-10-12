@@ -40,7 +40,7 @@ Setup, use and how the system works are in the docs site, whose pages live in `d
 
 - Pi still asks before a destructive connected app action that the current request does not clearly authorize. The trust check is the server floor beneath that instruction, not a replacement.
 - Onboarding turns and activity checks must only read connected apps. The trust check refuses any app action it does not judge a read in these turns.
-- The first-chat task cards are prepared without a turn from the owner's setup answers and, when Gmail is connected, one read of recent inbox subjects and snippets that drops security mail; the owner's selected model sees that mail only as data, and its cards are validated or replaced by fixed ones. **Do it** sends exactly the visible card title as a normal owner message.
+- The first-chat task cards are prepared without a turn from the owner's setup answers and, when Gmail is connected, one read of recent inbox subjects and snippets that drops verification-code mail; the owner's selected model sees that mail only as data, and its cards are validated or replaced by fixed ones. **Do it** sends exactly the visible card title as a normal owner message.
 
 ## Validation
 
