@@ -7,7 +7,7 @@ sidebar:
 
 Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. The checker runs reads and drafts, and anything else only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules, your profile, notification settings or memory during a conversation. In scheduled and background work, Otto always asks before those changes.
+The same checker decides when Otto changes its own schedules, your profile or notification settings during a conversation. In scheduled and background work, Otto always asks before those changes. Memory has its own rules: see [Memory](/how-it-works/memory/).
 
 Background work, such as on a new email, has no words from you behind it. So the checker lets it read and draft, and Otto asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
@@ -86,7 +86,7 @@ The trust check is a floor, not a replacement for Otto's own instructions. Otto 
 :::
 
 :::caution[What the trust check doesn't cover]
-It checks connected-app actions, Otto's own changes and [sign-ins](/trust/vault/). Clicks and form submissions on websites in Otto's browser follow the model's instructions. The checker is a best-effort judge and can be wrong.
+It checks connected-app actions, Otto's own changes and [sign-ins](/trust/vault/). Other clicks and form submissions on websites in Otto's browser follow the model's instructions; card entry always goes through [payment approval](/trust/payments/). The checker is a best-effort judge and can be wrong.
 :::
 
 ## Where this is enforced

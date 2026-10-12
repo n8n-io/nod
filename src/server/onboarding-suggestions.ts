@@ -8,6 +8,7 @@ import type { SuggestedTask } from '../shared/onboarding.ts';
 import { pool, transaction } from './db.ts';
 import { refresh } from './events.ts';
 import { verificationMail } from './integration-result.ts';
+import { personalSecret } from './memory-tree.ts';
 import { lockThread } from './thread.ts';
 
 type Source = SuggestedTask['source'];
@@ -48,7 +49,7 @@ function readableInbox(items: InboxSnippet[]) {
     const subject = decoded(item.subject);
     const snippet = decoded(item.snippet);
     const text = `${subject}\n${snippet}`;
-    if (verificationMail(text)) return [];
+    if (verificationMail(text) || personalSecret.test(text)) return [];
     const clean = (value: string, max: number) =>
       fit(value.replace(/\b\d{6,}\b/g, '[number]'), max);
     return [{ subject: clean(subject, 120), snippet: clean(snippet, 160) }];

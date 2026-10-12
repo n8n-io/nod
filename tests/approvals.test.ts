@@ -372,6 +372,9 @@ test(
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
       let aligned: boolean | ((input: Record<string, any>) => boolean) = false;
+      t.beforeEach(() => {
+        aligned = false;
+      });
       const replies: object[] = [];
       const replyAnswers: Record<string, string> = {
         yes: 'yes',

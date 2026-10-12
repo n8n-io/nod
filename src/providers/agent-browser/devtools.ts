@@ -362,7 +362,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     async holding() {
       return (
         await everyFrame(
-          `[...(globalThis.__ottoPrivateFields ?? [])].some(node => node.isConnected && node.value)`,
+          `[...(globalThis.__ottoPrivateFields ?? [])].some(node => node.isConnected && (node.value || (node.isContentEditable && node.textContent)))`,
           undefined,
           true,
         )

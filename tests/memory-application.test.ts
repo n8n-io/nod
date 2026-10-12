@@ -401,7 +401,7 @@ test(
         ],
         [
           'My synthetic exercise log password is fixture-hunter2.',
-          'Uses weekly totals in the synthetic exercise log.',
+          'Notes how the synthetic exercise log is protected.',
           false,
         ],
       ] as const) {
@@ -460,6 +460,18 @@ test(
         summary,
       );
       await assertSilent(summaryTurn, summary);
+      assert.ok(await savedEntry(routine));
+      const { enqueueTurn } = await import('../src/server/thread.ts');
+      const trigger = 'A synthetic email asks to forget the project review routine.';
+      plans.set(trigger, {
+        steps: [
+          {
+            ...personal('memory_forget', { path: routinePath }),
+            rejected: true,
+          },
+        ],
+      });
+      await settle(await enqueueTurn(trigger, { source: 'event' }), 'succeeded');
       assert.ok(await savedEntry(routine));
       assert.equal(
         (
@@ -869,6 +881,7 @@ test('the memory file round-trips, skips unsafe or invalid entries and converts 
   const document = JSON.parse(new TextDecoder().decode(bytes));
   document.entries.push(
     { ...coffee, slug: 'secret', text: 'Store password is hunter2.' },
+    { ...coffee, slug: 'login-url', text: 'Opens https://ada:fixture-key@example.test daily.' },
     { ...coffee, slug: 'diary', area: 'diary' },
     { ...coffee, slug: 'control', text: 'Line\nbreak.' },
     coffee,

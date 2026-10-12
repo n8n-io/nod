@@ -44,8 +44,10 @@ Passkeys are turned on in Otto's browser, but they need an authenticator that th
 | What's stored    | Username and password, encrypted by Vault              | The browser profile: cookies and site storage |
 | How you add it   | **New login**, an import or the private form           | Sign in once in Otto's browser                |
 | How Otto uses it | The server types the values into the fields Otto picks | Otto opens the signed-in profile              |
-| Where it works   | Fields on the login's exact origin                     | Origins the proxy permits for the task        |
+| Where it works   | Fields on the login's exact origin                     | Any public website, never your local network  |
 | Best for         | Username and password sign-in                          | Sign-ins you do by hand, such as magic links  |
+
+Like the rest of Otto's browser, a saved profile reaches only public addresses: never your computer, your local network or other containers.
 
 :::caution
 Once signed in, Otto can act anywhere on that website. Vault doesn't review each click. A saved session is browser data kept with Otto's other data, and Vault doesn't encrypt it, so protect your computer and backups.
@@ -53,7 +55,7 @@ Once signed in, Otto can act anywhere on that website. Vault doesn't review each
 
 ## Where this is enforced
 
-[`src/server/browser-connections.ts`](https://github.com/n8n-io/otto/blob/main/src/server/browser-connections.ts) (sessions) · [`src/server/vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts) (permission and sign-out for background work)
+[`src/server/browser-connections.ts`](https://github.com/n8n-io/otto/blob/main/src/server/browser-connections.ts) (sessions) · [`src/server/vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts) (permission and sign-out for background work) · [`src/providers/agent-browser/network.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/agent-browser/network.ts) (public addresses only)
 
 ## Related resources
 

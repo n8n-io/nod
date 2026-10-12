@@ -30,16 +30,16 @@ flowchart LR
 
 ## What each part can and can't reach
 
-|                       | Server                   | Sandbox user                        | Connected CLI user        | Browser container                                                    |
-| --------------------- | ------------------------ | ----------------------------------- | ------------------------- | -------------------------------------------------------------------- |
-| Provider keys         | Yes                      | No                                  | No                        | No                                                                   |
-| Owner access key      | Yes                      | No                                  | No                        | No                                                                   |
-| Vault values          | Yes                      | No                                  | No                        | Only a value the server enters in a page                             |
-| A connected CLI token | Yes                      | No                                  | Its own token only        | No                                                                   |
-| Docker socket         | Yes, locally             | No                                  | No                        | No                                                                   |
-| Workspace files       | Through a guarded reader | Yes                                 | Files passed as arguments | No shared mounts                                                     |
-| Browser profiles      | Through the bridge       | No                                  | No                        | Yes                                                                  |
-| Internet              | Yes                      | Yes, no egress firewall from source | Yes                       | Public addresses only. A saved profile reaches only allowed origins. |
+|                       | Server                   | Sandbox user                        | Connected CLI user        | Browser container                               |
+| --------------------- | ------------------------ | ----------------------------------- | ------------------------- | ----------------------------------------------- |
+| Provider keys         | Yes                      | No                                  | No                        | No                                              |
+| Owner access key      | Yes                      | No                                  | No                        | No                                              |
+| Vault values          | Yes                      | No                                  | No                        | Only a value the server enters in a page        |
+| A connected CLI token | Yes                      | No                                  | Its own token only        | No                                              |
+| Docker socket         | Yes, locally             | No                                  | No                        | No                                              |
+| Workspace files       | Through a guarded reader | Yes                                 | Files passed as arguments | No shared mounts                                |
+| Browser profiles      | Through the bridge       | No                                  | No                        | Yes                                             |
+| Internet              | Yes                      | Yes, no egress firewall from source | Yes                       | Public addresses only, saved profiles included. |
 
 ## The workspace container
 

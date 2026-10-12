@@ -321,7 +321,7 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens an existing profile without verifying sign-in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
+    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens a saved profile after the same permission check as a sign-in, without verifying that it is still signed in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
       Type.Object(
         {

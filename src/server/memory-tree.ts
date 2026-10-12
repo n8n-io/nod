@@ -9,7 +9,7 @@ export const maxArchive = 40;
 export const indexBudget = 6000;
 
 export const personalSecret =
-  /\b(?:password|passcode|passphrase|otp|pin|2fa|api[ _-]?key|secret|token|bearer|private[ _-]?key|security code|cvv|cvc|verification code|recovery code|palavra[ _-]?passe|senha|código de verificação)\b|\bsk-[A-Za-z0-9_-]{12,}|\b(?:\d[ -]?){14,19}\b/i;
+  /\b(?:password|passcode|passphrase|otp|pin|2fa|api[ _-]?key|secret|token|bearer|private[ _-]?key|security code|cvv|cvc|verification code|recovery code|palavra[ _-]?passe|senha|código de verificação)\b|\bsk-[A-Za-z0-9_-]{12,}|\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@/i;
 const slugPattern = '[a-z0-9]+(?:-[a-z0-9]+)*';
 const legacyKinds = { fact: 'about', preference: 'preferences', pattern: 'lessons' } as const;
 const legacy =

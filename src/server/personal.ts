@@ -199,6 +199,8 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'memory_forget') {
       if (!memory) throw new Error('Memory is unavailable.');
+      if (!provenance?.sourceMessageId)
+        throw new Error('Only a request from the owner can forget a note.');
       return memory.forget(args.path);
     }
     if (action === 'history_search') {

@@ -1103,6 +1103,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     itemId: string | null,
     since?: number,
   ) {
+    await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `otto-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`,
+    ]);
     const { rowCount } = await database.query(
       `SELECT 1 FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=$3 AND kind=$4
        AND (item_id IS NULL OR item_id=$5) AND ($6::timestamptz IS NULL OR created_at>=$6) LIMIT 1`,
