@@ -218,7 +218,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     cwd: string,
     options: { onData(data: Buffer): void; signal?: AbortSignal; timeout?: number },
   ) {
-    const seconds = Math.max(1, Math.min(Math.ceil(options.timeout ?? 600), 3600));
+    const seconds = Math.max(1, Math.min(Math.ceil(options.timeout ?? 3540), 3540));
     const file = `${workspace.path}/.otto/outputs/bash-${randomUUID()}.log`;
     const marker = `\notto-timeout-${randomUUID()}`;
     const script = [

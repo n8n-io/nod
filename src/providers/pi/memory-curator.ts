@@ -83,8 +83,8 @@ export function createPiMemoryCurator(options: {
         },
         {
           signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
-          maxTokens: 2048,
-          maxRetries: 0,
+          maxTokens: 8192,
+          maxRetries: 2,
           reasoning: effort === 'off' ? undefined : effort,
         },
       );
@@ -93,7 +93,11 @@ export function createPiMemoryCurator(options: {
           model: model.id,
           costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
         });
-      if (reply.stopReason === 'error' || reply.stopReason === 'aborted')
+      if (
+        reply.stopReason === 'error' ||
+        reply.stopReason === 'aborted' ||
+        reply.stopReason === 'length'
+      )
         throw new Error('The memory model is unavailable.');
       return json(
         reply.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),

@@ -14,7 +14,7 @@ Setup, use and how the system works are in the docs site, whose pages live in `d
 ## Architecture
 
 - One thread per owner: a persistent Pi session, a sandbox workspace and a browser computer, all keyed by the thread ID and shared by web, Telegram and WhatsApp.
-- Every user message, schedule fire, event wake and resume is a turn. Conversation turns run one at a time on the thread's Pi session; schedule and event turns start when they fire, in parallel, each in its own Pi session. Every write from a turn goes through `withTurnLock`. Turns and tool calls are never retried automatically; Pi retries only a failed model request.
+- Every user message, schedule fire, event wake and resume is a turn. Conversation turns run one at a time on the thread's Pi session; schedule and event turns start when they fire, in parallel, each in its own Pi session. Every write from a turn goes through `withTurnLock`. Turns and tool calls are never retried automatically, and app actions run with provider retries off; Pi and the memory model retry only failed model requests, and provider lookups (accounts, catalogs, schemas) may retry at the HTTP level.
 - The thread browser has one holder: the conversation, a background turn or the user. Others wait in order. The conversation keeps it while it waits for the user, so a browser handoff is never blocked by background work.
 - Pi-native tools (read, bash, edit, write, find, ls) run inside the sandbox through `WorkspaceSession.exec`. The pinned Pi web extension runs in the server process with its process permissions.
 - Provider keys never enter the sandbox or the browser. The Pi web extension, `create_audio` and apps run server-side; the web extension never reads local files. The browser reaches only public addresses.

@@ -8,6 +8,7 @@ import { classifyVerificationReply } from '../shared/verification-code.ts';
 import type { TurnRef, TurnSource } from './thread.ts';
 import { parentTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
+import { texts as codeTexts } from './chat-verification.ts';
 
 const now = z.string().trim().min(1).max(200);
 const waits = z
@@ -621,8 +622,12 @@ export function createTasks(options: {
         [id, ownerId],
       )
     ).rows;
+    const placeholders = new Set(
+      Object.values(codeTexts).flatMap((text) => [text.masked, text.pending]),
+    );
     const requests = messages.filter(
       (message) =>
+        !placeholders.has(message.text) &&
         !personalSecret.test(message.text) &&
         !credentialUrl.test(message.text) &&
         classifyVerificationReply(message.text).kind === 'ordinary',

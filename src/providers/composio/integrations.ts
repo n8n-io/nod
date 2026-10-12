@@ -275,7 +275,7 @@ export function createComposioProvider(options: {
   }
   async function ownedAccount(sdk: Composio, id: string, ownerId: string, signal: AbortSignal) {
     const account = accountRouting.parse(
-      await sdk.getClient().connectedAccounts.retrieve(id, { signal, maxRetries: 0 }),
+      await sdk.getClient().connectedAccounts.retrieve(id, { signal }),
     );
     if (sdk !== client) throw new Error('The connection provider changed. Try again.');
     if (account.id !== id || account.user_id !== ownerId)
@@ -300,7 +300,7 @@ export function createComposioProvider(options: {
               limit: 200,
               ...(cursor ? { cursor } : {}),
             },
-            { signal, maxRetries: 0 },
+            { signal },
           ),
         );
       } catch (error) {
@@ -358,7 +358,7 @@ export function createComposioProvider(options: {
               limit: 1000,
               ...(cursor ? { cursor } : {}),
             },
-            { signal: operation, maxRetries: 0 },
+            { signal: operation },
           ),
         );
         for (const entry of page.items) {
@@ -645,7 +645,7 @@ export function createComposioProvider(options: {
                     include: ['input_schema'],
                   },
                 },
-                { signal: operation, maxRetries: 0 },
+                { signal: operation },
               );
             operation.throwIfAborted();
             const envelope = toolSchemasResponse.parse(response).data;
@@ -686,7 +686,7 @@ export function createComposioProvider(options: {
           action,
           args,
           accountId ? { account: accountId } : undefined,
-          { signal },
+          { signal, maxRetries: 0 } as Parameters<typeof value.execute>[3],
         );
         signal?.throwIfAborted();
         if (

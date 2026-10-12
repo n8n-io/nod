@@ -61,7 +61,7 @@ Both the workspace and browser containers drop all capabilities, set `no-new-pri
 Every command goes through a small supervisor inside the container, in [`src/providers/docker/command.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/docker/command.ts).
 
 - It owns the command's session and signals every process in it, even ones that left the process group.
-- It enforces the timeout: 10 minutes by default, at most one hour for `bash`.
+- It enforces the timeout: 59 minutes for `bash`, both by default and at most.
 - It acknowledges when the command ends. If that acknowledgement is lost, the server fences the workspace: no more commands run until Otto restarts.
 
 ## Command output

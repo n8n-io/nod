@@ -56,7 +56,7 @@ ${JSON.stringify(
         name: profile.name.slice(0, 100),
         location: profile.location.slice(0, 200),
         phone: profile.phone.slice(0, 40),
-        preferences: profile.preferences.slice(0, 2000),
+        preferences: profile.preferences,
       }
     : null,
 )}

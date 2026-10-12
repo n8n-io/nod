@@ -107,7 +107,7 @@ export function createBrowserProxy(
               method: incoming.method,
               path: url.pathname + url.search,
               headers,
-              timeout: 30_000,
+              timeout: 600_000,
             },
             (response) => {
               outgoing.writeHead(response.statusCode ?? 502, response.headers);
@@ -135,7 +135,7 @@ export function createBrowserProxy(
             port: Number(url.port || 443),
           });
           track(upstream);
-          upstream.setTimeout(60_000, () => upstream.destroy());
+          upstream.setTimeout(600_000, () => upstream.destroy());
           upstream.on('close', () => {
             if (!upstream.readableEnded) socket.destroy();
           });
@@ -166,7 +166,7 @@ export function createBrowserProxy(
             method: incoming.method,
             path: url.pathname + url.search,
             headers,
-            timeout: 30_000,
+            timeout: 600_000,
           });
           upstream.on('socket', track);
           upstream.on('timeout', () => upstream.destroy());

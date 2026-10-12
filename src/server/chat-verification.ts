@@ -18,7 +18,7 @@ interface VerificationInput {
 }
 
 type VerificationStatus = 'submitted' | 'invalid' | 'unavailable';
-const texts = {
+export const texts = {
   otp: {
     masked: 'Verification code sent securely.',
     pending: 'Verification code received securely.',

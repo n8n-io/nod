@@ -414,7 +414,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             reasoning,
             input: m.architecture.input_modalities.includes('image') ? ['text', 'image'] : ['text'],
             contextWindow: m.context_length,
-            maxTokens: m.top_provider?.max_completion_tokens ?? known?.maxTokens ?? 8192,
+            maxTokens: m.top_provider?.max_completion_tokens ?? known?.maxTokens ?? 32_768,
             cost: {
               input: m.pricing.prompt * 1000000,
               output: m.pricing.completion * 1000000,

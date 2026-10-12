@@ -449,7 +449,7 @@ test(
             assert.equal(response.statusCode, 200, response.body);
             assert.deepEqual(response.json(), {
               title: 'Synthetic account report',
-              prompt: `${first}\n\n${clarification}`,
+              prompt: `${first}\n\nMy password is synthetic-only.\n\n${clarification}`,
               omittedSensitive: true,
               hasAttachments: true,
             });

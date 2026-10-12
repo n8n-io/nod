@@ -4431,7 +4431,6 @@ test(
           ...(input.cursor ? { cursor: input.cursor } : {}),
         });
         assert.equal(options.signal.aborted, false);
-        assert.equal(options.maxRetries, 0);
         if (authFailure === 'permission')
           throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
         if (authFailure === 'transport') throw new Error('synthetic-private-auth-detail');
@@ -6468,8 +6467,7 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
   const listing = t.mock.method(
     client.getClient().toolkits,
     'list',
-    async (input: { cursor?: string }, options: { signal: AbortSignal; maxRetries: number }) => {
-      assert.equal(options.maxRetries, 0);
+    async (input: { cursor?: string }, options: { signal: AbortSignal }) => {
       assert.equal(options.signal.aborted, false);
       await gate.promise;
       if (!input.cursor)
@@ -8192,9 +8190,10 @@ test('connected provider cancellation reaches session creation, search, schemas,
       _action: string,
       _args: unknown,
       account: { account: string },
-      options: { signal?: AbortSignal },
+      options: { signal?: AbortSignal; maxRetries?: number },
     ) => {
       assert.equal(account.account, 'fixture-account');
+      assert.equal(options.maxRetries, 0);
       return block(options.signal);
     },
   };
@@ -8213,14 +8212,8 @@ test('connected provider cancellation reaches session creation, search, schemas,
   t.mock.method(
     client.getClient().toolRouter.session,
     'executeMeta',
-    async (
-      _id: string,
-      _input: unknown,
-      options: { signal?: AbortSignal; maxRetries?: number },
-    ) => {
-      assert.equal(options.maxRetries, 0);
-      return block(options.signal);
-    },
+    async (_id: string, _input: unknown, options: { signal?: AbortSignal }) =>
+      block(options.signal),
   );
   const provider = createComposioProvider({ client });
   const session = await provider.createSession('fixture-owner', { gmail: ['fixture-account'] });
