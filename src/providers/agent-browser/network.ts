@@ -74,7 +74,6 @@ export function browserUrl(value: string): URL {
 }
 
 export function createBrowserProxy(
-  allow: (origin: string) => boolean = () => true,
   options: { privateNetwork?: boolean; resolver?: AddressResolver } = {},
 ) {
   const destination = (url: URL) =>
@@ -97,7 +96,6 @@ export function createBrowserProxy(
       server = createServer(async (incoming, outgoing) => {
         try {
           const url = browserUrl(incoming.url ?? '');
-          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.protocol !== 'http:') throw new Error('Invalid proxy request.');
           const headers: OutgoingHttpHeaders = { ...incoming.headers, host: url.host };
           delete headers['proxy-authorization'];
@@ -131,7 +129,6 @@ export function createBrowserProxy(
       server.on('connect', async (incoming, socket, head) => {
         try {
           const url = browserUrl(`https://${incoming.url}`);
-          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.pathname !== '/' || url.search || url.hash) throw new Error();
           const upstream = connect({
             host: await destination(url),
@@ -159,7 +156,6 @@ export function createBrowserProxy(
       server.on('upgrade', async (incoming, socket, head) => {
         try {
           const url = browserUrl(incoming.url ?? '');
-          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.protocol !== 'http:') throw new Error();
           const headers: OutgoingHttpHeaders = { ...incoming.headers, host: url.host };
           delete headers['proxy-authorization'];

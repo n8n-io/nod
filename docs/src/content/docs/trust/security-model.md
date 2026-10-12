@@ -55,7 +55,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - Entry and submission happen in one step that the model can't observe or act during. Scripts on the destination page can read the entered values, as with any form.
 - A page changed by the model's own JavaScript must reload before entry. After a failed entry, the model's view stays locked until the filled page changes.
 - While a field Otto filled still holds its value, the model's page scripts are paused, so a script can't read the value back.
-- The browser reaches only public addresses, never the host, the local network or other containers. A saved browser profile can reach only the exact origins permitted for the task.
+- The browser reaches only public addresses, never the host, the local network or other containers.
 
 ### One use
 

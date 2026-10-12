@@ -38,9 +38,8 @@ export type BrowserConnectionRequest =
       url: string;
       connectionId?: string;
       label?: string;
-      destinations?: string[];
     }
-  | { action: 'use'; url: string; connectionId: string; destinations?: string[] }
+  | { action: 'use'; url: string; connectionId: string }
   | { action: 'save'; url: string; connectionId: string; signedIn: true };
 
 interface MessageAttachment {

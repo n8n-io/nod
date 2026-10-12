@@ -50,8 +50,6 @@ interface BrowserState {
   protectedSelectors: Set<string>;
   privateDocument?: string;
   uploads: Set<string>;
-  origins?: Set<string>;
-  blocked: Set<string>;
   proxy?: ReturnType<typeof createBrowserProxy>;
   started: boolean;
   lastUsed: number;
@@ -384,7 +382,6 @@ export function createAgentBrowserComputer(options: {
         secrets: new Set(),
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
-        blocked: new Set(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -519,15 +516,7 @@ export function createAgentBrowserComputer(options: {
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
-    if (!state.proxy)
-      state.proxy = createBrowserProxy(
-        (origin) => {
-          if (!state.origins || state.origins.has(origin)) return true;
-          if (state.blocked.size < 20) state.blocked.add(origin);
-          return false;
-        },
-        { privateNetwork },
-      );
+    state.proxy ??= createBrowserProxy({ privateNetwork });
     const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
     const timeZone = browserTimeZone(state.saved.timeZone);
@@ -797,7 +786,7 @@ export function createAgentBrowserComputer(options: {
     if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     return {
-      text: `${state.blocked.size ? `Blocked network destinations: ${[...state.blocked].join(', ')}. Use browser_session use with this connection and destinations set to the required exact origins to request access.\n` : ''}Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
+      text: `Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
     };
   }
@@ -865,7 +854,6 @@ export function createAgentBrowserComputer(options: {
     )
       await closeBrowser(id);
     const state = stateFor(id);
-    state.origins ??= existing?.origins;
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
       state.saved.restoreSession = savedProfile.restoreSession;
@@ -880,13 +868,6 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       if (input.action === 'open') {
-        if (
-          state.saved.profileId &&
-          (!state.origins || !state.origins.has(browserUrl(input.url ?? '').origin))
-        )
-          throw new Error(
-            'This saved session needs a grant for that destination. Use browser_session use.',
-          );
         const url = browserUrl(input.url ?? '');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -1765,16 +1746,13 @@ export function createAgentBrowserComputer(options: {
     await pending;
   }
 
-  async function bindProfile(id: string, rawProfileId: string, origins?: string[]): Promise<void> {
+  async function bindProfile(id: string, rawProfileId: string): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
-    const granted = new Set(origins?.map((origin) => browserUrl(origin).origin));
-    if (!granted.size) throw new Error('A saved browser profile needs an exact destination grant.');
     assertNotDiscarded(id);
     await allocate(async () => {
       assertNotDiscarded(id);
       const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (previous?.saved.profileId === profileId) {
-        for (const origin of granted) (previous.origins ??= new Set()).add(origin);
         if (!previous.saved.restoreSession) {
           previous.saved.restoreSession = true;
           previous.saved.sensitive = true;
@@ -1796,7 +1774,6 @@ export function createAgentBrowserComputer(options: {
         await closeBrowser(otherId);
       }
       const state = stateFor(id);
-      state.origins = granted;
       state.saved = {
         version: 1,
         url: '',

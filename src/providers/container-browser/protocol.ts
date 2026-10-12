@@ -139,7 +139,6 @@ export const browserRequest = z.discriminatedUnion('method', [
       method: z.literal('bindProfile'),
       threadId: thread,
       profileId: z.uuid(),
-      origins: z.array(z.string().max(2048)).max(100).optional(),
     })
     .strict(),
   z.object({ ...identity, method: z.literal('deleteProfile'), profileId: z.uuid() }).strict(),

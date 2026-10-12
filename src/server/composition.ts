@@ -707,7 +707,6 @@ async function initializeApplication(
       kind: 'sign_in' | 'session' | 'form';
       account?: string;
       itemId?: string;
-      destinations?: string[];
     },
   ): Promise<{ reason: VaultActivityReason } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);

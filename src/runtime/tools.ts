@@ -321,16 +321,13 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect {url, label?, destinations?} opens a new private profile. use {url, connectionId, destinations?} opens an existing profile without verifying sign-in. destinations lists additional exact origins needed for assets, APIs or sign-in redirects. Network access with a saved profile requires permission for each origin. If a destination is blocked, request it with use. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
+    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens an existing profile without verifying sign-in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
       Type.Object(
         {
           action: Type.Literal('connect'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-          destinations: Type.Optional(
-            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
-          ),
         },
         { additionalProperties: false },
       ),
@@ -339,9 +336,6 @@ export const toolDefinitions = {
           action: Type.Literal('use'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           connectionId: uuid,
-          destinations: Type.Optional(
-            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
-          ),
         },
         { additionalProperties: false },
       ),

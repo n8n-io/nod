@@ -299,8 +299,8 @@ export function createBridgeComputer(options: {
       return result;
     },
     currentSession: () => currentSession,
-    bindProfile: async (id, profileId, origins) => {
-      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId, origins });
+    bindProfile: async (id, profileId) => {
+      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId });
       screens.delete(threadIdentity(id));
     },
     deleteProfile: async (profileId) => {

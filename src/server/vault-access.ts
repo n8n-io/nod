@@ -181,7 +181,6 @@ export async function createVaultAccess(
       kind: Kind;
       account?: string;
       itemId?: string;
-      destinations?: string[];
     },
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
@@ -195,14 +194,10 @@ export async function createVaultAccess(
       return { ok: false, message: heldMessages[reason] };
     }
     if (target.kind === 'form') return { ok: true, reason: 'entered' };
-    const destinations = [...new Set((target.destinations ?? []).map(credentialOrigin))].filter(
-      (destination) => destination !== origin,
-    );
     const args = {
       origin,
       kind: target.kind,
       ...(target.itemId ? { itemId: target.itemId } : {}),
-      ...(destinations.length ? { destinations } : {}),
     };
     if (await confirmed(chain, args)) return { ok: true, reason: 'allowed' };
     const verdict = await options.check(
@@ -211,13 +206,12 @@ export async function createVaultAccess(
       {
         website: origin,
         ...(target.account ? { account: target.account } : {}),
-        ...(destinations.length ? { networkDestinations: destinations } : {}),
       },
     );
     if (!verdict.confirm)
       return { ok: true, reason: work.source === 'schedule' ? 'schedule' : 'asked' };
     await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
-    const site = [origin, ...destinations].map(host).join(', ');
+    const site = host(origin);
     return {
       ok: false,
       args,
@@ -242,7 +236,6 @@ export async function createVaultAccess(
         origin: z.string().max(2048),
         kind: z.enum(['sign_in', 'session', 'form']).optional(),
         itemId: z.string().max(100).optional(),
-        destinations: z.array(z.string().max(2048)).max(20).optional(),
       })
       .strict()
       .parse(raw);

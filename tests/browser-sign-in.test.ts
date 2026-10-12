@@ -77,7 +77,6 @@ test(
           account: 'example.test',
           kind: 'session',
           itemId: connectionId,
-          destinations: [],
         },
       );
       assert.equal(
@@ -215,7 +214,6 @@ test(
           account: (await service.sessions())[0]!.label,
           kind: 'session',
           itemId: connectionId,
-          destinations: [],
         },
       );
       assert.equal(

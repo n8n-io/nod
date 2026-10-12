@@ -617,19 +617,14 @@ test(
             });
           }
           const group = await begin('Open my work dashboard.');
-          const destinations = [
-            'https://api.workspace.example.test',
-            'https://login.workspace.example.test',
-          ];
           const target = {
             origin: 'https://workspace.example.test',
             kind: 'session' as const,
             itemId: first,
-            destinations,
           };
           const session = await access.authorize(group, target);
           assert.ok('question' in session);
-          assert.deepEqual(reviews.at(-1)?.action.arguments.networkDestinations, destinations);
+          assert.deepEqual(reviews.at(-1)?.action.name, 'OTTO_browser_session');
           const groupResumed = await confirmAccess(group, session.args);
           const afterGroup = reviews.length;
           assert.deepEqual(await access.authorize(groupResumed, target), {
@@ -637,13 +632,6 @@ test(
             reason: 'allowed',
           });
           assert.equal(reviews.length, afterGroup);
-          assert.ok(
-            'question' in
-              (await access.authorize(groupResumed, {
-                ...target,
-                destinations: [...destinations, 'https://other.example.test'],
-              })),
-          );
           const task = await begin('Download my bank statement.');
           const signIn = await access.authorize(task, {
             origin: site,

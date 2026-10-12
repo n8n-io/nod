@@ -53,7 +53,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.           |
 | `pay`                                                               | Pays at a checkout with a Vault card after your approval.                             |
 | `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                    |
-| `browser_session`                                                   | Opens or saves a signed-in browser profile for exact origins.                         |
+| `browser_session`                                                   | Opens or saves a signed-in browser profile.                                           |
 | `apps`                                                              | Runs an action on a connected account, after the trust check.                         |
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                               |
 | `manage_personal_context`                                           | Profile, schedules, notification preferences, memory, history and usage.              |

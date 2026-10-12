@@ -640,10 +640,10 @@ test('the browser proxy refuses private network destinations, including names th
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const port = (server.address() as { port: number }).port;
-  const guarded = createBrowserProxy(() => true, {
+  const guarded = createBrowserProxy({
     resolver: async () => [{ address: '192.168.1.10', family: 4 }],
   });
-  const open = createBrowserProxy(() => true, { privateNetwork: true });
+  const open = createBrowserProxy({ privateNetwork: true });
   const status = async (proxy: ReturnType<typeof createBrowserProxy>, target: string) => {
     const { hostname, port: proxyPort } = new URL(await proxy.url());
     const connect = !target.startsWith('http');

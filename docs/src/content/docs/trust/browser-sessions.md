@@ -1,6 +1,6 @@
 ---
 title: Saved browser sessions
-description: Keep a website signed in inside Otto's private browser and reuse it on the websites you allow, nowhere else.
+description: Keep a website signed in inside Otto's private browser and reuse it in later tasks.
 sidebar:
   order: 8
 ---
@@ -21,21 +21,6 @@ You can also ask Otto in chat to connect to a website and save the session.
 When a task needs the website, Otto opens the saved profile. It's the same permission check as a saved login: the server checks that your task needs this website and account, or Otto asks "Use your saved session on example.com?".
 
 Opening a profile doesn't prove it's still signed in, so Otto checks the page. If opening it lands on another website, such as a sign-in service, Vault shows **Sign-in needed** and a **Sign in again** button.
-
-## Only the websites you allow
-
-All network traffic from a saved profile goes through a proxy. It allows only the exact origins permitted for the current task, and blocks everything else, including requests made by the page's own scripts. This covers page loads, HTTP and HTTPS requests and WebSocket connections.
-
-Many sites also load assets, call APIs or redirect to a sign-in service on other origins. Blocked origins show up in what Otto sees, so it can request them as extra destinations, up to 20 at a time. One review covers the whole set, and each origin needs permission.
-
-```mermaid
-flowchart LR
-  page[Saved profile] --> proxy{{Profile proxy}}:::accent
-  proxy -- permitted --> site[app.example.com]:::go
-  proxy -- permitted extra --> api[api.example.com]:::go
-  proxy -- anything else --> block[Blocked]:::stop
-  block -. Otto can ask .-> you([You]):::accent
-```
 
 ## When the browser stays signed in
 
@@ -68,7 +53,7 @@ Once signed in, Otto can act anywhere on that website. Vault doesn't review each
 
 ## Where this is enforced
 
-[`src/server/browser-connections.ts`](https://github.com/n8n-io/otto/blob/main/src/server/browser-connections.ts) (sessions) · [`src/server/vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts) (permission and sign-out on a new task) · [`src/providers/agent-browser/network.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/agent-browser/network.ts) (profile proxy)
+[`src/server/browser-connections.ts`](https://github.com/n8n-io/otto/blob/main/src/server/browser-connections.ts) (sessions) · [`src/server/vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts) (permission and sign-out for background work)
 
 ## Related resources
 

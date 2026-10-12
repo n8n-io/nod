@@ -1300,7 +1300,7 @@ test('signing out closes the thread browser, clears its own profile and keeps sa
     }
     await mkdir(join(runtime, 'downloads', 'thread'), { recursive: true });
     await writeFile(join(runtime, 'downloads', 'thread', 'statement.pdf'), 'synthetic-statement');
-    await computer.bindProfile!('thread', savedProfile, ['https://1.1.1.1']);
+    await computer.bindProfile!('thread', savedProfile);
     await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
     assert.equal(profiles.at(-1), savedProfile);
     await computer.signOut('thread');
@@ -1347,17 +1347,14 @@ test('discarding a thread closes its browser and deletes only its throwaway data
     for (const screen of screens) await writeFile(join(runtime, screen), 'synthetic');
     await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
     await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' });
-    await computer.bindProfile!('bound', savedProfile, ['https://1.1.1.1']);
+    await computer.bindProfile!('bound', savedProfile);
     await computer.discard!('old');
     await computer.discard!('bound');
     await assert.rejects(
       computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' }),
       /was reset/,
     );
-    await assert.rejects(
-      computer.bindProfile!('old', savedProfile, ['https://1.1.1.1']),
-      /was reset/,
-    );
+    await assert.rejects(computer.bindProfile!('old', savedProfile), /was reset/);
     assert.equal(commands.filter((command) => command === 'close').length, 1);
     assert.deepEqual(
       (await readdir(join(runtime, 'profiles'))).sort(),
@@ -5697,81 +5694,6 @@ test(
       await worker.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  'a saved profile blocks an ungranted account and keeps scripts and API access on granted origins',
-  { timeout: 60_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-profile-origins-'));
-    let apiHits = 0;
-    let accountHits = 0;
-    let apiOrigin = '';
-    let accountOrigin = '';
-    const page = createHttpServer((_request, response) => {
-      response.setHeader('content-type', 'text/html');
-      response.end(
-        `<h1>Workspace</h1><iframe src="${accountOrigin}/private"></iframe><script>fetch('${apiOrigin}/data').catch(() => {});</script>`,
-      );
-    });
-    const api = createHttpServer((_request, response) => {
-      apiHits++;
-      response.setHeader('access-control-allow-origin', '*');
-      response.setHeader('content-type', 'application/json');
-      response.end('{"ready":true}');
-    });
-    const account = createHttpServer((_request, response) => {
-      accountHits++;
-      response.setHeader('set-cookie', 'account=synthetic-owned-session; SameSite=Lax');
-      response.end('Private account');
-    });
-    const listen = async (server: typeof page) => {
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const address = server.address();
-      assert.ok(address && typeof address !== 'string');
-      return `http://127.0.0.1:${address.port}`;
-    };
-    const pageOrigin = await listen(page);
-    apiOrigin = await listen(api);
-    accountOrigin = await listen(account);
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-    });
-    const profile = randomUUID();
-    try {
-      await computer.bindProfile!('profile', profile, [accountOrigin]);
-      await computer.act('profile', { action: 'open', url: accountOrigin });
-      assert.ok(accountHits > 0);
-      await computer.signOut('profile');
-      accountHits = 0;
-      await computer.bindProfile!('profile', profile, [pageOrigin]);
-      await computer.act('profile', { action: 'open', url: pageOrigin });
-      await delay(200);
-      assert.equal(accountHits, 0);
-      assert.equal(apiHits, 0);
-      await assert.rejects(computer.act('profile', { action: 'open', url: accountOrigin }));
-      await computer.bindProfile!('profile', profile, [pageOrigin, apiOrigin]);
-      await computer.act('profile', { action: 'open', url: pageOrigin });
-      const result = await computer.act('profile', {
-        action: 'evaluate',
-        script: `fetch('${apiOrigin}/data').then(response => response.json())`,
-      });
-      assert.match(result.text, /"ready":\s*true/);
-      assert.ok(apiHits > 0);
-      assert.equal(accountHits, 0);
-      assert.ok(await computer.screenshot('profile'));
-    } finally {
-      await computer.dispose();
-      for (const server of [page, api, account]) {
-        server.closeAllConnections();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-      }
       await rm(directory, { recursive: true, force: true });
     }
   },
