@@ -396,7 +396,6 @@ export function createAgentRuntime(dependencies: {
       if (stopped || status !== 'succeeded' || checkRecorded || (checkRecording && !recording))
         throw new Error('This execution segment has stopped.');
     };
-    let untrustedMarked = false;
     const guard = (
       name: string,
       params: unknown,
@@ -490,10 +489,6 @@ export function createAgentRuntime(dependencies: {
             if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
             await waitFor(pendingReplies);
             assertActive(reservedRecord);
-            if (untrustedResult && !untrustedMarked) {
-              await waitFor(Promise.resolve(context.markUntrustedContext?.()));
-              untrustedMarked = true;
-            }
             await waitFor(context.emit('tool_start', label));
             executed = true;
             const executeCurrent = () => {
@@ -703,10 +698,6 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       const resumed = session.resumed;
       const embedded = untrustedContents(context.prompt);
-      if (context.attachments.length || embedded.length) {
-        await waitFor(Promise.resolve(context.markUntrustedContext?.()));
-        untrustedMarked = true;
-      }
       const embeddedFindings = injectionFindings(embedded.join('\n'));
       if (embeddedFindings.length)
         await waitFor(Promise.resolve(context.flagInjection?.(embeddedFindings)));

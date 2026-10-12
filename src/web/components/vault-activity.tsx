@@ -25,7 +25,6 @@ const reasons: Record<VaultActivityReason, string> = {
   injection: 'A page had instructions',
   unrequested: 'You didn’t mention it',
   payment: 'You approved',
-  chat_app: 'Approve payments in Otto',
   code_typed: 'You approved',
   said_yes: 'You approved',
 };

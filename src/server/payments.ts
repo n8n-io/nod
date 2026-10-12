@@ -131,7 +131,7 @@ export async function createPayments(
       origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, card_id text NOT NULL,
       fields jsonb NOT NULL, document text NOT NULL, destinations jsonb NOT NULL,
       keep_notice boolean NOT NULL, flagged boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
-      created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, entered_at timestamptz
+      created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
     );
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS submit_selector text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS card_version text;

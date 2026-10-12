@@ -111,7 +111,6 @@ export type VaultActivityReason =
   | 'injection'
   | 'unrequested'
   | 'payment'
-  | 'chat_app'
   | 'code_typed'
   | 'said_yes'
   | 'owner';

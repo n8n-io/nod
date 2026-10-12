@@ -94,32 +94,6 @@ export function createMemoryService(options: {
   store: PrivateObjectStore;
   curator?: MemoryCurator;
 }) {
-  async function initialize() {
-    await options.pool.query(`DO $$ BEGIN
-      IF to_regclass('memory_untrusted_threads') IS NULL THEN
-        CREATE TABLE IF NOT EXISTS memory_untrusted_threads (owner_id text NOT NULL, thread_id uuid NOT NULL, marked_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (owner_id, thread_id));
-        IF to_regclass('threads') IS NOT NULL THEN
-          INSERT INTO memory_untrusted_threads(owner_id,thread_id) SELECT owner_id,id FROM threads ON CONFLICT DO NOTHING;
-        END IF;
-      END IF;
-    END $$`);
-  }
-
-  async function markUntrusted(threadId: string) {
-    await options.pool.query(
-      'INSERT INTO memory_untrusted_threads(owner_id,thread_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
-      [options.ownerId, threadId],
-    );
-  }
-
-  async function untrusted(threadId: string) {
-    const { rowCount } = await options.pool.query(
-      'SELECT 1 FROM memory_untrusted_threads WHERE owner_id=$1 AND thread_id=$2',
-      [options.ownerId, threadId],
-    );
-    return !!rowCount;
-  }
-
   async function load() {
     const object = await options.store.read(key, maxBytes);
     return { tree: parse(object?.bytes), bytes: object?.bytes, version: object?.version ?? null };
@@ -504,9 +478,6 @@ export function createMemoryService(options: {
   }
 
   return {
-    initialize,
-    markUntrusted,
-    untrusted,
     validate,
     context,
     supported,

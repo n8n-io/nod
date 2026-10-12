@@ -114,7 +114,6 @@ export interface ThreadDependencies {
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   watchTurn?: (turn: TurnRef & { source: TurnSource }) => () => void;
-  markUntrustedContext?: (turn: TurnRef) => Promise<void>;
   flagInjection?: (turn: TurnRef, findings: string[]) => Promise<void>;
   holdBrowser?: (threadId: string, until: number | null) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
@@ -1137,7 +1136,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               }
               return taken;
             },
-      markUntrustedContext: fenced(async () => dependencies.markUntrustedContext?.(ref)),
       flagInjection: fenced(async (findings: string[]) =>
         dependencies.flagInjection?.(ref, findings),
       ),

@@ -3249,7 +3249,6 @@ const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => 
   const ownerId = 'memory-fixture-owner';
   const store = createFilesystemObjectStore(root);
   const memory = createMemoryService({ pool, ownerId, store, curator });
-  await memory.initialize();
   const post = async (
     text: string,
     options: { owner?: string; role?: string; at?: string; attachments?: string } = {},
@@ -3408,25 +3407,6 @@ test(
           .map((note) => note.path)
           .sort(),
         ['people/ana-is-the-sister', 'people/marc-is-the-manager'],
-      );
-
-      const existingThread = randomUUID();
-      await pool.query('DROP TABLE memory_untrusted_threads');
-      await pool.query('CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL)');
-      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [existingThread, ownerId]);
-      await memory.initialize();
-      assert.equal(await memory.untrusted(existingThread), true);
-      await memory.initialize();
-      const threadId = randomUUID();
-      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, ownerId]);
-      await memory.initialize();
-      assert.equal(await memory.untrusted(threadId), false);
-      await memory.markUntrusted(threadId);
-      await memory.markUntrusted(threadId);
-      assert.equal(await memory.untrusted(threadId), true);
-      assert.equal(
-        await createMemoryService({ pool, ownerId: 'other-owner', store }).untrusted(threadId),
-        false,
       );
 
       await memory.edit((tree) => {
