@@ -45,8 +45,8 @@ export function createTrust(options: {
         .filter((row) => row.role === 'user')
         .slice(0, 5)
         .reverse()
-        .map((row) => ({ at: row.created_at.toISOString(), text: row.text.slice(0, 1500) })),
-      ...(before ? { assistantMessageBeforeLatestUserMessage: before.text.slice(0, 1500) } : {}),
+        .map((row) => ({ at: row.created_at.toISOString(), text: row.text })),
+      ...(before ? { assistantMessageBeforeLatestUserMessage: before.text } : {}),
     };
   }
 
@@ -62,9 +62,8 @@ export function createTrust(options: {
       origin.source === 'event'
         ? undefined
         : origin.source === 'schedule'
-          ? instruction && { scheduledTaskInstruction: instruction.slice(0, 3000) }
+          ? instruction && { scheduledTaskInstruction: instruction }
           : await conversation(turn.threadId);
-    if (JSON.stringify(args).length > 32_768) throw new Error('The app request is too large.');
     const answer = await options
       .review(checkInstructions, {
         ...words,
@@ -95,7 +94,6 @@ export function createTrust(options: {
   }
 
   async function answer(reply: string) {
-    if (reply.length > 1500) return undefined;
     const result = await options.review(answerInstructions, { reply }).catch(() => undefined);
     const value = result && typeof result === 'object' && (result as { answer?: unknown }).answer;
     return value === 'yes' ? true : value === 'no' ? false : undefined;

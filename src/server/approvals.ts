@@ -196,7 +196,7 @@ export async function createApprovals(
     options: { confirm?: boolean; question?: string; sourceMessageId?: string | null } = {},
   ) {
     const encoded = JSON.stringify(args);
-    if (!encoded || encoded.length > 32768) throw new Error('The action is too large.');
+    if (!encoded) throw new Error('The action has no arguments to save.');
     const snapshot = JSON.parse(encoded) as Record<string, unknown>;
     const allowed =
       !options.confirm && !options.question && decide
@@ -309,8 +309,6 @@ export async function createApprovals(
       const question = direct
         ? undefined
         : (options.question ?? actionConfirmation(action, snapshot, targetTitle));
-      if (question && question.length > 6000)
-        throw new Error('This action is too large to confirm clearly. Use a smaller action.');
       const messageId = question ? randomUUID() : null;
       if (messageId)
         await client.query(

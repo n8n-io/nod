@@ -40,7 +40,7 @@ flowchart TD
   check -- no --> ask[Ask you]:::accent
 ```
 
-If the checker can't answer, for example without a model provider key, Otto asks you. In read-only work, the action is refused instead. Otto refuses any app request over 32,768 characters, so the checker always sees the whole request.
+If the checker can't answer, for example without a model provider key, Otto asks you. In read-only work, the action is refused instead. The checker always sees the whole request, however long.
 
 ## The confirmation
 

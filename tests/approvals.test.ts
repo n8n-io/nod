@@ -794,15 +794,11 @@ test(
             JSON.stringify(reviews.at(-1)?.action.arguments),
             /synthetic-mime-for-an-outsider/,
           );
-          const oversized = reviews.length;
-          await assert.rejects(
-            trust.check(turn, 'CONNECTED_MCP_CALL', {
-              tool: 'post_message',
-              input: { text: 'x'.repeat(40_000), channel: 'C-OUTSIDER' },
-            }),
-            /too large/,
-          );
-          assert.equal(reviews.length, oversized);
+          await trust.check(turn, 'CONNECTED_MCP_CALL', {
+            tool: 'post_message',
+            input: { text: `${'x'.repeat(40_000)} tail`, channel: 'C-OUTSIDER' },
+          });
+          assert.match(reviews.at(-1)?.action.arguments.input.text, / tail$/);
           const hidden = {
             tool: 'post_message',
             input: { text: 'x'.repeat(6000), note: 'y'.repeat(6000), channel: 'C-OUTSIDER' },
@@ -1275,21 +1271,6 @@ test(
           assert.equal(calls.length, before + 1);
           assert.deepEqual(calls.at(-1)?.args, args);
           await finish(continuation.turnId, 'failed');
-        },
-      );
-
-      await t.test(
-        'a confirmation too large to show is refused before anything is saved',
-        async () => {
-          const turn = await begin('Synthetic boundary fixture', { source: 'event' });
-          const before = calls.length;
-          await assert.rejects(
-            approvals.request(turn, 'OTTO_profile_update', { preferences: 'x'.repeat(7000) }),
-            /too large to confirm/,
-          );
-          assert.equal(await proposal(turn.turnId), undefined);
-          assert.equal(await assistantMessages(turn.turnId), 0);
-          assert.equal(calls.length, before);
         },
       );
 
@@ -2201,9 +2182,9 @@ test(
           const answer = await approvals.chat.answer(first.input);
           assert.deepEqual(answer, { approvalId: first.id, approved: true });
           assert.deepEqual(replies.at(-1), { reply });
-          const read = replies.length;
-          assert.equal(await trust.answer(`${'yes '.repeat(400)}but send it elsewhere`), undefined);
-          assert.equal(replies.length, read);
+          const long = `${'yes '.repeat(400)}but send it elsewhere`;
+          assert.equal(await trust.answer(long), undefined);
+          assert.deepEqual(replies.at(-1), { reply: long });
           const forged = await db.transaction((client) =>
             approvals.chat.accept(client, {
               ...first.input,
