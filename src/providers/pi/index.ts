@@ -67,7 +67,13 @@ function resources(
 const compactAt = 256_000;
 const imageStep = 8;
 
-const webAccess = { toolActivation: 'eager', workflow: 'none', githubClone: { enabled: false } };
+const webAccess = {
+  toolActivation: 'eager',
+  workflow: 'none',
+  githubClone: { enabled: false },
+  video: { enabled: false },
+  allowBrowserCookies: false,
+};
 
 function configureWebAccess(root: string) {
   process.env.PI_CODING_AGENT_DIR = root;

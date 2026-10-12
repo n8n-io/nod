@@ -282,6 +282,7 @@ export function createAgentBrowserComputer(options: {
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
   daemonCommand?: typeof existingDaemonCommand;
+  privateNetwork?: boolean;
   onDiagnostic?(event: BrowserDiagnostic): void;
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
@@ -302,6 +303,7 @@ export function createAgentBrowserComputer(options: {
   const executable =
     options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
   const run = options.run ?? runProcess;
+  const privateNetwork = options.privateNetwork;
   const requestDaemon = (...args: Parameters<typeof existingDaemonCommand>) =>
     diagnose(
       args[1].action === 'url' || args[1].action === 'screenshot' || args[1].action === 'snapshot'
@@ -522,11 +524,14 @@ export function createAgentBrowserComputer(options: {
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
     if (!state.proxy)
-      state.proxy = createBrowserProxy((origin) => {
-        if (!state.origins || state.origins.has(origin)) return true;
-        if (state.blocked.size < 20) state.blocked.add(origin);
-        return false;
-      });
+      state.proxy = createBrowserProxy(
+        (origin) => {
+          if (!state.origins || state.origins.has(origin)) return true;
+          if (state.blocked.size < 20) state.blocked.add(origin);
+          return false;
+        },
+        { privateNetwork },
+      );
     const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
     const timeZone = browserTimeZone(state.saved.timeZone);
@@ -1099,6 +1104,8 @@ export function createAgentBrowserComputer(options: {
           const devtools = await inspector(state);
           let read;
           try {
+            if (state.secrets.size && (await devtools.holding()))
+              throw new BrowserActionError('browser_script_paused');
             read = await devtools.readOnly(script);
             if (!read) {
               await devtools.scripted(true);
@@ -1108,10 +1115,6 @@ export function createAgentBrowserComputer(options: {
             devtools.close();
           }
           const value = read ? read.value : await evaluate(state, script, signal);
-          if (await privateDocumentOpen(state, signal))
-            throw new Error(
-              'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
-            );
           if (!read) await markScripted(state);
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {

@@ -60,7 +60,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `task`                                                              | Keeps a progress card on the Tasks page. It schedules and grants nothing.             |
 | `share_file`                                                        | Sends a workspace file to you.                                                        |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                           |
-| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension.                               |
+| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.   |
 | `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                       |
 
 Activity checks get only `apps` for one account plus `record_activity_check`.

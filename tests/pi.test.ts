@@ -524,6 +524,21 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     );
     assert.match(JSON.stringify(direct.content), /No query provided/);
     assert.deepEqual(ran, ['ls', 'get_search_content', 'web_search']);
+    const fetchContent = extension.tools.get('fetch_content')!;
+    await writeFile(join(directory, 'host.mp4'), 'synthetic host video');
+    const hostFile = async (name: string) =>
+      JSON.stringify(
+        (
+          await fetchContent.definition.execute(
+            'call',
+            { url: join(directory, name), timestamp: '0:01' },
+            undefined,
+            undefined,
+            undefined as never,
+          )
+        ).content,
+      ).replaceAll(name, 'file.mp4');
+    assert.equal(await hostFile('host.mp4'), await hostFile('missing.mp4'));
     await session.dispose();
   } finally {
     await agent.dispose();

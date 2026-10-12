@@ -1217,7 +1217,7 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const { port } = server.address() as { port: number };
     const directory = await mkdtemp(join(tmpdir(), 'otto-real-card-'));
-    const computer = createAgentBrowserComputer({ dataRoot: directory });
+    const computer = createAgentBrowserComputer({ dataRoot: directory, privateNetwork: true });
     const shop = `http://127.0.0.1:${port}`;
     const card = {
       cardNumber: '4242424242424242',
@@ -2837,6 +2837,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const worker = await workerFixture(() => computer, 30_000);
@@ -3013,6 +3014,43 @@ test('secure entry types a code into the referenced field and keeps it out of ob
   }
 });
 
+test('a script cannot read back a privately entered value while the page keeps it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-login-script-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    const page = fixture.pages.get('fixture')!;
+    const render = page.render.bind(page);
+    page.render = () => {};
+    await computer.injectCredentials({
+      threadId: 'fixture',
+      origin: 'https://1.1.1.1',
+      kind: 'password',
+      password: 'synthetic-kept-secret',
+      passwordSelector: '#account',
+      submitSelector: 'button',
+    });
+    assert.equal(page.input.value, 'synthetic-kept-secret');
+    await assert.rejects(
+      computer.act('fixture', {
+        action: 'evaluate',
+        script: "document.querySelector('#account').value.split('').reverse().join('')",
+      }),
+      /still holds its value/,
+    );
+    const observation = await computer.act('fixture', { action: 'snapshot' });
+    assert.equal(JSON.stringify(observation).includes('synthetic-kept-secret'), false);
+    page.render = render;
+    await computer.act('fixture', { action: 'reload' });
+    const script = await computer.act('fixture', { action: 'evaluate', script: '1 + 1' });
+    assert.match(JSON.stringify(script), /Script result/);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test(
   'native secure entry completes single and split OTP controls without maxlength hints',
   { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
@@ -3070,6 +3108,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const worker = await harness({ computer });
@@ -4169,6 +4208,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const read = async () => {
@@ -5527,7 +5567,7 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const directory = await mkdtemp(join(tmpdir(), 'otto-private-entry-'));
-    const native = createAgentBrowserComputer({ dataRoot: directory });
+    const native = createAgentBrowserComputer({ dataRoot: directory, privateNetwork: true });
     const worker = await harness({ computer: native });
     const computer = worker.client(directory, { timeoutMs: 30_000 });
     assert.ok(computer.cardDestinations);
@@ -5553,6 +5593,14 @@ test(
       await computer.injectCredentials(input);
       const seen = (await computer.act('private', { action: 'snapshot' })).text;
       assert.equal(seen.includes(secret), false);
+      await assert.rejects(
+        computer.act('private', {
+          action: 'evaluate',
+          script: 'document.querySelector("#password").value.split("").reverse().join("")',
+        }),
+        /still holds its value/,
+      );
+      await computer.act('private', { action: 'reload' });
       assert.equal(
         (
           await computer.act('private', {
@@ -5562,7 +5610,6 @@ test(
         ).text.includes(Buffer.from(secret).toString('base64')),
         false,
       );
-      await computer.act('private', { action: 'reload' });
       const page = (await computer.act('private', { action: 'snapshot' })).text;
       const ref = /"Foreign password"[^\n]*ref=(e\d+)/.exec(page)?.[1];
       assert.ok(ref);
@@ -5588,14 +5635,12 @@ test(
       assert.equal(receipt.includes('4242424242424242'), false);
       assert.equal(receipt.includes('737'), false);
       assert.ok(await computer.screenshot('private'));
-      assert.match(
-        (
-          await computer.act('private', {
-            action: 'evaluate',
-            script: '[...document.querySelectorAll("input")].map(node=>node.value)',
-          })
-        ).text,
-        /Script result/,
+      await assert.rejects(
+        computer.act('private', {
+          action: 'evaluate',
+          script: '[...document.querySelectorAll("input")].map(node=>node.value)',
+        }),
+        /still holds its value/,
       );
       await computer.act('private', { action: 'open', url: `${origin}/shadow` });
       const shadowPage = (await computer.act('private', { action: 'snapshot' })).text;
@@ -5632,6 +5677,8 @@ test(
       const image = await computer.screenshot('private');
       assert.ok(image);
       shadowImage = Buffer.from(image);
+      for (const field of [shadowFields.number, shadowFields.expiryYear, shadowFields.securityCode])
+        await computer.act('private', { action: 'fill', selector: field, text: '' });
       await computer.act('private', {
         action: 'evaluate',
         script: 'globalThis.privateStyles[0].style.setProperty("outline-width", "1px")',
@@ -5711,6 +5758,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const profile = randomUUID();
@@ -5945,7 +5993,7 @@ test('failed private entry holds every Pi action until the filled document chang
 });
 
 test(
-  'private submission keeps SPA state, delayed requests, field formats and harmless inspection',
+  'private submission keeps SPA state, delayed requests and field formats, and pauses scripts while a value stays',
   { timeout: 60_000 },
   async () => {
     const submitted = deferred<string>();
@@ -5984,6 +6032,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
     });
     try {
       await computer.act('state', { action: 'open', url: origin });
@@ -6022,14 +6071,12 @@ test(
         ),
         false,
       );
-      assert.match(
-        (
-          await computer.act('state', {
-            action: 'evaluate',
-            script: 'Promise.resolve("Synthetic inspection")',
-          })
-        ).text,
-        /Synthetic inspection/,
+      await assert.rejects(
+        computer.act('state', {
+          action: 'evaluate',
+          script: 'Promise.resolve(document.querySelector("#password").value.length)',
+        }),
+        /still holds its value/,
       );
       await computer.act('state', { action: 'open', url: `${origin}/card` });
       const fields = {
@@ -6060,11 +6107,13 @@ test(
         (await computer.act('state', { action: 'snapshot' })).text,
         /Order total EUR 30/,
       );
-      const inspector = await computer.act('state', {
-        action: 'evaluate',
-        script: 'document.querySelector("#number").value',
-      });
-      assert.equal(inspector.text.includes('4242424242424242'), false);
+      await assert.rejects(
+        computer.act('state', {
+          action: 'evaluate',
+          script: 'document.querySelector("#number").value',
+        }),
+        /still holds its value/,
+      );
       await computer.act('fence', { action: 'open', url: `${origin}/card` });
       await computer.act('fence', {
         action: 'evaluate',
@@ -6073,6 +6122,7 @@ test(
       const recovered = createAgentBrowserComputer({
         dataRoot: directory,
         browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
       });
       try {
         assert.equal((await recovered.currentPage('fence')).origin, origin);

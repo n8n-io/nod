@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import test from 'node:test';
 import { crc32 } from 'node:zlib';
@@ -8,6 +8,7 @@ import { act, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { JSDOM } from 'jsdom';
 import { actionConfirmation } from '../src/server/action-presentation.ts';
+import { createBrowserProxy } from '../src/providers/agent-browser/network.ts';
 import {
   createPublicLinkPreviewProvider,
   requestPublicPreview,
@@ -628,4 +629,60 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
     '/api/artifacts/abc?token=private',
   ])
     assert.equal(artifactImage({ ...picture, url }), null);
+});
+
+test('the browser proxy refuses private network destinations, including names that resolve to them', async () => {
+  let reached = 0;
+  const server = createServer((_request, reply) => {
+    reached++;
+    reply.end('local');
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = (server.address() as { port: number }).port;
+  const guarded = createBrowserProxy(() => true, {
+    resolver: async () => [{ address: '192.168.1.10', family: 4 }],
+  });
+  const open = createBrowserProxy(() => true, { privateNetwork: true });
+  const status = async (proxy: ReturnType<typeof createBrowserProxy>, target: string) => {
+    const { hostname, port: proxyPort } = new URL(await proxy.url());
+    const connect = !target.startsWith('http');
+    const sent = request({
+      host: hostname,
+      port: proxyPort,
+      method: connect ? 'CONNECT' : 'GET',
+      path: target,
+      headers: { host: connect ? target : new URL(target).host },
+    });
+    const response = once(sent, connect ? 'connect' : 'response');
+    sent.end();
+    const [reply, socket] = (await response) as [
+      import('node:http').IncomingMessage,
+      import('node:net').Socket?,
+    ];
+    socket?.destroy();
+    reply.resume();
+    return reply.statusCode;
+  };
+  try {
+    for (const target of [
+      `http://127.0.0.1:${port}/`,
+      `http://localhost:${port}/`,
+      `http://[::1]:${port}/`,
+      'http://10.0.0.5/',
+      'http://host.docker.internal/',
+      'http://rebind.example/',
+      '169.254.169.254:443',
+      `127.0.0.1:${port}`,
+    ])
+      assert.equal(await status(guarded, target), 400, target);
+    assert.equal(reached, 0);
+    assert.equal(await status(open, `http://127.0.0.1:${port}/`), 200);
+    assert.equal(reached, 1);
+  } finally {
+    await guarded.dispose();
+    await open.dispose();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

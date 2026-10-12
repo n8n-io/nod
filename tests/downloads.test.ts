@@ -44,6 +44,7 @@ async function createDownloadBrowser(root: string) {
       return createAgentBrowserComputer({
         dataRoot,
         browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
         headless: true,
       });
     },

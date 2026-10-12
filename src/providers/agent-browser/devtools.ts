@@ -357,6 +357,15 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     async blur() {
       await everyFrame(blurScript);
     },
+    async holding() {
+      return (
+        await everyFrame(
+          `[...(globalThis.__ottoPrivateFields ?? [])].some(node => node.isConnected && node.value)`,
+          undefined,
+          true,
+        )
+      ).some((item) => item.value === true);
+    },
     async mask(on: boolean, secrets: string[] = [], allFields = true, snapshot = false) {
       await everyFrame(
         maskScript(on, secrets, allFields, snapshot),

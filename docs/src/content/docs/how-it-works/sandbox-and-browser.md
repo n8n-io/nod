@@ -30,16 +30,16 @@ flowchart LR
 
 ## What each part can and can't reach
 
-|                       | Server                   | Sandbox user                        | Connected CLI user        | Browser container                                  |
-| --------------------- | ------------------------ | ----------------------------------- | ------------------------- | -------------------------------------------------- |
-| Provider keys         | Yes                      | No                                  | No                        | No                                                 |
-| Owner access key      | Yes                      | No                                  | No                        | No                                                 |
-| Vault values          | Yes                      | No                                  | No                        | Only a value the server enters in a page           |
-| A connected CLI token | Yes                      | No                                  | Its own token only        | No                                                 |
-| Docker socket         | Yes, locally             | No                                  | No                        | No                                                 |
-| Workspace files       | Through a guarded reader | Yes                                 | Files passed as arguments | No shared mounts                                   |
-| Browser profiles      | Through the bridge       | No                                  | No                        | Yes                                                |
-| Internet              | Yes                      | Yes, no egress firewall from source | Yes                       | Yes. A saved profile reaches only allowed origins. |
+|                       | Server                   | Sandbox user                        | Connected CLI user        | Browser container                                                    |
+| --------------------- | ------------------------ | ----------------------------------- | ------------------------- | -------------------------------------------------------------------- |
+| Provider keys         | Yes                      | No                                  | No                        | No                                                                   |
+| Owner access key      | Yes                      | No                                  | No                        | No                                                                   |
+| Vault values          | Yes                      | No                                  | No                        | Only a value the server enters in a page                             |
+| A connected CLI token | Yes                      | No                                  | Its own token only        | No                                                                   |
+| Docker socket         | Yes, locally             | No                                  | No                        | No                                                                   |
+| Workspace files       | Through a guarded reader | Yes                                 | Files passed as arguments | No shared mounts                                                     |
+| Browser profiles      | Through the bridge       | No                                  | No                        | Yes                                                                  |
+| Internet              | Yes                      | Yes, no egress firewall from source | Yes                       | Public addresses only. A saved profile reaches only allowed origins. |
 
 ## The workspace container
 
@@ -116,7 +116,7 @@ sequenceDiagram
 - Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.
 
 :::caution[Limits]
-In a source install, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app blocks workspace and browser traffic to private and reserved address ranges. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
+In a source install, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app blocks workspace traffic to private and reserved address ranges. The browser reaches only public addresses in every mode. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
 :::
 
 ## Related resources
