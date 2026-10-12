@@ -42,7 +42,8 @@ export function createTrust(options: {
     const before = (
       await pool.query<{ text: string }>(
         `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
-         AND (created_at,id)<($3,$4) ORDER BY created_at DESC,id DESC LIMIT 1`,
+         AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
         [ownerId, threadId, latest.created_at, latest.id],
       )
     ).rows[0];

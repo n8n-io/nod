@@ -366,7 +366,12 @@ test(
               error.statusCode === 409 && /secure payment link/.test(error.message),
           );
           assert.equal((await send('73951')).statusCode, 409);
-          const prose = ['2 hinges for room 212', '739 or 740', 'The year is 2026'];
+          const prose = [
+            '2 hinges for 7395',
+            '2 hinges for room 212',
+            '739 or 740',
+            'The year is 2026',
+          ];
           for (const text of prose) assert.equal((await send(text)).statusCode, 200, text);
           assert.deepEqual(ordinary, prose);
           assert.deepEqual(entered, []);

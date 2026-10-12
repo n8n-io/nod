@@ -2378,6 +2378,12 @@ test('browser observations redact OAuth callback values, API credentials and sig
     [],
   );
   assert.equal(url.includes('private-token'), false);
+  assert.equal(
+    redactBrowserUrl('https://example.com/callback#access%5Ftoken=private-encoded', []).includes(
+      'private-encoded',
+    ),
+    false,
+  );
   for (const [name, value] of [
     ['code', 'private-code'],
     ['email', 'private-email'],

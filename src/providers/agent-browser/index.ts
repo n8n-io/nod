@@ -279,7 +279,14 @@ export function redactBrowserUrl(value: string, secrets: Iterable<string>): stri
     url.hash
       .slice(1)
       .split(/[?&]/)
-      .some((part) => part.includes('=') && secret(part.split('=')[0]!))
+      .some((part) => {
+        if (!part.includes('=')) return false;
+        try {
+          return secret(decodeURIComponent(part.split('=')[0]!));
+        } catch {
+          return true;
+        }
+      })
   )
     url.hash = '[redacted]';
   return redactBrowserText(url.href, secrets);

@@ -2504,12 +2504,14 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     fauxAssistantMessage('{"ops":[]}'),
     fauxAssistantMessage('no json here'),
     fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
+    fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
+    fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
   ]);
   assert.deepEqual(await ask(), { paths: ['people/ana'] });
   assert.deepEqual(await ask(), { ops: [] });
   assert.equal(await ask(), null);
   await assert.rejects(ask(), /unavailable/);
-  assert.equal(faux.state.callCount, 4);
+  assert.equal(faux.state.callCount, 6);
   assert.equal(curator.configured, true);
   assert.equal(createPiMemoryCurator({ provider, runtime }).configured, false);
   await assert.rejects(

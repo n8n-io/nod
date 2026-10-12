@@ -75,19 +75,26 @@ export function createPiMemoryCurator(options: {
         throw error;
       });
       const { runtime, model, effort, subscription } = await loaded;
-      const reply = await runtime.completeSimple(
-        model,
-        {
-          systemPrompt: instructions,
-          messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
-        },
-        {
-          signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
-          maxTokens: 8192,
-          maxRetries: 2,
-          reasoning: effort === 'off' ? undefined : effort,
-        },
-      );
+      const complete = () =>
+        runtime.completeSimple(
+          model,
+          {
+            systemPrompt: instructions,
+            messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
+          },
+          {
+            signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
+            maxTokens: 8192,
+            reasoning: effort === 'off' ? undefined : effort,
+          },
+        );
+      let reply = await complete();
+      for (
+        let attempt = 0;
+        attempt < 2 && reply.stopReason === 'error' && !signal?.aborted;
+        attempt++
+      )
+        reply = await complete();
       if (reply.usage?.totalTokens)
         report?.({
           model: model.id,

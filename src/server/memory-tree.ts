@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { secretToken } from './redaction.ts';
 import { memoryAreas, type MemorySource, type MemoryView } from '../shared/memory.ts';
 
 export const areas = memoryAreas;
@@ -8,8 +9,10 @@ export const maxEntries = 300;
 export const maxArchive = 40;
 export const indexBudget = 6000;
 
-export const personalSecret =
-  /\bsk-[A-Za-z0-9_-]{12,}|\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@/i;
+export const personalSecret = new RegExp(
+  String.raw`\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@|` + secretToken.source,
+  'i',
+);
 const slugPattern = '[a-z0-9]+(?:-[a-z0-9]+)*';
 const legacyKinds = { fact: 'about', preference: 'preferences', pattern: 'lessons' } as const;
 const legacy =

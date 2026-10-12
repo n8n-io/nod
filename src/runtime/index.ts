@@ -16,7 +16,6 @@ import type {
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
-import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { actionEffect } from '../shared/action-effect.ts';
 import { conversation, createBrowserClaims } from './browser-claims.ts';
 import { createBrowserFlows } from './browser-flows.ts';
@@ -500,8 +499,7 @@ export function createAgentRuntime(dependencies: {
           } catch (error) {
             if (reservedRecord) checkRecording = false;
             if (!stopped) await waitFor(context.emit('tool_failed', label)).catch(() => {});
-            const browserFailure =
-              error instanceof BrowserActionError ? browserErrorMessage(error.code) : undefined;
+            const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
             const failure = signal.aborted
               ? 'The action was cancelled.'
               : error instanceof ReadOnlyTurnError
