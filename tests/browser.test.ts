@@ -2720,7 +2720,10 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
-    const computer = createAgentBrowserComputer(containerBrowserOptions(directory));
+    const computer = createAgentBrowserComputer({
+      ...containerBrowserOptions(directory),
+      privateNetwork: true,
+    });
     let stderrPath: string | undefined;
     try {
       await computer.act('fixture', { action: 'open', url: `http://127.0.0.1:${address.port}` });
@@ -3198,23 +3201,15 @@ test(
           assert.doesNotMatch(accepted, /\[ref=e\d+\]:\s*\d/);
           await act({ action: 'click', selector: `@${held}` });
           assert.match((await act({ action: 'snapshot' })).text, /Verified/);
-          const types = await act({
-            action: 'evaluate',
-            script: 'globalThis.fields.map(node => node.getAttribute("type"))',
-          });
-          assert.deepEqual(
-            JSON.parse(types.text.slice(types.text.indexOf('\n') + 1)),
-            Array(path === '/automatic' ? 1 : 6).fill(null),
+          await assert.rejects(
+            act({
+              action: 'evaluate',
+              script: 'globalThis.fields.map(node => node.value)',
+            }),
+            (error: unknown) =>
+              error instanceof BrowserActionError && error.code === 'browser_script_paused',
           );
-          await client.screenshot('fixture');
-          const styles = await act({
-            action: 'evaluate',
-            script: 'globalThis.fields.map(node => node.getAttribute("style"))',
-          });
-          assert.deepEqual(
-            JSON.parse(styles.text.slice(styles.text.indexOf('\n') + 1)),
-            Array(path === '/automatic' ? 1 : 6).fill(null),
-          );
+          assert.ok(await client.screenshot('fixture'));
           continue;
         }
         await act({ action: 'back' });
