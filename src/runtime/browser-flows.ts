@@ -9,7 +9,7 @@ import type {
 } from '../ports/computer.ts';
 
 const slug = Type.String({ pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 80 });
-const waitMs = Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 }));
+const waitMs = Type.Optional(Type.Integer({ minimum: 0, maximum: 60000 }));
 const selector = Type.String({ minLength: 1, maxLength: 500 });
 const text = Type.String({ minLength: 1, maxLength: 500 });
 const flowAction = Type.Union([
@@ -24,6 +24,10 @@ const flowAction = Type.Union([
     { additionalProperties: false },
   ),
   Type.Object(
+    { action: Type.Literal('type'), selector, text, waitMs },
+    { additionalProperties: false },
+  ),
+  Type.Object(
     { action: Type.Literal('select'), selector, text, waitMs },
     { additionalProperties: false },
   ),
@@ -35,15 +39,7 @@ const flowAction = Type.Union([
   Type.Object(
     {
       action: Type.Literal('press'),
-      key: Type.Union([
-        Type.Literal('Enter'),
-        Type.Literal('Escape'),
-        Type.Literal('Tab'),
-        Type.Literal('ArrowDown'),
-        Type.Literal('ArrowUp'),
-        Type.Literal('PageDown'),
-        Type.Literal('PageUp'),
-      ]),
+      key: Type.String({ minLength: 1, maxLength: 50 }),
       waitMs,
     },
     { additionalProperties: false },
@@ -58,6 +54,7 @@ const flowAction = Type.Union([
     { additionalProperties: false },
   ),
   Type.Object({ action: Type.Literal('reload'), waitMs }, { additionalProperties: false }),
+  Type.Object({ action: Type.Literal('back'), waitMs }, { additionalProperties: false }),
 ]);
 export const browserFlowSchema = Type.Object(
   {
@@ -78,7 +75,7 @@ export const browserFlowSchema = Type.Object(
         },
         { additionalProperties: false },
       ),
-      { minItems: 1, maxItems: 30 },
+      { minItems: 1, maxItems: 100 },
     ),
   },
   { additionalProperties: false },
@@ -156,7 +153,7 @@ function validateFlow(value: unknown): Flow {
   const flow = value as Flow;
   const origin = flowOrigin(flow.origin);
   const inputs = Object.keys(flow.inputs);
-  if (inputs.length > 10) throw new Error('A flow can use at most ten inputs.');
+  if (inputs.length > 30) throw new Error('A flow can use at most 30 inputs.');
   if (flow.steps[0].action.action !== 'open')
     throw new Error('The first flow step must open its website.');
   const final = flow.steps[flow.steps.length - 1];
@@ -166,8 +163,6 @@ function validateFlow(value: unknown): Flow {
     const action = step.action;
     if ('selector' in action && action.selector && /^@e\d+$/.test(action.selector))
       throw new Error('Use a stable selector in a saved flow, not a page reference.');
-    if (action.action === 'fill' && !/^\{\{[a-z][a-z0-9_]*\}\}$/.test(action.text))
-      throw new Error('A fill step must use a named input. Do not save entered values.');
     for (const value of [
       action.action === 'open' ? action.url : '',
       'text' in action ? action.text : '',
@@ -184,8 +179,8 @@ function validateFlow(value: unknown): Flow {
     }
     if (step.expectUrl) {
       const url = new URL(step.expectUrl.replace(/\{\{[a-z][a-z0-9_]*\}\}/g, 'value'));
-      if (url.origin !== origin || url.username || url.password)
-        throw new Error('An expected URL must use the flow origin without URL credentials.');
+      if (url.username || url.password)
+        throw new Error('An expected URL must not contain URL credentials.');
     }
   }
   return flow;
@@ -306,13 +301,6 @@ export function createBrowserFlows(
           observation: current,
         };
       }
-      if (new URL(observation.url).origin !== flowOrigin(flow.origin))
-        return {
-          status: 'needs_repair',
-          step: index + 1,
-          reason: 'The browser left the saved origin.',
-          observation,
-        };
       const expectedText = step.expectText && replaceInputs(step.expectText, inputs, false);
       const expectedUrl = step.expectUrl && replaceInputs(step.expectUrl, inputs, true);
       if (

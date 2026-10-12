@@ -1656,20 +1656,6 @@ test('browser flows stay discoverable after a thread reset and stop when a page 
         ...flow,
         steps: [
           flow.steps[0],
-          { action: { action: 'fill', selector: '#password', text: 'stored-secret' } },
-          flow.steps.at(-1)!,
-        ],
-      },
-    }),
-    /named input/,
-  );
-  await assert.rejects(
-    run({
-      action: 'save',
-      flow: {
-        ...flow,
-        steps: [
-          flow.steps[0],
           { action: { action: 'click', selector: '@e12' } },
           flow.steps.at(-1)!,
         ],
