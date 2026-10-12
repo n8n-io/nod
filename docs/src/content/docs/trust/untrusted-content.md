@@ -27,7 +27,7 @@ flowchart TD
   check -- no --> you([Asks you]):::accent
 ```
 
-Otto doesn't scan outside text for injection phrases. Pattern lists miss new wording and flag harmless text, so the limits come from the server instead: whatever the model believes, the trust check, Vault and payment approval still apply.
+Otto doesn't scan outside text for injection phrases. Pattern lists miss new wording and flag harmless text, so the limits come from the server instead: whatever the model believes, the trust check, Vault and payment approval still apply. When Otto notices an email, page or file that looks like phishing or tries to instruct it, it leaves it alone and tells you which one.
 
 ## Memory ignores outside content
 
