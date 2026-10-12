@@ -130,7 +130,6 @@ type VaultOptions = {
   refresh?(): void;
   admission?: WorkAdmission;
   onUse?(use: VaultUse, client: PoolClient): Promise<void>;
-  onForget?(origin: string): Promise<void>;
   onOwnerUse?(
     entry: {
       action: 'reveal' | 'permission';
@@ -2038,13 +2037,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .send(Buffer.from(icon.bytes));
       });
       scope.delete<{ Params: { id: string } }>('/api/vault/:id', async (request) => {
-        const { rows } = await pool.query<{ origin: string; remaining: boolean }>(
-          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING origin),
-           card AS (DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2)
-           SELECT origin,EXISTS(SELECT 1 FROM vault_entries e WHERE e.owner_id=$2 AND e.origin=login.origin AND e.id<>$1) AS remaining FROM login`,
+        await pool.query(
+          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2)
+           DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2`,
           [z.uuid().parse(request.params.id), owner],
         );
-        for (const row of rows) if (!row.remaining) await options.onForget?.(row.origin);
         return { ok: true };
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>

@@ -2004,15 +2004,11 @@ test(
       origin: 'http://localhost:4310',
       cookie: 'otto-access-4310=synthetic-local-access',
     };
-    const forgotten: string[] = [];
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const instance = Fastify({ logger: false });
       registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
         keyStore: checkedKeyStore(pool, { id: 'fixture', configured: true, getKey }),
-        onForget: async (origin) => {
-          forgotten.push(origin);
-        },
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),
         resume: async () => assert.fail('Viewing or editing a login must not resume a turn.'),
         retry: async () => assert.fail('Viewing or editing a login must not restart a turn.'),
@@ -2331,30 +2327,6 @@ test(
           );
         },
       );
-
-      await t.test('deleting the last login for a site forgets its grants', async () => {
-        const add = async (label: string) =>
-          (
-            await app.inject({
-              method: 'POST',
-              url: '/api/vault',
-              headers,
-              payload: {
-                label,
-                origin: 'https://forget.example.test',
-                username: `${label}@example.test`,
-                password: `${label}-secret`,
-              },
-            })
-          ).json<VaultLoginEntry>();
-        const [one, two] = [await add('One'), await add('Two')];
-        const remove = (id: string) =>
-          app.inject({ method: 'DELETE', url: `/api/vault/${id}`, headers });
-        assert.equal((await remove(one.id)).statusCode, 200);
-        assert.deepEqual(forgotten, []);
-        assert.equal((await remove(two.id)).statusCode, 200);
-        assert.deepEqual(forgotten, ['https://forget.example.test']);
-      });
     } finally {
       await app.close();
       await pool.end();
