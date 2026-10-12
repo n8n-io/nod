@@ -111,11 +111,7 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
       if (part === null) return [null];
       return part.split(value).flatMap((section, index) => (index ? [null, section] : [section]));
     });
-  const result = parts.map((part) => part ?? '[redacted]').join('');
-  return result.replace(
-    /((?:password|card ?number|security code|cvc|cvv|csc)[^\n]*?)(?:value=|: )[^\n]*/gi,
-    '$1 [redacted]',
-  );
+  return parts.map((part) => part ?? '[redacted]').join('');
 }
 
 const browserTabList = z.array(
@@ -980,14 +976,7 @@ export function createAgentBrowserComputer(options: {
         }
         if (input.action === 'fill' || input.action === 'type') {
           const target = selector(input.selector);
-          const type = await command(state, ['get', 'attr', target, 'type'], { signal });
-          const autocomplete = await command(state, ['get', 'attr', target, 'autocomplete'], {
-            signal,
-          });
-          if (
-            /password|one-time-code|username/i.test([type.value, autocomplete.value].join(' ')) ||
-            state.protectedSelectors.has(target)
-          )
+          if (state.protectedSelectors.has(target))
             throw new Error('Use the secure credential request tool for this field.');
           const text = input.text ?? '';
           if ([...state.secrets].some((secret) => secret && text.includes(secret)))

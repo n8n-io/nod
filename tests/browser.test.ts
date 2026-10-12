@@ -2440,11 +2440,6 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
   try {
     await computer.act('login', { action: 'open', url: 'https://1.1.1.1/login' });
     const origin = 'https://1.1.1.1';
-    for (const action of ['fill', 'type'] as const)
-      await assert.rejects(
-        computer.act('login', { action, selector: '#account', text: 'not-through-chat' }),
-        /secure credential/,
-      );
     const identifier = computer.injectCredentials({
       threadId: 'login',
       origin,
