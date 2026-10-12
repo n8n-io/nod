@@ -8143,6 +8143,75 @@ test('Composio inbox polling rejects mismatched metadata and stops immediately o
   assert.equal(calls, 4);
 });
 
+test('connected tool search loads missing schemas in batches of twenty', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
+  const slugs = Array.from({ length: 25 }, (_, index) => `GMAIL_FIXTURE_ACTION_${index}`);
+  const managed = {
+    sessionId: 'fixture-session',
+    search: async () => ({
+      success: true,
+      error: null,
+      results: [],
+      toolSchemas: Object.fromEntries(
+        slugs.map((slug, index) => [
+          slug,
+          {
+            toolSlug: slug,
+            toolkit: 'gmail',
+            hasFullSchema: false,
+            schemaRef: {
+              tool: 'COMPOSIO_GET_TOOL_SCHEMAS',
+              args: { toolSlugs: slugs.slice(index < 20 ? 0 : 20, index < 20 ? 20 : 25) },
+            },
+          },
+        ]),
+      ),
+    }),
+  };
+  t.mock.method(client.sessions, 'create', async () => managed);
+  const batches: string[][] = [];
+  t.mock.method(
+    client.getClient().toolRouter.session,
+    'executeMeta',
+    async (_id: string, input: { arguments: { tool_slugs: string[] } }) => {
+      batches.push(input.arguments.tool_slugs);
+      return {
+        error: null,
+        data: {
+          success: true,
+          tool_schemas: Object.fromEntries(
+            input.arguments.tool_slugs.map((slug) => [
+              slug,
+              {
+                tool_slug: slug,
+                toolkit: 'gmail',
+                input_schema: { type: 'object', properties: {} },
+              },
+            ]),
+          ),
+        },
+      };
+    },
+  );
+  const provider = createComposioProvider({ client });
+  const session = await provider.createSession('fixture-owner', { gmail: ['fixture-account'] });
+  const found = await session.search('fixture');
+  assert.deepEqual(
+    batches.map((batch) => batch.length),
+    [20, 5],
+  );
+  assert.equal(Object.keys(found.tools as object).length, 25);
+});
+
 test('connected provider cancellation reaches session creation, search, schemas, and execution', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',

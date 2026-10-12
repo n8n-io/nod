@@ -614,7 +614,6 @@ export function createComposioProvider(options: {
             ([, tool]) =>
               tool.hasFullSchema === false || !schemaFields.safeParse(tool.inputSchema).success,
           );
-          if (missing.length > 20) throw new Error();
           for (const [slug, tool] of missing) {
             const reference = tool.schemaRef;
             const slugs = reference?.args.toolSlugs;
@@ -630,7 +629,8 @@ export function createComposioProvider(options: {
           const tools = Object.fromEntries(
             entries.map(([slug, { schemaRef: _, ...tool }]) => [slug, tool]),
           );
-          if (missing.length) {
+          for (let start = 0; start < missing.length; start += 20) {
+            const batch = missing.slice(start, start + 20);
             const operation = signal
               ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
               : AbortSignal.timeout(15_000);
@@ -641,7 +641,7 @@ export function createComposioProvider(options: {
                 {
                   slug: 'COMPOSIO_GET_TOOL_SCHEMAS',
                   arguments: {
-                    tool_slugs: missing.map(([slug]) => slug),
+                    tool_slugs: batch.map(([slug]) => slug),
                     include: ['input_schema'],
                   },
                 },
@@ -651,8 +651,8 @@ export function createComposioProvider(options: {
             const envelope = toolSchemasResponse.parse(response).data;
             const schemas =
               'tool_schemas' in envelope ? envelope.tool_schemas : envelope.data.tool_schemas;
-            if (Object.keys(schemas).length !== missing.length) throw new Error();
-            for (const [slug, tool] of missing) {
+            if (Object.keys(schemas).length !== batch.length) throw new Error();
+            for (const [slug, tool] of batch) {
               const schema = schemas[slug];
               if (!schema || schema.tool_slug !== slug || schema.toolkit !== tool.toolkit)
                 throw new Error();
