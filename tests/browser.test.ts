@@ -731,6 +731,7 @@ async function transportFixture(respectTimeouts = false) {
   await startDaemon();
   const computer = createAgentBrowserComputer({
     dataRoot: directory,
+    headless: true,
     onDiagnostic: (event) => diagnostics.push(event),
     daemonCommand: (path, command, signal, timeoutMs) => {
       timeouts.push({ action: command.action, timeoutMs });
@@ -1204,7 +1205,11 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const { port } = server.address() as { port: number };
     const directory = await mkdtemp(join(tmpdir(), 'otto-real-card-'));
-    const computer = createAgentBrowserComputer({ dataRoot: directory, privateNetwork: true });
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      privateNetwork: true,
+      headless: true,
+    });
     const shop = `http://127.0.0.1:${port}`;
     const card = {
       cardNumber: '4242424242424242',
@@ -5546,7 +5551,11 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const directory = await mkdtemp(join(tmpdir(), 'otto-private-entry-'));
-    const native = createAgentBrowserComputer({ dataRoot: directory, privateNetwork: true });
+    const native = createAgentBrowserComputer({
+      dataRoot: directory,
+      privateNetwork: true,
+      headless: true,
+    });
     const worker = await harness({ computer: native });
     const computer = worker.client(directory, { timeoutMs: 30_000 });
     assert.ok(computer.cardDestinations);
@@ -5937,6 +5946,7 @@ test(
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
+      headless: true,
     });
     try {
       await computer.act('state', { action: 'open', url: origin });
@@ -6027,6 +6037,7 @@ test(
         dataRoot: directory,
         browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
         privateNetwork: true,
+        headless: true,
       });
       try {
         assert.equal((await recovered.currentPage('fence')).origin, origin);
