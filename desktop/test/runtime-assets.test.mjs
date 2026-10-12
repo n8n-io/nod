@@ -462,7 +462,7 @@ async function releaseFixture(
   const runtimeTag = `runtime-darwin-arm64-${fingerprint}`;
   const version = automatic ? '0.1.1' : '0.1.0';
   const appTag = `desktop-v${version}`;
-  const name = `Otto-Runtime-darwin-arm64-${digest(archive).slice(0, 12)}.tar.gz`;
+  const name = `Otto-Runtime-darwin-arm64-${digest('Synthetic runtime files').slice(0, 12)}.tar.gz`;
   const release = {
     version: 1,
     platform: 'darwin-arm64',
@@ -607,15 +607,18 @@ if (args[1] === 'create') {
     if (args.includes('--target')) release.target_commitish = flag('--target');
     if (args.includes('--draft=false')) {
       release.draft = false;
+      release.published_at = '2026-10-04T12:00:00Z';
       release.html_url = 'https://github.com/synthetic/otto/releases/tag/' + tag;
     }
+    if (args.includes('--draft=true')) release.draft = true;
     if (args.includes('--prerelease=false')) release.prerelease = false;
     if (args.includes('--notes-file')) release.body = readFileSync(flag('--notes-file'), 'utf8');
   } else if (args[1] === 'upload') {
     const bytes = readFileSync(args[3]);
     const name = basename(args[3]);
     release.assets = release.assets.filter(asset => asset.name !== name);
-    release.assets.push({ name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex') });
+    state.assetIds = (state.assetIds || 0) + 1;
+    release.assets.push({ id: state.assetIds, name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), state: 'uploaded' });
     state.contents[tag + '/' + name] = bytes.toString('base64');
   } else if (args[1] === 'download') {
     const name = flag('--pattern');
@@ -632,11 +635,32 @@ save();
   await writeFile(
     network,
     String.raw`import { readFileSync, writeFileSync } from 'node:fs';
+import { checkRedirect, checkRequest, releaseResponse } from ${JSON.stringify(new URL('../../deployment/n8n/desktop-releases.mjs', import.meta.url).href)};
+const broker = (state, url, source) => {
+  const path = url.pathname.slice(new URL(source).pathname.length + 1).split('/');
+  const params = path[0] === 'tags' ? { tag: path[1] } : Object.fromEntries([['releaseId', path[1]], ['assetId', path[3]], ['filename', path[4]]].filter(([, value]) => value !== undefined));
+  const checked = checkRequest({ params, query: Object.fromEntries(url.searchParams) });
+  if (checked.status) return Response.json(checked.body, { status: checked.status });
+  const releases = Object.values(state.releases).map(release => ({ ...release, assets: release.assets.filter(asset => !state.brokerHides?.includes(asset.name)) }));
+  const found = releases.find(release => checked.tag ? release.tag_name === checked.tag : release.id === checked.releaseId);
+  const pages = checked.tag || checked.releaseId ? [found ? { statusCode: 200, body: found } : { statusCode: 404, body: {} }] : [{ statusCode: 200, body: releases }];
+  const result = releaseResponse(pages, checked, source);
+  if (result.assetUrl) {
+    const name = found.assets.find(asset => asset.id === checked.assetId).name;
+    const redirect = result.metadata
+      ? checkRedirect({ statusCode: 200, body: Buffer.from(state.contents[found.tag_name + '/' + name], 'base64').toString('utf8') }, result.metadata)
+      : checkRedirect({ statusCode: 302, headers: { location: 'https://release-assets.githubusercontent.com/synthetic' } });
+    return redirect.status === 302 ? new Response(null, { status: 302, headers: { location: redirect.location } }) : Response.json(redirect.body, { status: redirect.status });
+  }
+  return result.status === 204 ? new Response(null, { status: 204 }) : Response.json(result.body, { status: result.status });
+};
 globalThis.fetch = async (url, options = {}) => {
   const file = process.env.FIXTURE_STATE;
   const state = JSON.parse(readFileSync(file, 'utf8'));
   state.calls.push(['fetch', options.method || 'GET', String(url)]);
   writeFileSync(file, JSON.stringify(state));
+  const source = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+  if (source && String(url).startsWith(source + '/')) return broker(state, new URL(url), source);
   const match = String(url).match(/^https:\/\/github\.com\/synthetic\/otto\/releases\/download\/([^/]+)\/([^/]+)$/);
   if (!match) throw new Error('Unexpected network access');
   const [, tag, name] = match;
@@ -877,15 +901,17 @@ test('app publication binds its delivery source and renamed installer to verifie
   await f.invoke('draft');
   const state = await f.readState();
   const assets = state.releases[f.appTag].assets;
-  for (const entry of [f.metadata.disk, f.metadata.update])
+  for (const entry of [f.metadata.disk, f.metadata.update]) {
+    const { name, size, digest } = assets.find((asset) => asset.name === entry.file);
     assert.deepEqual(
-      assets.find((asset) => asset.name === entry.file),
+      { name, size, digest },
       {
         name: entry.file,
         size: entry.bytes,
         digest: `sha256:${entry.sha256}`,
       },
     );
+  }
   assert.equal(
     JSON.parse(Buffer.from(state.contents[f.appTag + '/release.json'], 'base64')).updateSourceUrl,
     f.metadata.updateSourceUrl,
@@ -1024,7 +1050,11 @@ test('one official release waits for verified runtime and downloaded app bytes',
 });
 
 test('all three checked bundles publish together as one regular Otto release', async (t) => {
-  const f = await releaseFixture(t, { plan: true, publish: true });
+  const f = await releaseFixture(t, {
+    plan: true,
+    publish: true,
+    updateSourceUrl: 'https://releases.example.invalid/otto',
+  });
   const target = join(f.root, 'dist/desktop');
   const arm = join(target, 'arm64');
   const intel = join(target, 'x64');
@@ -1120,6 +1150,10 @@ test('all three checked bundles publish together as one regular Otto release', a
   await assert.rejects(f.invoke('draft-all'), /application assets/);
   assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
   await copyFile(join(arm, 'Otto-arm64.zip'), join(intel, 'Otto-x64.zip'));
+  await f.writeState({ ...(await f.readState()), brokerHides: [runtime.archive.file] });
+  await assert.rejects(f.invoke('draft-all'), /draft again.*x64 Mac.*incomplete/s);
+  assert.equal((await f.readState()).releases[f.appTag].draft, true);
+  await f.writeState({ ...(await f.readState()), brokerHides: [] });
   await f.invoke('draft-all');
   const completed = await f.readState();
   assert.equal(completed.created, 1);
@@ -1127,7 +1161,7 @@ test('all three checked bundles publish together as one regular Otto release', a
   assert.equal(completed.releases[f.appTag].prerelease, false);
   assert.deepEqual(
     completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
-    [f.appTag],
+    [f.appTag, f.appTag],
   );
   for (const name of [
     'Otto-arm64.dmg',

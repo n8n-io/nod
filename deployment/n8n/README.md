@@ -16,5 +16,6 @@ node --test deployment/n8n/*.test.mjs
 - The installer verifies the DMG's size, SHA-256 and code signature against the pinned certificate before it replaces `/Applications/Otto.app`, and keeps the old app until the new one is ready.
 - Feedback requests are versioned in `src/ports/feedback.ts`. The workflow checks every hash before it touches Linear, and repeated submissions with the same ID can't create a second issue. Execution data retention stays off.
 - Publish the broker before the installer. Before you replace a workflow, export its current version so you can roll back.
+- Every published release is fetched through the live broker with the desktop update code. If a Mac installer, runtime or update feed doesn't resolve, the release goes back to draft, so publish broker changes before the release that needs them.
 
 User-facing behaviour is documented in [Install the desktop app](../../docs/src/content/docs/get-started/install-desktop.mdx) and [Your data and privacy](../../docs/src/content/docs/trust/privacy.md).

@@ -477,6 +477,44 @@ function publishRelease(repository, tag) {
     throw new Error('Published release identity does not match its tag and source.');
 }
 
+async function verifyDelivery(tag, version) {
+  const sourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+  if (!sourceUrl) return;
+  const { createUpdateSource } = await import('../../desktop/main/updates.mjs');
+  const get = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
+  let arch;
+  try {
+    for (arch of ['arm64', 'x64']) {
+      let update;
+      for (let attempt = 0; update?.version !== version; attempt++) {
+        if (attempt === 6) throw new Error(`it does not list Otto ${version}`);
+        if (attempt) await new Promise((resolve) => setTimeout(resolve, 10_000));
+        update = await createUpdateSource({ sourceUrl, arch }).latest('0.0.0');
+      }
+      const installer = await get(`${sourceUrl}/releases?installer=true&platform=darwin-${arch}`);
+      const archive = await get(update.downloadUrl, { redirect: 'manual' });
+      await archive.body?.cancel();
+      const feed = await get(update.feedUrl);
+      if (
+        !installer.ok ||
+        (await installer.json()).version !== version ||
+        archive.status !== 302 ||
+        !feed.ok ||
+        (await feed.json()).name !== `Otto ${version}`
+      )
+        throw new Error('its installer, runtime or update is unavailable');
+    }
+  } catch (error) {
+    gh(
+      ['release', 'edit', tag, '--repo', releaseRepository, '--tag', tag, '--draft=true'],
+      releaseRepository,
+    );
+    throw new Error(
+      `Otto ${version} is a draft again because ${sourceUrl} cannot deliver the ${arch} Mac app: ${error.message}`,
+    );
+  }
+}
+
 async function draftApp({ stageOnly = false } = {}) {
   repositoryName(sourceRepository);
   repositoryName(releaseRepository);
@@ -816,6 +854,7 @@ async function draftAll() {
   }
   if (process.env.OTTO_PUBLISH_RELEASE === 'true') {
     publishRelease(releaseRepository, tag);
+    await verifyDelivery(tag, version);
     release = releaseByTag(releaseRepository, tag);
   }
   if (process.env.GITHUB_STEP_SUMMARY)
