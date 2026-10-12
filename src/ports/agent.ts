@@ -160,7 +160,7 @@ export interface PromptSnapshot {
   instruction: string;
   resumed: boolean;
   imageCount: number;
-  reason: 'user' | 'secure_resume' | 'steer';
+  reason: 'user' | 'steer';
   createdAt: string;
 }
 export interface RuntimeResult {

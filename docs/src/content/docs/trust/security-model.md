@@ -45,7 +45,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 ### Secrets
 
 - No tool returns a saved password, code or card to the model.
-- If the model writes a message asking you for a password, code, card or API key, Otto withholds it and points the model to private entry.
+- Otto is told never to ask for a password, code, card or API key in chat; it opens private entry instead. A code you send in reply to a pending verification or payment request is caught before the model sees it. Any other secret you type into chat reaches the model.
 - Known secret values are removed from tool output and masked in screenshots.
 - Provider keys never enter the workspace, the browser or a prompt.
 
@@ -101,7 +101,6 @@ The team aims to acknowledge your report within 3 business days and to share a f
 | Authority and confirmations | [`trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts), [`approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)               |
 | Vault and one use           | [`vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts), [`vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) |
 | Browser entry and proxy     | [`agent-browser`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser)                                                                                      |
-| Credential guard            | [`communication.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/communication.ts)                                                                                  |
 | Local access and hosting    | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts), [`gateway.ts`](https://github.com/n8n-io/otto/blob/main/src/server/gateway.ts)                 |
 
 ## Related resources

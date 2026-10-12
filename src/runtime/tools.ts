@@ -6,9 +6,9 @@ import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { requestsPrivateInput, vaultInvitation } from './communication.ts';
+import { vaultInvitation } from './communication.ts';
 import { browserFlowParameters } from './browser-flows.ts';
-import { privateInputNotice, type Turn } from './turn.ts';
+import type { Turn } from './turn.ts';
 
 export const personalActions = [
   'profile_get',
@@ -544,8 +544,6 @@ export function ottoTools(
         (await turn.reply(p.text, undefined, p.replyToMessageId)) ?? 'Message delivered.',
     ),
     bind(toolDefinitions.ask_user, async (p) => {
-      if (requestsPrivateInput(p.question))
-        return { status: 'withheld', message: privateInputNotice };
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
       await pause('question', text, { hold: true });

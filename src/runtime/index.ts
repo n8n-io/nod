@@ -20,12 +20,11 @@ import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { actionEffect } from '../shared/action-effect.ts';
 import { conversation, createBrowserClaims } from './browser-claims.ts';
 import { createBrowserFlows } from './browser-flows.ts';
-import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
-import { privateInputNotice, type Turn } from './turn.ts';
+import type { Turn } from './turn.ts';
 import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
@@ -236,7 +235,6 @@ export function createAgentRuntime(dependencies: {
     let stopped = false;
     let modelFailed = false;
     let modelIncomplete = false;
-    let secureContinuation: string | undefined;
     let lastReply = '';
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
@@ -244,7 +242,6 @@ export function createAgentRuntime(dependencies: {
     let bufferedText = '';
     let streamedText = '';
     let streamSubmitted = false;
-    let streamBlocked = false;
     let toolCalls = 0;
     let inspectedApp = false;
     let checkRecording = false;
@@ -311,13 +308,7 @@ export function createAgentRuntime(dependencies: {
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
     };
-    const reply = async (text: string, id?: string, replyToMessageId?: string) => {
-      if (requestsPrivateInput(text)) {
-        if (id) secureContinuation = privateInputNotice;
-        return { status: 'withheld', message: privateInputNotice };
-      }
-      await deliverReply(text, id, replyToMessageId);
-    };
+    const reply = deliverReply;
     const pause = async (
       reason: 'question' | 'approval' | 'credentials',
       text?: string,
@@ -345,14 +336,7 @@ export function createAgentRuntime(dependencies: {
     };
 
     const flushText = () => {
-      if (bufferedText && requestsPrivateInput(streamedText + bufferedText)) streamBlocked = true;
-      if (
-        bufferedText &&
-        !stopped &&
-        !context.background &&
-        !context.activityCheck &&
-        !streamBlocked
-      ) {
+      if (bufferedText && !stopped && !context.background && !context.activityCheck) {
         context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
@@ -372,14 +356,13 @@ export function createAgentRuntime(dependencies: {
     const completeStream = (persist = false) => {
       flushText();
       if (streamId && !context.background && !context.activityCheck) {
-        if (persist && !streamSubmitted && !streamBlocked && !stopped && streamedText.trim())
+        if (persist && !streamSubmitted && !stopped && streamedText.trim())
           queueStreamReply(streamedText, streamId);
         if (!streamSubmitted) context.delta('', streamId, true);
       }
       streamId = undefined;
       streamedText = '';
       streamSubmitted = false;
-      streamBlocked = false;
     };
 
     const assertActive = (recording = false) => {
@@ -707,28 +690,18 @@ export function createAgentRuntime(dependencies: {
           omittedImages.add(attachment.path);
         }
       }
-      const sendPrompt = async (
-        instruction: string,
-        images: AgentImage[],
-        reason: 'user' | 'secure_resume',
-      ) => {
-        const currentInstruction = instruct(
-          instruction,
-          images.length,
-          reason,
-          resumed || reason === 'secure_resume',
-        );
-        await waitFor(session!.prompt(currentInstruction, images));
-        await waitFor(pendingReplies);
-      };
-      await sendPrompt(firstInstruction(context, resumed, omittedImages), images, 'user');
-      if (secureContinuation && !stopped) {
-        const instruction = secureContinuation;
-        secureContinuation = undefined;
-        await sendPrompt(instruction, [], 'secure_resume');
-        if (secureContinuation)
-          throw new Error('The reply kept asking for private sign-in details.');
-      }
+      await waitFor(
+        session!.prompt(
+          instruct(
+            firstInstruction(context, resumed, omittedImages),
+            images.length,
+            'user',
+            resumed,
+          ),
+          images,
+        ),
+      );
+      await waitFor(pendingReplies);
       signal.throwIfAborted();
       if (modelFailed)
         throw new Error('The model request failed. Check the configured provider and model.');
