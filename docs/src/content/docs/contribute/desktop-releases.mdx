@@ -91,9 +91,9 @@ Drafts are never offered to the installer or the updater.
 
 ## Help private-alpha testers
 
-Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy Otto to Applications and follow the **Open Anyway** and Keychain prompts if macOS shows them. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
+Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy Otto to Applications, or run the [Terminal installer](/get-started/install-desktop/), and follow the **Open Anyway** and Keychain prompts if macOS shows them. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
 
-On Windows, testers download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder. They keep the runtime pack compressed, then run the installer.
+On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex` in PowerShell. To install by hand, they download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder, keep the runtime pack compressed, then run the installer. After that, Otto updates itself.
 
 | Situation                | What to know                                                                                                                                                                  |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
