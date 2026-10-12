@@ -380,6 +380,13 @@ test(
       assert.ok(['confirmed', 'executing', 'completed'].includes(confirmed.status));
       assert.ok(confirmed.confirmation_reply_id);
       assert.deepEqual(replies, [{ reply: 'sure, go ahead' }]);
+      assert.equal((await send(11, 'sure, go ahead')).statusCode, 200);
+      await application.channels!.drain();
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_inbox WHERE source_id LIKE $1', ['%:11']))
+          .rows[0].state,
+        'submitted',
+      );
       const disabled = await application.app.inject({
         method: 'DELETE',
         url: '/api/channel-settings/telegram',

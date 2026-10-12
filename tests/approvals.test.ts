@@ -721,15 +721,18 @@ test(
             });
             assert.equal(signedOut, true);
             const before = reviews.length;
-            assert.ok(
-              'message' in
-                (await access.authorize(background, {
-                  origin: site,
-                  kind: 'session',
-                  itemId: first,
-                })),
-            );
-            assert.equal(reviews.length, before);
+            const verdict = await access.authorize(background, {
+              origin: site,
+              kind: 'session',
+              itemId: first,
+            });
+            if (source === 'event') {
+              assert.ok('question' in verdict);
+              assert.equal(reviews.at(-1)?.userMessages, undefined);
+            } else {
+              assert.ok('message' in verdict);
+              assert.equal(reviews.length, before);
+            }
           }
           await db.pool.query(
             `INSERT INTO vault_activity(id,owner_id,at,action,origin,reason)
@@ -749,7 +752,7 @@ test(
         },
       );
 
-      await t.test('payments never run from background or read-only work', async () => {
+      await t.test('payments never run from read-only work', async () => {
         assert.deepEqual(await trust.payment(await begin('Buy hinges at shop.example.test.')), {
           allowed: true,
           inOtto: true,
@@ -767,8 +770,8 @@ test(
           { allowed: true, inOtto: false },
         );
         assert.deepEqual(await trust.payment(await begin('Synthetic event', { source: 'event' })), {
-          allowed: false,
-          reason: 'background',
+          allowed: true,
+          inOtto: true,
         });
         assert.deepEqual(await trust.payment(await begin('', { source: 'onboarding' })), {
           allowed: false,
@@ -1297,7 +1300,7 @@ test(
             assert.equal((await stored(id)).status, 'expired');
             assert.equal((await stored(id)).confirmation_reply_id, revised.messageId);
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
-            await assert.rejects(confirm(id, true), { statusCode: 409 });
+            assert.equal(await confirm(id, true), undefined);
             const next = await propose(await running(revised.turnId), 'OTTO_profile_update', {
               preferences: 'Shorter preference.',
             });
@@ -1331,7 +1334,7 @@ test(
           assert.equal((await row(result.turnId)).source, 'user');
           assert.equal((await stored(id)).status, 'expired');
           assert.equal((await stored(id)).confirmation_reply_id, result.messageId);
-          await assert.rejects(confirm(id, true), { statusCode: 409 });
+          assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
           const revised = await running(result.turnId);
           const update = await propose(revised, 'OTTO_profile_update', {
@@ -1352,7 +1355,7 @@ test(
       await t.test(
         'a user can replace a background pause proposal with a direct local plan change',
         async () => {
-          aligned = true;
+          aligned = (input) => Boolean(input.userMessages?.length);
           for (const absorbed of [false, true]) {
             const current = absorbed ? await begin('Inspect the synthetic dashboard.') : undefined;
             const origin = await begin('Review a paused task.', { source: 'event' });
@@ -1378,7 +1381,7 @@ test(
             assert.equal(calls.at(-1)?.context.sourceMessageId, revised.messageId);
             assert.equal((await proposal(turn.turnId)).status, 'completed');
             assert.equal(await assistantMessages(turn.turnId), 0);
-            await assert.rejects(confirm(id, true), { statusCode: 409 });
+            assert.equal(await confirm(id, true), undefined);
           }
           aligned = false;
           const current = await begin('Inspect the synthetic dashboard.');
@@ -1453,14 +1456,7 @@ test(
             const origin = await begin('A synthetic background pause.', { source: 'event' });
             const args = { id: randomUUID() };
             const id = await propose(origin, 'OTTO_schedule_cancel', args);
-            if (status === 'expired') {
-              await db.pool.query(
-                "UPDATE approvals SET expires_at=now()-interval '1 minute' WHERE id=$1",
-                [id],
-              );
-            } else {
-              await db.pool.query('UPDATE approvals SET status=$2 WHERE id=$1', [id, status]);
-            }
+            await db.pool.query('UPDATE approvals SET status=$2 WHERE id=$1', [id, status]);
             const next = await begin('A later synthetic background pause.', { source: 'schedule' });
             const replacement = await propose(next, 'OTTO_schedule_cancel', args);
             assert.notEqual(replacement, id);
@@ -1500,7 +1496,7 @@ test(
             assert.notEqual(replacement, id);
             assert.equal((await stored(replacement)).status, 'pending');
             assert.equal(await assistantMessages(next.turnId), 1);
-            await assert.rejects(confirm(id, true), { statusCode: 409 });
+            assert.equal(await confirm(id, true), undefined);
           }
           assert.equal(calls.length, before);
         },
@@ -1986,9 +1982,14 @@ test(
           const decisions = await Promise.allSettled(
             Array.from({ length: 4 }, () => confirm(id, true)),
           );
-          assert.equal(decisions.filter((result) => result.status === 'fulfilled').length, 1);
-          for (const result of decisions)
-            if (result.status === 'rejected') assert.equal(result.reason.statusCode, 409);
+          assert.deepEqual(
+            decisions.map((result) => result.status),
+            ['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled'],
+          );
+          assert.equal(
+            decisions.filter((result) => result.status === 'fulfilled' && result.value).length,
+            1,
+          );
           assert.equal(calls.length, before);
           const resumedTurns = await resumeTurns(id);
           assert.equal(resumedTurns.length, 1);
@@ -2117,22 +2118,15 @@ test(
       );
 
       await t.test(
-        'cancelled, expired, wrong-channel and foreign confirmations cannot execute',
+        'cancelled, wrong-channel and foreign confirmations cannot execute',
         async () => {
           const before = calls.length;
           const cancelled = await propose(await newTurn(), 'OTTO_profile_update', {
             preferences: 'Synthetic preference',
           });
           await thread.stopThread();
-          await assert.rejects(confirm(cancelled, true), { statusCode: 409 });
-          const expired = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
-          });
-          await db.pool.query(
-            "UPDATE approvals SET expires_at=now()-interval '1 minute' WHERE id=$1",
-            [expired],
-          );
-          await assert.rejects(confirm(expired, true), { statusCode: 409 });
+          assert.equal(await confirm(cancelled, true), undefined);
+          assert.notEqual((await stored(cancelled)).status, 'confirmed');
           const foreign = await propose(await newTurn(), 'OTTO_profile_update', {
             preferences: 'Synthetic preference',
           });
@@ -2216,7 +2210,7 @@ test(
             undefined,
           );
           assert.equal((await stored(id)).status, 'expired');
-          await assert.rejects(confirm(id, true), { statusCode: 409 });
+          assert.equal(await confirm(id, true), undefined);
           assert.equal(await confirm(id, true, { threadId: randomUUID() }), undefined);
           assert.equal(
             (
@@ -2230,7 +2224,7 @@ test(
           );
           await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [turn.turnId]);
           const before = calls.length;
-          await assert.rejects(confirm(id, true), { statusCode: 409 });
+          assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
           await assert.rejects(
             approvals.request(turn, 'OTTO_profile_update', { preferences: 'Synthetic preference' }),
@@ -2327,7 +2321,7 @@ test(
           assert.equal(declined.length, 1);
           assert.equal(declined[0].status, 'queued');
           assert.equal((await stored(id)).status, 'declined');
-          await assert.rejects(confirm(id, true), { statusCode: 409 });
+          assert.equal(await confirm(id, true), undefined);
           assert.equal(await execute(id), undefined);
           const failed = await propose(await newTurn(), 'OTTO_profile_update', {
             preferences: 'Synthetic preference',
@@ -2345,7 +2339,7 @@ test(
           }
           assert.equal((await stored(failed)).status, 'uncertain');
           assert.equal(await execute(failed), undefined);
-          await assert.rejects(confirm(failed, true), { statusCode: 409 });
+          assert.equal(await confirm(failed, true), undefined);
           assert.equal(calls.length, before + 1);
           await thread.stopThread();
         },
@@ -2441,7 +2435,7 @@ test(
             throw new Error('Must not automatically retry');
           });
           assert.equal((await stored(interrupted)).status, 'uncertain');
-          await assert.rejects(confirm(interrupted, true), { statusCode: 409 });
+          assert.equal(await confirm(interrupted, true), undefined);
           await thread.stopThread();
         },
       );

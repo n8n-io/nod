@@ -840,6 +840,7 @@ async function initializeApplication(
       },
       paymentSetting: async (turn, input) => {
         const { args, question } = await payments.requestSetting(turn, input);
+        if (!args.doItForMe) return payments.setting(turn, args, true);
         const result = await approvals.request(turn, 'OTTO_payment_setting', args, {
           confirm: true,
           question,

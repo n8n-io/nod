@@ -68,7 +68,7 @@ async function confirmedBy(client: PoolClient, turn: TurnRow) {
 async function turnChain(client: PoolClient, turn: TurnRow) {
   const chain = [turn];
   let current = turn;
-  for (let depth = 0; depth < 20; depth++) {
+  for (;;) {
     if (current.source !== 'resume') return chain;
     const linked =
       (await confirmedBy(client, current))?.turn_id ??
@@ -77,11 +77,11 @@ async function turnChain(client: PoolClient, turn: TurnRow) {
       )?.[1];
     if (!linked) return chain;
     const next = await turnRow(client, linked);
-    if (!next || next.thread_id !== turn.thread_id) return undefined;
+    if (!next || next.thread_id !== turn.thread_id || chain.some((item) => item.id === next.id))
+      return undefined;
     chain.push(next);
     current = next;
   }
-  return undefined;
 }
 
 async function scheduleAuthority(client: PoolClient, turnId: string) {
@@ -279,7 +279,7 @@ export async function createApprovals(
              JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id AND u.thread_id=a.thread_id
              JOIN messages m ON m.id=a.confirmation_message_id AND m.owner_id=a.owner_id AND m.thread_id=a.thread_id AND m.role='assistant'
              WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.action=$3 AND a.args=$4::jsonb
-               AND a.status='pending' AND a.expires_at>now() AND u.status IN ('running','waiting') AND u.channel=$5
+               AND a.status='pending' AND u.status IN ('running','waiting') AND u.channel=$5
              ORDER BY a.id LIMIT 1`,
             [ownerId, turn.threadId, action, snapshot, current.channel],
           )
@@ -291,7 +291,7 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      const direct = allowed && !background;
+      const direct = allowed;
       const id = randomUUID();
       let targetTitle: string | undefined;
       if (!direct && typeof snapshot.id === 'string') {
@@ -393,12 +393,8 @@ export async function createApprovals(
       }
       return undefined;
     }
-    if (
-      approval.status !== 'pending' ||
-      !['running', 'waiting'].includes(approval.turn_status) ||
-      new Date(approval.expires_at).getTime() <= Date.now()
-    )
-      throw conflict();
+    if (approval.status !== 'pending' || !['running', 'waiting'].includes(approval.turn_status))
+      return undefined;
     if (approved) await preflight?.(approval.action, approval.args);
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'

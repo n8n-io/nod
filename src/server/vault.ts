@@ -1307,10 +1307,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const selected = chosen?.kind === 'identifier' ? chosen : undefined;
       const username = await stagedUsername(selected);
       const entries = await pool.query<EntryRow>(
-        `SELECT e.* FROM vault_entries e WHERE e.owner_id=$1 AND e.origin=$2
-         AND NOT EXISTS(SELECT 1 FROM vault_uses a WHERE a.root_turn_id=$3 AND a.owner_id=e.owner_id AND a.origin=e.origin AND a.kind=$4 AND a.item_id=e.id)
-         ORDER BY e.updated_at DESC`,
-        [row.owner_id, row.origin, row.root_turn_id, row.kind],
+        'SELECT e.* FROM vault_entries e WHERE e.owner_id=$1 AND e.origin=$2 ORDER BY e.updated_at DESC',
+        [row.owner_id, row.origin],
       );
       const matches =
         row.kind === 'password' && selected && username === undefined ? [] : entries.rows;

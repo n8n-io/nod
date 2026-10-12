@@ -1492,10 +1492,7 @@ test(
           const url = request.url.replace('/vault/', '/api/credential-requests/');
           const available = (await describe(url)).savedEntries;
           assert.ok(available?.some((entry) => entry.id === second.id));
-          assert.equal(
-            available?.some((entry) => entry.id === first.id),
-            false,
-          );
+          assert.ok(available?.some((entry) => entry.id === first.id));
           const before = injections.length;
           const response = await app.inject({
             method: 'POST',
@@ -3097,8 +3094,8 @@ test(
       );
       assert.match(await payments.setting(turn, { doItForMe: false }, true), /off for Visa ••4242/);
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
-      policy = { allowed: false, reason: 'background' };
-      await assert.rejects(payments.request(turn, order), /never pays/);
+      policy = { allowed: false, reason: 'readonly' };
+      await assert.rejects(payments.request(turn, order), /can only read/);
       policy = { allowed: true, inOtto: true };
 
       await save('Travel card', '5555 5555 5555 4444');
@@ -3139,7 +3136,7 @@ test(
           ['uncertain', 'payment'],
           ['asked', 'payment'],
           ['card', 'said_yes'],
-          ['held', 'background'],
+          ['held', 'readonly'],
           ['asked', 'payment'],
           ['asked', 'payment'],
         ],

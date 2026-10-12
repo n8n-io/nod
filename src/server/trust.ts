@@ -16,7 +16,7 @@ Reply with only JSON: {"answer": "yes"}, {"answer": "no"} or {"answer": "other"}
 answer is yes when the message approves the action as asked, in any language or wording. It is no when the message declines, cancels or refuses it. It is other for anything else, including an approval with a change or condition, a question or a new request.`;
 
 export type PaymentPolicy =
-  { allowed: false; reason: 'readonly' | 'background' } | { allowed: true; inOtto: boolean };
+  { allowed: false; reason: 'readonly' } | { allowed: true; inOtto: boolean };
 
 export function createTrust(options: {
   pool: Pool;
@@ -89,7 +89,6 @@ export function createTrust(options: {
     const origin = await turnOrigin(turn.turnId);
     if (!origin) throw new Error('This turn is no longer running.');
     if (origin.readOnly) return { allowed: false, reason: 'readonly' };
-    if (origin.source === 'event') return { allowed: false, reason: 'background' };
     return { allowed: true, inOtto: origin.channel === 'web' };
   }
 

@@ -44,7 +44,7 @@ In Otto web or desktop, Otto shows the checkout with the card fields hidden and 
 
 Turn on **Do it for me** for a card and a yes is enough. Otto keeps the card's security code, entered in the card form or at your next payment. Each payment still needs your yes.
 
-- Turn it on in the card's form in Vault, or ask Otto. Otto then asks a yes/no question for that exact card and setting.
+- Turn it on in the card's form in Vault, or ask Otto. Otto then asks a yes/no question for that exact card. Turning it off takes effect at once.
 - It can be turned on only from a message in the Otto app, not from Telegram or WhatsApp.
 - Turning it off deletes the saved code.
 
@@ -72,7 +72,7 @@ sequenceDiagram
 
 ## When Otto never pays
 
-- Background work Otto starts itself, and read-only work.
+- Read-only work. Background work Otto starts itself can pay, but like any payment it waits for your approval.
 - Hosted Otto. It refuses to store new cards, change cards or pay.
 - With an expired, replaced or already-used request.
 

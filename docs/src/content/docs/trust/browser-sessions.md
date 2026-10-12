@@ -27,7 +27,7 @@ Opening a profile doesn't prove it's still signed in, so Otto checks the page. I
 | Situation                          | What happens                                                                        |
 | ---------------------------------- | ----------------------------------------------------------------------------------- |
 | A conversation or a scheduled run  | The browser stays signed in. Each new sign-in or saved-session use is checked again |
-| Background work and read-only work | Always starts signed out and can't sign in or open saved sessions                   |
+| Background work and read-only work | Always starts signed out. Background work asks you before it signs in again         |
 
 ## Sign out
 

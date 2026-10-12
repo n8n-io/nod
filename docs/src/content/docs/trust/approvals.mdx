@@ -7,7 +7,7 @@ sidebar:
 
 Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. The checker runs reads and drafts, and anything else only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules, your profile or notification settings during a conversation. In scheduled and background work, Otto always asks before those changes. Memory has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Otto changes its own schedules, your profile or notification settings. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
 
 Background work, such as on a new email, has no words from you behind it. So the checker lets it read and draft, and Otto asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
@@ -62,8 +62,7 @@ Reply yes to go ahead, no to skip it, or tell me what to change.
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
 - The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale".
-- A yes with a change or condition, a question or anything else closes the question, and Otto treats your message as a new request.
-- A question expires after 30 minutes.
+- A yes with a change or condition, a question or anything else closes the question, and Otto treats your message as a new request. So does a reply to a question that was already answered or whose task has ended.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
 
 ```mermaid

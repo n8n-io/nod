@@ -304,13 +304,8 @@ export async function createPayments(
     const policy = await options.policy(turn);
     const origin = credentialOrigin((await options.page(turn.threadId)).origin);
     if (!policy.allowed) {
-      const reason = policy.reason;
-      await record(turn, { action: 'held', origin, reason, itemKind: 'card' });
-      throw new PaymentError(
-        reason === 'background'
-          ? 'Work Otto starts on its own never pays. Tell the owner what to buy.'
-          : 'This turn can only read. Do not pay.',
-      );
+      await record(turn, { action: 'held', origin, reason: policy.reason, itemKind: 'card' });
+      throw new PaymentError('This turn can only read. Do not pay.');
     }
     const currency = parsed.currency.toUpperCase();
     const [whole, fraction = ''] = parsed.amount.split('.');
