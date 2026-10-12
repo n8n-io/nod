@@ -314,13 +314,13 @@ test(
       await vault.fillSaved(task2, 'local-development', stored.rows[0].id, input);
       assert.equal(injected, 2);
       assert.equal(resumed, 1);
-      await assert.rejects(
-        vault.fillSaved(task2, 'local-development', stored.rows[0].id, input),
-        /fresh credentials/,
+      assert.equal(
+        await vault.fillSaved(task2, 'local-development', stored.rows[0].id, input),
+        false,
       );
-      await assert.rejects(
-        vault.fillSaved(await resume(task1), 'local-development', stored.rows[0].id, input),
-        /fresh credentials/,
+      assert.equal(
+        await vault.fillSaved(await resume(task1), 'local-development', stored.rows[0].id, input),
+        false,
       );
       assert.equal(injected, 2);
       const requests = await pool.query('SELECT * FROM credential_requests');
@@ -443,7 +443,7 @@ test(
 );
 
 test(
-  'failed autofill requires fresh input and pending forms survive a restart',
+  'a failed or repeated autofill opens the secure form and pending forms survive a restart',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
@@ -488,9 +488,9 @@ test(
         passwordSelector: '#password',
       };
       await assert.rejects(vault.fillSaved(taskRetry, 'local-development', saved.json().id, input));
-      await assert.rejects(
-        vault.fillSaved(taskRetry, 'local-development', saved.json().id, input),
-        /fresh credentials/,
+      assert.equal(
+        await vault.fillSaved(taskRetry, 'local-development', saved.json().id, input),
+        false,
       );
       assert.equal(attempts, 1);
       const retry = await vault.request(taskRetry, 'local-development', input);
@@ -532,10 +532,35 @@ test(
         true,
       );
       assert.equal(attempts, 4);
-      await assert.rejects(
-        restarted.fillSaved(continued, 'local-development', saved.json().id, input),
-        /fresh credentials/,
+      assert.equal(
+        await restarted.fillSaved(continued, 'local-development', saved.json().id, input),
+        false,
       );
+      const rejected = await turn();
+      assert.equal(
+        await restarted.fillSaved(rejected, 'local-development', saved.json().id, input),
+        true,
+      );
+      assert.equal(
+        await restarted.fillSaved(rejected, 'local-development', saved.json().id, input),
+        false,
+      );
+      assert.equal(attempts, 5);
+      const corrected = await restarted.request(rejected, 'local-development', input);
+      await wait(rejected);
+      const correctedUrl = corrected.url.replace('/vault/', '/api/credential-requests/');
+      assert.equal((await app.inject({ url: correctedUrl })).json().status, 'pending');
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: correctedUrl,
+            payload: { label: 'Fixture login', username: 'person', password: 'corrected-password' },
+          })
+        ).statusCode,
+        200,
+      );
+      assert.equal(attempts, 6);
     } finally {
       await app.close();
       await pool.end();
@@ -648,9 +673,9 @@ test(
         409,
       );
       const entry = (await vault.list())[0];
-      await assert.rejects(
-        vault.fillSaved(await resume(retryTurn), 'local-development', entry.id, input),
-        /fresh credentials/,
+      assert.equal(
+        await vault.fillSaved(await resume(retryTurn), 'local-development', entry.id, input),
+        false,
       );
       const archived = await vault.request(task2, 'local-development', input);
       await wait(task2);
@@ -1431,18 +1456,22 @@ test(
             injections.slice(before).map((entry) => entry.username),
             ['same-first@example.test', 'same-second@example.test'],
           );
-          await assert.rejects(vault.fillSaved(turn, 'local-development', first.id, combined));
-          await assert.rejects(vault.fillSaved(turn, 'local-development', second.id, combined));
+          assert.equal(await vault.fillSaved(turn, 'local-development', first.id, combined), false);
+          assert.equal(
+            await vault.fillSaved(turn, 'local-development', second.id, combined),
+            false,
+          );
           assert.equal(injections.length, before + 2);
           await addTask('staged-account');
           await vault.fillSaved(task('staged-account'), 'local-development', first.id, input());
-          await assert.rejects(
-            vault.fillSaved(
+          assert.equal(
+            await vault.fillSaved(
               task('staged-account'),
               'local-development',
               second.id,
               input('password'),
             ),
+            false,
           );
           assert.equal(injections.length, before + 3);
         },

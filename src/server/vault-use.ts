@@ -18,8 +18,7 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
     created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz
   );
   ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS root_turn_id uuid;
-  ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS attempt_key text;
-  CREATE UNIQUE INDEX IF NOT EXISTS vault_uses_attempt ON vault_uses(owner_id,attempt_key);
+  ALTER TABLE vault_uses DROP COLUMN IF EXISTS attempt_key;
   CREATE INDEX IF NOT EXISTS vault_uses_owner ON vault_uses(owner_id,created_at DESC);`);
   await pool.query(
     'CREATE INDEX IF NOT EXISTS vault_uses_root ON vault_uses(owner_id,root_turn_id,origin,kind,item_id)',
@@ -54,7 +53,6 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       origin: string;
       kind: string;
       itemId?: string;
-      attemptKey?: string;
     },
     operation: {
       prepare?(client: PoolClient): Promise<void | false>;
@@ -75,8 +73,8 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       if ((await operation.prepare?.(client)) === false) return false;
       claimStarted = true;
       const claimed = await client.query(
-        `INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,item_id,attempt_key,status)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running') ON CONFLICT DO NOTHING RETURNING id`,
+        `INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,item_id,status)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'running') ON CONFLICT DO NOTHING RETURNING id`,
         [
           id,
           use.ownerId,
@@ -86,7 +84,6 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
           use.origin,
           use.kind,
           use.itemId ?? null,
-          use.attemptKey ?? null,
         ],
       );
       if (!claimed.rowCount)

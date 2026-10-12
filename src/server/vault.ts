@@ -547,16 +547,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     "UPDATE credential_requests SET status='consumed' WHERE owner_id=$1 AND status IN ('filled','entering','uncertain')",
     [owner],
   );
-  await pool.query(`DO $$ BEGIN
-      IF to_regclass('credential_autofill_attempts') IS NOT NULL THEN
-        INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,item_id,attempt_key,status)
-          SELECT 'legacy:'||md5(a.owner_id||a.root_turn_id||a.origin||a.kind),a.owner_id,u.thread_id,u.id,a.root_turn_id,a.origin,a.kind,a.entry_id,
-            a.root_turn_id||':'||a.origin||':'||a.kind||':'||coalesce(a.entry_id,''),'uncertain'
-          FROM credential_autofill_attempts a JOIN turns u ON u.id=a.root_turn_id AND u.owner_id=a.owner_id ON CONFLICT DO NOTHING;
-        DROP TABLE credential_autofill_attempts;
-      END IF;
-    END $$;
-  `);
   let keyPromise: Promise<Buffer> | undefined;
   const key = () => {
     keyPromise ??= options.keyStore
@@ -1115,6 +1105,22 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return result.rows[0];
   }
 
+  async function automaticUse(
+    database: Pick<PoolClient, 'query'>,
+    rootTurnId: string,
+    origin: string,
+    kind: string,
+    itemId: string | null,
+    since?: number,
+  ) {
+    const { rowCount } = await database.query(
+      `SELECT 1 FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=$3 AND kind=$4
+       AND (item_id IS NULL OR item_id=$5) AND ($6::timestamptz IS NULL OR created_at>=$6) LIMIT 1`,
+      [owner, rootTurnId, origin, kind, itemId, since === undefined ? null : new Date(since)],
+    );
+    return Boolean(rowCount);
+  }
+
   async function rememberSelection(
     database: Pick<PoolClient, 'query'>,
     value: {
@@ -1386,7 +1392,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       origin: input.origin,
       kind: input.kind,
       itemId: undefined as string | undefined,
-      attemptKey: undefined as string | undefined,
     };
     let selected: SelectionRow | undefined;
     let entryId: string | null = null;
@@ -1444,8 +1449,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             ).rowCount
           )
             throw new VaultError('This saved login is no longer available.', 409);
+          if (await automaticUse(client, root, input.origin, 'otp', null, source.enteredAt))
+            return false;
           secret.code = source.code.code;
-          use.attemptKey = `${root}:${input.origin}:otp:${selected?.id ?? root}`;
         } else if (source.kind === 'form') {
           const values = source.values;
           if (
@@ -1489,7 +1495,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             selected &&
             (selected.blocked || !staged || selected.entry_id !== entryId)
           )
-            throw new VaultError('Enter fresh credentials to retry this website.', 409);
+            return false;
           if (entryId) {
             const row = (
               await client.query<EntryRow>(
@@ -1535,25 +1541,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             heldLabel = selected.login_label;
           }
           use.itemId = entryId ?? selected?.id;
-          if (!request) {
-            const recovering =
-              input.kind === 'identifier' && selected?.kind === 'identifier' ? selected : undefined;
-            if (
-              !recovering &&
-              (
-                await client.query(
-                  `SELECT 1 FROM credential_requests r LEFT JOIN vault_uses v ON v.id=r.id AND v.owner_id=r.owner_id
-                   WHERE r.root_turn_id=$1 AND r.owner_id=$2 AND r.origin=$3 AND r.kind=$4
-                   AND r.status IN ('consumed','retried') AND (v.item_id IS NULL OR v.item_id=$5) LIMIT 1`,
-                  [root, ownerId, input.origin, input.kind, entryId],
-                )
-              ).rowCount
-            )
-              throw new VaultError('Enter fresh credentials to retry this website.', 409);
-            use.attemptKey = recovering
-              ? `${root}:${input.origin}:identifier:${recovering.id}`
-              : `${root}:${input.origin}:${input.kind}:${entryId ?? selected?.id ?? ''}`;
-          }
+          if (
+            !request &&
+            !(input.kind === 'identifier' && selected?.kind === 'identifier') &&
+            (await automaticUse(client, root, input.origin, input.kind, use.itemId ?? null))
+          )
+            return false;
         }
         if (request)
           await client.query("UPDATE credential_requests SET status='consumed' WHERE id=$1", [
@@ -1803,16 +1796,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         (selected && selected.expires_at.getTime() <= Date.now())
       )
         return false;
-      const attemptKey = `${root}:${origin}:otp:${selected?.id ?? root}`;
-      if (
-        (
-          await pool.query('SELECT 1 FROM vault_uses WHERE owner_id=$1 AND attempt_key=$2', [
-            ownerId,
-            attemptKey,
-          ])
-        ).rowCount
-      )
-        return false;
+      if (await automaticUse(pool, root, origin, 'otp', null, enteredAt)) return false;
       const fresh = await inspectRequest(turn.threadId, raw);
       const shown = fresh.input.emailRecipient?.toLowerCase();
       const username = verificationRecipient(
