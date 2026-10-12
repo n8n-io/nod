@@ -2,8 +2,15 @@ import { browserErrorMessage, type BrowserErrorCode } from '../shared/browser-er
 import type { BrowserHandoffInput } from '../shared/browser-handoff.ts';
 
 export class BrowserActionError extends Error {
-  constructor(readonly code: BrowserErrorCode) {
-    super(browserErrorMessage(code));
+  constructor(
+    readonly code: BrowserErrorCode,
+    readonly detail?: string,
+  ) {
+    super(
+      detail
+        ? `${browserErrorMessage(code)} The browser said: ${detail}`
+        : browserErrorMessage(code),
+    );
     this.name = 'BrowserActionError';
   }
 }

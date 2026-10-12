@@ -90,7 +90,7 @@ The browser is a separate trusted container. It doesn't share mounts or a networ
 
 Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. Otto runs no page-parsing scripts of its own. While a dialog is open, the observation is the dialog, and every action except open is refused until Pi accepts or dismisses it.
 
-Known secret values are removed from tool output and masked in screenshots. Pi uses saved profiles through `browser_session` and never reads their files. The code is in [`src/providers/agent-browser/`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser).
+Known secret values (passwords, codes, card numbers and security codes) are removed from tool output and masked in screenshots; usernames and the cardholder name aren't secrets and stay visible. URL parameters that carry credentials, such as tokens and signatures, are hidden; other query parameters stay. When an action fails, Pi sees the browser's own error with known secrets removed. Pi uses saved profiles through `browser_session` and never reads their files. The code is in [`src/providers/agent-browser/`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser).
 
 ## Browser handoff
 

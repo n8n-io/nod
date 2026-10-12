@@ -1092,7 +1092,7 @@ test('a card goes only into the approved fields on the approved sites and stays 
     await assert.rejects(computer.act('shop', { action: 'snapshot' }));
     assert.equal(snapshots, beforeFailure);
     model.failMasks = false;
-    assert.doesNotMatch(seen, /4242|Synthetic Cardholder|: 737/);
+    assert.doesNotMatch(seen, /4242|: 737/);
     assert.match(seen, /"Expiry"[^\n]*: 08\/30/);
     assert.match(
       (await computer.act('shop', { action: 'evaluate', script: 'document.title' })).text,
@@ -2357,9 +2357,14 @@ test('browser observations redact OAuth callback values, API credentials and sig
     'https://example.com/callback?code=private-code&email=private-email&state=private-state&view=account#access_token=private-token',
     [],
   );
-  for (const value of ['private-code', 'private-email', 'private-state', 'private-token'])
-    assert.equal(url.includes(value), false);
-  assert.equal(new URL(url).searchParams.get('view'), 'account');
+  assert.equal(url.includes('private-token'), false);
+  for (const [name, value] of [
+    ['code', 'private-code'],
+    ['email', 'private-email'],
+    ['state', 'private-state'],
+    ['view', 'account'],
+  ])
+    assert.equal(new URL(url).searchParams.get(name), value);
   for (const name of [
     'api_key',
     'X-API-Key',
@@ -2466,7 +2471,7 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
     assert.equal(fixture.pages.get('login')?.stage, 'complete');
     assert.equal(fixture.pages.get('login')?.entered.at(-1), '739204');
     const observation = await computer.act('login', { action: 'snapshot' });
-    for (const secret of ['synthetic-account@example.test', 'synthetic-password', '739204'])
+    for (const secret of ['synthetic-password', '739204'])
       assert.equal(JSON.stringify(observation).includes(secret), false);
   } finally {
     await computer.dispose();
@@ -3940,7 +3945,7 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
     try {
       assert.equal(submissions.length, 1);
       assert.equal(submissions[0].text, text);
-      assert.equal(submissions[0].verificationRequestId, requestId);
+      assert.equal(submissions[0].verificationRequestId, text === '737' ? requestId : undefined);
       const editor = view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor;
       assert.equal(editor.getMarkdown(), text === 'call 911' ? text : '');
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);

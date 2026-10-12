@@ -87,6 +87,20 @@ export function browserSessionId(id: string): string {
   return `sk-${createHash('sha256').update(threadIdentity(id)).digest('hex').slice(0, 24)}`;
 }
 
+const shortNumber = /^\d{1,11}$/;
+
+function holdsSecret(text: string, secrets: Iterable<string>) {
+  for (const secret of secrets)
+    if (
+      secret &&
+      (shortNumber.test(secret)
+        ? new RegExp(`(?<!\\d)${secret}(?!\\d)`).test(text)
+        : text.includes(secret))
+    )
+      return true;
+  return false;
+}
+
 export function redactBrowserText(text: string, secrets: Iterable<string>): string {
   const variants = new Set<string>();
   for (const secret of secrets) {
@@ -247,20 +261,22 @@ function visualGesture(input: BrowserAction) {
   return { points, durationMs };
 }
 
-export function redactBrowserUrl(
-  value: string,
-  secrets: Iterable<string>,
-  hideQuery = false,
-): string {
+export function redactBrowserUrl(value: string, secrets: Iterable<string>): string {
   const url = new URL(value);
   url.username = '';
   url.password = '';
   const sensitive =
-    /^(?:code|state|token|accesstoken|idtoken|refreshtoken|password|otp|session|sessionid|ticket|assertion|authorization|email|username|identifier|phone|apikey|xapikey|clientsecret|signature|sig|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/i;
+    /^(?:token|accesstoken|idtoken|refreshtoken|password|otp|session|sessionid|ticket|assertion|authorization|apikey|xapikey|clientsecret|signature|sig|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/i;
+  const secret = (name: string) => sensitive.test(name.replace(/[-_]/g, ''));
   for (const name of url.searchParams.keys())
-    if (hideQuery || sensitive.test(name.replace(/[-_]/g, '')))
-      url.searchParams.set(name, '[redacted]');
-  if (url.hash.includes('=')) url.hash = '[redacted]';
+    if (secret(name)) url.searchParams.set(name, '[redacted]');
+  if (
+    url.hash
+      .slice(1)
+      .split(/[?&]/)
+      .some((part) => part.includes('=') && secret(part.split('=')[0]!))
+  )
+    url.hash = '[redacted]';
   return redactBrowserText(url.href, secrets);
 }
 
@@ -598,7 +614,8 @@ export function createAgentBrowserComputer(options: {
       response.error.startsWith('Operation timed out.')
     )
       throw new DaemonCommandError();
-    if (result.exitCode || response.success === false) throw new DaemonCommandError();
+    if (result.exitCode || response.success === false)
+      throw new DaemonCommandError(typeof response.error === 'string' ? response.error : undefined);
     return response.data ?? {};
   }
 
@@ -627,7 +644,7 @@ export function createAgentBrowserComputer(options: {
   async function pendingDialog(state: BrowserState, signal?: AbortSignal) {
     const dialog = await observationCommand(state, ['dialog', 'status'], { signal });
     if (dialog.hasDialog !== true) return;
-    return `A ${String(dialog.type)} dialog blocks the page: "${redactBrowserText(String(dialog.message ?? ''), state.secrets).slice(0, 1000)}". Use accept_dialog {text?} or dismiss_dialog.`;
+    return `A ${String(dialog.type)} dialog blocks the page: "${redactBrowserText(String(dialog.message ?? ''), state.secrets)}". Use accept_dialog {text?} or dismiss_dialog.`;
   }
 
   async function currentUrl(state: BrowserState, signal?: AbortSignal): Promise<string> {
@@ -787,7 +804,7 @@ export function createAgentBrowserComputer(options: {
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     return {
       text: `Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
-      url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
+      url: redactBrowserUrl(url, state.secrets),
     };
   }
 
@@ -942,10 +959,10 @@ export function createAgentBrowserComputer(options: {
             text: tabs
               .map(
                 (tab) =>
-                  `${tab.active ? 'Active' : 'Open'} ${tab.tabId}: ${redactBrowserUrl(tab.url, state.secrets, true)}`,
+                  `${tab.active ? 'Active' : 'Open'} ${tab.tabId}: ${redactBrowserUrl(tab.url, state.secrets)}`,
               )
               .join('\n'),
-            url: redactBrowserUrl(await currentUrl(state, signal), state.secrets, true),
+            url: redactBrowserUrl(await currentUrl(state, signal), state.secrets),
           };
         }
         if (input.action === 'tab_switch') {
@@ -960,7 +977,7 @@ export function createAgentBrowserComputer(options: {
           if (state.protectedSelectors.has(target))
             throw new Error('Use the secure credential request tool for this field.');
           const text = input.text ?? '';
-          if ([...state.secrets].some((secret) => secret && text.includes(secret)))
+          if (holdsSecret(text, state.secrets))
             throw new Error('This field must use the secure credential flow.');
           await command(state, [input.action, target, text], { signal });
         }
@@ -978,10 +995,7 @@ export function createAgentBrowserComputer(options: {
         }
         if (input.action === 'accept_dialog' || input.action === 'dismiss_dialog') {
           const text = input.action === 'accept_dialog' ? input.text : undefined;
-          if (
-            text !== undefined &&
-            [...state.secrets].some((secret) => secret && text.includes(secret))
-          )
+          if (text !== undefined && holdsSecret(text, state.secrets))
             throw new Error('Answer the dialog without private details.');
           await command(
             state,
@@ -1030,7 +1044,7 @@ export function createAgentBrowserComputer(options: {
         }
         if (input.action === 'select') {
           const value = input.text ?? '';
-          if (!value || [...state.secrets].some((secret) => secret && value.includes(secret)))
+          if (!value || holdsSecret(value, state.secrets))
             throw new Error('Choose a visible option without private details.');
           await command(state, ['select', selector(input.selector), value], { signal });
         }
@@ -1089,7 +1103,7 @@ export function createAgentBrowserComputer(options: {
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
             text: `Script result (JSON):\n${result}`,
-            url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
+            url: redactBrowserUrl(url, state.secrets),
           };
         }
       }
@@ -1097,7 +1111,10 @@ export function createAgentBrowserComputer(options: {
       return observe(state, signal, input);
     }).catch((error: unknown) => {
       if (error instanceof DaemonCommandError)
-        throw new BrowserActionError('browser_action_failed');
+        throw new BrowserActionError(
+          'browser_action_failed',
+          error.detail ? redactBrowserText(error.detail, state.secrets) : undefined,
+        );
       throw error;
     });
   }
@@ -1283,8 +1300,11 @@ export function createAgentBrowserComputer(options: {
       const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
       for (const step of fields) {
         const secret = input.kind === 'otp' ? input.code! : step.value;
-        state.secrets.add(secret);
-        secrets.add(secret);
+        const identifier = input.kind === 'identifier' || step.value === input.username;
+        if (!identifier) {
+          state.secrets.add(secret);
+          secrets.add(secret);
+        }
         const field = await focusField(state, devtools, step.selector);
         if (field.origin !== input.origin)
           throw new Error('The login field is on a different origin.');
@@ -1299,7 +1319,8 @@ export function createAgentBrowserComputer(options: {
           throw new Error(
             'The login field changed during entry. Check the result before another attempt.',
           );
-        if (!step.selector.startsWith('@')) state.protectedSelectors.add(step.selector);
+        if (!identifier && !step.selector.startsWith('@'))
+          state.protectedSelectors.add(step.selector);
       }
       state.secretsByOrigin.set(input.origin, secrets);
       await saveState(state);
@@ -1473,8 +1494,7 @@ export function createAgentBrowserComputer(options: {
       async (devtools, document) => {
         if (document !== input.document) throw new BrowserActionError('browser_card_changed');
         for (const step of steps) {
-          const privateValue =
-            step.field === 'number' || step.field === 'securityCode' || step.field === 'name';
+          const privateValue = step.field === 'number' || step.field === 'securityCode';
           if (privateValue) for (const value of step.values) state.secrets.add(value);
           const selection = fields[step.field]!;
           const field = await focusField(
@@ -1512,7 +1532,7 @@ export function createAgentBrowserComputer(options: {
       const url = await currentUrl(state);
       return {
         origin: browserUrl(url).origin,
-        url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
+        url: redactBrowserUrl(url, state.secrets),
       };
     });
   }

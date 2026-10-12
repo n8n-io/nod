@@ -310,6 +310,7 @@ export async function startContainerBrowserWorker(
               : error instanceof Error && 'statusCode' in error && error.statusCode === 423
                 ? 'locked'
                 : 'unavailable',
+          ...(error instanceof BrowserActionError && error.detail ? { detail: error.detail } : {}),
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

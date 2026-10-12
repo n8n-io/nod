@@ -257,6 +257,7 @@ export const browserResponse = z.discriminatedUnion('ok', [
       id: z.uuid(),
       ok: z.literal(false),
       error: z.union([z.enum(['cancelled', 'locked', 'unavailable']), z.enum(browserErrorCodes)]),
+      detail: z.string().optional(),
       metadata: browserMetadata,
     })
     .strict(),

@@ -203,7 +203,9 @@ export function createBridgeComputer(options: {
           return reject(new Error('Browser operation cancelled.'));
         if (response.ok) return resolve(response.result);
         if (browserErrorMessage(response.error))
-          return reject(new BrowserActionError(response.error as BrowserErrorCode));
+          return reject(
+            new BrowserActionError(response.error as BrowserErrorCode, response.detail),
+          );
         if (response.error === 'locked') {
           const error = new Error('Browser observations are paused during credential entry.');
           return reject(Object.assign(error, { statusCode: 423 }));
