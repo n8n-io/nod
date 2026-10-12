@@ -210,7 +210,12 @@ function daemonRequest(args: string[], input?: string): Record<string, unknown> 
     case 'download':
       return { action: 'download', selector: args[1], path: args[2] };
     case 'snapshot':
-      return { action: 'snapshot', compact: true, ...(args[3] ? { selector: args[3] } : {}) };
+      return {
+        action: 'snapshot',
+        compact: true,
+        urls: true,
+        ...(args[3] ? { selector: args[3] } : {}),
+      };
     case 'close':
       return { action: 'close' };
     case 'tab':

@@ -1985,7 +1985,7 @@ test('computer observations normalize controls, protect credentials and return c
     assert.match(page.text, /textbox/);
     assert.deepEqual(
       protocol.filter((command) => command.action === 'snapshot'),
-      [{ action: 'snapshot', compact: true }],
+      [{ action: 'snapshot', compact: true, urls: true }],
     );
     await computer.injectCredentials({
       threadId: 'fixture',
