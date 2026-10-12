@@ -570,6 +570,44 @@ test('Intel installers and feeds resolve only Intel assets from the same Otto re
   );
 });
 
+test('Windows installers pin the installer, runtime pack and manifest of the newest Otto release', () => {
+  const windows = release({
+    assets: [
+      asset(103, 'Otto-arm64.dmg'),
+      asset(107, 'Otto-Setup-x64.exe'),
+      asset(108, 'Otto-Runtime-win32-x64.tar.gz'),
+      asset(109, 'release-win32-x64.json'),
+    ],
+  });
+  const request = checkRequest({ query: { installer: 'true', platform: 'win32-x64' } });
+  const file = (id, name) => ({
+    url: `${base}/releases/42/assets/${id}/${name}`,
+    bytes: 1234,
+    sha256: 'a'.repeat(64),
+  });
+  assert.deepEqual(releaseResponse([{ statusCode: 200, body: [windows] }], request, base), {
+    status: 200,
+    body: {
+      schema: 1,
+      version: '0.2.0',
+      releaseId: 42,
+      installer: file(107, 'Otto-Setup-x64.exe'),
+      runtime: file(108, 'Otto-Runtime-win32-x64.tar.gz'),
+      manifestUrl: `${base}/releases/42/assets/109/release-win32-x64.json`,
+    },
+  });
+  const incomplete = release({
+    id: 43,
+    tag_name: 'desktop-v0.3.0',
+    assets: [asset(110, 'Otto-Setup-x64.exe'), asset(111, 'release-win32-x64.json')],
+  });
+  assert.equal(
+    releaseResponse([{ statusCode: 200, body: [windows, incomplete] }], request, base).status,
+    503,
+  );
+  assert.equal(checkRequest({ query: { installer: 'true', platform: 'win32-arm64' } }).status, 400);
+});
+
 test('legacy runtime tag lookup stays exact and only a missing release starts alias lookup', () => {
   const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
   const request = checkRequest({ params: { tag } });

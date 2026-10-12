@@ -28,7 +28,8 @@ export function checkRequest(input) {
     !keys &&
     ['installer', 'installer,platform'].includes(queryKeys) &&
     query.installer === 'true' &&
-    (query.platform === undefined || ['darwin-arm64', 'darwin-x64'].includes(query.platform))
+    (query.platform === undefined ||
+      ['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(query.platform))
   )
     return {
       operation: 'installer',
@@ -233,6 +234,31 @@ export function releaseResponse(pages, request, baseUrl) {
         .filter((release) => desktopTag(release.tag_name))
         .sort((a, b) => compare(b.tag_name.slice(9), a.tag_name.slice(9)))[0];
       if (!latest) return missing();
+      const file = (asset) => ({
+        url: asset.url,
+        bytes: asset.size,
+        sha256: asset.digest.slice(7),
+      });
+      if (request.platform === 'win32-x64') {
+        const [installer, runtime, manifest] = [
+          'Otto-Setup-x64.exe',
+          'Otto-Runtime-win32-x64.tar.gz',
+          'release-win32-x64.json',
+        ].map((name) => latest.assets.find((asset) => asset.name === name));
+        if (!installer || !runtime || !manifest || manifest.size > 2 * 1024 * 1024)
+          return unavailable();
+        return {
+          status: 200,
+          body: {
+            schema: 1,
+            version: latest.tag_name.slice(9),
+            releaseId: latest.id,
+            installer: file(installer),
+            runtime: file(runtime),
+            manifestUrl: manifest.url,
+          },
+        };
+      }
       const arch = request.platform === 'darwin-x64' ? 'x64' : 'arm64';
       const disk = latest.assets.find((asset) => asset.name === `Otto-${arch}.dmg`);
       const manifest = latest.assets.find(
@@ -245,7 +271,7 @@ export function releaseResponse(pages, request, baseUrl) {
           schema: 1,
           version: latest.tag_name.slice(9),
           releaseId: latest.id,
-          disk: { url: disk.url, bytes: disk.size, sha256: disk.digest.slice(7) },
+          disk: file(disk),
           manifestUrl: manifest.url,
         },
       };

@@ -18,6 +18,16 @@ const assets = resolve(
   process.env.OTTO_RUNTIME_ASSETS || join(root, '.local/windows-runtime-assets'),
 );
 const configuration = JSON.parse(await readFile(join(root, 'desktop/package.json'), 'utf8'));
+const updateSourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+if (
+  updateSourceUrl &&
+  (!URL.canParse(updateSourceUrl) ||
+    new URL(updateSourceUrl).protocol !== 'https:' ||
+    new URL(updateSourceUrl).username ||
+    new URL(updateSourceUrl).password ||
+    /[?#]/.test(updateSourceUrl))
+)
+  throw new Error('The desktop update source must be a credential-free HTTPS URL.');
 const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
 if (
   manifest.platform !== 'win32-x64' ||
@@ -77,6 +87,7 @@ configuration.ottoBuild = {
   source: await run('git', ['-C', root, 'rev-parse', 'HEAD'], { output: 'stdout' }),
   builtAt: new Date().toISOString(),
   platform: 'win32-x64',
+  ...(updateSourceUrl ? { updateSourceUrl } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;
@@ -127,6 +138,7 @@ await writeFile(
       version: configuration.version,
       source: configuration.ottoBuild.source,
       platform: 'win32-x64',
+      ...(updateSourceUrl ? { updateSourceUrl } : {}),
       signing: { mode: 'unsigned' },
       installer: {
         file: 'Otto-Setup-x64.exe',

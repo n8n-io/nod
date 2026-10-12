@@ -1,0 +1,423 @@
+---
+import '../styles/waitlist.css';
+
+const endpoint = 'https://internal.users.n8n.cloud/webhook/otto/waitlist';
+const description =
+  "Otto is a personal assistant that does real-world work for you. It's open source, runs on the AI model you pick and checks with you before anything high-stakes. Join the waitlist for early access.";
+const favicon = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}favicon.svg`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Otto · Join the waitlist</title>
+    <meta name="description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Otto · Join the waitlist" />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary" />
+    <meta name="theme-color" content="#fafafa" />
+    <link rel="icon" href={favicon} type="image/svg+xml" />
+    <script is:inline>try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('boot')}catch{}</script>
+  </head>
+  <body>
+<div class="page">
+  <header class="top">
+    <span class="brand">
+      <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><circle class="ring" cx="16" cy="16" r="10"></circle><circle class="dot" cx="25" cy="6" r="4"></circle></svg>
+      otto
+      <span class="labs">n8n Labs</span>
+    </span>
+  </header>
+
+  <main class="chat">
+    <div class="pane" id="pane" tabindex="0" aria-label="A conversation with Otto">
+    <div class="log" id="log">
+      <div class="row otto">
+        <button class="avatar" id="avatar" type="button" aria-label="Replay the conversation">
+          <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg>
+        </button>
+        <div class="stack">
+          <div class="reveal" data-step><div>
+            <div class="bubble hello">
+              <h1><span class="wave" aria-hidden="true">👋</span>Hey, I'm Otto.</h1>
+              <p>A personal assistant that does <strong>real-world work</strong> for you.</p>
+            </div>
+          </div></div>
+          <div class="reveal typing pending" aria-hidden="true"><div><span class="bubble"><i></i><i></i><i></i></span></div></div>
+        </div>
+      </div>
+
+      <div class="row me"><div class="stack">
+        <div class="reveal" data-step><div><p class="bubble me">What kind of work?</p></div></div>
+      </div></div>
+      <div class="row otto">
+        <span class="avatar" aria-hidden="true"><svg class="glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
+        <div class="stack">
+          <div class="reveal" data-step><div>
+            <p class="bubble">I use a computer and a browser the way you do.</p>
+          </div></div>
+          <div class="reveal" data-step><div>
+            <p class="bubble jobs">So I can <span class="job"><strong>get a refund for a subscription</strong>&nbsp;💸,</span> <span class="job"><strong>do the grocery shopping</strong>&nbsp;🛒,</span> <span class="job"><strong>chase clients</strong>&nbsp;🧾</span> or <span class="job"><strong>book a hotel</strong>&nbsp;🏨.</span></p>
+          </div></div>
+          <div class="reveal typing pending" aria-hidden="true"><div><span class="bubble"><i></i><i></i><i></i></span></div></div>
+        </div>
+      </div>
+      <div class="row me"><div class="stack">
+        <div class="reveal" data-step><div class="reacted"><p class="bubble me">But how can I trust you with my accounts?<span class="react" role="img" aria-label="Otto reacted with a check mark">✅</span></p></div></div>
+      </div></div>
+      <div class="row otto">
+        <span class="avatar" aria-hidden="true"><svg class="glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
+        <div class="stack">
+          <div class="reveal" data-step><div>
+            <p class="bubble">I'm <strong>open source</strong> and run on the AI model you pick. Your logins stay in an <strong>encrypted vault</strong>, and I <strong>check with you before anything high-stakes</strong>, like spending money or messaging someone.</p>
+          </div></div>
+          <div class="reveal" data-step><div>
+            <p class="bubble">Oh, and I come in a really <strong>simple, slick app</strong> ✨</p>
+          </div></div>
+          <div class="reveal typing pending" aria-hidden="true"><div><span class="bubble"><i></i><i></i><i></i></span></div></div>
+        </div>
+      </div>
+      <div class="row me"><div class="stack">
+        <div class="reveal" data-step><div><p class="bubble me">How do I try you?</p></div></div>
+      </div></div>
+      <div class="row otto">
+        <span class="avatar" aria-hidden="true"><svg class="glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
+        <div class="stack">
+          <div class="reveal" data-step><div>
+            <p class="bubble ask">Leave your email below and I'll save you a spot.</p>
+          </div></div>
+          <div class="reveal typing pending" aria-hidden="true"><div><span class="bubble"><i></i><i></i><i></i></span></div></div>
+        </div>
+      </div>
+
+      <div class="row me" id="me-row" hidden><div class="stack">
+        <div class="reveal pending" id="me-say"><div><p class="bubble me" id="me-email"></p></div></div>
+      </div></div>
+
+      <div class="row otto" id="reply-row" hidden>
+        <span class="avatar" aria-hidden="true"><svg class="glyph" id="reply-glyph" viewBox="0 0 32 32"><circle class="ring" cx="16" cy="16" r="10"></circle><g class="orbit"><circle class="dot" cx="25" cy="6" r="4"></circle></g></svg></span>
+        <div class="stack">
+          <div class="reveal pending" data-reply><div><p class="bubble">Got it. <strong>Check your inbox</strong> to confirm your spot.</p></div></div>
+          <div class="reveal pending" data-reply><div><p class="bubble">Once you confirm, we'll email you when your spot opens. If you're up for a quick chat about what you'd hand off, just reply to that email.</p></div></div>
+          <div class="reveal typing pending" id="reply-typing" aria-hidden="true"><div><span class="bubble"><i></i><i></i><i></i></span></div></div>
+        </div>
+      </div>
+      <p class="sr" id="status" role="status"></p>
+    </div>
+    </div>
+
+    <div class="dock">
+      <form class="composer" id="form" data-endpoint={endpoint} novalidate>
+        <label class="sr" for="email">Email address</label>
+        <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" required>
+        <input class="trap" id="website" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <button class="go-btn" id="go" type="submit">
+          <span id="go-label">Join the waitlist</span>
+          <svg id="go-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </button>
+      </form>
+      <label class="consent" id="consent-row"><input type="checkbox" id="consent" name="consent" required><span id="consent-text">I consent to n8n GmbH emailing me about early access to Otto and about its other products, features and events. I can withdraw this consent at any time with effect for the future via the unsubscribe link in every email or at privacy@n8n.io. You can find additional information in our <a href="https://n8n.io/legal/privacy/" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+      <p class="error" id="error" role="alert" hidden></p>
+      <p class="fine">Otto is an n8n Labs experiment and may or may not become a product. <a href="https://n8n.io/legal/privacy/" target="_blank" rel="noopener">Privacy policy</a> · <a href="https://n8n.io/imprint/" target="_blank" rel="noopener">Imprint</a></p>
+    </div>
+  </main>
+</div>
+    <script is:inline>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const root = document.documentElement;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const pane = $('#pane');
+  const avatar = $('#avatar');
+  const rows = [...document.querySelectorAll('#log .row:not(#me-row):not(#reply-row)')];
+  const steps = [...document.querySelectorAll('#log [data-step]')];
+  const typings = rows.flatMap((row) => [...row.querySelectorAll('.typing')]);
+  const glyphs = rows.flatMap((row) => [...row.querySelectorAll('.glyph')]);
+  const reacts = [...document.querySelectorAll('#log .react')];
+  const form = $('#form');
+  const input = $('#email');
+  const go = $('#go');
+  const error = $('#error');
+
+  let run = 0;
+  let playing = false;
+  let follow = false;
+  let unlisten = () => {};
+
+  const bottom = () => { pane.scrollTop = pane.scrollHeight; };
+  const pin = () => {
+    if (!follow) return;
+    bottom();
+    requestAnimationFrame(pin);
+  };
+  const track = (on) => {
+    const was = follow;
+    follow = on;
+    if (on && !was) requestAnimationFrame(pin);
+  };
+
+  const spotlight = (row) => {
+    document.querySelectorAll('#log .row.otto').forEach((r) => r.classList.toggle('past', r !== row));
+  };
+  const latest = () => [...document.querySelectorAll('#log .row.otto')].filter((r) => !r.hidden && !r.classList.contains('later')).pop();
+
+  const settle = () => {
+    if (!playing) return;
+    playing = false;
+    run++;
+    unlisten();
+    track(false);
+    avatar.style.transition = 'none';
+    avatar.style.transform = '';
+    avatar.style.opacity = '';
+    root.classList.remove('boot', 'intro');
+    rows.forEach((r) => r.classList.remove('later'));
+    steps.forEach((el) => el.classList.remove('pending'));
+    typings.forEach((el) => el.classList.add('pending'));
+    reacts.forEach((el) => el.classList.remove('hide'));
+    glyphs.forEach((el) => el.classList.remove('thinking'));
+    spotlight(latest());
+    requestAnimationFrame(() => {
+      avatar.style.transition = '';
+      bottom();
+    });
+  };
+
+  const listen = () => {
+    const kinds = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
+    const skip = () => settle();
+    kinds.forEach((t) => addEventListener(t, skip, { passive: true }));
+    unlisten = () => kinds.forEach((t) => removeEventListener(t, skip));
+  };
+
+  const step = async (id, ms) => {
+    if (id !== run) return false;
+    await wait(ms);
+    return id === run;
+  };
+
+  const show = (el) => {
+    el.classList.remove('pending');
+    const wave = el.querySelector('.wave');
+    if (wave) {
+      wave.classList.remove('go');
+      void wave.offsetWidth;
+      wave.classList.add('go');
+    }
+  };
+
+  const enter = (row) => {
+    if (!row.classList.contains('later')) return false;
+    row.classList.remove('later');
+    void row.offsetHeight;
+    return true;
+  };
+
+  const reading = (el) => Math.min(2400, Math.max(800, el.textContent.trim().length * 22));
+
+  const play = async () => {
+    const id = ++run;
+    playing = true;
+    root.classList.add('instant', 'intro');
+    rows.forEach((r, i) => r.classList.toggle('later', i > 0));
+    spotlight(rows[0]);
+    steps.forEach((el) => el.classList.add('pending'));
+    typings.forEach((el) => el.classList.add('pending'));
+    reacts.forEach((el) => el.classList.add('hide'));
+    root.classList.remove('boot');
+    void document.body.offsetHeight;
+    root.classList.remove('instant');
+    bottom();
+    const slot = avatar.getBoundingClientRect();
+    const box = pane.getBoundingClientRect();
+    const dx = box.left + box.width / 2 - (slot.left + slot.width / 2);
+    const dy = box.top + box.height * 0.42 - (slot.top + slot.height / 2);
+    avatar.style.transition = 'none';
+    avatar.style.opacity = '0';
+    avatar.style.transform = `translate(${dx}px, ${dy}px) scale(1.8)`;
+    void avatar.offsetWidth;
+    setTimeout(() => { if (id === run) listen(); }, 0);
+    if (!(await step(id, 60))) return;
+    avatar.style.transition = 'transform 640ms var(--pop), opacity 300ms ease-out';
+    avatar.style.opacity = '1';
+    avatar.style.transform = `translate(${dx}px, ${dy}px) scale(3)`;
+    if (!(await step(id, 1050))) return;
+    avatar.style.transition = 'transform 760ms var(--travel)';
+    avatar.style.transform = '';
+    if (!(await step(id, 700))) return;
+    avatar.style.transition = '';
+    avatar.style.opacity = '';
+    root.classList.remove('intro');
+    track(true);
+    for (const el of steps) {
+      const row = el.closest('.row');
+      const fresh = enter(row);
+      if (row.classList.contains('me')) {
+        show(el);
+        if (!(await step(id, 700))) return;
+        const react = el.querySelector('.react');
+        if (react) {
+          react.classList.remove('hide');
+          if (!(await step(id, 700))) return;
+        }
+        continue;
+      }
+      if (fresh) spotlight(row);
+      const dots = row.querySelector('.typing');
+      const mark = row.querySelector('.glyph');
+      dots.classList.remove('pending');
+      mark.classList.add('thinking');
+      const ok = await step(id, fresh ? 800 : 600);
+      dots.classList.add('pending');
+      mark.classList.remove('thinking');
+      show(el);
+      if (!ok || !(await step(id, reading(el)))) return;
+    }
+    playing = false;
+    unlisten();
+    await wait(500);
+    if (id === run) track(false);
+  };
+
+  const reply = async (email, animate) => {
+    const me = $('#me-row');
+    const them = $('#reply-row');
+    $('#me-email').textContent = email;
+    $('#status').textContent = 'Check your inbox to confirm your spot.';
+    form.hidden = true;
+    $('#consent-row').hidden = true;
+    const parts = [$('#me-say'), ...document.querySelectorAll('[data-reply]')];
+    me.hidden = false;
+    if (!animate || reduced) {
+      them.hidden = false;
+      parts.forEach((el) => el.classList.remove('pending'));
+      spotlight(them);
+      requestAnimationFrame(bottom);
+      return;
+    }
+    track(true);
+    void me.offsetHeight;
+    parts[0].classList.remove('pending');
+    await wait(700);
+    them.hidden = false;
+    void them.offsetHeight;
+    spotlight(them);
+    const mark = $('#reply-glyph');
+    const dots = $('#reply-typing');
+    for (const el of parts.slice(1)) {
+      dots.classList.remove('pending');
+      mark.classList.add('thinking');
+      await wait(700);
+      dots.classList.add('pending');
+      mark.classList.remove('thinking');
+      el.classList.remove('pending');
+      await wait(900);
+    }
+    track(false);
+  };
+
+  const source = () => {
+    try {
+      return {
+        ref: new URLSearchParams(location.search).get('ref'),
+        referrer: document.referrer ? new URL(document.referrer).hostname : null,
+      };
+    } catch {
+      return { ref: null, referrer: null };
+    }
+  };
+
+  const send = async (email) => {
+    const endpoint = form.dataset.endpoint;
+    if (endpoint === 'preview') return wait(700);
+    if (!endpoint || endpoint.startsWith('__')) throw new Error('missing endpoint');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          consent: { given: true, text: $('#consent-text').textContent.trim(), version: '2026-10-12' },
+          ...source(),
+        }),
+        signal: ctrl.signal,
+      });
+      if (res.status === 400) throw new Error('invalid');
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const busy = (on) => {
+    go.setAttribute('aria-busy', String(on));
+    go.disabled = on;
+    $('#go-label').textContent = on ? 'Saving' : 'Join the waitlist';
+    $('#go-icon').outerHTML = on
+      ? '<span class="spin" id="go-icon" aria-hidden="true"></span>'
+      : '<svg id="go-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>';
+  };
+
+  const fail = (text) => {
+    error.textContent = text;
+    error.hidden = !text;
+    requestAnimationFrame(bottom);
+  };
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (go.disabled) return;
+    settle();
+    const email = input.value.trim().toLowerCase();
+    if (email.length > 254 || !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) {
+      fail("That doesn't look like an email address. Check it and try again.");
+      input.focus();
+      return;
+    }
+    if (!$('#consent').checked) {
+      const row = $('#consent-row');
+      row.classList.remove('nudge');
+      void row.offsetWidth;
+      row.classList.add('nudge');
+      $('#consent').focus();
+      fail('Tick the box to agree, then join the waitlist.');
+      return;
+    }
+    fail('');
+    if ($('#website').value) return reply(email, true);
+    busy(true);
+    try {
+      await send(email);
+      busy(false);
+      await reply(email, true);
+    } catch (err) {
+      busy(false);
+      fail(err.message === 'invalid' ? "That doesn't look like an email address. Check it and try again." : "I couldn't save your spot just now. Try again in a minute.");
+    }
+  });
+
+  input.addEventListener('input', () => error.hidden || fail(''));
+  $('#consent').addEventListener('change', () => {
+    if (!$('#consent').checked) return;
+    $('#consent-row').classList.remove('nudge');
+    if (!error.hidden) fail('');
+  });
+  avatar.addEventListener('click', () => { if (!reduced && !playing) play(); });
+
+  root.classList.remove('boot');
+  if (!reduced) play();
+  else {
+    spotlight(latest());
+    requestAnimationFrame(bottom);
+  }
+})();
+    </script>
+  </body>
+</html>

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 export const installer = await readFile(new URL('./install.sh', import.meta.url), 'utf8');
+export const windowsInstaller = await readFile(new URL('./install.ps1', import.meta.url), 'utf8');
 
 export function installNodes() {
   return [
@@ -47,6 +48,28 @@ export function installNodes() {
         },
       },
     },
+    {
+      name: 'Windows install command',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2.1,
+      parameters: {
+        httpMethod: 'GET',
+        path: 'otto/install-windows',
+        authentication: 'none',
+        responseMode: 'responseNode',
+        options: {},
+      },
+    },
+    {
+      name: 'Load Windows installer',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      parameters: {
+        mode: 'runOnceForAllItems',
+        language: 'javaScript',
+        jsCode: `return [{json:{body:${JSON.stringify(windowsInstaller)}}}];`,
+      },
+    },
   ];
 }
 
@@ -56,7 +79,7 @@ export function installWorkflowCode() {
       JSON.stringify('={{ $json.body }}'),
       `expr(${JSON.stringify('{{ $json.body }}')})`,
     );
-    return `const n${index} = ${index === 0 ? 'trigger' : 'node'}({type:${JSON.stringify(type)},version:${typeVersion},config:${serialized}});`;
+    return `const n${index} = ${[0, 3].includes(index) ? 'trigger' : 'node'}({type:${JSON.stringify(type)},version:${typeVersion},config:${serialized}});`;
   });
-  return `import {workflow,trigger,node,expr} from '@n8n/workflow-sdk';\n${declarations.join('\n')}\nexport default workflow('otto-install','Otto Install').add(n0).to(n1).to(n2);\n`;
+  return `import {workflow,trigger,node,expr} from '@n8n/workflow-sdk';\n${declarations.join('\n')}\nexport default workflow('otto-install','Otto Install').add(n0).to(n1).to(n2).add(n3).to(n4).to(n2);\n`;
 }
