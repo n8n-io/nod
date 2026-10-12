@@ -1142,15 +1142,17 @@ async function initializeApplication(
           events.off('event', onEvent);
         };
       },
-      submit: async (text, sourceId, client, channel, messageId) =>
+      submit: async (text, sourceId, client, channel, messageId, answer) =>
         (
           await userMessages.submit(text, [], {
             sourceId,
             channel,
             client,
             clientMessageId: messageId,
+            answer,
           })
         ).turnId,
+      answer: (text, channel) => userMessages.answer(text, { channel }),
     });
     channels.registerRoutes(app);
     await channelSettings?.recover();

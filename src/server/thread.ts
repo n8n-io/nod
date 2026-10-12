@@ -79,6 +79,7 @@ export interface SubmitUserMessageOptions {
   seenMessageId?: string;
   clientMessageId?: string;
   prompt?: string;
+  answer?: ChatConfirmationInput['answer'];
 }
 export interface SubmitUserMessageResult {
   threadId: string;
@@ -325,7 +326,25 @@ export function createUserMessageService(options: { confirmAction?: ConfirmActio
   return {
     submit: (text: string, attachments: Artifact[] = [], input: SubmitUserMessageOptions = {}) =>
       submitUserMessage(text, attachments, input, options.confirmAction),
+    answer: (text: string, input: SubmitUserMessageOptions = {}) =>
+      readAnswer(text, false, input, options.confirmAction),
   };
+}
+
+async function readAnswer(
+  text: string,
+  hasAttachments: boolean,
+  options: SubmitUserMessageOptions,
+  confirmAction?: ConfirmAction,
+) {
+  return confirmAction?.answer({
+    text,
+    channel: options.channel ?? 'web',
+    threadId: options.threadId ?? (await activeThread(pool)).id,
+    replyToMessageId: options.replyToMessageId,
+    seenMessageId: options.seenMessageId,
+    hasAttachments,
+  });
 }
 
 export async function submitUserMessage(
@@ -345,10 +364,9 @@ export async function submitUserMessage(
     sourceId: options.sourceId,
     hasAttachments: attachments.length > 0,
   };
-  const answer = await confirmAction?.answer({
-    ...confirmation,
-    threadId: options.threadId ?? (await activeThread(pool)).id,
-  });
+  const answer = options.client
+    ? options.answer
+    : await readAnswer(text, attachments.length > 0, options, confirmAction);
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)

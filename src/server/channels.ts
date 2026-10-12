@@ -13,6 +13,7 @@ import type {
   MessagingTransport,
 } from '../ports/messaging.ts';
 import { loopbackHost } from '../shared/loopback.ts';
+import type { ChatConfirmationInput } from './approvals.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 
@@ -34,7 +35,9 @@ interface ChannelOptions {
     client: PoolClient,
     channel: string,
     messageId: string,
+    answer?: ChatConfirmationInput['answer'],
   ) => Promise<string>;
+  answer?: (text: string, channel: string) => Promise<ChatConfirmationInput['answer']>;
   subscribe: (listener: () => void) => () => void;
   refresh?: () => void;
   intervalMs?: number;
@@ -416,6 +419,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       if (!pending) break;
       const channel = conversationChannel(pending);
       if (closed || replacing) break;
+      const answer = await options.answer?.(pending.text, channel).catch(() => undefined);
       const client = await pool.connect();
       let submitted = false;
       try {
@@ -436,7 +440,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           );
         } else {
           const messageId = row.message_id ?? randomUUID();
-          const turnId = await options.submit(row.text, row.source_id, client, channel, messageId);
+          const turnId = await options.submit(
+            row.text,
+            row.source_id,
+            client,
+            channel,
+            messageId,
+            answer,
+          );
           await client.query(
             "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
             [row.source_id, turnId, messageId, ownerId, channel],

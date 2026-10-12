@@ -2201,6 +2201,9 @@ test(
           const answer = await approvals.chat.answer(first.input);
           assert.deepEqual(answer, { approvalId: first.id, approved: true });
           assert.deepEqual(replies.at(-1), { reply });
+          const read = replies.length;
+          assert.equal(await trust.answer(`${'yes '.repeat(400)}but send it elsewhere`), undefined);
+          assert.equal(replies.length, read);
           const forged = await db.transaction((client) =>
             approvals.chat.accept(client, {
               ...first.input,

@@ -107,7 +107,17 @@ test(
     let failClose = false;
     let agentDisposed = false;
     let analyticsClosed = 0;
+    const replies: object[] = [];
     const adapters: ApplicationAdapters = {
+      onboardingCurator: {
+        id: 'fixture',
+        configured: true,
+        curate: async ({ task, input }) => {
+          if (task !== 'review' || !('reply' in input)) return undefined;
+          replies.push(input);
+          return { answer: input.reply === 'sure, go ahead' ? 'yes' : 'other' };
+        },
+      },
       analytics: {
         capture() {},
         async shutdown() {
@@ -337,6 +347,39 @@ test(
         ).rowCount,
         0,
       );
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='question',finished_at=now() WHERE id=$1",
+        [turns[1].id],
+      );
+      const questionId = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Update your preferences? Reply yes or no.',$3,$4)",
+        [questionId, source.owner_id, first.thread_id, turns[1].id],
+      );
+      const approvalId = randomUUID();
+      await pool.query(
+        `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,confirmation_message_id)
+         VALUES($1,$2,$3,$4,'OTTO_profile_update',$5,$6)`,
+        [
+          approvalId,
+          source.owner_id,
+          first.thread_id,
+          turns[1].id,
+          { preferences: 'Channel fixture' },
+          questionId,
+        ],
+      );
+      await application.channels!.drain();
+      assert.equal((await send(10, 'sure, go ahead')).statusCode, 200);
+      await application.channels!.drain();
+      const confirmed = (
+        await pool.query('SELECT status,confirmation_reply_id FROM approvals WHERE id=$1', [
+          approvalId,
+        ])
+      ).rows[0];
+      assert.ok(['confirmed', 'executing', 'completed'].includes(confirmed.status));
+      assert.ok(confirmed.confirmation_reply_id);
+      assert.deepEqual(replies, [{ reply: 'sure, go ahead' }]);
       const disabled = await application.app.inject({
         method: 'DELETE',
         url: '/api/channel-settings/telegram',

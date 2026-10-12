@@ -95,9 +95,8 @@ export function createTrust(options: {
   }
 
   async function answer(reply: string) {
-    const result = await options
-      .review(answerInstructions, { reply: reply.slice(0, 1500) })
-      .catch(() => undefined);
+    if (reply.length > 1500) return undefined;
+    const result = await options.review(answerInstructions, { reply }).catch(() => undefined);
     const value = result && typeof result === 'object' && (result as { answer?: unknown }).answer;
     return value === 'yes' ? true : value === 'no' ? false : undefined;
   }
