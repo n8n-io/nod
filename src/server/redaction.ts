@@ -178,3 +178,14 @@ export function createErrorRedactor(secrets: string[]) {
     return typeof safe === 'string' ? safe : JSON.stringify(safe);
   };
 }
+
+export function withoutSecretKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutSecretKeys);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      secretKey.test(key.replace(/[^a-z0-9]/gi, '')) ? hidden : withoutSecretKeys(entry),
+    ]),
+  );
+}

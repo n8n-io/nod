@@ -63,7 +63,7 @@ export function verificationMail(text: string) {
   );
 }
 
-function privateEmailResult(value: unknown): unknown {
+export function privateEmailResult(value: unknown): unknown {
   if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
     try {
       return JSON.stringify(privateEmailResult(JSON.parse(value)));

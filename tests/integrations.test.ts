@@ -3109,7 +3109,7 @@ test(
     await f.service.drain();
     const receipts = (await f.pool.query('SELECT * FROM integration_events')).rows;
     assert.equal(receipts.length, 1);
-    assert.equal(receipts[0].summary.includes('private message body'), false);
+    assert.equal(receipts[0].summary.includes('private message body'), true);
     assert.equal(receipts[0].summary.includes('private-token'), false);
     assert.match(receipts[0].summary, /D-fixture/);
     assert.equal(

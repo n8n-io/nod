@@ -26,6 +26,8 @@ import type { SiteIcon } from '../ports/link-preview.ts';
 import type { TriageIntent } from './triage.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
+import { privateEmailResult } from './integration-result.ts';
+import { withoutSecretKeys } from './redaction.ts';
 import {
   hasWorkspaceFiles,
   uploadWorkspaceFiles,
@@ -150,15 +152,6 @@ class IntegrationError extends Error {
   }
 }
 
-function textField(value: unknown, maximum = 300) {
-  return typeof value === 'string'
-    ? value
-        .replace(/[\r\n\u0000-\u001f]/g, ' ')
-        .replace(/\b\d{6,}\b/g, '[number]')
-        .slice(0, maximum)
-    : undefined;
-}
-
 function messageIdentity(data: Record<string, unknown>, field: 'message' | 'thread') {
   const nested = data.message;
   const value =
@@ -178,42 +171,15 @@ function inboxEventId(provider: string, owner: string, account: string, message:
 }
 
 export function eventOverview(toolkit: string, trigger: string, data: Record<string, unknown>) {
-  const fields: Record<string, unknown> = {};
-  if (toolkit === 'gmail') {
-    fields.message_id = messageIdentity(data, 'message');
-    fields.thread_id = messageIdentity(data, 'thread');
-  }
-  for (const name of [
-    'subject',
-    'sender',
-    'summary',
-    'status',
-    'updated',
-    'message_timestamp',
-    'channel',
-    'user',
-    'ts',
-    'event_type',
-    'page_id',
-    'workspace_name',
-    'timestamp',
-  ]) {
-    const value = textField(data[name]);
-    if (value) fields[name] = value;
-  }
-  for (const name of ['start', 'end']) {
-    const value = data[name];
-    if (typeof value === 'string') fields[name] = textField(value);
-    else if (value && typeof value === 'object') {
-      const record = value as Record<string, unknown>;
-      fields[name] = {
-        dateTime: textField(record.dateTime),
-        date: textField(record.date),
-        timeZone: textField(record.timeZone),
-      };
-    }
-  }
-  return `Connected-app event from ${toolkit}; trigger ${trigger}. Assess whether there is useful background work to do.\n${untrustedBlock(`${toolkit} event`, JSON.stringify(fields))}`;
+  const fields =
+    toolkit === 'gmail'
+      ? {
+          message_id: messageIdentity(data, 'message'),
+          thread_id: messageIdentity(data, 'thread'),
+          ...data,
+        }
+      : data;
+  return `Connected-app event from ${toolkit}; trigger ${trigger}. Assess whether there is useful background work to do.\n${untrustedBlock(`${toolkit} event`, JSON.stringify(privateEmailResult(withoutSecretKeys(fields))))}`;
 }
 
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
