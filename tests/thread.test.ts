@@ -124,7 +124,7 @@ test(
     });
     const accounts = createAccountStore(db.pool);
     await accounts.initialize();
-    const userMessages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
+    const userMessages = thread.createUserMessageService({ confirmAction: approvals.chat });
     const discarded: string[] = [];
     const planInputs: Array<{ owner: string; input: object }> = [];
     let planAnswer: (owner: string) => unknown = () => null;

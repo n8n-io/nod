@@ -108,14 +108,18 @@ test(
           id: 'fixture',
           configured: true,
           curate: async ({ task, input }) =>
-            task === 'review'
+            task === 'review' && 'reply' in input
               ? {
-                  run: asked.has(
-                    (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
-                      ?.text ?? '',
-                  ),
+                  answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
                 }
-              : undefined,
+              : task === 'review'
+                ? {
+                    run: asked.has(
+                      (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                        ?.text ?? '',
+                    ),
+                  }
+                : undefined,
         },
       },
       { channels: false },

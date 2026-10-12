@@ -85,10 +85,10 @@ export interface SubmitUserMessageResult {
   turnId: string;
   messageId: string;
 }
-type ConfirmAction = (
-  client: PoolClient,
-  input: ChatConfirmationInput,
-) => Promise<ChatConfirmationResult>;
+type ConfirmAction = {
+  answer(input: ChatConfirmationInput): Promise<ChatConfirmationInput['answer']>;
+  accept(client: PoolClient, input: ChatConfirmationInput): Promise<ChatConfirmationResult>;
+};
 
 export interface ThreadDependencies {
   analytics?: CaptureAnalytics;
@@ -336,6 +336,19 @@ export async function submitUserMessage(
 ): Promise<SubmitUserMessageResult> {
   validateSource(options.sourceId, options.channel);
   const channel = options.channel ?? 'web';
+  const confirmation = {
+    text,
+    channel,
+    replyToMessageId: options.replyToMessageId,
+    seenMessageId: options.seenMessageId,
+    clientMessageId: options.clientMessageId,
+    sourceId: options.sourceId,
+    hasAttachments: attachments.length > 0,
+  };
+  const answer = await confirmAction?.answer({
+    ...confirmation,
+    threadId: options.threadId ?? (await activeThread(pool)).id,
+  });
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)
@@ -373,15 +386,10 @@ export async function submitUserMessage(
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
     let supersededApprovalId: string | undefined;
     if (confirmAction) {
-      const confirmed = await confirmAction(client, {
-        text,
-        channel,
+      const confirmed = await confirmAction.accept(client, {
+        ...confirmation,
         threadId: thread.id,
-        replyToMessageId: options.replyToMessageId,
-        seenMessageId: options.seenMessageId,
-        clientMessageId: options.clientMessageId,
-        sourceId: options.sourceId,
-        hasAttachments: attachments.length > 0,
+        answer,
       });
       if (confirmed && 'supersededApprovalId' in confirmed)
         supersededApprovalId = confirmed.supersededApprovalId;

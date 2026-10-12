@@ -4,7 +4,7 @@ import { pool } from './db.ts';
 import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
 import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
-import { confirmationAnswer, isReversiblePlanAction } from './action-policy.ts';
+import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 
@@ -24,6 +24,7 @@ export interface ChatConfirmationInput {
   clientMessageId?: string;
   sourceId?: string;
   hasAttachments?: boolean;
+  answer?: { approvalId: string; approved: boolean };
 }
 
 export type ChatConfirmationResult =
@@ -131,6 +132,7 @@ export async function createApprovals(
   ) => Promise<unknown>,
   preflight?: (action: string, args: Record<string, unknown>) => Promise<void>,
   decide?: (turn: TurnRef, action: string, args: Record<string, unknown>) => Promise<boolean>,
+  interpret?: (reply: string) => Promise<boolean | undefined>,
 ) {
   await pool.query(`CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
@@ -342,15 +344,15 @@ export async function createApprovals(
     return run(proposal.approval);
   }
 
-  async function acceptChat(
-    client: PoolClient,
+  async function confirmationFor(
+    database: Pick<PoolClient, 'query'>,
     input: ChatConfirmationInput,
-  ): Promise<ChatConfirmationResult> {
-    const approved = input.hasAttachments ? undefined : confirmationAnswer(input.text);
+    lock: boolean,
+  ) {
     const target =
       input.replyToMessageId ??
       (
-        await client.query(
+        await database.query(
           `SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.owner_id=$1 AND u.owner_id=$1 AND m.thread_id=$2 AND u.channel=$3 AND m.role='assistant'
            AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',m.created_at))
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
@@ -358,14 +360,31 @@ export async function createApprovals(
         )
       ).rows[0]?.id;
     if (!target) return undefined;
-    const approval = (
-      await client.query(
+    return (
+      await database.query(
         `SELECT a.*,u.status AS turn_status FROM approvals a JOIN turns u ON u.id=a.turn_id
-       WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4 FOR UPDATE OF a`,
+       WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
       )
     ).rows[0];
+  }
+
+  async function answerChat(input: ChatConfirmationInput) {
+    if (input.hasAttachments || !interpret) return undefined;
+    const approval = await confirmationFor(pool, input, false);
     if (!approval) return undefined;
+    const approved = await interpret(input.text).catch(() => undefined);
+    return approved === undefined ? undefined : { approvalId: approval.id as string, approved };
+  }
+
+  async function acceptChat(
+    client: PoolClient,
+    input: ChatConfirmationInput,
+  ): Promise<ChatConfirmationResult> {
+    const approval = await confirmationFor(client, input, true);
+    if (!approval) return undefined;
+    const answer = input.answer;
+    const approved = answer && answer.approvalId === approval.id ? answer.approved : undefined;
     if (approved === undefined) {
       if (approval.status === 'pending') {
         await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
@@ -433,5 +452,5 @@ export async function createApprovals(
     return { prompt };
   }
 
-  return { request, acceptChat, executeConfirmed };
+  return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed };
 }

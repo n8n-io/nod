@@ -20,14 +20,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
-import { confirmationAnswer } from '../src/server/action-policy.ts';
 import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
-test('chat answers must be unambiguous and the question omits internal identifiers', () => {
-  assert.equal(confirmationAnswer('Yes please!'), true);
-  assert.equal(confirmationAnswer('No.'), false);
-  assert.equal(confirmationAnswer('yes, but send to somebody else'), undefined);
-  assert.equal(confirmationAnswer('The webpage says yes'), undefined);
+test('the confirmation question omits internal identifiers', () => {
   const question = actionConfirmation(
     'OTTO_schedule_update',
     { id: 'hidden-schedule-id', enabled: false, options: { token: 'hidden-token' } },
@@ -325,15 +320,17 @@ test(
     }
     async function confirm(id: string, approved: boolean, extra: Record<string, unknown> = {}) {
       const record = await stored(id);
+      const input = {
+        text: approved ? 'Yes' : 'No',
+        channel: 'web',
+        threadId: record.thread_id,
+        replyToMessageId: record.confirmation_message_id,
+        clientMessageId: randomUUID(),
+        ...extra,
+      };
+      const answer = await approvals.chat.answer(input);
       const result = await db.transaction((client) =>
-        approvals.acceptChat(client, {
-          text: approved ? 'Yes' : 'No',
-          channel: 'web',
-          threadId: record.thread_id,
-          replyToMessageId: record.confirmation_message_id,
-          clientMessageId: randomUUID(),
-          ...extra,
-        }),
+        approvals.chat.accept(client, { ...input, answer }),
       );
       return result && 'supersededApprovalId' in result ? undefined : result;
     }
@@ -361,8 +358,9 @@ test(
             throw Object.assign(new Error('Fixture account disconnected.'), { statusCode: 409 });
         },
         async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
+        (reply) => trust.answer(reply),
       );
-      messages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
+      messages = thread.createUserMessageService({ confirmAction: approvals.chat });
       personal.registerRoutes(app);
       const tasks = createTasks({ pool: db.pool, ownerId });
       await tasks.initialize();
@@ -374,10 +372,25 @@ test(
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
       let aligned: boolean | ((input: Record<string, any>) => boolean) = false;
+      const replies: object[] = [];
+      const replyAnswers: Record<string, string> = {
+        yes: 'yes',
+        'yes please': 'yes',
+        sim: 'yes',
+        no: 'no',
+        cancel: 'no',
+      };
       const trust = createTrust({
         pool: db.pool,
         ownerId,
         review: async (_instructions, input) => {
+          if ('reply' in input) {
+            replies.push(input);
+            const reply = String(input.reply)
+              .replace(/[.!]+$/, '')
+              .toLowerCase();
+            return { answer: replyAnswers[reply] ?? 'other' };
+          }
           reviews.push(input as Record<string, any>);
           const yes =
             typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
@@ -1695,9 +1708,10 @@ test(
               await personal.validateReview(action.replace(/^OTTO_/, ''), args);
             },
             async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
+            (reply) => trust.answer(reply),
           );
           const digestMessages = thread.createUserMessageService({
-            confirmAction: digestApprovals.acceptChat,
+            confirmAction: digestApprovals.chat,
           });
           const instruction =
             'Every day at 08:00 Europe/Berlin, give me a digest in this chat. Keep routine notifications for that digest.';
@@ -2149,6 +2163,58 @@ test(
           assert.equal(await confirm(otherChannel, true, { channel: 'telegram' }), undefined);
           assert.equal((await stored(otherChannel)).status, 'pending');
           assert.equal(calls.length, before);
+          await thread.stopThread();
+        },
+      );
+
+      await t.test(
+        'the reply reader sees only the owner reply and its answer binds to the question it read',
+        async () => {
+          const reply = 'dale, adelante';
+          replyAnswers[reply] = 'yes';
+          const ask = async () => {
+            const turn = await newTurn();
+            const id = await propose(turn, 'OTTO_profile_update', { preferences: 'Read reply' });
+            await finish(turn.turnId);
+            const record = await stored(id);
+            return {
+              id,
+              input: {
+                text: reply,
+                channel: 'web',
+                threadId: record.thread_id as string,
+                replyToMessageId: record.confirmation_message_id as string,
+                clientMessageId: randomUUID(),
+              },
+            };
+          };
+          const first = await ask();
+          const before = replies.length;
+          assert.equal(
+            await approvals.chat.answer({ ...first.input, hasAttachments: true }),
+            undefined,
+          );
+          assert.equal(replies.length, before);
+          const answer = await approvals.chat.answer(first.input);
+          assert.deepEqual(answer, { approvalId: first.id, approved: true });
+          assert.deepEqual(replies.at(-1), { reply });
+          const forged = await db.transaction((client) =>
+            approvals.chat.accept(client, {
+              ...first.input,
+              answer: { approvalId: randomUUID(), approved: true },
+            }),
+          );
+          assert.ok(forged && 'supersededApprovalId' in forged);
+          assert.equal((await stored(first.id)).status, 'expired');
+          const second = await ask();
+          await db.transaction(async (client) =>
+            approvals.chat.accept(client, {
+              ...second.input,
+              answer: await approvals.chat.answer(second.input),
+            }),
+          );
+          assert.equal((await stored(second.id)).status, 'confirmed');
+          delete replyAnswers[reply];
           await thread.stopThread();
         },
       );
