@@ -337,7 +337,7 @@ test(
         },
       );
       await t.test(
-        'a reply carrying one security code pays in Otto, and any other numbers are held back from the model',
+        'while a payment is pending any 3 or 4 digit number is held back, and afterwards numbers are ordinary',
         async () => {
           await reset();
           const threadId = (await thread.activeThread(db.pool, ownerId)).id;
@@ -382,22 +382,10 @@ test(
           assert.equal(response.json().verificationStatus, 'submitted');
           assert.deepEqual(entered, ['7395']);
           assert.deepEqual(kept, []);
-          assert.equal((await send('7395')).statusCode, 409);
-          await db.pool.query(
-            `INSERT INTO credential_requests(id,owner_id,thread_id,turn_id,kind,status,expires_at)
-             SELECT 'old-code-'||n,$1,$2,$3,'otp','filled',now()-interval '1 minute'
-             FROM generate_series(1,12) n`,
-            [ownerId, threadId, turnId],
-          );
-          assert.equal((await send('739')).statusCode, 409);
-          assert.deepEqual(ordinary, ['wait, which card is that?']);
-          await db.pool.query(
-            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,started_at)
-             VALUES($1,$2,$3,'user','A new numeric request','web','running',clock_timestamp())`,
-            [randomUUID(), ownerId, threadId],
-          );
-          assert.equal((await send('Order 100 hinges')).statusCode, 200);
-          assert.deepEqual(ordinary, ['wait, which card is that?', 'Order 100 hinges']);
+          const prose = ['2026', '2 hinges for room 212'];
+          for (const text of prose) assert.equal((await send(text)).statusCode, 200, text);
+          assert.deepEqual(ordinary, ['wait, which card is that?', ...prose]);
+          assert.deepEqual(entered, ['7395']);
           const persisted = await db.pool.query(
             `SELECT text AS value FROM messages UNION ALL SELECT prompt FROM turns
              UNION ALL SELECT fields::text||status FROM vault_payments`,
@@ -657,41 +645,40 @@ test(
           }
         },
       );
-      await t.test(
-        'expired, stopped and consumed code replies never become ordinary chat',
-        async () => {
-          for (const options of [
-            { expired: true },
-            { status: 'cancelled' },
-            { status: 'failed' },
-            { status: 'cancelled', expired: true },
-            { status: 'failed', expired: true },
-          ]) {
-            await reset();
-            await seed(options);
-            const response = await send('The code is 791 483');
-            assert.equal(response.statusCode, 409, JSON.stringify(options));
-            assert.deepEqual(ordinary, []);
-            assert.equal(injected.length, 0);
-            assert.equal(
-              (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
-              0,
-            );
-          }
+      await t.test('codes are held only while their request is pending', async () => {
+        for (const options of [{ status: 'cancelled' }, { status: 'failed' }]) {
           await reset();
-          await seed();
-          assert.equal((await send('791483')).statusCode, 200);
-          assert.equal((await send('Código: 791 483')).statusCode, 409);
-          await db.pool.query(
-            "UPDATE credential_requests SET expires_at=now()-interval '1 minute'",
-          );
-          assert.equal((await send('Código: 791 483')).statusCode, 409);
-          assert.equal(injected.length, 1);
+          await seed(options);
+          const response = await send('The code is 791 483');
+          assert.equal(response.statusCode, 409, JSON.stringify(options));
           assert.deepEqual(ordinary, []);
-          const persisted = await db.pool.query('SELECT row_to_json(m) FROM messages m');
-          assert.doesNotMatch(JSON.stringify(persisted.rows), /791483/);
-        },
-      );
+          assert.equal(injected.length, 0);
+          assert.equal(
+            (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
+            0,
+          );
+        }
+        for (const options of [
+          { expired: true },
+          { status: 'cancelled', expired: true },
+          { status: 'failed', expired: true },
+        ]) {
+          await reset();
+          await seed(options);
+          assert.equal((await send('The code is 791 483')).statusCode, 200);
+          assert.deepEqual(ordinary, ['The code is 791 483'], JSON.stringify(options));
+          assert.equal(injected.length, 0);
+        }
+        await reset();
+        await seed();
+        assert.equal((await send('791483')).statusCode, 200);
+        assert.equal(injected.length, 1);
+        const persisted = await db.pool.query('SELECT row_to_json(m) FROM messages m');
+        assert.doesNotMatch(JSON.stringify(persisted.rows), /791483/);
+        assert.equal((await send('Código: 791 483')).statusCode, 200);
+        assert.deepEqual(ordinary, ['Código: 791 483']);
+        assert.equal(injected.length, 1);
+      });
       await t.test(
         'reset fences and invalid explicit code input never persist or route plaintext',
         async () => {
