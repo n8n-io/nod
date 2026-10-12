@@ -95,10 +95,7 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 
 ## Updates
 
-<Tabs syncKey="os">
-<TabItem label="Mac" icon="apple">
-
-On Apple silicon, Otto checks for updates when it starts, every six hours while open, and after your Mac wakes if a check is due. **Check for Updates…** in the Otto menu checks now.
+Otto checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. **Check for Updates…** in the Otto menu, menu bar or tray checks now.
 
 ```mermaid
 flowchart TD
@@ -113,17 +110,9 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
-An Intel Mac doesn't update automatically yet. Quit Otto, then install the new DMG over the old app.
-
-</TabItem>
-<TabItem label="Windows" icon="seti:windows">
-
-Updates are manual in this preview. Quit Otto, download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into one folder, then run the installer. Keep the runtime pack compressed.
+On a Mac, Otto downloads the new app and, when it changed, the new runtime pack before it offers the restart. On Windows, it downloads the new installer and runtime pack, or reuses the installed pack when it hasn't changed. The restart runs the installer in the background and opens Otto again.
 
 Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
-
-</TabItem>
-</Tabs>
 
 ## Windows preview
 

@@ -16,8 +16,8 @@ import {
   utilityProcess,
 } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
@@ -40,6 +40,7 @@ import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
+import { stageWindowsUpdate, windowsInstallCommand } from './windows-update.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
@@ -55,6 +56,7 @@ if (developmentDataRoot && !isAbsolute(developmentDataRoot))
   throw new Error('The development profile path must be absolute.');
 app.setPath('userData', developmentDataRoot || join(app.getPath('appData'), 'Otto'));
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
+const windowsUpdates = join(process.env.LOCALAPPDATA || app.getPath('temp'), 'Otto', 'updates');
 const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
 const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analytics-id'), {
   packaged: app.isPackaged,
@@ -842,6 +844,23 @@ async function confirmRestart() {
 }
 
 function installUpdate() {
+  if (process.platform === 'win32') {
+    const { command, args, env } = windowsInstallCommand({
+      directory: join(windowsUpdates, updates.ready.version),
+      appPath: process.execPath,
+      pid: process.pid,
+      systemRoot: process.env.SystemRoot,
+    });
+    spawn(command, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, ...env },
+    }).unref();
+    installingUpdate = true;
+    app.exit();
+    return Promise.resolve();
+  }
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       autoUpdater.removeListener('error', failed);
@@ -1142,14 +1161,22 @@ else {
   void app
     .whenReady()
     .then(async () => {
-      if (app.isPackaged && process.platform === 'darwin' && process.arch === 'arm64') {
+      if (app.isPackaged && ['darwin', 'win32'].includes(process.platform)) {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+        const windows = process.platform === 'win32';
+        if (windows) await rm(windowsUpdates, { recursive: true, force: true }).catch(() => {});
         updateSource = createUpdateSource({ sourceUrl: ottoBuild?.updateSourceUrl });
         updates = createDesktopUpdater({
           source: updateSource,
           currentVersion: app.getVersion(),
-          native: autoUpdater,
+          native: windows ? undefined : autoUpdater,
           prepareRuntime: async (candidate, signal) => {
+            if (windows)
+              return stageWindowsUpdate(candidate, {
+                directory: windowsUpdates,
+                resourcesPath: engineRoot,
+                signal,
+              });
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );

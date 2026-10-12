@@ -83,11 +83,14 @@ async function json(url, request, signal, accept = 'application/json') {
 
 export function createUpdateSource({
   sourceUrl,
+  os = process.platform === 'win32' ? 'win32' : 'darwin',
   arch = process.platform === 'darwin' ? process.arch : 'arm64',
   fetch: request = fetch,
 } = {}) {
-  if (!['arm64', 'x64'].includes(arch)) throw new Error('Unsupported Mac update architecture.');
-  const platform = `darwin-${arch}`;
+  if (os === 'darwin' && !['arm64', 'x64'].includes(arch))
+    throw new Error('Unsupported Mac update architecture.');
+  if (!['darwin', 'win32'].includes(os)) throw new Error('Unsupported desktop update platform.');
+  const platform = os === 'win32' ? 'win32-x64' : `darwin-${arch}`;
   const metadataName = (name) => (arch === 'arm64' ? `${name}.json` : `${name}-darwin-x64.json`);
   const base = sourceUrl
     ? https(sourceUrl).replace(/\/$/, '')
@@ -132,34 +135,71 @@ export function createUpdateSource({
       throw new Error('The desktop update runtime archive digest does not match.');
     return assetUrl(runtimeRelease, archive);
   };
+  const newest = async (currentVersion, signal) => {
+    versionParts(currentVersion);
+    const releases = await json(
+      `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
+      request,
+      signal,
+    );
+    if (!Array.isArray(releases) || releases.length > (sourceUrl ? 500 : 100))
+      throw new Error('The desktop release list is invalid.');
+    const newer = releases
+      .filter(
+        (release) =>
+          release?.draft === false &&
+          /^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(release.tag_name) &&
+          compareVersions(release.tag_name.slice(9), currentVersion) > 0,
+      )
+      .sort((a, b) => compareVersions(b.tag_name.slice(9), a.tag_name.slice(9)));
+    if (!newer.length) return undefined;
+    const listed = newer[0];
+    if (!Number.isSafeInteger(listed.id) || listed.id < 1)
+      throw new Error('The desktop release identity is invalid.');
+    const release = published(await json(releasePath(listed.id), request, signal), listed.tag_name);
+    if (release.id !== listed.id) throw new Error('The desktop release identity changed.');
+    return release;
+  };
+  if (os === 'win32')
+    return {
+      async latest(currentVersion, signal) {
+        const release = await newest(currentVersion, signal);
+        if (!release) return undefined;
+        const version = release.tag_name.slice(9);
+        const manifest = await getAsset(release, 'release-win32-x64.json', signal);
+        if (
+          manifest.version !== version ||
+          manifest.platform !== platform ||
+          !sourceHash.test(manifest.source) ||
+          manifest.installer?.file !== 'Otto-Setup-x64.exe' ||
+          manifest.runtime?.file !== 'Otto-Runtime-win32-x64.tar.gz'
+        )
+          throw new Error('The desktop update metadata is incompatible.');
+        const files = {};
+        for (const key of ['installer', 'runtime']) {
+          const entry = manifest[key];
+          const item = asset(release, entry.file);
+          if (
+            !hash.test(entry.sha256) ||
+            item.size !== entry.bytes ||
+            item.digest !== `sha256:${entry.sha256}`
+          )
+            throw new Error('The desktop update files do not match their metadata.');
+          files[key] = {
+            file: entry.file,
+            bytes: entry.bytes,
+            sha256: entry.sha256,
+            url: assetUrl(release, item),
+          };
+        }
+        return { version, source: manifest.source, ...files };
+      },
+    };
   return {
     runtimeDownloadUrl,
     async latest(currentVersion, signal) {
-      versionParts(currentVersion);
-      const releases = await json(
-        `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
-        request,
-        signal,
-      );
-      if (!Array.isArray(releases) || releases.length > (sourceUrl ? 500 : 100))
-        throw new Error('The desktop release list is invalid.');
-      const newer = releases
-        .filter(
-          (release) =>
-            release?.draft === false &&
-            /^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(release.tag_name) &&
-            compareVersions(release.tag_name.slice(9), currentVersion) > 0,
-        )
-        .sort((a, b) => compareVersions(b.tag_name.slice(9), a.tag_name.slice(9)));
-      if (!newer.length) return undefined;
-      const listed = newer[0];
-      if (!Number.isSafeInteger(listed.id) || listed.id < 1)
-        throw new Error('The desktop release identity is invalid.');
-      const release = published(
-        await json(releasePath(listed.id), request, signal),
-        listed.tag_name,
-      );
-      if (release.id !== listed.id) throw new Error('The desktop release identity changed.');
+      const release = await newest(currentVersion, signal);
+      if (!release) return undefined;
       const manifest = await getAsset(release, metadataName('release'), signal);
       const version = release.tag_name.slice(9);
       if (
@@ -222,7 +262,7 @@ export function createDesktopUpdater({
   let disposed = false;
   const controller = new AbortController();
   const ignoreError = () => {};
-  native.on('error', ignoreError);
+  native?.on('error', ignoreError);
   return {
     get ready() {
       return ready;
@@ -241,35 +281,36 @@ export function createDesktopUpdater({
         await prepareRuntime(candidate, controller.signal);
         controller.signal.throwIfAborted();
         onStatus('downloading');
-        await new Promise((resolve, reject) => {
-          const finish = (error) => {
-            native.removeListener('error', failed);
-            native.removeListener('update-downloaded', downloaded);
-            native.removeListener('update-not-available', unavailable);
-            controller.signal.removeEventListener('abort', aborted);
-            error ? reject(error) : resolve();
-          };
-          const failed = (error) => finish(error);
-          const downloaded = (_event, _notes, name) =>
-            finish(
-              name === `Otto ${candidate.version}`
-                ? undefined
-                : new Error('The downloaded update does not match the selected version.'),
-            );
-          const unavailable = () =>
-            finish(new Error('The selected desktop update is unavailable.'));
-          const aborted = () => finish(new Error('Otto is closing.'));
-          native.once('error', failed);
-          native.once('update-downloaded', downloaded);
-          native.once('update-not-available', unavailable);
-          controller.signal.addEventListener('abort', aborted, { once: true });
-          try {
-            native.setFeedURL({ url: https(candidate.feedUrl) });
-            native.checkForUpdates();
-          } catch (error) {
-            finish(error);
-          }
-        });
+        if (native)
+          await new Promise((resolve, reject) => {
+            const finish = (error) => {
+              native.removeListener('error', failed);
+              native.removeListener('update-downloaded', downloaded);
+              native.removeListener('update-not-available', unavailable);
+              controller.signal.removeEventListener('abort', aborted);
+              error ? reject(error) : resolve();
+            };
+            const failed = (error) => finish(error);
+            const downloaded = (_event, _notes, name) =>
+              finish(
+                name === `Otto ${candidate.version}`
+                  ? undefined
+                  : new Error('The downloaded update does not match the selected version.'),
+              );
+            const unavailable = () =>
+              finish(new Error('The selected desktop update is unavailable.'));
+            const aborted = () => finish(new Error('Otto is closing.'));
+            native.once('error', failed);
+            native.once('update-downloaded', downloaded);
+            native.once('update-not-available', unavailable);
+            controller.signal.addEventListener('abort', aborted, { once: true });
+            try {
+              native.setFeedURL({ url: https(candidate.feedUrl) });
+              native.checkForUpdates();
+            } catch (error) {
+              finish(error);
+            }
+          });
         ready = candidate;
         return ready;
       })().finally(() => {

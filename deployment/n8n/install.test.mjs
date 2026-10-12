@@ -348,3 +348,154 @@ test('CLI-INSTALL: Intel metadata, installer and executable use the same archite
     await rejected.close();
   }
 });
+
+const powershell = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0;
+
+async function windowsInstall(options = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-windows-install-'));
+  const temporary = join(directory, 'tmp');
+  await mkdir(temporary);
+  const bytes = {
+    installer: Buffer.from('synthetic Windows installer'),
+    runtime: Buffer.from('synthetic Windows runtime pack'),
+  };
+  const url = (id, name) => `${base}/releases/42/assets/${id}/${name}`;
+  const entry = (id, name, value) => ({
+    url: url(id, name),
+    bytes: value.length,
+    sha256: sha256(value),
+  });
+  const latest = {
+    schema: 1,
+    version: '0.2.0',
+    releaseId: 42,
+    installer: entry(7, 'Otto-Setup-x64.exe', bytes.installer),
+    runtime: entry(8, 'Otto-Runtime-win32-x64.tar.gz', bytes.runtime),
+    manifestUrl: url(9, 'release-win32-x64.json'),
+  };
+  const manifest = {
+    version: '0.2.0',
+    platform: 'win32-x64',
+    installer: {
+      file: 'Otto-Setup-x64.exe',
+      bytes: bytes.installer.length,
+      sha256: latest.installer.sha256,
+    },
+    runtime: {
+      file: 'Otto-Runtime-win32-x64.tar.gz',
+      bytes: bytes.runtime.length,
+      sha256: latest.runtime.sha256,
+    },
+    ...options.manifest,
+  };
+  const served = { installer: options.installer || bytes.installer, runtime: bytes.runtime };
+  const log = join(directory, 'log');
+  const fixture = join(directory, 'fixture.json');
+  await writeFile(log, '');
+  await writeFile(
+    fixture,
+    JSON.stringify({
+      build: options.build || '26100',
+      running: Boolean(options.running),
+      installDir: options.installDir || '',
+      exitCode: options.exitCode || 0,
+      routes: { [`${base}/releases?installer=true&platform=win32-x64`]: latest },
+      files: {
+        [latest.installer.url]: served.installer.toString('base64'),
+        [latest.runtime.url]: served.runtime.toString('base64'),
+        [latest.manifestUrl]: Buffer.from(JSON.stringify(manifest)).toString('base64'),
+      },
+    }),
+  );
+  const mocks = String.raw`
+$fixture = Get-Content -Raw $env:OTTO_FIXTURE | ConvertFrom-Json
+function Get-ItemProperty { param($Path, $ErrorAction)
+  if ($Path -like 'HKLM:*') { [pscustomobject]@{ CurrentBuildNumber = $fixture.build } }
+  elseif ($fixture.installDir) { [pscustomobject]@{ InstallDir = $fixture.installDir } } }
+function Get-Process { param($Name, $ErrorAction) if ($fixture.running) { [pscustomobject]@{ Name = $Name } } }
+function Invoke-RestMethod { param($Uri, [switch]$UseBasicParsing) Add-Content $env:OTTO_LOG "metadata $Uri"; $fixture.routes.$Uri }
+function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing)
+  Add-Content $env:OTTO_LOG "download $Uri"
+  $value = [Convert]::FromBase64String($fixture.files.$Uri)
+  if ($OutFile) { [IO.File]::WriteAllBytes($OutFile, $value) } else { [pscustomobject]@{ RawContentStream = [IO.MemoryStream]::new($value) } } }
+function Start-Process { param($FilePath, $ArgumentList, [switch]$Wait, [switch]$PassThru)
+  $runtime = Join-Path (Split-Path $FilePath) 'Otto-Runtime-win32-x64.tar.gz'
+  Add-Content $env:OTTO_LOG "install $ArgumentList runtime=$([IO.File]::Exists($runtime))"
+  [pscustomobject]@{ ExitCode = $fixture.exitCode } }
+`;
+  const script = join(directory, 'install.ps1');
+  const runner = join(directory, 'runner.ps1');
+  await writeFile(script, new Function(installNodes()[4].parameters.jsCode)()[0].json.body);
+  await writeFile(runner, `${mocks}\nInvoke-Expression (Get-Content -Raw $env:OTTO_SCRIPT)\n`);
+  const result = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', runner], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      OTTO_FIXTURE: fixture,
+      OTTO_LOG: log,
+      OTTO_SCRIPT: script,
+      TMPDIR: temporary,
+      TEMP: temporary,
+      NO_COLOR: '1',
+    },
+    timeout: 60_000,
+  });
+  const calls = (await readFile(log, 'utf8')).trim().split('\n').filter(Boolean);
+  const staged = await readdir(temporary);
+  await rm(directory, { recursive: true, force: true });
+  return { result, calls, staged, output: result.stdout + result.stderr };
+}
+
+test(
+  'CLI-INSTALL: the Windows script installs verified files silently and leaves nothing staged',
+  { skip: !powershell && 'pwsh is unavailable' },
+  async () => {
+    const installed = await windowsInstall();
+    assert.match(installed.output, /Otto 0\.2\.0 is installed/);
+    assert.deepEqual(
+      installed.calls.filter((call) => call.startsWith('install')),
+      ['install /S runtime=True'],
+    );
+    assert.deepEqual(installed.staged, []);
+    const custom = await windowsInstall({
+      installDir: 'C:\\Users\\Synthetic User\\Otto Apps\\Otto',
+    });
+    assert(
+      custom.calls.includes(
+        'install /S /D=C:\\Users\\Synthetic User\\Otto Apps\\Otto runtime=True',
+      ),
+    );
+  },
+);
+
+test(
+  'CLI-INSTALL: the Windows script stops before installing on any mismatch or open app',
+  { skip: !powershell && 'pwsh is unavailable' },
+  async () => {
+    for (const [options, failure] of [
+      [
+        { installer: Buffer.from('tampered Windows installer!') },
+        /Otto-Setup-x64\.exe failed its integrity check/,
+      ],
+      [{ manifest: { version: '0.3.0' } }, /do not match their metadata/],
+      [
+        {
+          manifest: {
+            runtime: { file: 'Otto-Runtime-win32-x64.tar.gz', bytes: 1, sha256: 'b'.repeat(64) },
+          },
+        },
+        /do not match their metadata/,
+      ],
+      [{ running: true }, /Quit Otto/],
+      [{ build: '19045' }, /Windows 11/],
+    ]) {
+      const rejected = await windowsInstall(options);
+      assert.match(rejected.output, failure);
+      assert(!rejected.calls.some((call) => call.startsWith('install')));
+      assert.deepEqual(rejected.staged, []);
+    }
+    const failed = await windowsInstall({ exitCode: 2 });
+    assert.match(failed.output, /installer did not finish/);
+    assert.deepEqual(failed.staged, []);
+  },
+);

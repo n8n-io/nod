@@ -45,7 +45,7 @@ You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime a
 <details>
 <summary>Install from Terminal instead</summary>
 
-On an Apple silicon Mac, you can install the latest release with one command. Quit Otto first, then paste this into Terminal:
+You can install the latest release on Apple silicon or Intel with one command. Quit Otto first, then paste this into Terminal:
 
 ```sh title="Terminal"
 (
@@ -81,6 +81,19 @@ virtualization, and at least 20 GB of free disk space.
 
 </Steps>
 
+<details>
+<summary>Install from PowerShell instead</summary>
+
+Quit Otto first, then paste this into PowerShell:
+
+```powershell title="PowerShell"
+irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex
+```
+
+Run it as your normal user. It downloads the installer and runtime file, verifies both, installs Otto and keeps your existing data. You don't need a GitHub account.
+
+</details>
+
 </TabItem>
 </Tabs>
 
@@ -97,22 +110,11 @@ If you rely on scheduled tasks, turn on **Open at login** in **Settings → Gene
 
 ## Update Otto
 
-<Tabs syncKey="os">
-<TabItem label="Mac" icon="apple">
+Otto updates itself. It checks after it starts, every six hours while it's open and after your computer wakes. To check now, select **Check for Updates…** in the **Otto** menu on a Mac, or from the menu bar or tray icon.
 
-On an Apple silicon Mac, Otto updates itself. It checks after it starts, every six hours while it's open and after your Mac wakes. To check now, select **Check for Updates…** in the **Otto** menu or the menu bar icon.
+When an update is ready, choose **Restart** to install it or **Later** to keep working. If Otto is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. Otto keeps your profile, keys and data.
 
-When an update is ready, choose **Restart** to install it or **Later** to keep working. If Otto is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards.
-
-On an Intel Mac, automatic updates aren't available yet. Quit Otto, then install the new DMG over the old app. Your data stays.
-
-</TabItem>
-<TabItem label="Windows" icon="seti:windows">
-
-Updates are manual in the preview. Quit Otto, then run the new installer with its runtime file in the same folder. Otto keeps your profile, keys and data.
-
-</TabItem>
-</Tabs>
+On Windows, the restart runs the new installer in the background and opens Otto again when it's done.
 
 ## Where your data lives
 

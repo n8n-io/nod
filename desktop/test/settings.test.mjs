@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   appendFile,
   mkdir,
@@ -34,6 +34,7 @@ import {
   createUpdateSource,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
+import { stageWindowsUpdate } from '../main/windows-update.mjs';
 
 function deferred() {
   let resolve;
@@ -2399,6 +2400,7 @@ test('update restart asks only when work would stop and installs after the norma
       lifecycle,
       app,
       autoUpdater,
+      process: { platform: 'darwin' },
       updates: { dispose: async () => events.push('checks stopped') },
       stopUpdateChecks: undefined,
       stopNotifications: undefined,
@@ -2582,6 +2584,112 @@ test('choosing Later keeps restart available without repeated background prompts
   await context.check();
   assert.equal(prompts, 2);
   assert.equal(restarts, 1);
+});
+
+test('Windows updates stage the verified installer and reuse an unchanged runtime pack', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-windows-update-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const base = 'https://updates.example.invalid/otto-desktop';
+  const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const bytes = {
+    'Otto-Setup-x64.exe': Buffer.from('synthetic Windows installer'),
+    'Otto-Runtime-win32-x64.tar.gz': Buffer.from('synthetic Windows runtime pack'),
+  };
+  const entry = (file) => ({ file, bytes: bytes[file].length, sha256: digest(bytes[file]) });
+  const manifest = {
+    version: '0.2.0',
+    platform: 'win32-x64',
+    source: 'a'.repeat(40),
+    signing: { mode: 'unsigned' },
+    installer: entry('Otto-Setup-x64.exe'),
+    runtime: entry('Otto-Runtime-win32-x64.tar.gz'),
+  };
+  const item = (id, name, size, sha256) => ({
+    id,
+    name,
+    size,
+    state: 'uploaded',
+    digest: `sha256:${sha256}`,
+  });
+  const release = {
+    id: 12,
+    tag_name: 'desktop-v0.2.0',
+    draft: false,
+    assets: [
+      item(301, 'release-win32-x64.json', 400, 'f'.repeat(64)),
+      item(302, 'Otto-Setup-x64.exe', manifest.installer.bytes, manifest.installer.sha256),
+      item(303, 'Otto-Runtime-win32-x64.tar.gz', manifest.runtime.bytes, manifest.runtime.sha256),
+    ],
+  };
+  const served = { ...bytes };
+  const downloads = [];
+  const request = async (url) => {
+    if (url === `${base}/releases`)
+      return Response.json([{ ...release, id: 11, tag_name: 'desktop-v0.1.0' }, release]);
+    if (url === `${base}/releases/12`) return Response.json(release);
+    if (url === `${base}/releases/12/assets/301/release-win32-x64.json`)
+      return Response.json(manifest);
+    const asset = release.assets.find(
+      (value) => url === `${base}/releases/12/assets/${value.id}/${value.name}`,
+    );
+    if (asset)
+      return new Response(null, {
+        status: 302,
+        headers: { location: `https://release-assets.githubusercontent.com/${asset.name}` },
+      });
+    const name = url.slice('https://release-assets.githubusercontent.com/'.length);
+    assert.ok(served[name], `Unexpected update request ${url}`);
+    downloads.push(name);
+    return new Response(served[name]);
+  };
+  const resourcesPath = join(root, 'resources');
+  await mkdir(join(resourcesPath, 'windows-runtime'), { recursive: true });
+  const installRuntime = (pack) =>
+    Promise.all([
+      writeFile(join(resourcesPath, 'windows-runtime/guest.tar.gz'), pack),
+      writeFile(
+        join(resourcesPath, 'windows-runtime/manifest.json'),
+        JSON.stringify({ guest: { file: 'guest.tar.gz', sha256: digest(pack) } }),
+      ),
+    ]);
+  await installRuntime(bytes['Otto-Runtime-win32-x64.tar.gz']);
+  const directory = join(root, 'updates');
+  const updater = createDesktopUpdater({
+    source: createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request }),
+    currentVersion: '0.1.0',
+    prepareRuntime: (candidate, signal) =>
+      stageWindowsUpdate(candidate, { directory, resourcesPath, signal, fetch: request }),
+    restart: async () => {},
+  });
+  const ready = await updater.check();
+  assert.equal(ready.version, '0.2.0');
+  assert.deepEqual(downloads, ['Otto-Setup-x64.exe']);
+  for (const [name, value] of Object.entries(bytes))
+    assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
+  await updater.dispose();
+
+  const candidate = await createUpdateSource({
+    sourceUrl: base,
+    os: 'win32',
+    fetch: request,
+  }).latest('0.1.0');
+  downloads.length = 0;
+  await installRuntime(Buffer.from('older Windows runtime pack'));
+  await stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request });
+  assert.deepEqual(downloads, ['Otto-Runtime-win32-x64.tar.gz', 'Otto-Setup-x64.exe']);
+
+  served['Otto-Setup-x64.exe'] = Buffer.alloc(bytes['Otto-Setup-x64.exe'].length, 'x');
+  await assert.rejects(
+    stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request }),
+    /integrity/,
+  );
+  await assert.rejects(stat(directory), { code: 'ENOENT' });
+
+  release.assets[1].digest = `sha256:${'e'.repeat(64)}`;
+  await assert.rejects(
+    createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request }).latest('0.1.0'),
+    /do not match/,
+  );
 });
 
 test('Intel updates use their own app assets and an official Otto runtime release', async () => {

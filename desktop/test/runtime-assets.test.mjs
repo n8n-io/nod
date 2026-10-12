@@ -1123,6 +1123,7 @@ test('all three checked bundles publish together as one regular Otto release', a
     platform: 'win32-x64',
     version: f.metadata.version,
     source: f.source,
+    updateSourceUrl: f.metadata.updateSourceUrl,
     signing: { mode: 'unsigned' },
     installer: { file: 'Otto-Setup-x64.exe', bytes: installer.length, sha256: f.digest(installer) },
     runtime: { file: 'Otto-Runtime-win32-x64.tar.gz', bytes: pack.length, sha256: f.digest(pack) },
@@ -1150,9 +1151,14 @@ test('all three checked bundles publish together as one regular Otto release', a
   await assert.rejects(f.invoke('draft-all'), /application assets/);
   assert(!Object.values((await f.readState()).releases).some((release) => !release.draft));
   await copyFile(join(arm, 'Otto-arm64.zip'), join(intel, 'Otto-x64.zip'));
-  await f.writeState({ ...(await f.readState()), brokerHides: [runtime.archive.file] });
-  await assert.rejects(f.invoke('draft-all'), /draft again.*x64 Mac.*incomplete/s);
-  assert.equal((await f.readState()).releases[f.appTag].draft, true);
+  for (const [hidden, failure] of [
+    [runtime.archive.file, /draft again.*darwin-x64.*incomplete/s],
+    [win.runtime.file, /draft again.*win32-x64.*incomplete/s],
+  ]) {
+    await f.writeState({ ...(await f.readState()), brokerHides: [hidden] });
+    await assert.rejects(f.invoke('draft-all'), failure);
+    assert.equal((await f.readState()).releases[f.appTag].draft, true);
+  }
   await f.writeState({ ...(await f.readState()), brokerHides: [] });
   await f.invoke('draft-all');
   const completed = await f.readState();
@@ -1161,7 +1167,7 @@ test('all three checked bundles publish together as one regular Otto release', a
   assert.equal(completed.releases[f.appTag].prerelease, false);
   assert.deepEqual(
     completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
-    [f.appTag, f.appTag],
+    [f.appTag, f.appTag, f.appTag],
   );
   for (const name of [
     'Otto-arm64.dmg',

@@ -28,8 +28,8 @@ Each release is named **Otto v0.x.x** and links these installers:
 | Platform          | Installer                                                           | Updates   |
 | ----------------- | ------------------------------------------------------------------- | --------- |
 | Mac Apple silicon | `Otto-arm64.dmg`                                                    | Automatic |
-| Mac Intel         | `Otto-x64.dmg`                                                      | Manual    |
-| Windows x64       | `Otto-Setup-x64.exe` with `Otto-Runtime-win32-x64.tar.gz` (preview) | Manual    |
+| Mac Intel         | `Otto-x64.dmg`                                                      | Automatic |
+| Windows x64       | `Otto-Setup-x64.exe` with `Otto-Runtime-win32-x64.tar.gz` (preview) | Automatic |
 
 Mac ZIP files, runtime packs, checksums, the public certificate and update metadata stay on the same release as supporting assets.
 
@@ -62,7 +62,7 @@ Private releases use the configured n8n download service for first-run downloads
 
 3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again to update the source and notes.
 
-4. Wait for CI on the merge commit. It builds and signs the three installers, then checks signing, runtime hashes, the Windows install and the downloaded installer bytes. It publishes one release only if every build and check passes. Then it fetches each Mac installer, runtime and update through the n8n download service with the app's own update code. If any is unavailable, the release goes back to draft.
+4. Wait for CI on the merge commit. It builds and signs the three installers, then checks signing, runtime hashes, the Windows install and the downloaded installer bytes. It publishes one release only if every build and check passes. Then it fetches every installer, runtime pack and update through the n8n download service with the app's own update code, for both Macs and Windows. If any is unavailable, the release goes back to draft.
 
 </Steps>
 
@@ -83,11 +83,11 @@ Release builds run one at a time, and up to 100 runs can wait in the queue. A fa
 
 Drafts are never offered to the installer or the updater.
 
-- The Mac app checks at startup, every six hours while it's open, and after waking if a check is due. **Check for Updates…** in the Otto menu checks right away.
+- Every app checks at startup, every six hours while it's open, and after waking if a check is due. **Check for Updates…** checks right away.
 - Updates download on their own, then offer **Restart** or **Later**.
 - If a reply, schedule or background check is running, or Otto can't tell, it asks before restarting.
-- If the runtime hasn't changed, Otto reuses it and downloads only the app.
-- Windows updates are manual in the preview. Quit Otto, then run the new installer. The profile is kept.
+- If the runtime hasn't changed, Otto reuses it and downloads only the app or installer.
+- On Windows, the restart runs the verified installer silently over the current install, then opens Otto again. The profile is kept.
 
 ## Help private-alpha testers
 
