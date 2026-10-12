@@ -1198,8 +1198,9 @@ export function createAgentBrowserComputer(options: {
             await command(state, ['wait', '--download'], { signal });
             files = await completedDownloads(directory);
           }
-          if (files.length !== 1) throw new Error('Choose the specific download link or URL.');
-          const result = await readDownload(directory, files[0], input.name);
+          if (!files.length) throw new Error('Choose the specific download link or URL.');
+          const result = await readDownload(directory, files[0]!, input.name);
+          await rm(resolve(directory, files[0]!), { force: true });
           signal?.throwIfAborted();
           return result;
         }

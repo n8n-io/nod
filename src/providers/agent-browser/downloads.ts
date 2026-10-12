@@ -54,9 +54,15 @@ export async function completedDownloads(directory: string): Promise<string[]> {
     throw new Error('The browser download directory is unavailable.');
   }
   const entries = await readdir(directory, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile() && !entry.name.endsWith('.crdownload'))
-    .map((entry) => entry.name);
+  const files = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && !entry.name.endsWith('.crdownload'))
+      .map(async (entry) => ({
+        name: entry.name,
+        modified: (await lstat(join(directory, entry.name))).mtimeMs,
+      })),
+  );
+  return files.sort((a, b) => b.modified - a.modified).map((file) => file.name);
 }
 
 export async function readDownload(directory: string, file: string, name?: string) {
