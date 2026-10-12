@@ -7,6 +7,7 @@ import type { Computer } from '../ports/computer.ts';
 import type { BrowserConnectionRequest } from '../ports/agent.ts';
 import type { Connection, VaultSession } from '../shared/contracts.ts';
 import type { TurnRef } from './thread.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 
 const idSchema = z.uuid();
 const requestSchema = z.discriminatedUnion('action', [
@@ -60,7 +61,7 @@ function site(raw: string) {
     !['https:', 'http:'].includes(url.protocol) ||
     url.username ||
     url.password ||
-    (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
+    (url.protocol === 'http:' && !loopbackHost(url.hostname))
   )
     throw new BrowserConnectionError('Use a secure website address.', 400);
   url.hash = '';

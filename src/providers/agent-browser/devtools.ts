@@ -1,3 +1,5 @@
+import { loopbackHost } from '../../shared/loopback.ts';
+
 type FrameNode = {
   frame: { id: string; loaderId?: string; securityOrigin?: string };
   childFrames?: FrameNode[];
@@ -78,7 +80,7 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
 
 export async function openDevtools(url: string, targetId: string, signal?: AbortSignal) {
   const address = new URL(url);
-  if (address.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname))
+  if (address.protocol !== 'ws:' || !loopbackHost(address.hostname))
     throw new Error('The browser inspector must be local.');
   signal?.throwIfAborted();
   const socket = new WebSocket(url);

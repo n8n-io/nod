@@ -13,6 +13,7 @@ import {
   deploymentInputSchema,
   deploymentMaximumDuration,
 } from './deployment-auth.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 
 const forwardedEnvironment = [
   'OTTO_PUBLIC_URL',
@@ -60,9 +61,7 @@ function composioWebhookUrl(environment: Record<string, string | undefined>) {
       origin.username ||
       origin.password ||
       (origin.protocol !== 'https:' &&
-        (explicit ||
-          origin.protocol !== 'http:' ||
-          !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)))
+        (explicit || origin.protocol !== 'http:' || !loopbackHost(origin.hostname)))
     )
       throw new Error();
     if (origin.protocol === 'https:') return new URL('/api/webhooks/composio', origin).href;

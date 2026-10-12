@@ -12,6 +12,7 @@ import type {
   MessagingAttachment,
   MessagingTransport,
 } from '../ports/messaging.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 
@@ -119,7 +120,7 @@ export function channelReply(
           const url = new URL(linked ?? plain!);
           if (
             url.host !== (appOrigin ? new URL(appOrigin).host : undefined) &&
-            !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+            !loopbackHost(url.hostname)
           )
             return match;
         } catch {}

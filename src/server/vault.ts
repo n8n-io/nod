@@ -30,7 +30,8 @@ import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
-import { parentTurnSql } from './turn-chain.ts';
+import { turnChainSql } from './turn-chain.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 const passwordInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -351,7 +352,7 @@ export function credentialOrigin(value: string) {
   } catch {
     throw new VaultError('Enter a valid website origin.');
   }
-  const local = localHost(url.hostname);
+  const local = loopbackHost(url.hostname);
   if (
     (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) ||
     url.username ||
@@ -365,10 +366,6 @@ export function credentialOrigin(value: string) {
   return url.origin;
 }
 
-function localHost(hostname: string) {
-  return ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
-}
-
 function savedCredentialOrigin(value: string) {
   const trimmed = value.trim();
   return credentialOrigin(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
@@ -377,7 +374,7 @@ function savedCredentialOrigin(value: string) {
 function requireFullHost(raw: unknown) {
   const { origin } = z.object({ origin: z.string().max(2048) }).parse(raw);
   const { hostname } = new URL(savedCredentialOrigin(origin));
-  if (!localHost(hostname) && !/[^.]\.[^.]/.test(hostname))
+  if (!loopbackHost(hostname) && !/[^.]\.[^.]/.test(hostname))
     throw new VaultError('Enter a full website domain, such as example.com.');
 }
 
@@ -1078,14 +1075,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
-    const link = parentTurnSql('u');
     const { rows } = await database.query<{ id: string }>(
-      `WITH RECURSIVE chain(id,next,thread_id) AS (
-         SELECT u.id,${link},u.thread_id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
-         UNION
-         SELECT u.id,${link},u.thread_id FROM chain c
-         JOIN turns u ON u.id=c.next AND u.owner_id=$2 AND u.thread_id=c.thread_id
-       ) SELECT c.id FROM chain c WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
+      `${turnChainSql()} SELECT c.id FROM chain c WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
       [turn.turnId, ownerId, turn.threadId],
     );
     return rows[0]?.id;
@@ -1855,7 +1846,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   const icons = new Map<string, { expiresAt: number; icon: Promise<SiteIcon | null> }>();
   function siteIcon(origin: string) {
     const fetchIcon = options.icon;
-    if (!fetchIcon || localHost(new URL(origin).hostname)) return null;
+    if (!fetchIcon || loopbackHost(new URL(origin).hostname)) return null;
     const cached = icons.get(origin);
     if (cached && cached.expiresAt > Date.now()) return cached.icon;
     icons.delete(origin);

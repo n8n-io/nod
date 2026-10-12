@@ -9,6 +9,7 @@ import { parsePrivacyNotice, registerPrivacyNotice } from './privacy.ts';
 import { createDeploymentControl, deploymentHeader } from './deployment-control.ts';
 import { deploymentBodyLimit, deploymentPath } from './deployment-auth.ts';
 import type { Analytics } from './analytics.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 
 function privateRuntimeResponse(response: Response, artifact = false) {
   const headers = new Headers();
@@ -117,7 +118,7 @@ export async function createGateway(options: {
     throw new Error('Configure a canonical application origin.');
   if (
     origin.protocol !== 'https:' &&
-    !(['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) && origin.protocol === 'http:')
+    !(loopbackHost(origin.hostname) && origin.protocol === 'http:')
   )
     throw new Error('Public application origins require HTTPS.');
   const app = Fastify({

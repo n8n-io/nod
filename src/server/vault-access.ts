@@ -10,7 +10,7 @@ import type {
 import type { TrustReason } from './trust.ts';
 import type { TurnRef } from './thread.ts';
 import { turnOrigin } from './approvals.ts';
-import { parentTurnSql } from './turn-chain.ts';
+import { turnChainSql } from './turn-chain.ts';
 import { credentialOrigin, VaultError } from './vault.ts';
 
 type Kind = 'sign_in' | 'session' | 'form';
@@ -76,13 +76,8 @@ export async function createVaultAccess(
   `);
 
   async function root(turn: TurnRef, database: Pool | PoolClient = pool): Promise<Chain> {
-    const link = parentTurnSql('u');
     const { rows } = await database.query<{ id: string; prompt: string; ids: string[] }>(
-      `WITH RECURSIVE chain(id,next) AS (
-         SELECT u.id,${link} FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
-         UNION
-         SELECT u.id,${link} FROM chain c JOIN turns u ON u.id=c.next AND u.owner_id=$2
-       )
+      `${turnChainSql()}
        SELECT u.id,u.prompt,(SELECT array_agg(id) FROM chain) AS ids FROM chain c JOIN turns u ON u.id=c.id AND u.owner_id=$2
        WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
       [turn.turnId, ownerId, turn.threadId],
