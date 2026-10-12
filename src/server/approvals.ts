@@ -4,12 +4,7 @@ import { pool } from './db.ts';
 import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
 import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
-import {
-  confirmationAnswer,
-  explicitlyRequestsAction,
-  isReversiblePlanAction,
-  requestsSchedule,
-} from './action-policy.ts';
+import { confirmationAnswer, isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 
@@ -128,15 +123,6 @@ export async function turnOrigin(turnId: string) {
   }
 }
 
-async function resumeKind(client: PoolClient, turn: TurnRow) {
-  if (turn.source !== 'resume') return null;
-  const confirmation = await confirmedBy(client, turn);
-  if (confirmation) return confirmation.status === 'declined' ? null : 'approval';
-  if (turn.source_id?.startsWith('credentials:')) return 'credentials';
-  if (turn.source_id?.startsWith('connection:')) return 'connection';
-  return null;
-}
-
 export async function createApprovals(
   execute: (
     action: string,
@@ -144,6 +130,7 @@ export async function createApprovals(
     context: ApprovalExecutionContext,
   ) => Promise<unknown>,
   preflight?: (action: string, args: Record<string, unknown>) => Promise<void>,
+  decide?: (turn: TurnRef, action: string, args: Record<string, unknown>) => Promise<boolean>,
 ) {
   await pool.query(`CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
@@ -209,6 +196,10 @@ export async function createApprovals(
     const encoded = JSON.stringify(args);
     if (!encoded || encoded.length > 32768) throw new Error('The action is too large.');
     const snapshot = JSON.parse(encoded) as Record<string, unknown>;
+    const allowed =
+      !options.confirm && !options.question && decide
+        ? await decide(turn, action, snapshot).catch(() => false)
+        : false;
     const proposal = await withTurnLock(turn.turnId, async (client) => {
       const current = await turnRow(client, turn.turnId);
       if (!current || current.thread_id !== turn.threadId)
@@ -258,32 +249,6 @@ export async function createApprovals(
         authorInstruction = author.text;
         authorMessageId = author.id;
       }
-      const revision =
-        !background && authorMessageId
-          ? Boolean(
-              (
-                await client.query(
-                  "SELECT 1 FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND confirmation_reply_id=$3 AND status='expired' LIMIT 1",
-                  [ownerId, turn.threadId, authorMessageId],
-                )
-              ).rowCount,
-            )
-          : false;
-      const explicit = explicitlyRequestsAction(action, authorInstruction);
-      const currentSource = Boolean(steering) || authorInstruction === current.prompt;
-      const kind = await resumeKind(client, current);
-      const resumedSource =
-        requestsSchedule(action, authorInstruction) &&
-        (kind === 'connection' ||
-          (kind === 'approval' && (await confirmedBy(client, current))?.status === 'completed'));
-      if (
-        !options.question &&
-        !background &&
-        !currentSource &&
-        !resumedSource &&
-        !(revision && kind !== null)
-      )
-        throw new Error('This action needs a direct request from the user.');
       await preflight?.(action, snapshot);
       if (background)
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -324,12 +289,7 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      const direct =
-        !options.confirm &&
-        !options.question &&
-        !background &&
-        ((isReversiblePlanAction(action) && (!revision || currentSource)) ||
-          (!revision && explicit));
+      const direct = allowed && !background;
       const id = randomUUID();
       let targetTitle: string | undefined;
       if (!direct && typeof snapshot.id === 'string') {

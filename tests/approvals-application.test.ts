@@ -46,6 +46,7 @@ test(
     let steering:
       { entered(turnId: string): void; wait: Promise<void>; messages: string[] } | undefined;
     const ids: string[] = [];
+    const asked = new Set<string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -103,6 +104,19 @@ test(
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
         relevance: { id: 'fixture', configured: false, classify: async () => 'ignore' },
         model: { provider: 'fixture', name: 'fixture', configured: true },
+        onboardingCurator: {
+          id: 'fixture',
+          configured: true,
+          curate: async ({ task, input }) =>
+            task === 'review'
+              ? {
+                  run: asked.has(
+                    (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                      ?.text ?? '',
+                  ),
+                }
+              : undefined,
+        },
       },
       { channels: false },
     );
@@ -282,6 +296,7 @@ test(
             );
             assert.equal((await approvalsFor(proposed))[0].status, 'completed');
             const text = 'Cancel the synthetic reminder now.';
+            asked.add(text);
             plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
             const cancellation = await request('POST', '/api/messages', {
               text,
@@ -318,6 +333,7 @@ test(
           const [approval] = await approvalsFor(background);
           assert.equal(approval.status, 'pending');
           const text = 'Cancel that synthetic reminder.';
+          asked.add(text);
           plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
           const cancellation = await request('POST', '/api/messages', {
             text,

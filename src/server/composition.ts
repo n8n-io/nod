@@ -659,6 +659,7 @@ async function initializeApplication(
         await personal.validateReview(action.slice('OTTO_'.length), args);
       else await integrations.prepare(ownerId, action, args);
     },
+    async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;

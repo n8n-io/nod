@@ -5,7 +5,7 @@ import type { VaultActivityReason } from '../shared/contracts.ts';
 
 export type TrustReason = 'background' | 'schedule' | 'unrequested';
 
-const checkInstructions = `You decide whether an AI assistant may run one action in its user's connected apps now.
+const checkInstructions = `You decide whether an AI assistant may run one action for its user now: an action in one of the user's connected apps, or a change to the assistant's own schedules, profile or notification settings for the user.
 Reply with only JSON: {"run": true} or {"run": false}.
 run is true for an action that only reads, or only prepares something for the user without sending, publishing, sharing or deleting anything, such as a draft.
 For any other action, run is true only when the user's own words ask for this kind of action on this target. A short "yes" counts when it answers the assistant message that proposed this action.
