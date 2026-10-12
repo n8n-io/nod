@@ -932,6 +932,26 @@ for (const [method, phase] of [
     }
   });
 
+test('a failed navigation keeps the current page usable and says it did not load', async () => {
+  const browser = await transportFixture();
+  try {
+    await browser.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    browser.fail('navigate', 'Navigation failed: net::ERR_ABORTED');
+    const seen = await browser.computer.act('fixture', {
+      action: 'open',
+      url: 'https://1.1.1.1/files/report.pdf',
+    });
+    assert.match(seen.text, /did not finish loading/);
+    assert.equal(new URL(seen.url).pathname, '/login');
+    browser.fail();
+    assert.ok((await browser.computer.act('fixture', { action: 'snapshot' })).text);
+    assert.equal(browser.actions.includes('close'), false);
+  } finally {
+    browser.fail();
+    await browser.cleanup();
+  }
+});
+
 for (const action of ['snapshot', 'click'] as const)
   test(`an acknowledged ${action} observation failure preserves the page through the browser bridge`, async () => {
     const browser = await transportFixture();

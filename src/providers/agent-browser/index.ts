@@ -915,18 +915,22 @@ export function createAgentBrowserComputer(options: {
           await command(state, ['open', url.href], { signal });
           state.saved.navigationFailed = false;
         } catch (error) {
-          if (error instanceof DaemonCommandError && !signal?.aborted) {
+          if (
+            (error instanceof DaemonCommandError ||
+              (error instanceof BrowserActionError &&
+                error.code === 'browser_navigation_failed')) &&
+            !signal?.aborted
+          ) {
             try {
               const loaded = new URL(await currentUrl(state, signal));
-              if (
-                loaded.origin === url.origin &&
-                loaded.pathname.replace(/\/+$/, '') === url.pathname.replace(/\/+$/, '') &&
-                loaded.search === url.search
-              ) {
+              if (['http:', 'https:'].includes(loaded.protocol)) {
                 const observation = await observe(state, signal);
                 if (observation.text.slice(observation.text.indexOf('\n') + 1).trim()) {
                   state.saved.navigationFailed = false;
-                  return observation;
+                  return {
+                    ...observation,
+                    text: `Opening ${redactBrowserUrl(url.href, state.secrets)} did not finish loading. This is the page the browser shows now.\n${observation.text}`,
+                  };
                 }
               }
             } catch {}
