@@ -94,8 +94,11 @@ function matchingConnection(value: unknown, connectionId: string): boolean {
 function inspectedAppResult(value: unknown): boolean {
   const envelopes: unknown[] = [value];
   let inspected = false;
+  let outer = true;
   while (envelopes.length) {
     let envelope = envelopes.pop();
+    const top = outer;
+    outer = false;
     if (typeof envelope === 'string') {
       const text = envelope;
       try {
@@ -119,7 +122,10 @@ function inspectedAppResult(value: unknown): boolean {
       Boolean(result.error) ||
       'workspaceFile' in result ||
       ('bytes' in result && 'preview' in result) ||
-      ['rejected', 'failed', 'error', 'unavailable', 'pending'].includes(String(result.status)) ||
+      (top &&
+        ['rejected', 'failed', 'error', 'unavailable', 'pending'].includes(
+          String(result.status),
+        )) ||
       (result.truncated === true &&
         !['data', 'content', 'items', 'results', 'messages'].some((key) => key in result))
     )
@@ -380,11 +386,13 @@ export function createAgentRuntime(dependencies: {
       const pending = waitFor(
         (async () => {
           assertActive();
-          if (limits && toolCalls >= limits.maxToolCalls) {
-            lifecycle.abort(new Error('The turn tool-call limit was reached.'));
-            signal.throwIfAborted();
+          if (name !== 'record_activity_check') {
+            if (limits && toolCalls >= limits.maxToolCalls) {
+              lifecycle.abort(new Error('The turn tool-call limit was reached.'));
+              signal.throwIfAborted();
+            }
+            toolCalls++;
           }
-          toolCalls++;
           const id = randomUUID();
           const started = performance.now();
           const end = (fields: {

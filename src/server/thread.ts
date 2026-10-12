@@ -874,7 +874,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ...(account ? { account } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
-      ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 8, timeoutMs: 90_000 } } : {}),
+      ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 20, timeoutMs: 300_000 } } : {}),
       personalContext: {
         profile: {
           name: String(stored.name ?? ''),
