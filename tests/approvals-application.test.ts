@@ -255,6 +255,15 @@ test(
         },
       );
 
+      await t.test('tool discovery runs without waiting for the checker', async () => {
+        const turn = await propose('SEARCH_TOOLS', { query: 'gmail email' }, 'apps');
+        const result = results.get(turn);
+        assert.ok(result);
+        const text = result.content.map((part) => ('text' in part ? part.text : '')).join('');
+        assert.doesNotMatch(text, /outside the connected apps|confirm/i);
+        assert.equal((await approvalsFor(turn)).length, 0);
+      });
+
       await t.test(
         'a schedule cancellation steered into a confirmed turn uses the fresh owner request',
         async () => {

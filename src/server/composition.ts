@@ -922,7 +922,10 @@ async function initializeApplication(
         return vault.request(turn, ownerId, request);
       },
       integration: async (turn, action, args, options) => {
-        const verdict = await trust.check(turn, action, args);
+        const verdict =
+          action === 'SEARCH_TOOLS'
+            ? ({ confirm: false } as const)
+            : await trust.check(turn, action, args);
         if (hasWorkspaceFiles(args))
           args = await withTurnLock(turn.turnId, () =>
             integrations.prepare(ownerId, action, args, turn, options.signal),
