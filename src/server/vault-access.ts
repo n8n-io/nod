@@ -38,8 +38,6 @@ const heldMessages = {
   readonly: 'This turn can only read. Do not sign in.',
   background:
     'Work Otto starts on its own does not sign in or open saved sessions. Tell the owner this site needs them.',
-  injection:
-    'Sign-in is held because a page or result contained instructions for AI assistants. Ask the owner before signing in.',
 } as const;
 
 const cursor = z.object({ at: z.iso.datetime(), id: z.uuid() });
@@ -281,7 +279,7 @@ export async function createVaultAccess(
       granted?.reason,
     );
     const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
-    const hold = async (reason: 'readonly' | 'background' | 'injection') => {
+    const hold = async (reason: 'readonly' | 'background') => {
       await log(turn, chain, { action: 'held', origin, reason, ...itemKind });
       return { ok: false as const, message: heldMessages[reason] };
     };
@@ -291,8 +289,7 @@ export async function createVaultAccess(
         if (!grants[index]) await remember(chain, origin, verdict.reason, itemKey);
       return { ok: true, reason: verdict.reason };
     }
-    if (target.kind === 'form')
-      return verdict.reason === 'injection' ? hold('injection') : { ok: true, reason: 'entered' };
+    if (target.kind === 'form') return { ok: true, reason: 'entered' };
     await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
     const site = origins.map(host).join(', ');
     return {

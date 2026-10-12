@@ -72,7 +72,7 @@ test(
       ownerId,
       uses: await createVaultUses(db.pool, ownerId),
       local: true,
-      policy: async () => ({ allowed: true, flagged: false, inOtto: true }),
+      policy: async () => ({ allowed: true, inOtto: true }),
       page: async () => ({
         origin: 'https://shop.fixture.test',
         url: 'https://shop.fixture.test/checkout',

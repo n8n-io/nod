@@ -447,7 +447,6 @@ test(
           return 'signIn' in input ? { aligned: yes } : { run: yes };
         },
       });
-      await trust.initialize();
       const email = (to: string) => ({
         recipient_email: to,
         subject: 'Synthetic update',
@@ -809,11 +808,6 @@ test(
             await access.authorize(later, { origin: site, kind: 'session', itemId: first }),
             { ok: true, reason: 'always' },
           );
-          await trust.flag(later, ['Synthetic injection']);
-          assert.ok(
-            'question' in
-              (await access.authorize(later, { origin: site, kind: 'sign_in', itemId: first })),
-          );
           for (const source of ['event', 'onboarding'] as const) {
             const background = await begin('Synthetic background work', { source });
             assert.ok(
@@ -850,43 +844,32 @@ test(
         },
       );
 
-      await t.test(
-        'payments never run from background or read-only work and note a task a page tried to steer',
-        async () => {
-          assert.deepEqual(await trust.payment(await begin('Buy hinges at shop.example.test.')), {
-            allowed: true,
-            flagged: false,
-            inOtto: true,
-          });
-          assert.deepEqual(
-            await trust.payment(
-              await begin('Buy hinges at shop.example.test.', { channel: 'telegram:synthetic' }),
-            ),
-            { allowed: true, flagged: false, inOtto: false },
-          );
-          assert.deepEqual(
-            await trust.payment(
-              await begin('Buy hinges at shop.example.test.', { channel: 'whatsapp:synthetic' }),
-            ),
-            { allowed: true, flagged: false, inOtto: false },
-          );
-          const steered = await begin('Buy more hinges.');
-          await trust.flag(steered, ['ignore_instructions']);
-          assert.deepEqual(await trust.payment(steered), {
-            allowed: true,
-            flagged: true,
-            inOtto: true,
-          });
-          assert.deepEqual(
-            await trust.payment(await begin('Synthetic event', { source: 'event' })),
-            { allowed: false, reason: 'background' },
-          );
-          assert.deepEqual(await trust.payment(await begin('', { source: 'onboarding' })), {
-            allowed: false,
-            reason: 'readonly',
-          });
-        },
-      );
+      await t.test('payments never run from background or read-only work', async () => {
+        assert.deepEqual(await trust.payment(await begin('Buy hinges at shop.example.test.')), {
+          allowed: true,
+          inOtto: true,
+        });
+        assert.deepEqual(
+          await trust.payment(
+            await begin('Buy hinges at shop.example.test.', { channel: 'telegram:synthetic' }),
+          ),
+          { allowed: true, inOtto: false },
+        );
+        assert.deepEqual(
+          await trust.payment(
+            await begin('Buy hinges at shop.example.test.', { channel: 'whatsapp:synthetic' }),
+          ),
+          { allowed: true, inOtto: false },
+        );
+        assert.deepEqual(await trust.payment(await begin('Synthetic event', { source: 'event' })), {
+          allowed: false,
+          reason: 'background',
+        });
+        assert.deepEqual(await trust.payment(await begin('', { source: 'onboarding' })), {
+          allowed: false,
+          reason: 'readonly',
+        });
+      });
 
       await t.test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
@@ -957,7 +940,6 @@ test(
           try {
             const resumed = await execute(seen.id);
             assert.equal(resumed?.prompt.match(/<\/untrusted_tool_result>/g)?.length, 1);
-            assert.match(resumed?.prompt ?? '', /\(ignore_instructions\)/);
           } finally {
             executionResult = undefined;
           }

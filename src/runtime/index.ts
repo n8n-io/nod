@@ -26,8 +26,7 @@ import { firstInstruction, steeredInstruction, systemContext, systemPrompt } fro
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
-import { delimit, resultText } from './untrusted.ts';
-import { injectionFindings, untrustedContents } from '../shared/untrusted.ts';
+import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
@@ -43,15 +42,7 @@ const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sig
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
-const trustedResultTools = new Set([
-  'skills',
-  'send_message',
-  'ask_user',
-  'react_to_message',
-  'manage_apps',
-  'share_file',
-  'create_audio',
-]);
+const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const delimitedTools = new Set([
   'apps',
   'browser',
@@ -350,7 +341,7 @@ export function createAgentRuntime(dependencies: {
       const text =
         'question' in result && typeof result.question === 'string' ? result.question : undefined;
       await pause('approval', text, { hold: true, post: false });
-      return 'The confirmation question is in chat. Wait for the reply.';
+      return confirmationNotice;
     };
 
     const flushText = () => {
@@ -430,10 +421,6 @@ export function createAgentRuntime(dependencies: {
           const memoryAction =
             name === 'manage_personal_context' && personalAction.startsWith('memory_');
           const catalogResult = name === 'manage_apps' && personalAction === 'discover';
-          const untrustedResult =
-            catalogResult ||
-            (!trustedResultTools.has(name) &&
-              !(name === 'manage_personal_context' && personalAction !== 'history_search'));
           const observedInput = memoryAction
             ? { action: (params as { action?: unknown }).action, args: '[private memory omitted]' }
             : name === 'browser' &&
@@ -457,7 +444,6 @@ export function createAgentRuntime(dependencies: {
           });
           let result: AgentToolResult;
           let reservedRecord = false;
-          let executed = false;
           try {
             assertActive();
             if (context.activityCheck) {
@@ -490,7 +476,6 @@ export function createAgentRuntime(dependencies: {
             await waitFor(pendingReplies);
             assertActive(reservedRecord);
             await waitFor(context.emit('tool_start', label));
-            executed = true;
             const executeCurrent = () => {
               assertActive(reservedRecord);
               return execute();
@@ -511,13 +496,12 @@ export function createAgentRuntime(dependencies: {
             if (context.activityCheck && name === 'record_activity_check') checkRecorded = true;
             if (!stopped) await waitFor(context.emit('tool_complete', label));
             result = isToolResult(output) ? output : textResult(output);
-            if (untrustedResult && !nested && !stopped) {
-              const findings = injectionFindings(resultText(result));
-              if (findings.length)
-                await waitFor(Promise.resolve(context.flagInjection?.(findings)));
-              if (delimitedTools.has(name) || catalogResult)
-                result = delimit(name, result, findings);
-            }
+            if (
+              !nested &&
+              output !== confirmationNotice &&
+              (delimitedTools.has(name) || catalogResult)
+            )
+              result = delimit(name, result);
             await end({
               status: 'succeeded',
               ...(['sign_in', 'browser_flow'].includes(name) || memoryAction ? {} : { output }),
@@ -545,11 +529,6 @@ export function createAgentRuntime(dependencies: {
               error.code === 'browser_click_intercepted'
             )
               return textResult({ status: 'blocked', code: error.code, message: browserFailure });
-            if (executed && untrustedResult && !nested && !stopped && !signal.aborted) {
-              const findings = injectionFindings(failure);
-              if (findings.length)
-                await waitFor(Promise.resolve(context.flagInjection?.(findings)));
-            }
             throw new Error(failure);
           }
           signal.throwIfAborted();
@@ -697,10 +676,6 @@ export function createAgentRuntime(dependencies: {
       session = await waitFor(opening);
       signal.throwIfAborted();
       const resumed = session.resumed;
-      const embedded = untrustedContents(context.prompt);
-      const embeddedFindings = injectionFindings(embedded.join('\n'));
-      if (embeddedFindings.length)
-        await waitFor(Promise.resolve(context.flagInjection?.(embeddedFindings)));
       const images: AgentImage[] = [];
       const omittedImages = new Set<string>();
       const root = resolve(context.workspacePath);

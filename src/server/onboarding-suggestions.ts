@@ -4,11 +4,9 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import type { InboxSnippet } from '../ports/integrations.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
-import { emailAddress } from '../shared/action-effect.ts';
 import type { SuggestedTask } from '../shared/onboarding.ts';
 import { pool, transaction } from './db.ts';
 import { refresh } from './events.ts';
-import { unsafe } from './memory-tree.ts';
 import { lockThread } from './thread.ts';
 
 type Source = SuggestedTask['source'];
@@ -19,8 +17,6 @@ const instructions = `You are Otto, a personal assistant that does real work for
 const securityMail =
   /\b(?:verif\w*|passwords?|passcodes?|one[- ]?time|otp|2fa|mfa|two[- ](?:factor|step)|security (?:alert|code|notice|check)|sign(?:ed)?[- ]?in|log(?:ged)?[- ]?in|login|reset|unusual activity|new device|access code|confirm your)\b/i;
 const entities: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-const notVerb =
-  /^(?:the|a|an|my|your|our|their|this|that|these|those|i|you|we|they|it|here|there|please|new|next|weekly|daily|monthly)\b/i;
 const reply = z.object({
   intro: z.string(),
   tasks: z
@@ -39,13 +35,6 @@ function fit(text: string, max: number, more = '') {
   return `${(space > max / 2 ? cut.slice(0, space) : value.slice(0, max)).replace(/[\s,;:-]+$/, '')}${more}`;
 }
 
-function contactDetail(text: string) {
-  return (
-    Boolean(text.match(emailAddress)) ||
-    /https?:\/\/|www\.|(^|[\s(])@\w|\b[\w-]+\.[a-z]{2,}(?:\/|\b)|\d(?:[\s().-]?\d){6,}/i.test(text)
-  );
-}
-
 function decoded(text: string) {
   return text.replace(/&(?:#(\d{1,7})|([a-z]+));/gi, (match, code, name) => {
     const point = code ? Number(code) : undefined;
@@ -55,23 +44,19 @@ function decoded(text: string) {
   });
 }
 
-function readableInbox(items: InboxSnippet[], tripwire: (text: string) => string[]) {
+function readableInbox(items: InboxSnippet[]) {
   return items.slice(0, 15).flatMap((item) => {
     const subject = decoded(item.subject);
     const snippet = decoded(item.snippet);
     const text = `${subject}\n${snippet}`;
-    if (tripwire(text).length || securityMail.test(text) || unsafe(text)) return [];
+    if (securityMail.test(text)) return [];
     const clean = (value: string, max: number) =>
       fit(value.replace(/\b\d{6,}\b/g, '[number]'), max);
     return [{ subject: clean(subject, 120), snippet: clean(snippet, 160) }];
   });
 }
 
-function checkedSuggestions(
-  raw: unknown,
-  sources: readonly Source[],
-  tripwire: (text: string) => string[],
-) {
+function checkedSuggestions(raw: unknown, sources: readonly Source[]) {
   const parsed = reply.safeParse(raw);
   if (!parsed.success) return;
   const intro = fit(parsed.data.intro, 200, '…');
@@ -79,15 +64,12 @@ function checkedSuggestions(
     title: fit(task.title, 60).replace(/[.!]+$/, ''),
     source: task.source,
   }));
-  const texts = [parsed.data.intro, ...parsed.data.tasks.map((task) => task.title)];
-  if (!intro || texts.some((text) => contactDetail(text) || unsafe(text))) return;
-  if (texts.some((text) => tripwire(text).length)) return;
+  if (!intro) return;
   if (
     tasks.some(
       (task) =>
         !/^\p{L}/u.test(task.title) ||
         task.title.split(' ').length > 6 ||
-        notVerb.test(task.title) ||
         !sources.includes(task.source),
     ) ||
     new Set(tasks.map((task) => task.title.toLowerCase())).size !== 3
@@ -127,7 +109,6 @@ export function createOnboardingSuggestions(options: {
   gmail(): Promise<boolean>;
   inbox(signal: AbortSignal): Promise<InboxSnippet[]>;
   telegram(): Promise<boolean>;
-  tripwire(text: string): string[];
 }) {
   const owner = options.ownerId;
   let preparing: Promise<PreparedSuggestions> | undefined;
@@ -153,12 +134,11 @@ export function createOnboardingSuggestions(options: {
             await options
               .inbox(AbortSignal.any([signal, AbortSignal.timeout(15_000)]))
               .catch(() => []),
-            options.tripwire,
           )
         : [];
       const input = { answers, ...(gmail ? { inbox } : {}), sources };
       const raw = await options.curator.curate({ task: 'plan', instructions, input }, signal);
-      return checkedSuggestions(raw, sources, options.tripwire) ?? fallback;
+      return checkedSuggestions(raw, sources) ?? fallback;
     } catch {
       return fallback;
     }

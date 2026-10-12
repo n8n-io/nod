@@ -57,7 +57,6 @@ import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
-import { injectionFindings } from '../shared/untrusted.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
@@ -683,7 +682,6 @@ async function initializeApplication(
           (channel) => channel.provider === 'telegram' && channel.enabled && channel.allowedUserId,
         ),
       ),
-    tripwire: injectionFindings,
   });
   analytics.setUsageData(
     ownerId,
@@ -738,7 +736,6 @@ async function initializeApplication(
         ? onboardingCurator.curate({ task: 'review', instructions, input })
         : undefined,
   });
-  await trust.initialize();
   vaultAccess = await createVaultAccess(pool, {
     ownerId,
     check: trust.signIn,
@@ -806,7 +803,6 @@ async function initializeApplication(
         return result;
       },
       watchTurn: tasks.watch,
-      flagInjection: trust.flag,
       holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
       prepareBrowser: (turn) =>

@@ -31,7 +31,6 @@ type Row = {
   destinations: Partial<Record<keyof CardFields, string>>;
   submit_selector: string | null;
   keep_notice: boolean;
-  flagged: boolean;
 };
 
 const selector = z.string().min(1).max(500);
@@ -130,9 +129,10 @@ export async function createPayments(
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
       origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, card_id text NOT NULL,
       fields jsonb NOT NULL, document text NOT NULL, destinations jsonb NOT NULL,
-      keep_notice boolean NOT NULL, flagged boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
+      keep_notice boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
       created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
     );
+    ALTER TABLE vault_payments DROP COLUMN IF EXISTS flagged;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS submit_selector text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS card_version text;
     CREATE INDEX IF NOT EXISTS vault_payments_owner ON vault_payments(owner_id,created_at DESC);
@@ -279,15 +279,15 @@ export async function createPayments(
     return `The private payment operation did not finish. Card details or the payment may have reached ${site(row.origin)}. Check the order and payment status. Do not repeat this operation.`;
   }
 
-  async function open(id: string, scope: { threadId?: string; turnId?: string; yes?: boolean }) {
+  async function open(id: string, scope: { threadId?: string; turnId?: string }) {
     return (
       await pool.query<Row>(
         `SELECT p.* FROM vault_payments p JOIN turns u ON u.id=p.turn_id AND u.owner_id=p.owner_id
          JOIN threads th ON th.id=p.thread_id AND th.owner_id=p.owner_id
          WHERE p.id=$1 AND p.owner_id=$2 AND th.archived_at IS NULL AND ${currentTurnSql}
          AND ($3::uuid IS NULL OR p.thread_id=$3) AND ($4::uuid IS NULL OR p.turn_id=$4)
-         AND NOT ($5 AND p.flagged) AND p.status='pending' AND p.expires_at>now()`,
-        [id, ownerId, scope.threadId ?? null, scope.turnId ?? null, scope.yes === true],
+         AND p.status='pending' AND p.expires_at>now()`,
+        [id, ownerId, scope.threadId ?? null, scope.turnId ?? null],
       )
     ).rows[0];
   }
@@ -335,8 +335,7 @@ export async function createPayments(
       document,
       destinations,
       submit_selector: parsed.submitSelector ?? null,
-      keep_notice: !policy.flagged && card.choice === true && !card.doItForMe,
-      flagged: policy.flagged,
+      keep_notice: card.choice === true && !card.doItForMe,
     };
     await pool.query(
       `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
@@ -344,8 +343,8 @@ export async function createPayments(
       [ownerId, turn.threadId, turn.turnId],
     );
     await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,flagged,submit_selector,card_version,expires_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now()+interval '10 minutes')`,
+      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now()+interval '10 minutes')`,
       [
         row.id,
         ownerId,
@@ -359,7 +358,6 @@ export async function createPayments(
         document,
         JSON.stringify(destinations),
         row.keep_notice,
-        row.flagged,
         row.submit_selector,
         row.card_version,
       ],
@@ -385,14 +383,11 @@ export async function createPayments(
         question: question.filter(Boolean).join(' '),
         url: `/payments/${row.id}`,
       };
-    if (card.doItForMe && !policy.flagged)
+    if (card.doItForMe)
       return { paymentId: row.id, question: question.filter(Boolean).join(' '), image };
     return {
       image,
       question: [
-        policy.flagged
-          ? 'A page in this task had instructions for AI assistants, so a yes is not enough.'
-          : '',
         ...question,
         'Reply with its security code.',
         row.keep_notice ? 'Otto will keep it, so next time a yes is enough.' : '',
@@ -404,7 +399,7 @@ export async function createPayments(
 
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
     const { paymentId } = z.object({ paymentId: z.uuid() }).strict().parse(raw);
-    const row = await open(paymentId, { threadId: context.threadId, yes: true });
+    const row = await open(paymentId, { threadId: context.threadId });
     const card = (await options.cards()).find((item) => item.id === row?.card_id);
     if (!row || !card?.doItForMe)
       return {
@@ -440,7 +435,7 @@ export async function createPayments(
       .parse(raw);
     if (!options.local) throw new PaymentError('Hosted Otto does not pay with saved cards.');
     const policy = await options.policy(turn);
-    if (!policy.allowed || (parsed.doItForMe && (policy.flagged || !policy.inOtto)))
+    if (!policy.allowed || (parsed.doItForMe && !policy.inOtto))
       throw new PaymentError('Do it for me can be turned on only from a message in the Otto app.');
     const card = await choose(parsed.card);
     return {
@@ -475,7 +470,7 @@ export async function createPayments(
         amount: money(row),
         card: cardName(card),
         destinations: [...new Set(Object.values(row.destinations))],
-        needsCode: !card.doItForMe || row.flagged,
+        needsCode: !card.doItForMe,
         keepCode: row.keep_notice,
       } satisfies PaymentRequest;
     });
@@ -497,7 +492,7 @@ export async function createPayments(
         const { code } = parsed.data;
         const row = await open(request.params.id, {});
         const card = (await options.cards()).find((item) => item.id === row?.card_id);
-        if (!row || !card || ((!card.doItForMe || row.flagged) && !code))
+        if (!row || !card || (!card.doItForMe && !code))
           return reply.code(409).send({ error: 'This payment needs a fresh secure request.' });
         try {
           await enter(row, card, code, true);

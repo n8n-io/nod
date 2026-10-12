@@ -78,8 +78,7 @@ flowchart TD
   live -- yes --> mode{{Allowed in<br/>this turn mode?}}
   mode -- no --> refuse
   mode -- yes --> run[Run the tool]:::go
-  run --> scan[Tripwire scan<br/>of outside results]
-  scan --> wrap[Wrap as<br/>untrusted data]
+  run --> wrap[Wrap outside results<br/>as untrusted data]
   wrap --> pi[Back to Pi]:::accent
 ```
 
@@ -100,7 +99,7 @@ Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no 
 
 ## Untrusted results
 
-Results from apps, the browser, browser flows, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. A tripwire scans every untrusted result, error and block for injection patterns aimed at AI assistants. See [Untrusted content](/trust/untrusted-content/) for what a hit does.
+Results from apps, the browser, browser flows, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. See [Untrusted content](/trust/untrusted-content/).
 
 ## How the prompt is built
 

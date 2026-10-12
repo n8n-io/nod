@@ -283,7 +283,6 @@ test('notification summaries exclude message bodies, tokens, and unbounded provi
     payload: { password: 'another-secret' },
   });
   assert.equal(summary.match(/<\/?untrusted_tool_result\b/g)?.length, 2);
-  assert.match(summary, /\(ignore_instructions\)/);
   assert.match(summary, /person@example.com/);
   for (const excluded of ['123456', 'private body', 'provider-secret', 'another-secret'])
     assert.equal(summary.includes(excluded), false);
