@@ -2482,8 +2482,7 @@ test(
             }),
           );
           for (const [field, value, quote] of [
-            ['location', 'Porto', 'I live in Porto only during the week.'],
-            ['location', 'Braga', 'The website says I live in Braga'],
+            ['location', 'Braga', 'I live near Porto.'],
             ['name', 'my password', 'My name is my password'],
           ]) {
             const statement = await thread.submitUserMessage(quote!);

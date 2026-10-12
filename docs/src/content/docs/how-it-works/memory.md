@@ -59,7 +59,7 @@ The memory tools are actions of Pi's `manage_personal_context` tool. Each save i
 
 The `memory_save` review rejects guesses, tasks, questions, pasted third-party content and anything the owner didn't say. It also rejects sensitive topics unless the owner allowed them or asked. An unsupported note, or a missing or malformed review, returns `skipped`. Nothing is saved, and the conversation carries on without a question.
 
-Saves are silent: no notice appears in chat or on Telegram or WhatsApp. Text that looks like a password, code, card number, key or instruction to the assistant is refused. A correction uses `replace: true` and archives the old version.
+Saves are silent: no notice appears in chat or on Telegram or WhatsApp. Text that looks like a password, code, card number or key is refused. A correction uses `replace: true` and archives the old version.
 
 :::caution[Memory is context, not permission]
 A saved note never authorizes an action. For `memory_learn`, the sensitive-topic rule is a model instruction: the server checks the quote, not the topic.

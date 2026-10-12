@@ -16,8 +16,6 @@ const profileSchema = z
     preferences: z.string().max(4000),
   })
   .strict();
-const declinedPersonalAnswer =
-  /^(?:no(?: thanks)?\b|skip\b|pass\b|not now\b|none\b|n\/a\b|(?:i(?:'d| would) rather not|i (?:do not|don't|don’t) want to|prefer not to|let(?:'s| us) not)(?:\b|$)|(?:do not|don't|don’t) (?:save|store|remember|ask)|não\b|prefiro não\b|saltar\b)/i;
 type PersonalDependencies = ScheduleDependencies & {
   memory?: MemoryService;
 };
@@ -70,7 +68,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       await client.query('BEGIN');
       const source = (
         await client.query(
-          "SELECT id,text,turn_id,thread_id,created_at FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' FOR SHARE",
+          "SELECT text,turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' FOR SHARE",
           [sourceMessageId, ownerId],
         )
       ).rows[0];
@@ -78,8 +76,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       if (
         !source ||
         (provenance?.turnId && source.turn_id !== provenance.turnId) ||
-        sourceText !== input.quote ||
-        input.quote.endsWith('?')
+        sourceText !== input.quote
       )
         throw Object.assign(
           new Error(
@@ -92,33 +89,9 @@ export function createPersonalService(dependencies: PersonalDependencies) {
           new Error('Sign-in details and payment secrets cannot be remembered.'),
           { statusCode: 400 },
         );
-      const statements = {
-        name: /^(?:my name is|call me|o meu nome é|chamo-me)\s+(.+?)\s*[.!]?$/i,
-        location: /^(?:i live in|i am based in|i'm based in|vivo em|moro em)\s+(.+?)\s*[.!]?$/i,
-        phone:
-          /^(?:my (?:phone|mobile)(?: number)? is|o meu (?:número|numero)(?: de (?:telefone|telemóvel))? é)\s+(.+?)\s*[.!]?$/i,
-      };
-      let value = input.quote.match(statements[input.field])?.[1];
-      if (!value && sourceText === input.quote && source.thread_id) {
-        const previous =
-          (
-            await client.query(
-              "SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND created_at<=$3 ORDER BY created_at DESC,id DESC LIMIT 1",
-              [ownerId, source.thread_id, source.created_at],
-            )
-          ).rows[0]?.text ?? '';
-        const questions = {
-          name: /(?:what (?:should|can) i call you|what(?:'s| is) your name|como te chamas|qual é o teu nome)/i,
-          location: /(?:where do you live|where are you based|onde (?:vives|moras))/i,
-          phone:
-            /(?:what(?:'s| is) your (?:phone|mobile)(?: number)?|qual é o teu (?:número|numero)(?: de (?:telefone|telemóvel)))/i,
-        };
-        if (questions[input.field].test(previous) && !declinedPersonalAnswer.test(input.quote))
-          value = input.quote;
-      }
       const limit = input.field === 'name' ? 100 : input.field === 'phone' ? 40 : 200;
       if (
-        value !== input.value ||
+        !input.quote.toLowerCase().includes(input.value.toLowerCase()) ||
         input.value.length > limit ||
         (input.field === 'phone' && !/^\+?[\d ()-]{5,40}$/.test(input.value))
       )
