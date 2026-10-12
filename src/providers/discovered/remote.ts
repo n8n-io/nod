@@ -32,9 +32,10 @@ export async function safeRemoteFetch(
   init?: RequestInit,
   dependencies = { validate: publicUrl, request: httpsRequest },
   maximumRequestBytes = 1024 * 1024,
-) {
+  redirects = 5,
+): Promise<Response> {
   const prepared = new Request(input, init);
-  const signal = AbortSignal.any([prepared.signal, AbortSignal.timeout(30_000)]);
+  const signal = AbortSignal.any([prepared.signal, AbortSignal.timeout(600_000)]);
   signal.throwIfAborted();
   const { url, address } = await new Promise<Awaited<ReturnType<typeof publicUrl>>>(
     (resolve, reject) => {
@@ -75,13 +76,37 @@ export async function safeRemoteFetch(
       (incoming) => {
         if (incoming.statusCode && incoming.statusCode >= 300 && incoming.statusCode < 400) {
           incoming.destroy();
-          reject(new Error('The connection redirected to another address.'));
+          const location = incoming.headers.location;
+          if (!location || redirects <= 0) {
+            reject(new Error('The connection redirected too many times or without a location.'));
+            return;
+          }
+          const next = new URL(location, url);
+          const headers = new Headers(prepared.headers);
+          if (next.origin !== url.origin)
+            for (const name of [...headers.keys()])
+              if (!['accept', 'content-type', 'user-agent'].includes(name)) headers.delete(name);
+          const keep = incoming.statusCode === 307 || incoming.statusCode === 308;
+          resolve(
+            safeRemoteFetch(
+              next,
+              {
+                method: keep || prepared.method === 'HEAD' ? prepared.method : 'GET',
+                headers,
+                ...(keep && body.byteLength ? { body } : {}),
+                signal,
+              },
+              dependencies,
+              maximumRequestBytes,
+              redirects - 1,
+            ),
+          );
           return;
         }
         let size = 0;
         incoming.on('data', (chunk: Buffer) => {
           size += chunk.byteLength;
-          if (size > 4 * 1024 * 1024)
+          if (size > 64 * 1024 * 1024)
             incoming.destroy(new Error('The connection response is too large.'));
         });
         incoming.on('error', reject);

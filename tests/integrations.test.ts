@@ -8298,6 +8298,64 @@ test('direct MCP cancellation aborts pending tool discovery and reads', async ()
   }
 });
 
+test('discovered requests follow redirects only to checked public addresses and drop credentials across origins', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { EventEmitter } = await import('node:events');
+  const sent: Array<{ url: string; authorization?: string }> = [];
+  const routes: Record<string, { status: number; location?: string }> = {
+    'https://api.fixture.example/start': {
+      status: 302,
+      location: 'https://files.fixture.example/data',
+    },
+    'https://files.fixture.example/data': { status: 200 },
+    'https://api.fixture.example/private': {
+      status: 307,
+      location: 'https://internal.fixture.example/',
+    },
+  };
+  const request = ((
+    url: URL,
+    options: { headers: Record<string, string> },
+    callback: (incoming: unknown) => void,
+  ) => {
+    sent.push({ url: url.href, authorization: options.headers.authorization });
+    const route = routes[url.href]!;
+    const incoming = Object.assign(new PassThrough(), {
+      statusCode: route.status,
+      headers: route.location ? { location: route.location } : { 'content-type': 'text/plain' },
+    });
+    queueMicrotask(() => {
+      callback(incoming);
+      incoming.end(route.status === 200 ? 'synthetic file' : '');
+    });
+    return Object.assign(new EventEmitter(), { end() {} });
+  }) as unknown as NonNullable<Parameters<typeof safeRemoteFetch>[2]>['request'];
+  const validate = async (value: string) => {
+    const url = new URL(value);
+    if (url.hostname === 'internal.fixture.example')
+      throw new Error('Private network destinations are blocked.');
+    return { url, address: '93.184.216.34' };
+  };
+  const response = await safeRemoteFetch(
+    'https://api.fixture.example/start',
+    { headers: { authorization: 'Bearer synthetic-token' } },
+    { validate, request },
+  );
+  assert.equal(await response.text(), 'synthetic file');
+  assert.deepEqual(sent, [
+    { url: 'https://api.fixture.example/start', authorization: 'Bearer synthetic-token' },
+    { url: 'https://files.fixture.example/data', authorization: undefined },
+  ]);
+  await assert.rejects(
+    safeRemoteFetch(
+      'https://api.fixture.example/private',
+      { method: 'POST', body: '{}' },
+      { validate, request },
+    ),
+    /Private network/,
+  );
+});
+
 test('discovered validation cancellation never starts HTTP after a late DNS settlement', async () => {
   for (const fails of [false, true]) {
     const controller = new AbortController();
