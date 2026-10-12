@@ -381,7 +381,7 @@ test(
           reviews.push(input as Record<string, any>);
           const yes =
             typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned;
-          return 'signIn' in input ? { aligned: yes } : { run: yes };
+          return { run: yes };
         },
       });
       const email = (to: string) => ({
@@ -579,18 +579,25 @@ test(
       );
 
       await t.test(
-        'Vault grants bind the current task, item and destination, with no authority from a domain mention',
+        'sign-in authority comes from the checker or an owned yes bound to the exact site and item',
         async () => {
           const { createVaultAccess } = await import('../src/server/vault-access.ts');
           const site = 'https://bank.example.test';
           const first = randomUUID();
           const second = randomUUID();
-          const access = await createVaultAccess(db.pool, {
-            ownerId,
-            check: trust.signIn,
-            account: async (key) =>
-              key === `sign_in:${first}` ? 'Personal account' : 'Work account',
-          });
+          const access = await createVaultAccess(db.pool, { ownerId, check: trust.check });
+          const confirmAccess = async (
+            turn: { threadId: string; turnId: string },
+            args: Record<string, unknown>,
+          ) => {
+            const id = await propose(turn, 'OTTO_vault_allow', args);
+            await finish(turn.turnId);
+            await confirm(id, true);
+            await execute(id);
+            const record = await stored(id);
+            assert.equal(record.status, 'completed');
+            return { threadId: turn.threadId, turnId: record.execution_turn_id as string };
+          };
           aligned = false;
           for (const text of [
             'Do not sign in to bank.example.test. Compare public prices.',
@@ -604,6 +611,10 @@ test(
             );
             assert.equal(reviews.length, before + 1);
             assert.equal(reviews.at(-1)?.userMessages.at(-1).text, text);
+            assert.deepEqual(reviews.at(-1)?.action, {
+              name: 'OTTO_sign_in',
+              arguments: { website: site },
+            });
           }
           const group = await begin('Open my work dashboard.');
           const destinations = [
@@ -616,56 +627,57 @@ test(
             itemId: first,
             destinations,
           };
-          const beforeGroup = reviews.length;
-          assert.ok('question' in (await access.authorize(group, target)));
-          assert.equal(reviews.length, beforeGroup + 1);
-          assert.deepEqual(reviews.at(-1)?.signIn.networkDestinations, destinations);
-          await access.allow(group, target);
+          const session = await access.authorize(group, target);
+          assert.ok('question' in session);
+          assert.deepEqual(reviews.at(-1)?.action.arguments.networkDestinations, destinations);
+          const groupResumed = await confirmAccess(group, session.args);
           const afterGroup = reviews.length;
-          assert.deepEqual(await access.authorize(group, target), { ok: true, reason: 'allowed' });
+          assert.deepEqual(await access.authorize(groupResumed, target), {
+            ok: true,
+            reason: 'allowed',
+          });
           assert.equal(reviews.length, afterGroup);
           assert.ok(
             'question' in
-              (await access.authorize(group, {
+              (await access.authorize(groupResumed, {
                 ...target,
                 destinations: [...destinations, 'https://other.example.test'],
               })),
           );
-          assert.equal(reviews.length, afterGroup + 1);
           const task = await begin('Download my bank statement.');
-          assert.ok(
-            'question' in
-              (await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first })),
-          );
-          await access.allow(task, { origin: site, kind: 'sign_in', itemId: first });
+          const signIn = await access.authorize(task, {
+            origin: site,
+            kind: 'sign_in',
+            itemId: first,
+          });
+          assert.ok('question' in signIn);
+          const resumed = await confirmAccess(task, signIn.args);
           assert.deepEqual(
-            await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first }),
+            await access.authorize(resumed, { origin: site, kind: 'sign_in', itemId: first }),
             { ok: true, reason: 'allowed' },
           );
+          for (const other of [
+            { origin: site, kind: 'sign_in' as const, itemId: second },
+            { origin: site, kind: 'session' as const, itemId: first },
+            { origin: 'https://other.example.test', kind: 'sign_in' as const, itemId: first },
+          ])
+            assert.ok('question' in (await access.authorize(resumed, other)));
           assert.ok(
             'question' in
-              (await access.authorize(task, { origin: site, kind: 'sign_in', itemId: second })),
-          );
-          assert.ok(
-            'question' in
-              (await access.authorize(task, { origin: site, kind: 'session', itemId: first })),
-          );
-          assert.ok(
-            'question' in
-              (await access.authorize(task, {
-                origin: 'https://other.example.test',
+              (await access.authorize(await begin('Check what is due.'), {
+                origin: site,
                 kind: 'sign_in',
                 itemId: first,
               })),
           );
-          await access.record(task, {
+          await access.record(resumed, {
             action: 'sign_in',
             origin: site,
             reason: 'allowed',
             itemId: first,
             itemKind: 'login',
           });
-          await access.record(task, {
+          await access.record(resumed, {
             action: 'sign_in',
             origin: site,
             reason: 'picked',
@@ -682,71 +694,29 @@ test(
             new Set([first, second]),
           );
           assert.equal(history.entries.filter((entry) => entry.action === 'sign_in').length, 2);
-          const cancelled = await begin('Cancel it. Stay signed out.');
-          let signedOut = false;
-          await access.prepare(cancelled, async () => {
-            signedOut = true;
-          });
-          assert.equal(signedOut, true);
-          assert.ok(
-            'question' in
-              (await access.authorize(cancelled, { origin: site, kind: 'sign_in', itemId: first })),
-          );
           aligned = (input) =>
-            input.signIn?.website === site &&
+            input.action?.name === 'OTTO_sign_in' &&
+            input.action.arguments.website === site &&
             input.userMessages?.at(-1)?.text === 'Download my bank statement now.';
           const requested = await begin('Download my bank statement now.');
           assert.deepEqual(
             await access.authorize(requested, { origin: site, kind: 'sign_in', itemId: first }),
             { ok: true, reason: 'asked' },
           );
-          let firstVisit = false;
+          let kept = true;
           await access.prepare(requested, async () => {
-            firstVisit = true;
+            kept = false;
           });
-          assert.equal(firstVisit, false);
-          await access.record(requested, {
-            action: 'sign_in',
-            origin: site,
-            itemId: first,
-            itemKind: 'login',
-            reason: 'asked',
-          });
-          aligned = (input) => input.signIn?.account === 'Work account';
-          const wrongAccount = await begin('Read my work bank account.');
-          let wrongRetained = false;
-          await access.prepare(wrongAccount, async () => {
-            wrongRetained = true;
-          });
-          assert.equal(wrongRetained, true);
-          assert.equal(reviews.at(-1)?.signIn.account, 'Personal account');
-          await db.pool.query(
-            "UPDATE vault_grants SET created_at=now()-interval '8 days' WHERE owner_id=$1 AND root_turn_id=$2",
-            [ownerId, task.turnId],
-          );
+          assert.equal(kept, true);
           aligned = false;
-          assert.ok(
-            'question' in
-              (await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first })),
-          );
-          aligned = true;
-          assert.deepEqual(
-            await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first }),
-            { ok: true, reason: 'asked' },
-          );
-          aligned = false;
-          assert.deepEqual(
-            await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first }),
-            { ok: true, reason: 'asked' },
-          );
-          await access.always({ origin: site });
-          const later = await begin('Check what is due.');
-          assert.deepEqual(
-            await access.authorize(later, { origin: site, kind: 'session', itemId: first }),
-            { ok: true, reason: 'always' },
-          );
           for (const source of ['event', 'onboarding'] as const) {
             const background = await begin('Synthetic background work', { source });
+            let signedOut = false;
+            await access.prepare(background, async () => {
+              signedOut = true;
+            });
+            assert.equal(signedOut, true);
+            const before = reviews.length;
             assert.ok(
               'message' in
                 (await access.authorize(background, {
@@ -755,14 +725,8 @@ test(
                   itemId: first,
                 })),
             );
+            assert.equal(reviews.length, before);
           }
-          await access.forget(site);
-          assert.equal((await access.permissions()).length, 0);
-          const noGrant = await begin('Cancel.');
-          assert.ok(
-            'question' in
-              (await access.authorize(noGrant, { origin: site, kind: 'sign_in', itemId: first })),
-          );
           await db.pool.query(
             `INSERT INTO vault_activity(id,owner_id,at,action,origin,reason)
           SELECT gen_random_uuid(),$1,date_trunc('milliseconds',now()-interval '30 days')+n*interval '1 microsecond',

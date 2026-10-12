@@ -480,8 +480,7 @@ button.vault-use:focus-visible {
     justify-self: start;
   }
 }
-.vault-switch-row,
-.vault-inset > .vault-switch-row {
+.vault-switch-row {
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -39,12 +39,10 @@ flowchart LR
 
 ## When the browser stays signed in
 
-| Situation                                     | What happens                                                                          |
-| --------------------------------------------- | ------------------------------------------------------------------------------------- |
-| The same task continues                       | The browser stays signed in                                                           |
-| A new request from you within 30 minutes      | Every website and account in use is checked again. If one fails, it starts signed out |
-| Any other new task, including a scheduled run | Starts signed out. Otto can reopen a saved session after the usual check              |
-| Background work and read-only work            | Always starts signed out and can't open saved sessions                                |
+| Situation                          | What happens                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------- |
+| A conversation or a scheduled run  | The browser stays signed in. Each new sign-in or saved-session use is checked again |
+| Background work and read-only work | Always starts signed out and can't sign in or open saved sessions                   |
 
 ## Sign out
 

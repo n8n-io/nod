@@ -610,7 +610,6 @@ async function initializeApplication(
         },
         client,
       ),
-    onForget: (origin) => vaultAccess.forget(origin),
   });
   browserConnections = await createBrowserConnections(pool, {
     ownerId,
@@ -629,7 +628,7 @@ async function initializeApplication(
       action === 'OTTO_memory_save'
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
         : action === 'OTTO_vault_allow'
-          ? vaultAccess.allow(provenance, args)
+          ? vaultAccess.allow(args)
           : action === 'OTTO_payment_setting'
             ? payments.setting(provenance, args, true)
             : action === 'OTTO_payment_approve'
@@ -714,19 +713,12 @@ async function initializeApplication(
     const access = await vaultAccess.authorize(turn, target);
     if (access.ok) return { reason: access.reason };
     if ('message' in access) throw new Error(access.message);
-    const args = {
-      origin: target.origin,
-      kind: target.kind,
-      ...(target.itemId ? { itemId: target.itemId } : {}),
-      ...(target.destinations?.length ? { destinations: target.destinations } : {}),
-    };
-    const result = await approvals.request(turn, 'OTTO_vault_allow', args, {
+    const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
       confirm: true,
       question: access.question,
     });
     if (result && typeof result === 'object' && 'requiresConfirmation' in result)
       return { question: String(result.question) };
-    await vaultAccess.allow(turn, args);
     return { reason: 'allowed' };
   }
   const trust = createTrust({
@@ -739,22 +731,8 @@ async function initializeApplication(
   });
   vaultAccess = await createVaultAccess(pool, {
     ownerId,
-    check: trust.signIn,
+    check: trust.check,
     refresh,
-    account: async (itemKey) => {
-      const [kind, id] = itemKey.split(':');
-      if (kind === 'sign_in') {
-        const login = (await vault.list(ownerId)).find(
-          (entry) => entry.kind === 'login' && entry.id === id,
-        );
-        return login ? `${login.label} (${login.usernameHint})` : undefined;
-      }
-      return kind === 'session'
-        ? (await browserConnections.sessions()).find(
-            (entry) => entry.id === id && entry.state !== 'disconnecting',
-          )?.label
-        : undefined;
-    },
   });
   payments = await createPayments(pool, {
     ownerId,
@@ -784,13 +762,7 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact?.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
-      runTurn: async (context) => {
-        try {
-          return await ledger.withTurn(context.turnId, () => runtime.runTurn(context));
-        } finally {
-          await vaultAccess.released(context).catch(() => {});
-        }
-      },
+      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
       observe: adapters.observe,
       inspectPrompt: adapters.inspectPrompt,
@@ -816,8 +788,6 @@ async function initializeApplication(
         if (!target) return browserConnections.request(request, turn, signal, launch);
         const access = await permitVault(turn, target);
         if ('question' in access) return { [appConfirmation]: access.question };
-        for (const origin of [target.origin, ...target.destinations])
-          await vaultAccess.track(turn.threadId, origin, `${target.kind}:${target.itemId}`);
         const result = await browserConnections.request(request, turn, signal, launch);
         if (result.status === 'session_opened')
           await vaultAccess.record(turn, {
@@ -1012,19 +982,6 @@ async function initializeApplication(
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
-    browserInput: async (threadId, apply) => {
-      const page = () =>
-        computer.currentPage(threadId).then(
-          (current) => current.origin,
-          () => undefined,
-        );
-      const acted = await page();
-      try {
-        await apply();
-      } finally {
-        await vaultAccess.touched(threadId, { acted, landed: await page() });
-      }
-    },
     computer,
     runtime,
     configuration: () =>

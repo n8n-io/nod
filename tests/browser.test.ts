@@ -114,14 +114,8 @@ test(
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
-    const touched: string[] = [];
     const app = await createApp({
       configuration: () => configuration(),
-      browserInput: async (id, apply) => {
-        touched.push(`${id}:before:${controls.length}`);
-        await apply();
-        touched.push(`${id}:after:${controls.length}`);
-      },
       runtime: {
         status: () => ({ browser: 'Ready', workspace: 'Ready' }),
         holdBrowserForUser: () => !browserHeld,
@@ -307,15 +301,8 @@ test(
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
-      assert.deepEqual(touched, [
-        `${next.id}:before:0`,
-        `${next.id}:after:1`,
-        `${next.id}:before:1`,
-        `${next.id}:after:2`,
-      ]);
       const scroll = { type: 'wheel', deltaX: 0, deltaY: 120 };
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
-      assert.equal(touched.length, 4);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
       assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);

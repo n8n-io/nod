@@ -154,11 +154,6 @@ export interface VaultImportResult {
   skipped: number;
 }
 
-export interface VaultPermission {
-  id: string;
-  origin: string;
-  createdAt: string;
-}
 export interface VaultSession {
   kind: 'session';
   id: string;

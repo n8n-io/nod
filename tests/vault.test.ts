@@ -985,7 +985,7 @@ test(
       );
       access = await createVaultAccess(f.pool, {
         ownerId: 'local-development',
-        check: async () => ({ allowed: true, reason: 'asked' }),
+        check: async () => ({ confirm: false }),
       });
       f.recordUse((use, client) =>
         access.used(use, { origin: use.origin, reason: use.reason, itemId: use.entryId }, client),
