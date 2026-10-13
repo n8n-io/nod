@@ -283,8 +283,10 @@ The old report-only `task` tool and the curator watcher go (WP-19).
 
 ### 5.7 Browser, Vault and payments
 
-- Every session already has its own browser. The live cap rises from 2 to cover the chat plus 3 tasks (target 4; measure on E2B with 2 CPU and 3 GB). At the cap, an open waits in an abortable queue instead of failing. A session with a running turn is never evicted (WP-07).
-- A paused task keeps its browser for 30 minutes when it has an open page, even when the paused segment did not browse.
+- Every session already has its own browser. The live cap rises from 2 to cover the chat plus 3 tasks (target 4; measure on E2B with 2 CPU and 3 GB). One setting sets the cap. At the cap, an open waits in an abortable queue instead of failing. A session with a running turn is pinned and is never evicted or closed, also not when another session needs the same profile (WP-07).
+- The bridge client keeps the pin locally and sends it before the first browse, upload or download of the turn, so a turn that does not browse does not start a browser container. The server clears all pins when it starts and sends the pin again after a bridge recovery.
+- Delegate subagent browsers do not use the 4 session slots. They have their own budget of 2 live browsers and their own queue, so a full set of session browsers never blocks a subagent. Measure E2B memory with 6 live browsers before Gate A (WP-12).
+- A paused task keeps its browser for 30 minutes when it has an open page, even when the paused segment did not browse. The runtime always asks to hold on pause. A hold does nothing when the session has no started browser.
 - A reopened task gets a new browser generation. Its saved logins still work. Its old page state is gone (WP-22).
 - Only a later turn in the same session supersedes a Vault, OTP or payment-code wait. A chat message never expires a task's sign-in (WP-18).
 - The browser view and the handoff routes take a session. A waiting task can hand its browser to the owner. **Done** resumes the task (WP-21).
@@ -298,7 +300,8 @@ Each task gets a working folder `/workspace/<threadId>/tasks/<taskId>`. Only Pi'
 
 - A task's context is its source message, the messages of its own session and the owner replies routed to it. It does not see other sessions' messages (WP-17).
 - The chat's context leaves out task-internal messages but keeps the "On it" and result messages, plus a list of open tasks: title, status and `onItMessageId`.
-- Schedule and event sessions get the same session scope.
+- Schedule and event sessions see the messages without a turn, the chat's messages from turns that finished before their trigger, and the messages of their own session. They do not see other background sessions (step 1).
+- Each schedule fire is its own session, so the unanswered count for schedule and event sessions stays thread-wide. It counts only Otto's messages from finished turns, as before. A task does not use the unanswered count, because its check-ins follow the progress mode.
 
 ### 5.10 Web state and events
 
@@ -322,6 +325,8 @@ A task that waits for other people calls `task_progress {waitingFor, nextCheck}`
 ## 6. Work packages
 
 A Gate A package must be complete before parallel tasks run at all, also for the team. A Gate B package must be complete before testers get tasks. Sizes are rough estimates from the code. WP-05 is obsolete: PR #252 removed the injection tripwire.
+
+Line references are for main at `022b9960`. After step 1, some of them are out of date. Search for the named function.
 
 | ID              | Title                                                                    | Gate             | Size | Needs                             |
 | --------------- | ------------------------------------------------------------------------ | ---------------- | ---- | --------------------------------- |
@@ -422,6 +427,8 @@ Status on main: missing.
   - durable = createPiCheckpoint(store, sessionKey).
   - Only the key changes in src/providers/pi/checkpoint.ts:317 and 354; the chat key stays the thread ID. Obsolete parts are removed by explicit ID, not by prefix.
   - manager = saved ? (durable?.manager ?? openLocalSession(directory)) : SessionManager.inMemory.
+- Step 1 result: sessionKey and saved replace threadId and background in AgentSessionOptions. RuntimeContext.browserId became sessionId. The provider creates the session folder only when saved is true. Part reads, obsolete-part cleanup and the failed-write rollback in checkpoint.ts also use the session key.
+- Step 2: the runtime opens a task session with sessionKey = task ID and saved = true. Schedule, event and subagent sessions keep saved = false. Add a runtime test for the options that each kind of session gets.
 - Task sessions get rebaseSession, closeInterruptedCalls and compaction.
 - For task sessions only, stop appending 'The request was:' (src/server/thread.ts:574, src/server/approvals.ts:405); the transcript carries the context. Keep the turn.prompt overwrite at thread.ts:975 for schedule and event.
 - Deletion on reset and retention are in WP-20.
@@ -451,6 +458,7 @@ Status on main: missing.
 - The steering check (216-226) also accepts task sessions.
 - Provenance checks (src/server/schedules.ts:603-607, src/server/personal.ts:65-80, 199-203) accept the task's authority message. memory_forget is allowed only when that message asked for it.
 - TrustReason gets 'task'.
+- Add taskOfTurn(turnId) to src/server/turn-chain.ts: the task whose id is the turn's session_id, owner-scoped. It moved here from WP-24.
 - vault-access (src/server/vault-access.ts:97-104): an OTTO_vault_allow grant covers turns with the same session_id, resolved through the WP-24 resolver.
 
 **Files.** `src/server/approvals.ts`, `src/server/turn-chain.ts`, `src/server/trust.ts`, `src/server/vault-access.ts`, `src/server/schedules.ts`, `src/server/personal.ts`
@@ -529,9 +537,11 @@ Status on main: partial (a browser per session exists; cap of 2 live browsers; L
 
 **Design.**
 
-- Raise maxLiveSessions in src/providers/container-browser/config.ts:16 and the clamp in src/providers/agent-browser/index.ts:339. The target is 4 (chat plus 3 tasks) for each provider. Measure memory on E2B (2 CPU / 3 GB) before you raise it further.
+- Raise maxLiveSessions in src/providers/container-browser/config.ts:16 and the clamp in src/providers/agent-browser/index.ts:339. The target is 4 (chat plus 3 tasks) for each provider. Measure memory on E2B (2 CPU / 3 GB) before you raise it further. One setting sets the cap; the docs name that setting.
 - Add computer.pin(id)/unpin(id), called by the runtime at turn start and end. reserveBrowser (447-480) skips pinned browsers when evicting. At the cap it waits in an abortable FIFO for a free slot instead of throwing 'The browser sessions are busy'.
-- pause (src/runtime/index.ts:316) holds the session browser when the session has an open page, not only when this turn browsed.
+- The bridge client keeps the pin locally and sends it before the first browse, upload or download of the turn. The server clears all pins when it starts. After a bridge recovery, the client sends the pin again before the open that caused the recovery.
+- bindProfile never closes the browser of a pinned session. A session that needs a profile that a pinned session holds waits in the same abortable queue.
+- pause (src/runtime/index.ts:316) always asks the computer to hold the session browser. The hold does nothing when the session has no started browser. Do not keep an in-memory list of sessions that browsed.
 - After an eviction, re-register redaction secrets for the session, or refuse to reopen without them (closeBrowser clears them, 1752).
 
 **Files.** `src/providers/container-browser/config.ts`, `src/providers/agent-browser/index.ts`, `src/ports/computer.ts`, `src/runtime/index.ts`, `docs/src/content/docs/how-it-works/threads-and-turns.md`
@@ -661,16 +671,18 @@ Status on main: partial (per-turn cost, spending check at open; no session cap; 
 - In claimTurns (src/server/thread.ts:720-744), inside the existing lockThread: skip a queued turn of a task session while 3 other task sessions have a running turn. Show tasks.state 'queued' until the first turn starts. Counting under the lock fixes the race the #253 bot found in the reverted cap. Waiting tasks and schedule or event sessions don't count (D13).
 - triage.ts:93-98 busy check ignores task sessions: AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.id = turns.session_id).
 - Cost per task = SUM(model_usage) over turns WHERE session_id = task.id, exposed in state.tasks.
-- Count subagents against the per-owner browser budget (WP-07).
+- Delegate subagent browsers get their own budget of 2 live browsers and their own abortable queue, beside the 4 session slots (section 5.7). A pinned parent never blocks its own subagents.
+- Task sessions do not get an unanswered count (WP-17).
 - A mid-turn spending check is later work.
 
-**Files.** `src/server/thread.ts`, `src/server/triage.ts`, `src/server/ledger.ts`, `src/server/app.ts`
+**Files.** `src/server/thread.ts`, `src/server/triage.ts`, `src/server/ledger.ts`, `src/server/app.ts`, `src/providers/agent-browser/index.ts`, `src/providers/container-browser/config.ts`, `src/runtime/index.ts`
 
 **Keep.** Turns are never retried automatically. Owner scoping.
 
 **Tests.**
 
 - tests/thread.test.ts: a 4th task stays queued until one finishes. Dispatches from two concurrent chat turns cannot start a 4th. An activity check still queues while a task runs.
+- tests/browser.test.ts: with 4 pinned session browsers, a subagent browser still opens, and a third subagent browser waits for a free subagent slot.
 
 ### WP-13
 
@@ -759,6 +771,7 @@ Status on main: missing.
 **Design.**
 
 - submitUserMessage (src/server/thread.ts:~389-415): after assertReplyTarget and the confirmation check, resolve the task with SELECT t.* FROM tasks t WHERE owner_id=$ AND (t.on_it_message_id = $target OR t.id = (SELECT u.session_id FROM messages m JOIN turns u ON u.id = m.turn_id WHERE m.id = $target)).
+- Use sessionOfMessage from WP-18 for this lookup, and extend chat-verification and messageFields so a code or a mask that targets 'On it' resolves to the task.
 - If a task matches, insert the turn with source 'user', background true, session_id = task.id and the inbound channel. Delivery stays on tasks.channel.
 - A closed task gets state 'open' again, subject to the cap.
 - Routing does not depend on turn status, so the 'reply before waiting' race (bot c) cannot happen: claimTurns keeps the turn queued until the session's running turn ends.
@@ -793,6 +806,7 @@ Status on main: missing.
 - loadTurnContext (src/server/thread.ts:819-834): for task sessions, the history is the source message plus messages whose turn has session_id = task.id, and `unseen` and unanswered() are computed inside the session (src/runtime/prompt.ts:67-87).
 - For the chat: exclude messages of task sessions except on_it and result messages. Add systemContext openTasks [{title, status, onItMessageId}] so the dispatcher knows what is running.
 - Schedule and event sessions keep the chat's completed messages and their own session, but no longer see other background sessions' messages (bot finding h, D13). Step 1 ships this part. The task part ships in step 2 with WP-01.
+- For schedule and event sessions, the unanswered count stays thread-wide and counts only Otto's messages from finished turns (section 5.9). Task sessions do not get an unanswered count. Activity checks do not run the count query.
 
 **Files.** `src/server/thread.ts`, `src/runtime/prompt.ts`
 
@@ -813,10 +827,12 @@ Status on main: missing.
 **Design.**
 
 - waitingTurnSql (src/server/vault.ts:234-238): replace `NOT wn.background AND wn.started_at>=…` with `wn.session_id=${alias}.session_id AND wn.started_at>=…`. The chat is unchanged because its session_id is the thread_id.
-- chat-verification (src/server/chat-verification.ts:177-199) matches the reply target's session to the request turn's session, not the exact turn. The client mask (src/web/pages/chat.tsx:457-466) does the same.
-- The email OTP auto-fill window is measured from the request's created_at (src/server/vault.ts:1784).
+- chat-verification (src/server/chat-verification.ts:177-199) matches the reply target's session to the request turn's session, not the exact turn. The client mask (src/web/pages/chat.tsx:457-466) does the same. VerificationRequest carries sessionId instead of turnId, and every message from /api/state and /api/messages carries its sessionId.
+- One function, sessionOfMessage, gives the session of a reply target: a task's on_it_message_id gives the task ID, and any other message gives the session of its turn. chat-verification, the server's messageFields (so the client mask sees the task ID on 'On it'), WP-06 and WP-16 all use it. The 'On it' part ships with WP-16.
+- payments.ts currentTurnSql uses the same session rule: only a later turn in the same session supersedes a payment request. A chat message never supersedes a background or task payment.
+- The email OTP auto-fill window: with a saved-login selection, it starts at the selection's credential_entered_at. Without one, it is the last 5 minutes, never earlier than the start of the current turn. So a long task can still fill a fresh code, and a code from before the turn or older than 5 minutes is refused. The recheck before entry keeps the same rule.
 
-**Files.** `src/server/vault.ts`, `src/server/chat-verification.ts`, `src/web/pages/chat.tsx`
+**Files.** `src/server/vault.ts`, `src/server/chat-verification.ts`, `src/server/payments.ts`, `src/server/app.ts`, `src/shared/contracts.ts`, `src/web/pages/chat.tsx`
 
 **Keep.** Secure forms bind owner, turn, origin and expiry. Codes are caught before Pi sees them. Private URLs never pass through chat apps.
 
@@ -929,16 +945,17 @@ Status on main: missing.
 
 **Design.**
 
-- use-app-state.ts:45, 127-130: don't abort an in-flight request. Mark it dirty and re-run once after it finishes.
-- Server: throttle tool_start and tool_complete refresh emits for each session (src/server/thread.ts:1046-1049) and send a targeted 'task' SSE event for silent preview changes.
+- use-app-state.ts:45, 127-130: don't abort an in-flight request. Mark it dirty and re-run once after it finishes. Each /api/state request has a 30-second timeout, so one stalled request never stops later updates.
+- Server: throttle tool_start and tool_complete refresh emits for each session (src/server/thread.ts:1046-1049).
+- The targeted 'task' SSE event for silent preview changes ships with WP-14, with its test.
 
-**Files.** `src/web/hooks/use-app-state.ts`, `src/server/thread.ts`, `src/server/app.ts`
+**Files.** `src/web/hooks/use-app-state.ts`, `src/server/thread.ts`
 
 **Keep.** src/web imports only web and shared code.
 
 **Tests.**
 
-- tests/channel-stream-isolation.test.ts: a burst of refresh events still produces a state update. A preview change without a new message does not change the unread count.
+- tests/channel-stream-isolation.test.ts: a burst of refresh events still produces a state update. A request that never settles is followed by a fresh state after the timeout.
 
 ### WP-24
 
@@ -952,7 +969,9 @@ Status on main: missing.
 
 - Delete the regex resolver in src/server/approvals.ts:68-85 and use src/server/turn-chain.ts everywhere.
 - Drop the dead 'control:' prefix (turn-chain.ts:6) and add taskOfTurn(turnId) by session_id.
-- Remove the unused 'injection' VaultActivityReason (src/shared/contracts.ts:111, src/web/components/vault-activity.tsx:25).
+- Remove the unused 'injection' VaultActivityReason (src/shared/contracts.ts:111, src/web/components/vault-activity.tsx:25). PR #252 stopped writing it, but rows up to 90 days old can still hold it. The startup cleanup deletes those rows, because the web view cannot show them. Note this data change in the PR description.
+- The resolver follows links only from resume turns. It checks the source_id link (credentials, credentials-retry, connection) first and the approval execution link second.
+- taskOfTurn moves to WP-03.
 
 **Files.** `src/server/turn-chain.ts`, `src/server/approvals.ts`, `src/server/vault-access.ts`, `src/server/tasks.ts`, `src/shared/contracts.ts`, `src/web/components/vault-activity.tsx`
 
@@ -1186,6 +1205,8 @@ Extend the existing file for each area (AGENTS.md). No tests of copy, wording, C
 | `tests/vault-chat-code.test.ts`                        | WP-11, WP-18                                                                       |
 | `tests/vault.test.ts`                                  | WP-03, WP-18                                                                       |
 
+The test files run in parallel. After step 1, `pnpm test` peaks at about 97 PostgreSQL connections (92 on main). A database with the default limit of 100 can fail with "too many clients". Use a test database with a higher limit, or lower the pool size for each file.
+
 ## 10. Docs to update
 
 Each step updates its own pages in the same change, in the house style of `write-docs.mdx`. Run `pnpm --dir docs build` for every docs change.
@@ -1300,7 +1321,7 @@ The build uses the default until product decides otherwise (D13).
 | Q7  | Who defines the steps? Can the count change?                                             | `start_task` gives 2 to 8 steps. `task_progress` can change them                                          |
 | Q8  | Does a reopened task reuse its session and browser?                                      | Same session and saved Pi session. New browser generation. Saved logins still work                        |
 | Q9  | How long are closed task transcripts and browser profiles kept?                          | 30 days after the task closes. Reset deletes them at once                                                 |
-| Q10 | What is the live browser cap?                                                            | 4 for each provider (chat plus 3 tasks), after a memory measurement on E2B                                |
+| Q10 | What is the live browser cap?                                                            | 4 session browsers for each provider (chat plus 3 tasks), plus 2 for subagents. Measure E2B memory first  |
 | Q11 | Do schedule and event sessions get session-scoped history and saved Pi sessions?         | History: the chat plus their own session, not other background sessions. Saved Pi sessions only for tasks |
 | Q12 | Does the Tasks page keep its tabs?                                                       | Yes: Current, Scheduled, Previous. Current groups Needs you, Working, Waiting and Queued                  |
 | Q13 | Is the progress mode read live? Is a check-in in quiet hours deferred?                   | Read live. Dropped, not deferred                                                                          |
