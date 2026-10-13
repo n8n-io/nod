@@ -504,10 +504,15 @@ export async function resetThread(expectedThreadId: string) {
     return { cancelled, previousThreadId: thread.id, threadId: (await activeThread(client)).id };
   });
   abortTurns(result.cancelled.ids);
-  const browsers = [result.previousThreadId, ...result.cancelled.browsers];
-  for (const id of browsers) heldBrowsers.delete(id);
+  const { browsers } = result.cancelled;
+  for (const id of [result.previousThreadId, ...browsers]) heldBrowsers.delete(id);
   refresh();
-  return { ok: true, threadId: result.threadId, browsers };
+  return {
+    ok: true,
+    threadId: result.threadId,
+    previousThreadId: result.previousThreadId,
+    browsers,
+  };
 }
 
 const onboardingPrompt =
