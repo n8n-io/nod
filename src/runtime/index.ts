@@ -121,8 +121,10 @@ export function createAgentRuntime(dependencies: {
     let streamSubmitted = false;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
-      if (!signal.aborted || (event.type === 'tool_end' && event.status === 'cancelled'))
+      if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
+      try {
         dependencies.observe?.(context.turnId, event);
+      } catch {}
     };
     const children = new Set<AgentSession>();
     const abortSession = () => {

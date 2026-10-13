@@ -81,7 +81,9 @@ flowchart TD
 - **Observations:** the guard reports each call to an optional observer. Only the capability evals and the voice eval script set one; the capability evals redact typed text and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
-App and memory calls run in parallel with each other and with subagents, and so do their trust checks. A call acts only once every app or memory call issued before it in the turn has been checked, and each of those that asks has opened its question or failed. If one of them opened a question, the call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
+`apps` and `manage_personal_context` calls run in parallel with each other and with subagents. The trust check covers app actions and changes to schedules, the profile and notification settings, and those checks run in parallel too. Other `manage_personal_context` operations, such as memory and reads, have no trust check and count as decided as soon as they reach the server.
+
+A call acts only once every `apps` or `manage_personal_context` call issued before it in the turn is decided, and each earlier one that asks has opened its question or failed. If one of them opened a question, the later call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
 
 ## Codemode
 

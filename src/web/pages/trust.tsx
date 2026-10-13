@@ -40,7 +40,7 @@ function money(value: number) {
 }
 
 function Summary({ week }: { week: TrustView['week'] }) {
-  if (!week.things && !week.spentUsd)
+  if (!week.things && !week.actions && !week.spentUsd)
     return <p className="statement-summary">Nothing yet this week.</p>;
   return (
     <p className="statement-summary">

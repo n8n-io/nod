@@ -337,6 +337,14 @@ test(
             const response = await request('POST', '/api/messages', { text });
             assert.equal(response.statusCode, 200, response.body);
             const turn = response.json().turnId as string;
+            if (subagents) {
+              const reached = await Promise.race([
+                partsReady.then(() => true),
+                delay(5000, false, { ref: false }),
+              ]);
+              partsArrived();
+              assert.ok(reached, 'Both synthetic subagents must start before either uses an app.');
+            }
             await waitFor(turn, 'waiting');
             const cards = await approvalsFor(turn);
             assert.deepEqual(
