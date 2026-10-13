@@ -35,7 +35,10 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const orderedTools = new Set(['apps', 'manage_personal_context']);
-const admissions = new AsyncLocalStorage<(asks: boolean) => Promise<void>>();
+const admissions = new AsyncLocalStorage<{
+  asked: boolean;
+  admit(asks: boolean): Promise<void>;
+}>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -200,6 +203,8 @@ export function createAgentRuntime(dependencies: {
       if (!result.requiresConfirmation) return result;
       const text =
         'question' in result && typeof result.question === 'string' ? result.question : undefined;
+      const gate = admissions.getStore();
+      if (gate) gate.asked = true;
       await pause('approval', text, { post: false });
       return confirmationNotice;
     };
@@ -341,14 +346,15 @@ export function createAgentRuntime(dependencies: {
           decide = resolve;
         });
         decided = Promise.all([earlier, own]).then(([before, asks]) => before || asks);
-        return {
-          decide,
+        const gate = {
+          asked: false,
           admit: async (asks: boolean) => {
-            decide(asks);
+            if (!asks) decide(false);
             if (await earlier)
               throw new Error("This turn is waiting for the owner's answer. Ask again after it.");
           },
         };
+        return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
         ottoTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
@@ -362,7 +368,7 @@ export function createAgentRuntime(dependencies: {
               (browserTools.has(name) || handsOverBrowser(name, params))
             )
               await take();
-            const gate = orderedTools.has(name) ? admission() : undefined;
+            const admitted = orderedTools.has(name) ? admission() : undefined;
             const run = () =>
               guard(name, params, async () => {
                 if (!Value.Check(parameters, params))
@@ -373,7 +379,7 @@ export function createAgentRuntime(dependencies: {
                   });
                 return execute(params);
               });
-            return gate ? admissions.run(gate.admit, run).finally(() => gate.decide(false)) : run();
+            return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
           },
         }));
       const system = systemPrompt(workspace, dependencies.skills);
@@ -381,9 +387,9 @@ export function createAgentRuntime(dependencies: {
         context: {
           ...context,
           integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
-            context.integration(action, args, callSignal, admissions.getStore()),
+            context.integration(action, args, callSignal, admissions.getStore()?.admit),
           manage: (action: string, args: Record<string, unknown>) =>
-            context.manage(action, args, admissions.getStore()),
+            context.manage(action, args, admissions.getStore()?.admit),
         },
         computer: browser,
         reply,
