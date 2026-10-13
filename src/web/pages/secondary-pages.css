@@ -170,10 +170,6 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
-.saved-plan-note a {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 .saved-plan-footer {
   display: flex;
   flex-wrap: wrap;

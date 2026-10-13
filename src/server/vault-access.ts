@@ -227,7 +227,7 @@ export async function createVaultAccess(
     return {
       allowed: true,
       website: exact,
-      message: `Access to ${host(exact)} is approved. No credential entry or saved-session use has run.`,
+      message: `Access to ${host(exact)} is approved. No credential entry or saved-session use has run. Take a fresh snapshot and call the tool again.`,
     };
   }
 

@@ -136,7 +136,6 @@ test(
       computer: fakeComputer(),
       objectStore: createFilesystemObjectStore(objects),
       workspace: fakeWorkspace({
-        status: () => '',
         open: () => {
           throw new Error('No workspace in fixture');
         },
@@ -158,9 +157,6 @@ test(
         webhooksConfigured: false,
         supportsSubscriptions: [],
         createSession: async () => {
-          throw new Error('No integration');
-        },
-        restoreSession: async () => {
           throw new Error('No integration');
         },
         deleteSession: async () => {},
@@ -308,21 +304,12 @@ test(
           turns[1].id,
         ])
       ).rows[0];
-      for (const [action, args] of [
-        ['profile_learn', { field: 'location', value: 'Lisbon', quote: 'I live in Lisbon' }],
-        ['memory_learn', { area: 'about', quote: 'I live in Lisbon' }],
-      ] as const) {
-        await application.personal.manage(action, args, {
-          sourceMessageId: source.id,
-          turnId: turns[1].id,
-        });
-        await application.channels!.drain();
-      }
-      assert.equal(
-        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [source.owner_id])).rows[0]
-          .data.location,
-        'Lisbon',
+      await application.personal.manage(
+        'memory_learn',
+        { area: 'about', quote: 'I live in Lisbon' },
+        { sourceMessageId: source.id, turnId: turns[1].id },
       );
+      await application.channels!.drain();
       const remembered = JSON.parse(await readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8'));
       assert.equal(remembered.entries.length, 1);
       assert.equal(remembered.entries[0].text, 'I live in Lisbon');
@@ -357,26 +344,22 @@ test(
       const approvalId = randomUUID();
       await pool.query(
         `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,confirmation_message_id)
-         VALUES($1,$2,$3,$4,'OTTO_profile_update',$5,$6)`,
+         VALUES($1,$2,$3,$4,'OTTO_notification_preferences_update',$5,$6)`,
         [
           approvalId,
           source.owner_id,
           first.thread_id,
           turns[1].id,
-          { preferences: 'Channel fixture' },
+          { notificationRule: 'Channel fixture' },
           questionId,
         ],
       );
       await application.channels!.drain();
       assert.equal((await send(10, 'sure, go ahead')).statusCode, 200);
       await application.channels!.drain();
-      const confirmed = (
-        await pool.query('SELECT status,confirmation_reply_id FROM approvals WHERE id=$1', [
-          approvalId,
-        ])
-      ).rows[0];
+      const confirmed = (await pool.query('SELECT status FROM approvals WHERE id=$1', [approvalId]))
+        .rows[0];
       assert.ok(['confirmed', 'executing', 'completed'].includes(confirmed.status));
-      assert.ok(confirmed.confirmation_reply_id);
       assert.deepEqual(replies, [{ reply: 'sure, go ahead' }]);
       assert.equal((await send(11, 'sure, go ahead')).statusCode, 200);
       await application.channels!.drain();

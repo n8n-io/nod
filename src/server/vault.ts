@@ -29,9 +29,8 @@ import {
 } from './email-code.ts';
 import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
-import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf, turnChainSql } from './turn-chain.ts';
+import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 const passwordInput = z
   .object({
@@ -130,7 +129,6 @@ export type VaultUse = {
 };
 type VaultOptions = {
   refresh?(): void;
-  admission?: WorkAdmission;
   onUse?(use: VaultUse, client: PoolClient): Promise<void>;
   onOwnerUse?(
     entry: {
@@ -143,7 +141,7 @@ type VaultOptions = {
     client?: PoolClient,
   ): Promise<void>;
   securityCodes?: boolean;
-  resume(turnId: string): Promise<void>;
+  resume(turnId: string, client: PoolClient): Promise<void>;
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
   keyStore: CredentialKeyStore;
@@ -235,7 +233,7 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
 export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
   return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
     AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
-    AND NOT EXISTS(SELECT 1 FROM turns wn WHERE wn.thread_id=${alias}.thread_id AND wn.id<>${alias}.id AND NOT wn.background AND wn.started_at>=${alias}.started_at)`;
+    AND NOT ${supersededSql(alias, `newer.started_at>=${alias}.started_at`)}`;
 }
 
 const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
@@ -506,9 +504,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       thread_id uuid NOT NULL REFERENCES threads(id), turn_id uuid NOT NULL REFERENCES turns(id), root_turn_id uuid NOT NULL REFERENCES turns(id),
       origin text NOT NULL, label text NOT NULL, kind text NOT NULL, status text NOT NULL DEFAULT 'pending',
       selectors jsonb NOT NULL, inspection jsonb NOT NULL, expires_at timestamptz NOT NULL,
-      resume_pending boolean NOT NULL DEFAULT false, failed_at timestamptz
+      failed_at timestamptz
     );
     ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS browser_id text;
+    ALTER TABLE credential_requests DROP COLUMN IF EXISTS resume_pending;
     CREATE TABLE IF NOT EXISTS credential_account_selections (
       id text NOT NULL, root_turn_id uuid NOT NULL REFERENCES turns(id), owner_id text NOT NULL, origin text NOT NULL,
       entry_id text, ciphertext text NOT NULL, blocked boolean NOT NULL DEFAULT false, expires_at timestamptz NOT NULL,
@@ -517,14 +516,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     );
     CREATE INDEX IF NOT EXISTS credential_requests_turn ON credential_requests(turn_id);
     ALTER TABLE credential_account_selections ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'identifier';
-    CREATE INDEX IF NOT EXISTS credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
+    DROP INDEX IF EXISTS credential_requests_root_turn;
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
   `);
   const uses = await createVaultUses(pool, owner);
   await pool.query(
     `
-    INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,status)
-      SELECT id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,
+    INSERT INTO vault_uses(id,owner_id,root_turn_id,origin,kind,status)
+      SELECT id,owner_id,root_turn_id,origin,kind,
         CASE WHEN status='filled' THEN 'submitted' ELSE 'uncertain' END
       FROM credential_requests WHERE owner_id=$1 AND status IN ('filled','entering','uncertain') ON CONFLICT DO NOTHING`,
     [owner],
@@ -555,42 +554,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       });
     return keyPromise;
   };
-  let closed = false;
-  let resuming: Promise<void> | undefined;
-  function resumePending() {
-    if (closed) return Promise.resolve();
-    resuming ??= Promise.resolve()
-      .then(async () => {
-        if (closed) return;
-        await pool.query(`UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
-        WHERE login_label<>'' AND expires_at<=now()`);
-        await pool.query(`UPDATE credential_requests r SET resume_pending=false WHERE r.resume_pending=true
-        AND NOT EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id AND ${waitingTurnSql('u', 'credentials')})`);
-        const { rows } =
-          await pool.query<RequestRow>(`SELECT r.* FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-        WHERE r.resume_pending=true AND ${waitingTurnSql('u', 'credentials')}`);
-        for (const row of rows) {
-          if (closed) break;
-          try {
-            await options.resume(row.turn_id);
-            await pool.query(
-              'UPDATE credential_requests SET resume_pending = false WHERE id = $1',
-              [row.id],
-            );
-          } catch {}
-        }
-      })
-      .finally(() => {
-        resuming = undefined;
-      });
-    return resuming;
-  }
-  const timer = setInterval(() => {
-    void (options.admission ? options.admission.run(resumePending) : resumePending())?.catch(
-      () => {},
+  const forgetExpiredHolds = () =>
+    pool.query(
+      `UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
+       WHERE owner_id=$1 AND login_label<>'' AND expires_at<=now()`,
+      [owner],
     );
-  }, 5000);
-  timer.unref();
+  await forgetExpiredHolds();
 
   async function list(ownerId = owner) {
     const { rows } = await pool.query<EntryRow>(
@@ -1177,6 +1147,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const token = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(token).digest('hex');
     const expiresAt = Date.now() + 10 * 60_000;
+    await forgetExpiredHolds();
     await options.hold?.(browserOf(turn), expiresAt);
     await transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -1320,8 +1291,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const use = {
       id: request?.id,
       ownerId,
-      threadId: turn.threadId,
-      turnId: turn.turnId,
       rootTurnId: root,
       origin: input.origin,
       kind: input.kind,
@@ -1517,6 +1486,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         return true;
       },
       complete: async (client) => {
+        if (request)
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+            `thread:${owner}`,
+          ]);
         if (input.kind !== 'otp') {
           if (
             (source.kind === 'form' && (input.kind === 'password' || !heldPassword)) ||
@@ -1556,9 +1529,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             ]);
         }
         if (request) {
-          await client.query('UPDATE credential_requests SET resume_pending=true WHERE id=$1', [
-            request.id,
-          ]);
           await options.onUse?.(
             {
               ...turn,
@@ -1568,10 +1538,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             },
             client,
           );
+          if (
+            (
+              await client.query(
+                `SELECT 1 FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND ${waitingTurnSql('u', 'credentials')}`,
+                [request.turn_id, ownerId],
+              )
+            ).rowCount
+          )
+            await options.resume(request.turn_id, client);
         }
       },
     });
-    if (request) await resumePending();
     return result === true;
   }
 
@@ -1788,36 +1766,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
-  const icons = new Map<string, { expiresAt: number; icon: Promise<SiteIcon | null> }>();
   function siteIcon(origin: string) {
-    const fetchIcon = options.icon;
-    if (!fetchIcon || loopbackHost(new URL(origin).hostname)) return null;
-    const cached = icons.get(origin);
-    if (cached && cached.expiresAt > Date.now()) return cached.icon;
-    icons.delete(origin);
-    const entry = {
-      expiresAt: Date.now() + 86_400_000,
-      icon: fetchIcon(origin)
-        .catch(() => null)
-        .then((icon) => {
-          if (!icon || icon.bytes.byteLength > 128 * 1024) {
-            entry.expiresAt = Date.now() + 600_000;
-            return null;
-          }
-          return icon;
-        }),
-    };
-    icons.set(origin, entry);
-    while (icons.size > 128) icons.delete(icons.keys().next().value!);
-    return entry.icon;
+    if (!options.icon || loopbackHost(new URL(origin).hostname)) return null;
+    return options.icon(origin);
   }
 
   function registerRoutes(app: FastifyInstance) {
-    app.addHook('onClose', async () => {
-      closed = true;
-      clearInterval(timer);
-      await resuming;
-    });
     app.register(async (scope) => {
       scope.addHook('onSend', async (_request, reply, payload) => {
         reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
@@ -2011,7 +1965,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     fillSelected,
     fillEmailCode,
     submitChatCode,
-    resumePending,
     paymentCards,
     paymentCard,
     setDoItForMe,

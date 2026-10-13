@@ -36,7 +36,6 @@ export interface IntegrationSession {
     args: Record<string, unknown>,
     accountId?: string,
     signal?: AbortSignal,
-    options?: { files?: boolean },
   ): Promise<unknown>;
   upload?(
     action: string,
@@ -53,18 +52,6 @@ export interface IntegrationEvent {
   trigger: string;
   data: Record<string, unknown>;
 }
-export interface IntegrationInboxPoll {
-  cursor: string;
-  hasMore: boolean;
-  messages: Array<{
-    id: string;
-    threadId: string;
-    subject: string;
-    sender: string;
-    receivedAt: string;
-  }>;
-}
-export class IntegrationInboxCursorExpired extends Error {}
 export class IntegrationCatalogAccessDenied extends Error {
   constructor() {
     super('App discovery requires Toolkit read access on the Composio project key.');
@@ -119,7 +106,6 @@ export interface IntegrationProvider {
     accounts: Partial<Record<IntegrationService, string | string[]>>,
     signal?: AbortSignal,
   ): Promise<IntegrationSession>;
-  restoreSession(id: string, signal?: AbortSignal): Promise<IntegrationSession>;
   deleteSession(id: string): Promise<void>;
   reconnectAccount?(
     ownerId: string,
@@ -146,11 +132,6 @@ export interface IntegrationProvider {
   ): Promise<VerificationEmail[] | undefined>;
   sentEmails?(accountId: string, signal: AbortSignal): Promise<SentEmail[]>;
   inboxSnippets?(accountId: string, signal: AbortSignal): Promise<InboxSnippet[]>;
-  pollInbox?(
-    accountId: string,
-    cursor: string | null,
-    signal: AbortSignal,
-  ): Promise<IntegrationInboxPoll>;
   parseCallback(query: unknown):
     | Promise<{ state: string; accountId: string; success: boolean }>
     | {

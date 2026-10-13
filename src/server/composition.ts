@@ -2,9 +2,8 @@ import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
 import { z } from 'zod';
-import { appConfirmation, type Agent } from '../ports/agent.ts';
+import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/agent.ts';
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
@@ -26,7 +25,6 @@ import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
-import { createDirectProvider } from '../providers/direct/integrations.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
@@ -118,7 +116,6 @@ import {
   startThreadWorkers,
   stopThreadWorkers,
   withTurnLock,
-  type ThreadDependencies,
   type TurnRef,
 } from './thread.ts';
 import { browserOf } from './turn-chain.ts';
@@ -129,13 +126,12 @@ import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
-import { createLinkPreviews } from './link-previews.ts';
+import { cachedIcons, createLinkPreviews } from './link-previews.ts';
 
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
-  observe?: ThreadDependencies['observe'];
-  inspectPrompt?: ThreadDependencies['inspectPrompt'];
+  observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   prepareComputer?(): Promise<void>;
@@ -148,12 +144,6 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
-  directIntegrations?: (
-    pool: pg.Pool,
-    keyStore: CredentialKeyStore,
-    grantVault: Awaited<ReturnType<typeof createAppGrantVault>>,
-    ownerId: string,
-  ) => IntegrationProvider;
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
@@ -224,7 +214,6 @@ export function createDefaultAdapters(
     googlesheets: env.COMPOSIO_SHEETS_AUTH_CONFIG_ID,
     googledocs: env.COMPOSIO_DOCS_AUTH_CONFIG_ID,
     slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
-    notion: env.COMPOSIO_NOTION_AUTH_CONFIG_ID,
   };
   const integrations = createComposioProvider({
     apiKey: env.COMPOSIO_API_KEY,
@@ -351,16 +340,6 @@ export function createDefaultAdapters(
     }),
     integrations,
     ...(integrationKey ? { integrationKey } : {}),
-    ...(['local', 'tenant'].includes(runtimeMode)
-      ? {
-          directIntegrations: (
-            pool: pg.Pool,
-            keyStore: CredentialKeyStore,
-            grantVault: Awaited<ReturnType<typeof createAppGrantVault>>,
-            ownerId: string,
-          ) => createDirectProvider({ pool, keyStore, grantVault, ownerId }),
-        }
-      : {}),
     keyStore,
     memoryCurator: modelCurator,
     onboardingCurator: selectedCurator,
@@ -463,6 +442,7 @@ async function initializeApplication(
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
+    observe: adapters.observe,
   });
   const speech = createSpeech(adapters.speech);
   let memoryStore = adapters.objectStore;
@@ -472,7 +452,7 @@ async function initializeApplication(
     await importMemoryFile(objects, join(dataRoot, 'objects', 'memory'));
     memoryStore = objects;
   }
-  const memory = createMemoryService({ pool, ownerId, store: memoryStore, curator });
+  const memory = createMemoryService({ pool, ownerId, store: memoryStore });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
     analytics: captureAnalytics,
@@ -498,7 +478,6 @@ async function initializeApplication(
     baseUrl: publicOrigin,
     grantVault,
     transport: createDiscoveredTransport(),
-    accountReplaced: triage.invalidateActivityCheck,
     oauth: createDiscoveredOAuth(),
     runCli: workspace.connectedCliAvailable
       ? async (threadId, cli, args, envName, token, timeoutSeconds, signal) => {
@@ -519,7 +498,7 @@ async function initializeApplication(
   let payments!: Awaited<ReturnType<typeof createPayments>>;
   let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
   const icon = adapters.linkPreviews?.icon
-    ? (origin: string) => adapters.linkPreviews!.icon!(origin)
+    ? cachedIcons((origin) => adapters.linkPreviews!.icon!(origin))
     : undefined;
   const integrations = await createIntegrations(pool, {
     admission,
@@ -527,16 +506,8 @@ async function initializeApplication(
     provider: adapters.integrations,
     readWorkspaceFile: (turn, path, maxBytes) =>
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
-    validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
-    ...(adapters.directIntegrations
-      ? {
-          additionalProviders: [
-            adapters.directIntegrations(pool, adapters.keyStore, grantVault, ownerId),
-          ],
-        }
-      : {}),
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
@@ -547,7 +518,6 @@ async function initializeApplication(
     icon,
   });
   vault = await createVault(pool, {
-    admission,
     refresh,
     keyStore: adapters.keyStore,
     resume: resumeAfterCredentials,
@@ -597,7 +567,7 @@ async function initializeApplication(
                     threadId: provenance.threadId,
                     turnId: provenance.turnId,
                   });
-                  await ledger.action(provenance.turnId, action, args);
+                  await ledger.action(provenance.turnId, action);
                   return (
                     await saveIntegrationFiles(result, async (file) => {
                       const name = `${randomUUID()}-${basename(file.name)}`;
@@ -613,7 +583,6 @@ async function initializeApplication(
         await personal.validateReview(action.slice('OTTO_'.length), args);
       else await integrations.prepare(ownerId, action, args);
     },
-    async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
     (reply) => trust.answer(reply),
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
@@ -669,7 +638,6 @@ async function initializeApplication(
     if (access.ok) return { reason: access.reason };
     if ('message' in access) throw new Error(access.message);
     const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
-      confirm: true,
       question: access.question,
     });
     if (result && typeof result === 'object' && 'requiresConfirmation' in result)
@@ -719,11 +687,8 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
-      observe: adapters.observe,
-      inspectPrompt: adapters.inspectPrompt,
       accountProfile,
       connectedApps: integrations.connectedApps,
-      activityCheck: triage.activityCheck,
       memoryContext: memory.context,
       task: async (turn, input) => {
         const result = await withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input));
@@ -749,10 +714,9 @@ async function initializeApplication(
         return result;
       },
       speech,
-      manage: async (turn, action, args, provenance) => {
+      manage: async (turn, action, args, { admit, ...provenance }) => {
         if (
           [
-            'profile_update',
             'notification_preferences_update',
             'schedule_create',
             'schedule_update',
@@ -764,22 +728,15 @@ async function initializeApplication(
             const schedule = await personal.getSchedule(String(input.id));
             if (!schedule.enabled) return schedule;
           }
-          return approvals.request(turn, `OTTO_${action}`, input, provenance);
+          const verdict = await trust.check(turn, `OTTO_${action}`, input);
+          return approvals.request(turn, `OTTO_${action}`, input, {
+            ...provenance,
+            allowed: !verdict.confirm,
+            admit,
+          });
         }
-        if (action === 'memory_save') {
-          const input = memory.validate(args);
-          if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
-            return { status: 'skipped', reason: 'unsupported_memory' };
-        }
-        if (
-          [
-            'memory_save',
-            'memory_forget',
-            'memory_learn',
-            'memory_control',
-            'profile_learn',
-          ].includes(action)
-        ) {
+        await admit?.(false);
+        if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
           return withTurnLock(turn.turnId, () =>
             personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
           );
@@ -790,10 +747,7 @@ async function initializeApplication(
       paymentSetting: async (turn, input) => {
         const { args, question } = await payments.requestSetting(turn, input);
         if (!args.doItForMe) return payments.setting(turn, args, true);
-        const result = await approvals.request(turn, 'OTTO_payment_setting', args, {
-          confirm: true,
-          question,
-        });
+        const result = await approvals.request(turn, 'OTTO_payment_setting', args, { question });
         if (result && typeof result === 'object' && 'requiresConfirmation' in result)
           return { [appConfirmation]: String(result.question) };
         return String(result);
@@ -806,7 +760,7 @@ async function initializeApplication(
           turn,
           'OTTO_payment_approve',
           { paymentId: result.paymentId },
-          { confirm: true, question: result.question },
+          { question: result.question },
         );
         if (
           confirmation &&
@@ -875,6 +829,7 @@ async function initializeApplication(
           action === 'SEARCH_TOOLS'
             ? ({ confirm: false } as const)
             : await trust.check(turn, action, args);
+        await options.admit?.(verdict.confirm);
         if (hasWorkspaceFiles(args))
           args = await withTurnLock(turn.turnId, () =>
             integrations.prepare(ownerId, action, args, turn, options.signal),
@@ -886,7 +841,6 @@ async function initializeApplication(
           );
           const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
           const result = await approvals.request(turn, action, prepared, {
-            confirm: true,
             question: appActionConfirmation(
               action,
               prepared,
@@ -905,15 +859,8 @@ async function initializeApplication(
             ? { [appConfirmation]: result.question }
             : result;
         }
-        const result = await integrations.execute(
-          ownerId,
-          action,
-          args,
-          turn,
-          options?.signal,
-          options?.checkConnectionId,
-        );
-        await ledger.action(turn.turnId, action, args);
+        const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
+        if (action !== 'SEARCH_TOOLS') await ledger.action(turn.turnId, action);
         return result;
       },
     });
@@ -932,7 +879,6 @@ async function initializeApplication(
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
     computer,
-    runtime,
     configuration: () =>
       configuration({
         provider: adapters.model.provider,
@@ -1150,6 +1096,7 @@ async function initializeApplication(
     app,
     runtime,
     personal,
+    memory,
     triage,
     integrations,
     vault,

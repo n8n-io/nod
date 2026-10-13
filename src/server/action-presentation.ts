@@ -1,11 +1,9 @@
-import { actionPayload, sentPath } from '../shared/action-effect.ts';
 import type { TrustReason } from './trust.ts';
 
 const labels: Record<string, string> = {
   OTTO_schedule_create: 'Add this schedule',
   OTTO_schedule_update: 'Update this schedule',
   OTTO_schedule_cancel: 'Pause this schedule',
-  OTTO_profile_update: 'Save these preferences',
   OTTO_notification_preferences_update: 'Save these notification preferences',
 };
 
@@ -72,6 +70,19 @@ function leaves(value: unknown, path: string, found: Array<[string, string]>) {
     for (const [key, item] of Object.entries(value))
       leaves(item, path ? `${path} › ${label(key)}` : label(key), found);
   return found;
+}
+
+function actionPayload(action: string, args: Record<string, unknown>) {
+  if (action === 'CONNECTED_HTTP')
+    return String(args.method ?? 'GET').toUpperCase() === 'GET' ? undefined : args.body;
+  if (action === 'CONNECTED_MCP_CALL') return args.input;
+  if (action === 'CONNECTED_CLI') return undefined;
+  return args;
+}
+
+function sentPath(path: string) {
+  const url = new URL(`./${path.replace(/^\/+/, '')}`, 'http://request.invalid/');
+  return `${url.pathname}${url.search}`;
 }
 
 function argument(value: string) {
@@ -176,12 +187,8 @@ export function actionConfirmation(
   add('For', text(targetTitle));
   for (const [key, label] of [
     ['title', 'Title'],
-    ['name', 'Name'],
     ['nextAction', 'Next step'],
     ['description', 'Description'],
-    ['preferences', 'Preferences'],
-    ['location', 'Location'],
-    ['phone', 'Phone'],
     ['notificationRule', 'Notify me'],
     ['quietStart', 'Quiet hours start'],
     ['quietEnd', 'Quiet hours end'],
@@ -230,6 +237,6 @@ export function actionConfirmation(
               : `Custom timing (${plain(args.cron)})`,
     );
   }
-  for (const key of ['text', 'prompt']) add('Instructions', text(args[key]));
+  add('Instructions', text(args.prompt));
   return `${label}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm, no to leave it unchanged, or tell me what to change.`;
 }

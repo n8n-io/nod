@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { LinkPreviewProvider, PreviewImage } from '../ports/link-preview.ts';
+import type { LinkPreviewProvider, PreviewImage, SiteIcon } from '../ports/link-preview.ts';
 import { previewableUrl, type LinkPreview } from '../shared/link-preview.ts';
 
 type CachedPreview = { expiresAt: number; preview: LinkPreview | null; imageId?: string };
@@ -149,4 +149,32 @@ export function createLinkPreviews(
     });
   }
   return { preview, image, registerRoutes };
+}
+
+export function cachedIcons(fetchIcon: (origin: string) => Promise<SiteIcon | null>) {
+  const icons = new Map<string, { expiresAt: number; value: Promise<SiteIcon | null> }>();
+  return (origin: string) => {
+    const cached = icons.get(origin);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    icons.delete(origin);
+    const entry = {
+      expiresAt: Date.now() + 86_400_000,
+      value: fetchIcon(origin)
+        .catch(() => null)
+        .then((value) => {
+          if (
+            !value ||
+            value.bytes.byteLength > 128 * 1024 ||
+            !['image/png', 'image/jpeg', 'image/webp', 'image/x-icon'].includes(value.mimeType)
+          ) {
+            entry.expiresAt = Date.now() + 600_000;
+            return null;
+          }
+          return value;
+        }),
+    };
+    icons.set(origin, entry);
+    while (icons.size > 128) icons.delete(icons.keys().next().value!);
+    return entry.value;
+  };
 }

@@ -4,7 +4,6 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { Agent } from '../ports/agent.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
-import { actionEffect } from '../shared/action-effect.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -31,9 +30,9 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
       source: 'resume',
       title: id.startsWith('confirmation:') ? 'Ran an action you approved' : 'Continued a task',
     };
-  const source: TrustSource = row.read_only ? 'check' : 'event';
-  if (id.startsWith('activity-check:')) return { source, title: 'Checked a connected app' };
-  return { source, title: 'Woke for an email or app event' };
+  if (id.startsWith('activity-check:'))
+    return { source: 'check', title: 'Checked a connected app' };
+  return { source: 'event', title: 'Woke for an email or app event' };
 }
 
 export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
@@ -42,15 +41,17 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     await pool.query(`DROP TABLE IF EXISTS provider_usage;
     CREATE TABLE IF NOT EXISTS model_usage (
       id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
-      model text, cost_usd double precision, created_at timestamptz NOT NULL DEFAULT now()
+      cost_usd double precision, created_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE model_usage DROP COLUMN IF EXISTS model;
     CREATE INDEX IF NOT EXISTS model_usage_owner_time ON model_usage(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS model_usage_turn ON model_usage(turn_id);
     CREATE TABLE IF NOT EXISTS app_actions (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL,
       turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
-      action text NOT NULL, effect text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+      action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE app_actions DROP COLUMN IF EXISTS effect;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
@@ -65,8 +66,8 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
-  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd,created_at)
-    SELECT $1,$2,$3,$4,$5,$6::timestamptz WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,created_at)
+    SELECT $1,$2,$3,$4,$5::timestamptz WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
     ON CONFLICT(id) DO NOTHING`;
   const pendingUsage = new Map<string, { values: unknown[]; pending: Promise<void> }>();
   async function flushUsage() {
@@ -77,16 +78,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     }
   }
 
-  function usage(id: string, turnId: string | null, model: string | undefined, costUsd: unknown) {
+  function usage(id: string, turnId: string | null, costUsd: unknown) {
     const attributedTurn = turnId ?? activeTurn.getStore() ?? null;
-    const values = [
-      id,
-      ownerId,
-      attributedTurn,
-      model?.slice(0, 200) ?? null,
-      cost(costUsd as number),
-      new Date().toISOString(),
-    ];
+    const values = [id, ownerId, attributedTurn, cost(costUsd as number), new Date().toISOString()];
     const pending = pool.query(usageSql, values).then(
       () => {
         pendingUsage.delete(id);
@@ -104,15 +98,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         const opened = await base.open({
           ...session,
           onEvent(event) {
-            if (event.type === 'model_usage')
-              usage(event.id, session.turnId, event.model, event.costUsd);
+            if (event.type === 'model_usage') usage(event.id, session.turnId, event.costUsd);
             if (event.type !== 'provider_usage') return session.onEvent(event);
-            usage(
-              event.usage.id ?? crypto.randomUUID(),
-              session.turnId,
-              event.usage.model,
-              event.usage.costUsd,
-            );
+            usage(event.usage.id ?? crypto.randomUUID(), session.turnId, event.usage.costUsd);
           },
         });
         return {
@@ -139,7 +127,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {
           return await base.curate(request, signal, (value) => {
-            usage(crypto.randomUUID(), null, value.model, value.costUsd);
+            usage(crypto.randomUUID(), null, value.costUsd);
             report?.(value);
           });
         } finally {
@@ -149,13 +137,11 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     };
   }
 
-  function action(turnId: string, name: string, args: Record<string, unknown>) {
-    const effect = actionEffect(name, args);
-    if (effect === 'read') return Promise.resolve();
+  function action(turnId: string, name: string) {
     return save(
-      `INSERT INTO app_actions(owner_id,turn_id,action,effect)
-       SELECT $1,id,$3,$4 FROM turns WHERE id=$2 AND owner_id=$1`,
-      [ownerId, turnId, name.slice(0, 200), effect],
+      `INSERT INTO app_actions(owner_id,turn_id,action)
+       SELECT $1,id,$3 FROM turns WHERE id=$2 AND owner_id=$1`,
+      [ownerId, turnId, name.slice(0, 200)],
     );
   }
 
@@ -195,7 +181,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
 
   async function entries(before?: { at: string; id: string }) {
     const { rows } = await pool.query(
-      `SELECT u.id,u.source,u.source_id,u.read_only,u.channel,u.status,u.error,u.created_at,
+      `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
          left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.unpriced,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
          (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions
@@ -233,8 +219,8 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         `SELECT
            (SELECT count(*) FROM turn_events e JOIN turns u ON u.id=e.turn_id
              WHERE u.owner_id=$1 AND e.type='tool_complete' AND e.created_at>now()-interval '7 days')::int AS things,
-           (SELECT count(*) FROM app_actions WHERE owner_id=$1 AND effect='outbound'
-             AND created_at>now()-interval '7 days')::int AS reached,
+           (SELECT count(*) FROM app_actions WHERE owner_id=$1
+             AND created_at>now()-interval '7 days')::int AS actions,
            (SELECT COALESCE(sum(cost_usd),0) FROM model_usage WHERE owner_id=$1
              AND created_at>now()-interval '7 days')::float8 AS week,
            EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND cost_usd IS NULL
@@ -258,7 +244,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     for (const { day, cost } of daily.rows) if (day <= days.length) days[day - 1] = cost ?? 0;
     const spent = days.reduce((sum, value) => sum + value, 0);
     return {
-      week: { things: row.things, reached: row.reached, spentUsd: row.week },
+      week: { things: row.things, actions: row.actions, spentUsd: row.week },
       month: {
         start: row.start.toISOString(),
         days: row.days,

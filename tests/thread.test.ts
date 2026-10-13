@@ -30,7 +30,6 @@ import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
-import { areaEntries, digest } from '../src/server/memory-tree.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
@@ -220,17 +219,7 @@ test(
     });
     let quietBackgroundWork = false;
     let currentApps: ConnectedApp[] = [];
-    let inventoryGate: Promise<void> | undefined;
-    let inventoryWaiting = false;
-    const readConnectedApps = async () => {
-      if (inventoryGate) {
-        inventoryWaiting = true;
-        await inventoryGate;
-      }
-      return structuredClone(currentApps);
-    };
-    let activityLookup: ThreadDependencies['activityCheck'];
-    let activityRun: ((context: RuntimeContext) => Promise<void>) | undefined;
+    const readConnectedApps = async () => structuredClone(currentApps);
 
     const runs: RuntimeContext[] = [];
     const sessionGates = new Map<string, Promise<void>>();
@@ -267,7 +256,6 @@ test(
     const dependencies: ThreadDependencies = {
       analytics: captureAnalytics,
       connectedApps: readConnectedApps,
-      activityCheck: async (turn) => activityLookup?.(turn),
       spendingLimitReached: async () => limitReached,
       speech: {
         synthesize: async () => {
@@ -353,10 +341,6 @@ test(
           await context.reply('The synthetic research summary is ready.');
           await context.waitForUser!('Connect the synthetic source to finish the research.');
           return { status: 'waiting_user' };
-        }
-        if (context.activityCheck) {
-          await activityRun?.(context);
-          return { status: 'succeeded' };
         }
         if (quietBackgroundWork && context.background) return quietRuntime.runTurn(context);
         if (context.prompt === 'remote-attachment-fixture') {
@@ -608,8 +592,6 @@ test(
             {
               id,
               ownerId: 'local-development',
-              threadId,
-              turnId: source,
               origin: 'https://shop.fixture.test',
               kind: 'card',
             },
@@ -1649,7 +1631,9 @@ test(
         assert.equal(context.signal.aborted, true);
         await assert.rejects(context.reply('late-reply-fixture'));
         await assert.rejects(context.emit('late-event-fixture', 'must not persist'));
-        await assert.rejects(context.manage('profile_update', { name: 'Injected' }));
+        await assert.rejects(
+          context.manage('notification_preferences_update', { notificationRule: 'Injected' }),
+        );
         const reads = integrationReads.length;
         await assert.rejects(context.integration('GMAIL_FETCH_EMAILS', {}));
         assert.equal(integrationReads.length, reads);
@@ -1960,12 +1944,6 @@ test(
               old.turnId,
             ])
           ).rows[0].id as string;
-          await personal.manage('profile_update', {
-            name: 'Fixture name',
-            location: 'Lisbon',
-            phone: '',
-            preferences: 'Concise',
-          });
           await db.pool.query(
             "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,$2,'Saved task','Fixture done','Fixture step')",
             [randomUUID(), ownerId],
@@ -2154,10 +2132,6 @@ test(
           assert.equal((await request('GET', '/api/schedules')).json().length, 1);
           assert.equal((await request('GET', '/api/vault')).json().length, 1);
           assert.equal(
-            ((await personal.manage('profile_get', {})) as { name: string }).name,
-            'Fixture name',
-          );
-          assert.equal(
             (await db.pool.query('SELECT account_id FROM app_connections')).rows[0].account_id,
             'saved-fixture-account',
           );
@@ -2174,7 +2148,6 @@ test(
           assert.equal(current.workspacePath, join(root, 'workspaces', freshThread));
           assert.notEqual(current.workspacePath, heldContext.workspacePath);
           assert.deepEqual(current.history, []);
-          assert.equal(current.personalContext?.profile.name, 'Fixture name');
           assert.equal(
             deltas.find((event) => event.turnId === held.turnId)?.threadId,
             firstThreadId,
@@ -2313,54 +2286,44 @@ test(
           const original = await preferences.get();
           const triage = createTriage({ connectedApps: readConnectedApps });
           const ids = Array.from({ length: 3 }, () => randomUUID());
+          const eventTurns = async (eventIds: string[]) =>
+            (
+              await db.pool.query(
+                'SELECT id,background,source,thread_id,session_id FROM turns WHERE owner_id=$1 AND source_id=ANY($2::text[])',
+                [ownerId, eventIds.map((id) => `notification:${id}`)],
+              )
+            ).rows;
           try {
             quietBackgroundWork = true;
             await preferences.update({ quietHoursEnabled: false });
-            const emptyReads = integrationReads.length;
-            await triage.heartbeat();
-            assert.equal(integrationReads.length, emptyReads);
-            assert.equal((await db.pool.query('SELECT id FROM notifications')).rowCount, 0);
             const revokedEvent = randomUUID();
-            await triage.triageEvent(
-              'Synthetic event disconnected during triage',
-              revokedEvent,
-              'inspect_message',
-              async () => false,
-            );
             assert.equal(
-              (
-                await db.pool.query('SELECT id FROM notifications WHERE event_id=$1', [
-                  revokedEvent,
-                ])
-              ).rowCount,
-              0,
+              await triage.triageEvent(
+                'Synthetic event disconnected during triage',
+                revokedEvent,
+                async () => false,
+              ),
+              undefined,
             );
-            await Promise.all(
-              [...ids, ids[0], ids[0]].map((id, index) =>
-                triage.triageEvent(
-                  `Synthetic app event ${id}`,
-                  id,
-                  index % 2 ? 'classify' : 'inspect_message',
-                ),
+            assert.deepEqual(await eventTurns([revokedEvent]), []);
+            const queued = await Promise.all(
+              [...ids, ids[0], ids[0]].map((id) =>
+                triage.triageEvent(`Synthetic app event ${id}`, id),
               ),
             );
-            const dispatched = await db.pool.query(
-              `SELECT n.decision,n.turn_id,u.background,u.source,u.thread_id,u.session_id FROM notifications n
-             LEFT JOIN turns u ON u.id=n.turn_id WHERE n.event_id=ANY($1::text[]) AND n.owner_id=$2`,
-              [ids, ownerId],
-            );
-            assert.equal(dispatched.rowCount, 3);
-            for (const row of dispatched.rows) {
-              assert.equal(row.decision, 'wake');
+            const dispatched = await eventTurns(ids);
+            assert.equal(dispatched.length, 3);
+            const turnIds = dispatched.map((row) => row.id);
+            assert.deepEqual(new Set(queued), new Set(turnIds));
+            for (const row of dispatched) {
               assert.equal(row.background, true);
               assert.equal(row.source, 'event');
               assert.equal(row.thread_id, threadId);
-              assert.equal(row.session_id, row.turn_id);
-              await waitFor(settled(row.turn_id));
-              assert.equal(await turnStatus(row.turn_id), 'succeeded');
+              assert.equal(row.session_id, row.id);
+              await waitFor(settled(row.id));
+              assert.equal(await turnStatus(row.id), 'succeeded');
             }
-            const turnIds = dispatched.rows.map((row) => row.turn_id);
-            await triage.triageEvent('Synthetic duplicate', ids[0], 'inspect_message');
+            assert.equal(await triage.triageEvent('Synthetic duplicate', ids[0]), queued[0]);
             assert.equal(runs.filter((run) => turnIds.includes(run.turnId)).length, 3);
             assert.equal(
               (
@@ -2378,27 +2341,17 @@ test(
               quietStart: `${String(hour).padStart(2, '0')}:00`,
               quietEnd: `${String((hour + 1) % 24).padStart(2, '0')}:00`,
             });
-            const quietId = randomUUID();
-            await triage.triageEvent('Synthetic event in quiet hours', quietId);
-            const quiet = await db.pool.query(
-              'SELECT decision,turn_id FROM notifications WHERE event_id=$1 AND owner_id=$2',
-              [quietId, ownerId],
-            );
-            assert.equal(quiet.rows[0].decision, 'wake');
-            await waitFor(settled(quiet.rows[0].turn_id));
-            assert.equal(quietInstructions.get(quiet.rows[0].turn_id)?.quietHours, true);
+            const quiet = await triage.triageEvent('Synthetic event in quiet hours', randomUUID());
+            assert.ok(quiet);
+            await waitFor(settled(quiet));
+            assert.equal(quietInstructions.get(quiet)?.quietHours, true);
             await preferences.update({ notificationRule: '', quietHoursEnabled: false });
             const disabledId = randomUUID();
-            await triage.triageEvent('Synthetic event without a rule', disabledId);
-            assert.deepEqual(
-              (
-                await db.pool.query(
-                  'SELECT decision,turn_id FROM notifications WHERE event_id=$1 AND owner_id=$2',
-                  [disabledId, ownerId],
-                )
-              ).rows,
-              [{ decision: 'digest', turn_id: null }],
+            assert.equal(
+              await triage.triageEvent('Synthetic event without a rule', disabledId),
+              undefined,
             );
+            assert.deepEqual(await eventTurns([disabledId]), []);
           } finally {
             quietBackgroundWork = false;
             await preferences.update(original);
@@ -2406,320 +2359,86 @@ test(
         },
       );
       await t.test(
-        'bounded app checks claim one owned account, persist verified reads and hand off each finding once',
+        'the heartbeat queues one quiet check per pollable account and never stacks them',
         async () => {
           const preferences = createPreferencesStore(db.pool, ownerId);
           const original = await preferences.get();
-          await db.pool.query('DELETE FROM notifications WHERE owner_id=$1', [ownerId]);
-          const connectionId = randomUUID();
+          const triage = createTriage({ connectedApps: readConnectedApps });
           const app: ConnectedApp = {
             slug: 'notion',
             name: 'Notion',
             status: 'connected',
-            connectionId,
+            connectionId: randomUUID(),
             access: ['api'],
             supportsTriggers: false,
             triggersEnabled: false,
           };
-          const optedOut: ConnectedApp = {
-            ...app,
-            connectionId: randomUUID(),
-            supportsTriggers: true,
-            triggersEnabled: false,
-            triggerStatus: 'disabled',
-          };
-          const manual: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['browser'] };
-          const cli: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['cli'] };
-          const unavailable: ConnectedApp = {
-            ...app,
-            connectionId: randomUUID(),
-            status: 'disconnected',
-          };
-          const triage = createTriage({ connectedApps: readConnectedApps });
-          const scheduleCount = (await personal.listSchedules()).length;
-          let releaseCheck = () => {};
-          const checking = new Promise<void>((resolve) => {
-            releaseCheck = resolve;
-          });
-          let entered = false;
-          const receipt = async () =>
+          const other: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['mcp'] };
+          const ignored: ConnectedApp[] = [
+            { ...app, connectionId: randomUUID(), access: ['browser'] },
+            { ...app, connectionId: randomUUID(), status: 'disconnected' },
+            {
+              ...app,
+              connectionId: randomUUID(),
+              supportsTriggers: true,
+              triggersEnabled: true,
+              triggerStatus: 'active',
+            },
+          ];
+          const checks = async (connectionId = '') =>
             (
               await db.pool.query(
-                'SELECT * FROM app_activity_checks WHERE owner_id=$1 AND connection_id=$2',
+                "SELECT id,source,background,read_only,prompt,started_at FROM turns WHERE owner_id=$1 AND source_id LIKE 'activity-check:'||$2||'%' ORDER BY created_at,id",
                 [ownerId, connectionId],
               )
-            ).rows[0];
-          const recordedContexts: RuntimeContext[] = [];
-          let findingVersion = 'version-1';
+            ).rows;
           try {
-            activityLookup = triage.activityCheck;
             quietBackgroundWork = true;
-            await preferences.update({ quietHoursEnabled: false });
-            currentApps = [app, optedOut, manual, cli, unavailable];
-            activityRun = async (context) => {
-              recordedContexts.push(context);
-              assert.equal(context.readOnly, true);
-              assert.equal(context.background, true);
-              assert.equal(context.activityCheck?.connectionId, connectionId);
-              entered = true;
-              await checking;
-              if (recordedContexts.length === 1) {
-                const previousIntegration = dependencies.integration;
-                const previousWrite = dependencies.writeArtifact;
-                const cancelled = new AbortController();
-                const page = { data: { items: [{ id: 'stable-item-1' }], next_cursor: 'page-2' } };
-                const files = await readdir(context.workspacePath);
-                let writes = 0;
-                dependencies.integration = async (_turn, _action, args, options) => {
-                  assert.equal(options.checkConnectionId, connectionId);
-                  if (args.abort) cancelled.abort(new Error('Synthetic read deadline'));
-                  if (args.file)
-                    return {
-                      data: {
-                        file: {
-                          name: 'agenda.png',
-                          mimeType: 'image/png',
-                          bytes: Buffer.from('synthetic image'),
-                        },
-                      },
-                    };
-                  return args.page_size === 1 ? page : largeAppResult;
-                };
-                dependencies.writeArtifact = async () => {
-                  writes++;
-                  throw new Error('Activity checks must not stage app results.');
-                };
-                try {
-                  await assert.rejects(
-                    context.integration('NOTION_RETRIEVE_PAGE', { connectionId }),
-                    /smaller page|narrower query/i,
-                  );
-                  await assert.rejects(
-                    context.integration(
-                      'NOTION_RETRIEVE_PAGE',
-                      { connectionId, abort: true },
-                      cancelled.signal,
-                    ),
-                    /Synthetic read deadline/,
-                  );
-                  assert.deepEqual(
-                    await context.integration('NOTION_RETRIEVE_PAGE', {
-                      connectionId,
-                      page_size: 1,
-                    }),
-                    page,
-                  );
-                  assert.deepEqual(
-                    await context.integration('NOTION_RETRIEVE_PAGE', { connectionId, file: true }),
-                    {
-                      data: {
-                        file: {
-                          name: 'agenda.png',
-                          mimeType: 'image/png',
-                          size: 15,
-                          message: 'The file was not saved in this run.',
-                        },
-                      },
-                    },
-                  );
-                  assert.equal(writes, 0);
-                  assert.deepEqual(await readdir(context.workspacePath), files);
-                } finally {
-                  dependencies.integration = previousIntegration;
-                  dependencies.writeArtifact = previousWrite;
-                }
-              }
-              await context.integration('NOTION_RETRIEVE_PAGE', { connectionId });
-              await context.activityCheck!.record({
-                status: 'verified',
-                value: 'revision-1',
-                summary: 'One recent item reviewed.',
-                finding: {
-                  id: 'stable-item-1',
-                  version: findingVersion,
-                  url: 'https://example.test/items/1',
-                  summary: 'A question needs a supported response.',
-                },
-              });
-              await assert.rejects(
-                context.activityCheck!.record({
-                  status: 'unavailable',
-                  summary: 'Duplicate report.',
-                }),
-                /already ended/,
-              );
-            };
+            await preferences.update({ notificationRule: 'Tell me about new requests.' });
+            currentApps = [app, other, ...ignored];
             await Promise.all([triage.heartbeat(), triage.heartbeat()]);
-            await waitFor(() => entered);
-            const first = await receipt();
-            assert.ok(first.attempted_at);
-            assert.equal(first.checked_at, null);
-            assert.equal((await db.pool.query('SELECT * FROM app_activity_checks')).rowCount, 1);
-            currentApps.push({ ...app, connectionId: randomUUID() });
-            await triage.heartbeat();
-            assert.equal((await db.pool.query('SELECT * FROM app_activity_checks')).rowCount, 1);
-            currentApps.pop();
-            releaseCheck();
-            await waitFor(settled(first.turn_id));
-            assert.equal(await turnStatus(first.turn_id), 'succeeded');
-            assert.equal(recordedContexts[0].activityCheck?.previous, undefined);
-            const verified = await receipt();
-            assert.ok(verified.checked_at);
-            assert.equal(verified.value, 'revision-1');
-            const finding = (
-              await db.pool.query(
-                "SELECT n.event_id,u.* FROM notifications n JOIN turns u ON u.id=n.turn_id WHERE n.owner_id=$1 AND n.event_id LIKE 'activity:%'",
-                [ownerId],
-              )
-            ).rows;
-            assert.equal(finding.length, 1);
-            assert.equal(finding[0].source, 'event');
-            assert.equal(finding[0].read_only, false);
-            assert.equal(finding[0].background, true);
-            await waitFor(settled(finding[0].id));
-            await assert.rejects(
-              recordedContexts[0].activityCheck!.record({
-                status: 'unavailable',
-                summary: 'Late report.',
-              }),
-              /no longer active/,
-            );
-            assert.equal(
-              await triage.activityCheck({ threadId: randomUUID(), turnId: first.turn_id }),
-              undefined,
-            );
-            await triage.heartbeat();
-            assert.equal((await receipt()).turn_id, first.turn_id);
-            await db.pool.query(
-              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
-              [ownerId],
-            );
-            await triage.heartbeat();
-            const second = await receipt();
-            assert.notEqual(second.turn_id, first.turn_id);
-            await waitFor(settled(second.turn_id));
-            assert.equal(recordedContexts[1].activityCheck?.previous?.value, 'revision-1');
-            assert.ok(recordedContexts[1].activityCheck?.previous?.checkedAt);
-            assert.equal(
-              (await db.pool.query("SELECT * FROM notifications WHERE event_id LIKE 'activity:%'"))
-                .rowCount,
-              1,
-            );
-            findingVersion = 'version-2';
-            await db.pool.query(
-              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
-              [ownerId],
-            );
-            await triage.heartbeat();
-            await waitFor(settled((await receipt()).turn_id));
-            const versioned = (
-              await db.pool.query(
-                "SELECT turn_id FROM notifications WHERE event_id LIKE 'activity:%' ORDER BY created_at",
-              )
-            ).rows;
-            assert.equal(versioned.length, 2);
-            await waitFor(settled(versioned[1].turn_id));
-            const previousCheck = (await receipt()).checked_at;
-            await db.pool.query(
-              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
-              [ownerId],
-            );
-            activityRun = async () => {
-              throw new Error('Synthetic connection unavailable.');
+            const [first] = await checks(app.connectionId);
+            assert.equal((await checks(app.connectionId)).length, 1);
+            assert.equal((await checks(other.connectionId)).length, 1);
+            for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
+            assert.equal(first.source, 'event');
+            assert.equal(first.background, true);
+            assert.equal(first.read_only, false);
+            for (const check of await checks()) await waitFor(settled(check.id));
+            const request = quietInstructions.get(first.id) as {
+              mode: string;
+              notificationRule: string;
+              connectedApps: ConnectedApp[];
+              currentInstruction: string;
             };
+            assert.equal(request.mode, 'background');
+            assert.equal(request.notificationRule, 'Tell me about new requests.');
+            assert.ok(request.connectedApps.some((item) => item.connectionId === app.connectionId));
+            assert.ok(request.currentInstruction.includes(app.connectionId!));
+            const { started_at: since } = (await checks(app.connectionId))[0];
             await triage.heartbeat();
-            const failed = await receipt();
-            await waitFor(settled(failed.turn_id));
-            assert.equal(await turnStatus(failed.turn_id), 'failed');
-            assert.deepEqual((await receipt()).checked_at, previousCheck);
-            await triage.heartbeat();
-            assert.equal((await receipt()).turn_id, failed.turn_id);
-            activityRun = async (context) => {
-              const controller = new AbortController();
-              let releaseInventory = () => {};
-              inventoryGate = new Promise<void>((resolve) => {
-                releaseInventory = resolve;
-              });
-              inventoryWaiting = false;
-              const recording = context.activityCheck!.record(
-                {
-                  status: 'verified',
-                  value: 'must-not-save',
-                  summary: 'Late observation.',
-                  finding: { id: 'must-not-notify', summary: 'Late finding.' },
-                },
-                controller.signal,
-              );
-              await waitFor(() => inventoryWaiting);
-              controller.abort(new Error('Synthetic deadline'));
-              inventoryGate = undefined;
-              releaseInventory();
-              await assert.rejects(recording, /Synthetic deadline/);
-            };
+            assert.equal((await checks()).length, 2);
             await db.pool.query(
-              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
-              [ownerId],
+              "UPDATE turns SET status='running',created_at=created_at-interval '31 minutes' WHERE id=$1",
+              [first.id],
             );
             await triage.heartbeat();
-            const aborted = await receipt();
-            await waitFor(settled(aborted.turn_id));
-            assert.equal((await receipt()).recorded_at, null);
-            assert.deepEqual((await receipt()).checked_at, previousCheck);
-            assert.equal(
-              (await db.pool.query("SELECT * FROM notifications WHERE event_id LIKE 'activity:%'"))
-                .rowCount,
-              2,
-            );
-            assert.equal(
-              (
-                await db.pool.query('SELECT * FROM messages WHERE turn_id=ANY($1::uuid[])', [
-                  [first.turn_id, second.turn_id, failed.turn_id],
-                ])
-              ).rowCount,
-              0,
-            );
-            currentApps = [optedOut, manual, cli, unavailable];
+            assert.equal((await checks()).length, 2);
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
+            await triage.heartbeat();
+            const [, second] = await checks(app.connectionId);
+            assert.ok(second.prompt.includes(since.toISOString()));
+            assert.equal((await checks()).length, 3);
+            await waitFor(settled(second.id));
             await db.pool.query(
-              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
-              [ownerId],
+              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE source_id LIKE 'activity-check:%'",
             );
+            await preferences.update({ notificationRule: '' });
             await triage.heartbeat();
-            assert.equal((await receipt()).turn_id, aborted.turn_id);
-            for (const change of ['revoked', 'disabled', 'replaced']) {
-              currentApps = [app];
-              await preferences.update({ ...original, quietHoursEnabled: false });
-              await db.pool.query(
-                "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
-                [ownerId],
-              );
-              const prompt = `Hold queued check ${change}`;
-              block(prompt);
-              const held = await thread.submitUserMessage(prompt);
-              await waitFor(() => Boolean(ran(held.turnId)));
-              await triage.heartbeat();
-              const queued = await receipt();
-              const reads = integrationReads.length;
-              if (change === 'revoked') currentApps = [];
-              if (change === 'disabled') await preferences.update({ notificationRule: '' });
-              if (change === 'replaced')
-                await transaction(
-                  (client) => triage.invalidateActivityCheck(connectionId, client),
-                  db.pool,
-                );
-              release(prompt);
-              await waitFor(settled(queued.turn_id));
-              assert.equal(await turnStatus(queued.turn_id), 'failed');
-              assert.equal(ran(queued.turn_id), undefined);
-              assert.equal(integrationReads.length, reads);
-            }
-            assert.equal((await personal.listSchedules()).length, scheduleCount);
+            assert.equal((await checks()).length, 3);
           } finally {
-            releaseCheck();
-            activityRun = undefined;
-            activityLookup = undefined;
             quietBackgroundWork = false;
             currentApps = [];
-            inventoryGate = undefined;
             await preferences.update(original);
           }
         },
@@ -2867,7 +2586,7 @@ test(
   },
 );
 
-const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => {
+const memoryFixture = async () => {
   const schema = `test_memory_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const root = await mkdtemp(join(tmpdir(), 'memory-test-'));
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -2878,10 +2597,9 @@ const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => 
   await pool.query(
     "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
   );
-  for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
   const store = createFilesystemObjectStore(root);
-  const memory = createMemoryService({ pool, ownerId, store, curator });
+  const memory = createMemoryService({ pool, ownerId, store });
   const post = async (
     text: string,
     options: { owner?: string; role?: string; at?: string; attachments?: string } = {},
@@ -2924,72 +2642,41 @@ test(
   async () => {
     const { pool, ownerId, store, root, post, memory, close } = await memoryFixture();
     try {
-      const first = await post('Keep progress reports short.');
-      const saved = await memory.save(
-        { area: 'preferences', text: 'Prefers short progress reports.' },
-        first,
-      );
-      assert.deepEqual(saved, {
-        path: 'preferences/prefers-short-progress-reports',
-        text: 'Prefers short progress reports.',
-        status: 'stated',
-      });
+      const short = 'Keep progress reports short.';
+      const first = await post(short);
+      const saved = await memory.learn({ area: 'preferences', quote: short }, first);
+      const slug = 'keep-progress-reports-short';
+      assert.deepEqual(saved, { path: `preferences/${slug}`, text: short, status: 'stated' });
       assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: ['prefers-short-progress-reports: Prefers short progress reports.'],
+        preferences: [`${slug}: ${short}`],
       });
       const reopened = createMemoryService({ pool, ownerId, store });
       assert.equal(
         ((await reopened.read({ path: saved.path })) as { text: string }).text,
         saved.text,
       );
-      const slug = 'prefers-short-progress-reports';
-      const correction = await post('Make progress reports detailed from now on.');
-      const detailed = 'Prefers detailed progress reports.';
+      const detailed = 'Make progress reports detailed from now on.';
+      const correction = await post(detailed);
       await assert.rejects(
-        reopened.save({ area: 'preferences', slug, text: detailed }, correction),
+        reopened.learn({ area: 'preferences', slug, quote: detailed }, correction),
         /needs a replacement/,
       );
-      await reopened.save({ area: 'preferences', slug, text: detailed, replace: true }, correction);
+      await reopened.learn(
+        { area: 'preferences', slug, quote: detailed, replace: true },
+        correction,
+      );
       assert.deepEqual(
         (await memory.view()).archive.map((entry) => [entry.path, entry.reason]),
         [[saved.path, 'superseded']],
       );
-      await assert.rejects(
-        memory.save(
-          { area: 'about', text: 'Prefers a private account.' },
-          { ...correction, turnId: randomUUID() },
-        ),
-        /current owned user message/,
-      );
-      const other = await post('A different owner likes long notes.', { owner: 'other-owner' });
-      await assert.rejects(
-        memory.save({ area: 'preferences', text: 'Likes long notes.' }, other),
-        /current owned user message/,
-      );
-      const secret = await post('I prefer email updates. Also reset my password on the store.');
-      await assert.rejects(
-        memory.save({ area: 'about', text: 'Store key is sk-fixturefixture1234.' }, secret),
-        /cannot be remembered/,
-      );
-      await assert.rejects(
-        memory.save(
-          { area: 'preferences', text: 'Prefers detailed progress reports please.' },
-          secret,
-        ),
-        /similar memory exists at preferences\/prefers-short-progress-reports/,
-      );
-      await memory.save({ area: 'preferences', text: detailed }, secret);
+      const repeated = await post(detailed);
+      await memory.learn({ area: 'preferences', quote: detailed }, repeated);
       assert.deepEqual(
         (await memory.load()).entries.find((entry) => entry.slug === slug)?.sources,
-        [correction.sourceMessageId, secret.sourceMessageId],
+        [correction.sourceMessageId, repeated.sourceMessageId],
       );
-      const approved = await memory.save(
-        { area: 'about', text: 'Lives in Lisbon.' },
-        { sourceMessageId: first.sourceMessageId, approved: true },
-      );
-      assert.equal(approved.path, 'about/lives-in-lisbon');
-      const tokyo = await memory.save(
-        { area: 'about', text: '我住在东京' },
+      const tokyo = await memory.learn(
+        { area: 'about', quote: '我住在东京' },
         await post('我住在东京'),
       );
       assert.equal(tokyo.path, 'about/note');
@@ -3001,30 +2688,25 @@ test(
         (await memory.find({ query: '东京' })).map((hit) => hit.path),
         [tokyo.path],
       );
-      await assert.rejects(
-        memory.save(
-          { area: 'about', text: 'Lives in Porto.' },
-          { sourceMessageId: other.sourceMessageId, approved: true },
-        ),
-        /current owned user message/,
-      );
 
-      const marcMessage = await post('Marc is my manager.');
-      const anaMessage = await post('Ana is my sister.');
+      const marc = 'Marc is my manager.';
+      const ana = 'Ana is my sister.';
+      const marcMessage = await post(marc);
+      const anaMessage = await post(ana);
       let raced = false;
       const racing: PrivateObjectStore = {
         ...store,
         write: async (key, bytes, options) => {
           if (!raced) {
             raced = true;
-            await memory.save({ area: 'people', text: 'Marc is the manager.' }, marcMessage);
+            await memory.learn({ area: 'people', quote: marc }, marcMessage);
             throw new ObjectStoreConflict();
           }
           return store.write(key, bytes, options);
         },
       };
-      await createMemoryService({ pool, ownerId, store: racing }).save(
-        { area: 'people', text: 'Ana is the sister.' },
+      await createMemoryService({ pool, ownerId, store: racing }).learn(
+        { area: 'people', quote: ana },
         anaMessage,
       );
       assert.deepEqual(
@@ -3032,19 +2714,9 @@ test(
           .filter((note) => note.area === 'people')
           .map((note) => note.path)
           .sort(),
-        ['people/ana-is-the-sister', 'people/marc-is-the-manager'],
+        ['people/ana-is-my-sister', 'people/marc-is-my-manager'],
       );
 
-      await memory.edit((tree) => {
-        tree.overviews.preferences = {
-          text: 'Reports.',
-          digest: digest(areaEntries(tree, 'preferences')),
-        };
-      });
-      assert.equal(
-        ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
-        'Reports.',
-      );
       await memory.forget(saved.path);
       const view = await memory.view();
       assert.equal(
@@ -3052,12 +2724,9 @@ test(
         false,
       );
       assert.deepEqual(view.archive, []);
-      assert.equal(
-        ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
-        undefined,
-      );
       await assert.rejects(memory.forget(saved.path), { statusCode: 404 });
 
+      const chess = 'I play chess on Sundays.';
       const path = join(root, 'memory', 'MEMORY.md');
       const document = JSON.parse(await readFile(path, 'utf8'));
       document.entries.push(
@@ -3066,7 +2735,7 @@ test(
       );
       await writeFile(path, JSON.stringify(document));
       assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
-      await memory.save({ area: 'about', text: 'Plays chess on Sundays.' }, first);
+      await memory.learn({ area: 'about', quote: chess }, await post(chess));
       assert.doesNotMatch(await readFile(path, 'utf8'), /sk-fixture|broken/);
 
       await writeFile(
@@ -3080,7 +2749,7 @@ test(
         (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
         'tentative',
       );
-      await memory.save({ area: 'about', text: 'Plays chess on Sundays.' }, first);
+      await memory.learn({ area: 'about', quote: chess }, await post(chess));
       const migrated = await readFile(path, 'utf8');
       assert.match(migrated, /^\{/);
       assert.doesNotMatch(migrated, /Broken entry/);
@@ -3091,8 +2760,6 @@ test(
   },
 );
 
-const approvalsTable =
-  'CREATE TABLE approvals (owner_id text NOT NULL, source_message_id uuid, action text NOT NULL, status text NOT NULL)';
 const nilMark = '2000-01-01T00:00:00.000000Z/00000000-0000-0000-0000-000000000000';
 
 type CuratorCall = {
@@ -3153,6 +2820,13 @@ test(
       await assert.rejects(memory.learn({ area: 'about', quote: secret }, await post(secret)));
       assert.equal((await memory.load()).entries.length, 2);
       assert.equal(await memory.enabled(), true);
+      const listed = 'Remember this about me:\n- I live in Lisbon\n- I am vegetarian';
+      const listedSource = await post(listed);
+      assert.equal(
+        (await memory.learn({ area: 'about', quote: listed }, listedSource)).text,
+        'Remember this about me: - I live in Lisbon - I am vegetarian',
+      );
+      await memory.forget('about/remember-this-about-me-live-in');
 
       const correction = 'Prefiro relatórios detalhados.';
       await memory.learn(
@@ -3172,13 +2846,6 @@ test(
       const blocked = 'I always drink green tea.';
       const blockedSource = await post(blocked);
       await assert.rejects(reopened.learn({ area: 'preferences', quote: blocked }, blockedSource));
-      await assert.rejects(reopened.save({ area: 'preferences', text: blocked }, blockedSource));
-      await assert.rejects(
-        reopened.save(
-          { area: 'preferences', text: blocked },
-          { sourceMessageId: blockedSource.sourceMessageId, approved: true },
-        ),
-      );
       await assert.rejects(
         reopened.edit((tree) => {
           tree.entries = [];
@@ -3197,7 +2864,6 @@ test(
       const cleared = await createMemoryService({ pool, ownerId, store }).load();
       assert.deepEqual(cleared.entries, []);
       assert.deepEqual(cleared.archive, []);
-      assert.deepEqual(cleared.overviews, {});
       assert.equal(await memory.enabled(), false);
       assert.notEqual(cleared.reflected, undefined);
       assert.equal(
@@ -3223,7 +2889,7 @@ test(
   'memory opt-out stops background work and rejects reflection started before disable and re-enable',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
-    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
+    const { pool, ownerId, post, memory, close } = await memoryFixture();
     const { calls, state, curator } = scriptedCurator();
     const learning = createMemoryLearning({ pool, ownerId, memory, curator });
     let release: (value: unknown) => void = () => {};
@@ -3247,7 +2913,6 @@ test(
       await memory.control({ enabled: false, quote: disable }, await post(disable));
       const disabled = await memory.load();
       assert.equal(await learning.reflect(), 0);
-      assert.equal(await learning.consolidate(), 0);
       await learning.run();
       assert.equal(calls.length, 1);
       assert.deepEqual(await memory.load(), disabled);
@@ -3284,8 +2949,8 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     t.mock.method(console, 'error', () => {});
-    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
-    const idle = await memoryFixture([approvalsTable]);
+    const { pool, ownerId, post, memory, close } = await memoryFixture();
+    const idle = await memoryFixture();
     try {
       const { calls, state, curator } = scriptedCurator();
       const learning = createMemoryLearning({ pool, ownerId, memory, curator });
@@ -3312,26 +2977,11 @@ test(
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
       await post('My card is 4111 1111 1111 1111 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
-      for (const [status, text] of [
-        ['declined', 'Remember that refunds go to account 1.'],
-        ['pending', 'Remember that I prefer window seats.'],
-        ['completed', 'Remember that my dentist is on Elm Street.'],
-      ] as const) {
-        const asked = await post(text, { at: '2026-01-01T10:04:30Z' });
-        await pool.query(
-          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
-          [ownerId, asked.id, status],
-        );
-      }
       await post('Other owner message that must not leak.', {
         owner: 'other-owner',
         at: '2026-01-01T10:04:45Z',
       });
       const call = await post(sister, { at: '2026-01-01T10:05:00Z' });
-      await pool.query(
-        "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'GMAIL_SEND_EMAIL','declined')",
-        [ownerId, call.id],
-      );
       await post('I am working on the budget today.');
 
       state.answer = () => ({
@@ -3473,9 +3123,10 @@ test(
         false,
       );
 
-      const trip = await memory.save(
-        { area: 'preferences', text: 'Is travelling this week.', expires: '2020-01-01' },
-        await post('I am travelling this week.', { at: '2026-01-01T14:00:00Z' }),
+      const travelling = 'I am travelling this week.';
+      const trip = await memory.learn(
+        { area: 'preferences', quote: travelling, expires: '2020-01-01' },
+        await post(travelling, { at: '2026-01-01T14:00:00Z' }),
       );
       state.answer = () => {
         throw new Error('offline');
@@ -3499,153 +3150,6 @@ test(
       assert.equal(unconfigured.calls.length, 0);
     } finally {
       await idle.close();
-      await close();
-    }
-  },
-);
-
-test(
-  'consolidation tidies one area without touching entry text and runs at most daily',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
-    const { pool, ownerId, memory, close } = await memoryFixture();
-    try {
-      const { calls, state, curator } = scriptedCurator();
-      const learning = createMemoryLearning({ pool, ownerId, memory, curator });
-      const source = randomUUID();
-      const put = (area: 'lessons' | 'routines', slug: string, text: string, updated: string) => ({
-        area,
-        slug,
-        text,
-        origin: 'stated' as const,
-        updated,
-        sources: [source],
-      });
-      await memory.edit((tree) => {
-        tree.entries.push(
-          put('lessons', 'a', 'Reply to email within a day.', '2026-01-01T00:00:00.000Z'),
-          put('lessons', 'b', 'Answer emails inside one day.', '2026-01-02T00:00:00.000Z'),
-          put('lessons', 'old', 'Call before noon.', '2026-01-01T00:00:00.000Z'),
-          put('lessons', 'new', 'Call after lunch.', '2026-02-01T00:00:00.000Z'),
-          put('lessons', 'c', 'Send summaries on Fridays.', '2026-01-03T00:00:00.000Z'),
-          put('routines', 'r1', 'Water the plants on Monday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r2', 'Back up the laptop on Tuesday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r3', 'Review the budget on Wednesday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r4', 'Call the parents on Thursday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r5', 'Plan the weekend on Friday.', '2026-01-01T00:00:00.000Z'),
-        );
-      });
-      state.answer = () => ({
-        ops: [
-          { op: 'merge', keep: 'lessons/a', drop: ['lessons/b'] },
-          { op: 'archive', path: 'lessons/old', by: 'lessons/new', reason: 'superseded' },
-          { op: 'rewrite', path: 'lessons/a', text: 'Invented.' },
-          { op: 'archive', path: 'routines/r1', by: 'routines/r2', reason: 'superseded' },
-          { op: 'overview', area: 'lessons', text: 'Email and call timing habits.' },
-        ],
-      });
-      assert.equal(await learning.consolidate(), 3);
-      assert.deepEqual(
-        calls.map((entry) => [entry.task, entry.input.area]),
-        [
-          ['consolidate', 'routines'],
-          ['consolidate', 'lessons'],
-        ],
-      );
-      const tree = await memory.load();
-      assert.equal(
-        tree.entries.find((entry) => entry.slug === 'a')?.text,
-        'Reply to email within a day.',
-      );
-      assert.deepEqual(
-        tree.archive.map((entry) => [entry.slug, entry.reason, entry.by]),
-        [
-          ['b', 'merged', 'lessons/a'],
-          ['old', 'superseded', 'lessons/new'],
-        ],
-      );
-      assert.equal(
-        ((await memory.read({ path: 'lessons' })) as { overview?: string }).overview,
-        'Email and call timing habits.',
-      );
-      assert.equal(await learning.consolidate(), 0);
-      assert.equal(calls.length, 2);
-
-      const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
-      await memory.edit((tree) => {
-        tree.consolidated.routines = hoursAgo(12);
-      });
-      assert.equal(await learning.consolidate(), 0);
-      assert.equal(calls.length, 2);
-      await memory.edit((tree) => {
-        tree.consolidated.routines = hoursAgo(48);
-      });
-      await learning.consolidate();
-      assert.deepEqual(
-        calls.map((entry) => entry.input.area),
-        ['routines', 'lessons', 'routines'],
-      );
-    } finally {
-      await close();
-    }
-  },
-);
-
-test(
-  'memory search matches words first, asks the model only for sparse results and keeps real paths',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
-    const { calls, state, curator } = scriptedCurator();
-    const { pool, ownerId, store, post, memory, close } = await memoryFixture([], curator);
-    try {
-      const ana = await memory.save(
-        { area: 'people', text: 'Ana is the sister.' },
-        await post('Ana is my sister.'),
-      );
-      const coffee = await memory.save(
-        { area: 'preferences', text: 'Drinks strong coffee.' },
-        await post('I drink strong coffee.'),
-      );
-      const paths = async (query: string, area?: string) =>
-        ((await memory.find({ query, area })) as Array<{ path: string }>).map((hit) => hit.path);
-
-      state.answer = () => ({ paths: [ana.path, 'people/not-a-real-entry', ana.path] });
-      assert.deepEqual(await paths('sibling'), [ana.path]);
-      assert.equal(calls.length, 1);
-      assert.equal(calls[0].task, 'search');
-      assert.deepEqual(calls[0].input, {
-        query: 'sibling',
-        entries: [
-          { path: coffee.path, abstract: 'Drinks strong coffee.' },
-          { path: ana.path, abstract: 'Ana is the sister.' },
-        ],
-      });
-      assert.deepEqual(await paths('coffee'), [coffee.path, ana.path]);
-      assert.equal(calls.length, 2);
-      assert.deepEqual(await paths('sibling', 'preferences'), []);
-      assert.deepEqual(calls[2].input, {
-        query: 'sibling',
-        entries: [{ path: coffee.path, abstract: 'Drinks strong coffee.' }],
-      });
-
-      for (const text of ['Likes green tea.', 'Brews black tea at five.', 'Tea after lunch helps.'])
-        await memory.save({ area: 'preferences', text }, await post(text));
-      assert.equal((await paths('tea')).length, 3);
-      assert.equal(calls.length, 3);
-
-      state.answer = () => {
-        throw new Error('offline');
-      };
-      assert.deepEqual(await paths('sibling'), []);
-      state.answer = () => 'nonsense';
-      assert.deepEqual(await paths('sibling'), []);
-      assert.equal(calls.length, 5);
-
-      const idle = scriptedCurator(false);
-      const plain = createMemoryService({ pool, ownerId, store, curator: idle.curator });
-      assert.deepEqual(await plain.find({ query: 'sibling' }), []);
-      assert.equal(idle.calls.length, 0);
-    } finally {
       await close();
     }
   },
@@ -4643,7 +4147,7 @@ test('feedback diagnostics build bounded private tool activity from the saved se
     ...activity(
       'memory',
       'manage_personal_context',
-      { action: 'profile_get', args: 'synthetic-private-profile' },
+      { action: 'memory_read', args: 'synthetic-private-profile' },
       'private-memory-output',
     ),
     activity('unfinished', 'browser', { action: 'click' }, '')[0],

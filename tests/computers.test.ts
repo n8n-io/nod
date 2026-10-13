@@ -395,7 +395,6 @@ async function e2bFixture() {
     createComputer: () => {
       return {
         ...fakeComputer(),
-        status: () => 'Synthetic browser',
         act: async (_id, input, signal) => {
           calls.push({ method: 'act', input });
           await action?.();
@@ -955,7 +954,6 @@ async function cloudflareFixture() {
       const selected = basename(directory);
       return {
         ...fakeComputer(),
-        status: () => 'Synthetic browser',
         act: async (_threadId, input, signal) => {
           calls.push({ namespace: selected, method: 'act', input });
           if (hold) {
@@ -1250,12 +1248,11 @@ test('browser disposal drains cancelled work and failed cleanup remains retryabl
   }
 });
 
-test('Cloudflare browser status follows an acknowledged explicit recovery', async () => {
+test('Cloudflare browser recovers only after an acknowledged explicit reopen', async () => {
   const f = await cloudflareFixture();
   const adapters = createCloudflareAdapters(f.options(ownerA));
   try {
     await adapters.computer.act('task', { action: 'snapshot' });
-    const ready = adapters.computer.status();
     f.breakRole('browser');
     await assert.rejects(
       adapters.computer.act('task', { action: 'click', selector: '#submit' }),
@@ -1273,7 +1270,6 @@ test('Cloudflare browser status follows an acknowledged explicit recovery', asyn
       f.calls.map(({ method }) => method),
       ['act', 'dispose', 'act'],
     );
-    assert.equal(adapters.computer.status(), ready);
   } finally {
     f.breakRole();
     await Promise.all([adapters.computer.dispose(), adapters.workspace.dispose()]);

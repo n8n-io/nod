@@ -1,6 +1,6 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { appConfirmation, type AgentToolMetadata, type SkillLibrary } from '../ports/agent.ts';
+import { appConfirmation, type SkillLibrary } from '../ports/agent.ts';
 import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
 import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
@@ -10,15 +10,11 @@ import { vaultInvitation } from './communication.ts';
 import type { Turn } from './turn.ts';
 
 export const personalActions = [
-  'profile_get',
-  'profile_update',
-  'profile_learn',
   'notification_preferences_get',
   'notification_preferences_update',
   'history_search',
   'memory_find',
   'memory_read',
-  'memory_save',
   'memory_learn',
   'memory_control',
   'memory_forget',
@@ -26,7 +22,6 @@ export const personalActions = [
   'schedule_create',
   'schedule_update',
   'schedule_cancel',
-  'schedule_record_observation',
   'usage_get',
 ] as const;
 
@@ -100,27 +95,6 @@ function defineTool<const N extends string, P extends TSchema>(
   return { name, description, parameters: rootObject(parameters), strict: parameters };
 }
 
-export const scheduleObservation = Type.Union([
-  Type.Object(
-    {
-      status: Type.Literal('verified'),
-      sourceUrl: Type.String(),
-      value: Type.String({ maxLength: 300 }),
-      summary: Type.String({ maxLength: 500 }),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      status: Type.Literal('unavailable'),
-      sourceUrl: Type.String(),
-      value: Type.Null(),
-      summary: Type.String({ maxLength: 500 }),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
 const taskNow = Type.String({ minLength: 1, maxLength: 200 });
 const taskWaits = Type.Array(
   Type.Object(
@@ -136,39 +110,6 @@ const taskNextCheck = Type.String({
   pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$',
   description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
 });
-
-const activityCheckTool = defineTool(
-  'record_activity_check',
-  'Record this read-only activity check once. verified requires a successful read from the selected account; include at most one useful finding with its stable source ID. Use unavailable when the source could not be inspected. This does not notify the user or prepare work.',
-  Type.Union([
-    Type.Object(
-      {
-        status: Type.Literal('verified'),
-        value: Type.String({ minLength: 1, maxLength: 300 }),
-        summary: Type.String({ minLength: 1, maxLength: 500 }),
-        finding: Type.Optional(
-          Type.Object(
-            {
-              id: Type.String({ minLength: 1, maxLength: 300 }),
-              version: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
-              url: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
-              summary: Type.String({ minLength: 1, maxLength: 500 }),
-            },
-            { additionalProperties: false },
-          ),
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        status: Type.Literal('unavailable'),
-        summary: Type.String({ minLength: 1, maxLength: 500 }),
-      },
-      { additionalProperties: false },
-    ),
-  ]),
-);
 
 export const toolDefinitions = {
   skills: defineTool(
@@ -275,7 +216,7 @@ export const toolDefinitions = {
   ),
   sign_in: defineTool(
     'sign_in',
-    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
+    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Read the full sign-in page through snapshots or screenshots and navigate login choices yourself. Use the method and account the user chose, or a uniquely applicable saved login; ask when methods or accounts remain ambiguous. A website default is not a user choice. A saved login applies only to the current exact origin or an observed link to the visible sign-in provider, never an unrelated entry or a shared parent domain. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId, the manage_apps connectionId of a saved login, to choose it; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer, then call sign_in again with a fresh snapshot. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
       origin: Type.String({ minLength: 1, maxLength: 2048 }),
       label: Type.String({ minLength: 1, maxLength: 100 }),
@@ -418,7 +359,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, schedules, notification preferences, memory and earlier conversation. profile_get reads the profile; profile_update is for explicit requests to edit profile fields, not learning ordinary preferences. Store communication, language and writing-style preferences with memory_save in the preferences area. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves a concise non-sensitive personal fact, preference or routine supported by the owner’s messages without asking; unsupported or unverifiable notes return skipped without saving; continue the task without requesting confirmation; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. Do not announce saves or show memory notices. Answer explicit questions and requests about memory honestly. An existing slug adds evidence only for the same text. Save an additional fact or exception with a distinct new slug. Use replace:true only for a correction that preserves details still valid; do not replace a whole routine with only its exception. After a skipped synthesis, memory_learn may retain a qualifying complete current statement verbatim under the same source and sensitive-topic restrictions. For both memory_learn and memory_save, save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when sensitiveTopics is allowed in memory or the user explicitly asks to remember that information. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; profile_learn {field, value, quote}; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (things done, people reached, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
+    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 600 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (things done, people reached, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -522,7 +463,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     await pause('question', text(url));
     return 'Waiting for the user to sign in.';
   };
-  const tools = [
+  return [
     ...(skills
       ? [
           bind(toolDefinitions.skills, async (p) =>
@@ -700,13 +641,9 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
           `I need access to your ${name} account for this task. [Connect ${name}](${url}) and I will continue here.`,
       );
     }),
-    bind(toolDefinitions.manage_personal_context, async (p) => {
-      if (p.action !== 'schedule_record_observation')
-        return confirm(await context.manage(p.action, p.args));
-      if (!Value.Check(scheduleObservation, p.args))
-        return 'schedule_record_observation needs {status, sourceUrl, value, summary}; value is null when unavailable.';
-      return context.manage(p.action, p.args);
-    }),
+    bind(toolDefinitions.manage_personal_context, async (p) =>
+      confirm(await context.manage(p.action, p.args)),
+    ),
     bind(toolDefinitions.task, async (p) => {
       if (!context.task) throw new Error('Tasks are unavailable.');
       return context.task(p);
@@ -718,22 +655,4 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       return context.createAudio(p.text);
     }),
   ];
-  if (context.activityCheck) {
-    const check = context.activityCheck;
-    return [
-      ...tools.filter((tool) => tool.name === 'apps'),
-      bind(activityCheckTool, async (result) => {
-        signal.throwIfAborted();
-        await check.record(result, signal);
-        return 'Activity check recorded.';
-      }),
-    ];
-  }
-  return tools;
-}
-
-export function inspectToolCatalog(): AgentToolMetadata[] {
-  return Object.values(toolDefinitions).map(({ name, description, parameters }) =>
-    structuredClone({ name, description, parameters }),
-  );
 }

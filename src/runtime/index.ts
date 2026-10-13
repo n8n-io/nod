@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
@@ -8,16 +9,14 @@ import type {
   AgentSession,
   AgentTool,
   AgentToolResult,
-  PromptSnapshot,
   RuntimeContext,
+  RuntimeObservation,
   RuntimeResult,
   SkillLibrary,
 } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
-import { actionEffect } from '../shared/action-effect.ts';
-import { createObservationQueue } from './observations.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
@@ -35,7 +34,8 @@ const parallelTools = new Set([
   'apps',
   'manage_personal_context',
 ]);
-const mixedTools = new Set(['apps', 'manage_personal_context']);
+const orderedTools = new Set(['apps', 'manage_personal_context']);
+const admissions = new AsyncLocalStorage<(asks: boolean) => Promise<void>>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -58,7 +58,6 @@ const readOnlyTools: Record<string, true | string[]> = {
   ls: true,
   send_message: true,
   apps: true,
-  record_activity_check: true,
   web_search: true,
   fetch_content: true,
   source_check: true,
@@ -66,7 +65,6 @@ const readOnlyTools: Record<string, true | string[]> = {
   browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
   manage_apps: ['list', 'discover'],
   manage_personal_context: [
-    'profile_get',
     'notification_preferences_get',
     'history_search',
     'memory_find',
@@ -80,81 +78,10 @@ const readOnlyRefusal =
   'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
 
 class ReadOnlyTurnError extends Error {}
-class ActivityCheckError extends Error {}
-
-function matchingConnection(value: unknown, connectionId: string): boolean {
-  if (!value || typeof value !== 'object') return true;
-  return Object.entries(value).every(([key, child]) =>
-    key === 'connectionId' ? child === connectionId : matchingConnection(child, connectionId),
-  );
-}
-
-function inspectedAppResult(value: unknown): boolean {
-  const envelopes: unknown[] = [value];
-  let inspected = false;
-  let outer = true;
-  while (envelopes.length) {
-    let envelope = envelopes.pop();
-    const top = outer;
-    outer = false;
-    if (typeof envelope === 'string') {
-      const text = envelope;
-      try {
-        envelope = JSON.parse(text);
-      } catch {
-        inspected ||= Boolean(text.trim());
-        continue;
-      }
-    }
-    if (Array.isArray(envelope)) {
-      inspected = true;
-      continue;
-    }
-    if (!envelope || typeof envelope !== 'object') continue;
-    const result = envelope as Record<string, unknown>;
-    if (
-      result.successful === false ||
-      result.success === false ||
-      result.isError === true ||
-      result.resultOmitted === true ||
-      Boolean(result.error) ||
-      'workspaceFile' in result ||
-      ('bytes' in result && 'preview' in result) ||
-      (top &&
-        ['rejected', 'failed', 'error', 'unavailable', 'pending'].includes(
-          String(result.status),
-        )) ||
-      (result.truncated === true &&
-        !['data', 'content', 'items', 'results', 'messages'].some((key) => key in result))
-    )
-      return false;
-    if ('data' in result) envelopes.push(result.data);
-    if ('content' in result)
-      envelopes.push(...(Array.isArray(result.content) ? result.content : [result.content]));
-    if (result.type === 'text') envelopes.push(result.text);
-    if (!('data' in result) && !('content' in result) && result.type !== 'text')
-      inspected ||= Object.keys(result).some(
-        (key) => !['successful', 'success', 'status', 'isError', 'truncated'].includes(key),
-      );
-  }
-  return inspected;
-}
 
 function allowedReadOnly(name: string, params: unknown) {
   const rule = readOnlyTools[name];
   return rule === true || rule?.includes(String((params as { action?: unknown })?.action)) === true;
-}
-
-function readCall(name: string, params: unknown) {
-  if (name !== 'apps') return allowedReadOnly(name, params);
-  const { action, args } = params as { action?: unknown; args?: unknown };
-  return (
-    typeof action === 'string' &&
-    actionEffect(
-      action,
-      args && typeof args === 'object' ? (args as Record<string, unknown>) : {},
-    ) === 'read'
-  );
 }
 
 function textResult(value: unknown): AgentToolResult {
@@ -185,9 +112,8 @@ export function createAgentRuntime(dependencies: {
   computer: Computer;
   workspace: Workspace;
   skills?: SkillLibrary;
-  observationTimeoutMs?: number;
-  withTool?<T>(turnId: string, toolCallId: string, toolName: string, action: () => T): T;
   redactError?(text: string): string;
+  observe?(turnId: string, event: RuntimeObservation): void;
 }) {
   const { agent, computer, skills } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -199,16 +125,6 @@ export function createAgentRuntime(dependencies: {
     if (disposed) throw new Error('The runtime has stopped.');
     threadIdentity(input.threadId);
     if (activeTurns.has(input.turnId)) throw new Error('This turn is already active.');
-    const limits = input.limits;
-    if (
-      limits &&
-      (!Number.isSafeInteger(limits.maxToolCalls) ||
-        limits.maxToolCalls < 1 ||
-        !Number.isSafeInteger(limits.timeoutMs) ||
-        limits.timeoutMs < 1 ||
-        limits.timeoutMs > 2_147_483_647)
-    )
-      throw new Error('Turn limits must be positive integers within the timer range.');
     const lifecycle = new AbortController();
     const context = { ...input, signal: AbortSignal.any([input.signal, lifecycle.signal]) };
     const { signal, threadId } = context;
@@ -233,22 +149,11 @@ export function createAgentRuntime(dependencies: {
     let bufferedText = '';
     let streamedText = '';
     let streamSubmitted = false;
-    let toolCalls = 0;
-    let inspectedApp = false;
-    let checkRecording = false;
-    let checkRecorded = false;
     const activeToolCalls = new Set<Promise<unknown>>();
-    const observations = createObservationQueue({
-      observe: context.observe,
-      signal,
-      timeoutMs: dependencies.observationTimeoutMs,
-    });
-    const promptCaptures = createObservationQueue({
-      observe: context.inspectPrompt,
-      signal,
-      timeoutMs: dependencies.observationTimeoutMs,
-    });
-    const observe = observations.record;
+    const observe = (event: RuntimeObservation) => {
+      if (!signal.aborted || (event.type === 'tool_end' && event.status === 'cancelled'))
+        dependencies.observe?.(context.turnId, event);
+    };
     const children = new Set<AgentSession>();
     const abortSession = () => {
       for (const child of [session, ...children])
@@ -263,38 +168,9 @@ export function createAgentRuntime(dependencies: {
     };
     activeTurns.set(context.turnId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
-    const deadline = limits
-      ? setTimeout(
-          () => lifecycle.abort(new Error('The turn time limit was reached.')),
-          limits.timeoutMs,
-        )
-      : undefined;
-    const waitFor = <T>(pending: Promise<T>): Promise<T> => {
-      if (!limits) return pending;
-      return new Promise<T>((resolve, reject) => {
-        const cancel = () => {
-          signal.removeEventListener('abort', cancel);
-          reject(signal.reason);
-        };
-        pending.then(
-          (value) => {
-            signal.removeEventListener('abort', cancel);
-            resolve(value);
-          },
-          (error: unknown) => {
-            signal.removeEventListener('abort', cancel);
-            reject(error);
-          },
-        );
-        signal.addEventListener('abort', cancel, { once: true });
-        if (signal.aborted) cancel();
-      });
-    };
 
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
-      if (context.activityCheck)
-        throw new ActivityCheckError('Activity checks cannot send messages.');
       const trimmed = text.trim();
       if (!trimmed || trimmed === lastReply) return;
       await context.reply(trimmed, id, replyToMessageId);
@@ -329,7 +205,7 @@ export function createAgentRuntime(dependencies: {
     };
 
     const flushText = () => {
-      if (bufferedText && !stopped && !context.background && !context.activityCheck) {
+      if (bufferedText && !stopped && !context.background) {
         context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
@@ -348,7 +224,7 @@ export function createAgentRuntime(dependencies: {
     };
     const completeStream = (persist = false) => {
       flushText();
-      if (streamId && !context.background && !context.activityCheck) {
+      if (streamId && !context.background) {
         if (persist && !streamSubmitted && !stopped && streamedText.trim())
           queueStreamReply(streamedText, streamId);
         if (!streamSubmitted) context.delta('', streamId, true);
@@ -358,10 +234,9 @@ export function createAgentRuntime(dependencies: {
       streamSubmitted = false;
     };
 
-    const assertActive = (recording = false) => {
+    const assertActive = () => {
       signal.throwIfAborted();
-      if (stopped || status !== 'succeeded' || checkRecorded || (checkRecording && !recording))
-        throw new Error('This execution segment has stopped.');
+      if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
     };
     const guard = (
       name: string,
@@ -370,151 +245,84 @@ export function createAgentRuntime(dependencies: {
       { nested = false } = {},
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
-      const pending = waitFor(
-        (async () => {
-          assertActive();
-          if (name !== 'record_activity_check') {
-            if (limits && toolCalls >= limits.maxToolCalls) {
-              lifecycle.abort(new Error('The turn tool-call limit was reached.'));
-              signal.throwIfAborted();
-            }
-            toolCalls++;
-          }
-          const id = randomUUID();
-          const started = performance.now();
-          const end = (fields: {
-            status: 'succeeded' | 'failed' | 'cancelled';
-            output?: unknown;
-            error?: string;
-          }) =>
-            observe({
-              type: 'tool_end',
-              id,
-              name,
-              ...fields,
-              finishedAt: new Date().toISOString(),
-              durationMs: performance.now() - started,
-            });
-          const personalAction = String((params as { action?: unknown })?.action);
-          const memoryAction =
-            name === 'manage_personal_context' && personalAction.startsWith('memory_');
-          const catalogResult = name === 'manage_apps' && personalAction === 'discover';
-          const observedInput = memoryAction
-            ? { action: (params as { action?: unknown }).action, args: '[private memory omitted]' }
-            : name === 'browser' &&
-                params &&
-                typeof params === 'object' &&
-                ['fill', 'type', 'accept_dialog'].includes(
-                  String((params as { action?: unknown }).action),
-                )
-              ? { ...params, text: '[redacted]' }
-              : params;
-          await observe({
-            type: 'tool_start',
+      const pending = (async () => {
+        assertActive();
+        const id = randomUUID();
+        const started = performance.now();
+        const end = (fields: {
+          status: 'succeeded' | 'failed' | 'cancelled';
+          output?: unknown;
+          error?: string;
+        }) =>
+          observe({
+            type: 'tool_end',
             id,
             name,
-            input: observedInput,
-            startedAt: new Date().toISOString(),
+            ...fields,
+            finishedAt: new Date().toISOString(),
+            durationMs: performance.now() - started,
           });
-          let result: AgentToolResult;
-          let reservedRecord = false;
-          try {
-            assertActive();
-            if (context.activityCheck) {
-              const args = params as {
-                action?: string;
-                args?: Record<string, unknown>;
-                status?: string;
-              };
-              if (name === 'apps') {
-                if (
-                  !args.args ||
-                  !matchingConnection(args.args, context.activityCheck.connectionId) ||
-                  (args.action !== 'SEARCH_TOOLS' &&
-                    args.args.connectionId !== context.activityCheck.connectionId)
-                )
-                  throw new ActivityCheckError(
-                    'Activity checks can only read the selected account.',
-                  );
-              } else if (name === 'record_activity_check') {
-                if (args.status === 'verified' && !inspectedApp)
-                  throw new ActivityCheckError(
-                    'A verified activity check needs a successful app read first.',
-                  );
-                checkRecording = true;
-                reservedRecord = true;
-              } else
-                throw new ActivityCheckError('Activity checks can only read the selected app.');
-            }
-            if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
-            await waitFor(pendingReplies);
-            assertActive(reservedRecord);
-            await waitFor(context.emit('tool_start', label));
-            const executeCurrent = () => {
-              assertActive(reservedRecord);
-              return execute();
-            };
-            const output = await waitFor(
-              dependencies.withTool
-                ? dependencies.withTool(context.turnId, id, name, executeCurrent)
-                : executeCurrent(),
-            );
-            signal.throwIfAborted();
-            if (
-              context.activityCheck &&
-              name === 'apps' &&
-              (params as { action: string }).action !== 'SEARCH_TOOLS' &&
-              inspectedAppResult(output)
-            )
-              inspectedApp = true;
-            if (context.activityCheck && name === 'record_activity_check') checkRecorded = true;
-            if (!stopped) await waitFor(context.emit('tool_complete', label));
-            result = isToolResult(output) ? output : textResult(output);
-            if (
-              !nested &&
-              output !== confirmationNotice &&
-              (delimitedTools.has(name) || catalogResult)
-            )
-              result = delimit(name, result);
-            await end({
-              status: 'succeeded',
-              ...(name === 'sign_in' || memoryAction ? {} : { output }),
-            });
-          } catch (error) {
-            if (reservedRecord) checkRecording = false;
-            if (!stopped) await waitFor(context.emit('tool_failed', label)).catch(() => {});
-            const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
-            const failure = signal.aborted
-              ? 'The action was cancelled.'
-              : error instanceof ReadOnlyTurnError
-                ? readOnlyRefusal
-                : (dependencies.redactError ?? String)(
-                    browserFailure ?? (error instanceof Error ? error.message : String(error)),
-                  );
-            await end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
-            if (
-              !signal.aborted &&
-              !stopped &&
-              status === 'succeeded' &&
-              name === 'browser' &&
-              (params as { action?: unknown }).action === 'click' &&
-              error instanceof BrowserActionError &&
-              error.code === 'browser_click_intercepted'
-            )
-              return textResult({ status: 'blocked', code: error.code, message: browserFailure });
-            throw new Error(failure);
-          }
+        observe({
+          type: 'tool_start',
+          id,
+          name,
+          input: params,
+          startedAt: new Date().toISOString(),
+        });
+        const catalogResult =
+          name === 'manage_apps' && (params as { action?: unknown })?.action === 'discover';
+        let result: AgentToolResult;
+        try {
+          assertActive();
+          if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
+          await pendingReplies;
+          assertActive();
+          await context.emit('tool_start', label);
+          assertActive();
+          const output = await execute();
           signal.throwIfAborted();
-          return result;
-        })(),
-      );
+          if (!stopped) await context.emit('tool_complete', label);
+          result = isToolResult(output) ? output : textResult(output);
+          if (
+            !nested &&
+            output !== confirmationNotice &&
+            (delimitedTools.has(name) || catalogResult)
+          )
+            result = delimit(name, result);
+          end({ status: 'succeeded', output });
+        } catch (error) {
+          if (!stopped) await context.emit('tool_failed', label).catch(() => {});
+          const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
+          const failure = signal.aborted
+            ? 'The action was cancelled.'
+            : error instanceof ReadOnlyTurnError
+              ? readOnlyRefusal
+              : (dependencies.redactError ?? String)(
+                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
+                );
+          end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
+          if (
+            !signal.aborted &&
+            !stopped &&
+            status === 'succeeded' &&
+            name === 'browser' &&
+            (params as { action?: unknown }).action === 'click' &&
+            error instanceof BrowserActionError &&
+            error.code === 'browser_click_intercepted'
+          )
+            return textResult({ status: 'blocked', code: error.code, message: browserFailure });
+          throw new Error(failure);
+        }
+        signal.throwIfAborted();
+        return result;
+      })();
       activeToolCalls.add(pending);
       void pending.finally(() => activeToolCalls.delete(pending)).catch(() => {});
       return pending;
     };
     try {
       signal.throwIfAborted();
-      await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
+      await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
       const workspace = dependencies.workspace.open(context);
       const browser: Computer = {
         ...computer,
@@ -525,15 +333,22 @@ export function createAgentRuntime(dependencies: {
             actionSignal,
           ),
       };
-      let exclusive = Promise.resolve();
-      const inTurn = (name: string, params: unknown, run: () => Promise<AgentToolResult>) => {
-        if (!mixedTools.has(name) || readCall(name, params)) return run();
-        const next = exclusive.then(run);
-        exclusive = next.then(
-          () => {},
-          () => {},
-        );
-        return next;
+      let decided = Promise.resolve(false);
+      const admission = () => {
+        const earlier = decided;
+        let decide!: (asks: boolean) => void;
+        const own = new Promise<boolean>((resolve) => {
+          decide = resolve;
+        });
+        decided = Promise.all([earlier, own]).then(([before, asks]) => before || asks);
+        return {
+          decide,
+          admit: async (asks: boolean) => {
+            decide(asks);
+            if (await earlier)
+              throw new Error("This turn is waiting for the owner's answer. Ask again after it.");
+          },
+        };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
         ottoTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
@@ -547,7 +362,8 @@ export function createAgentRuntime(dependencies: {
               (browserTools.has(name) || handsOverBrowser(name, params))
             )
               await take();
-            return inTurn(name, params, () =>
+            const gate = orderedTools.has(name) ? admission() : undefined;
+            const run = () =>
               guard(name, params, async () => {
                 if (!Value.Check(parameters, params))
                   throw new Error('The tool arguments do not match its schema.');
@@ -556,13 +372,19 @@ export function createAgentRuntime(dependencies: {
                     throw new Error('Open the page in your browser before handing it to the user.');
                   });
                 return execute(params);
-              }),
-            );
+              });
+            return gate ? admissions.run(gate.admit, run).finally(() => gate.decide(false)) : run();
           },
         }));
       const system = systemPrompt(workspace, dependencies.skills);
       const shared = {
-        context,
+        context: {
+          ...context,
+          integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
+            context.integration(action, args, callSignal, admissions.getStore()),
+          manage: (action: string, args: Record<string, unknown>) =>
+            context.manage(action, args, admissions.getStore()),
+        },
         computer: browser,
         reply,
         invite: (text: string) => deliverReply(text),
@@ -614,7 +436,6 @@ export function createAgentRuntime(dependencies: {
           runTool: guard,
           shouldStop: () => stopped,
           onEvent: (event) => {
-            if (event.type === 'model_usage') void observe(event);
             if (event.type === 'final') answer = event.text;
           },
         });
@@ -639,25 +460,8 @@ export function createAgentRuntime(dependencies: {
         if (!browsed) await computer.pin(browserId, true).catch(() => {});
         browsed = true;
       });
-      const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
-      const instruct = (
-        instruction: string,
-        imageCount: number,
-        reason: PromptSnapshot['reason'],
-        resumed: boolean,
-      ) => {
-        const currentInstruction = `${currentUserTime(context.timeZone)}\n${instruction}`;
-        void promptCaptures.record({
-          id: randomUUID(),
-          system: inspectedSystem,
-          instruction: currentInstruction,
-          resumed,
-          imageCount,
-          reason,
-          createdAt: new Date().toISOString(),
-        });
-        return currentInstruction;
-      };
+      const instruct = (instruction: string) =>
+        `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
       const opening = agent.open({
         threadId,
@@ -669,15 +473,12 @@ export function createAgentRuntime(dependencies: {
         timeZone: context.timeZone,
         background: Boolean(context.background),
         runTool: guard,
-        shouldStop: () => stopped || checkRecorded,
+        shouldStop: () => stopped,
         nextMessages:
           takeMessages &&
           (async () =>
-            (await takeMessages()).map((message) =>
-              instruct(steeredInstruction(message), 0, 'steer', true),
-            )),
+            (await takeMessages()).map((message) => instruct(steeredInstruction(message)))),
         onEvent: (event) => {
-          if (event.type === 'model_usage') void observe(event);
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
@@ -691,7 +492,7 @@ export function createAgentRuntime(dependencies: {
           }
           if (event.type === 'error') modelFailed = true;
           if (event.type === 'final') modelFailed = modelIncomplete = false;
-          if (stopped || context.background || context.activityCheck) return;
+          if (stopped || context.background) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();
             bufferedText += event.text;
@@ -700,20 +501,7 @@ export function createAgentRuntime(dependencies: {
           if (event.type === 'final') queueStreamReply(event.text, streamId ?? randomUUID());
         },
       });
-      void opening.then(
-        (opened) => {
-          if (limits && signal.aborted) {
-            void Promise.resolve()
-              .then(() => opened.abort())
-              .catch(() => {});
-            void Promise.resolve()
-              .then(() => opened.dispose())
-              .catch(() => {});
-          }
-        },
-        () => {},
-      );
-      session = await waitFor(opening);
+      session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
       const images: AgentImage[] = [];
@@ -725,13 +513,11 @@ export function createAgentRuntime(dependencies: {
         if (!path.startsWith(root + sep)) continue;
         try {
           const bytes = Buffer.from(
-            await waitFor(
-              dependencies.workspace.readArtifact(
-                threadId,
-                relative(root, path),
-                imageBytes,
-                'attachment',
-              ),
+            await dependencies.workspace.readArtifact(
+              threadId,
+              relative(root, path),
+              imageBytes,
+              'attachment',
             ),
           );
           signal.throwIfAborted();
@@ -747,26 +533,14 @@ export function createAgentRuntime(dependencies: {
           omittedImages.add(attachment.path);
         }
       }
-      await waitFor(
-        session!.prompt(
-          instruct(
-            firstInstruction(context, resumed, omittedImages),
-            images.length,
-            'user',
-            resumed,
-          ),
-          images,
-        ),
-      );
-      await waitFor(pendingReplies);
+      await session!.prompt(instruct(firstInstruction(context, resumed, omittedImages)), images);
+      await pendingReplies;
       signal.throwIfAborted();
       if (modelFailed)
         throw new Error('The model request failed. Check the configured provider and model.');
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
-      if (context.activityCheck && !checkRecorded)
-        throw new Error('The activity check did not record a result.');
       waitingForUser = status !== 'succeeded';
       return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
     } finally {
@@ -774,13 +548,13 @@ export function createAgentRuntime(dependencies: {
       completeStream();
       signal.removeEventListener('abort', abort);
       try {
-        await waitFor(Promise.resolve().then(() => session?.dispose())).catch((error: unknown) => {
-          if (!signal.aborted) throw error;
-        });
+        await Promise.resolve()
+          .then(() => session?.dispose())
+          .catch((error: unknown) => {
+            if (!signal.aborted) throw error;
+          });
       } finally {
-        clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
-        await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
         if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard(browserId).catch(() => {});
@@ -792,11 +566,6 @@ export function createAgentRuntime(dependencies: {
 
   return {
     runTurn,
-    status: () => ({
-      browser: computer.status(),
-      workspace: dependencies.workspace.status(),
-      activeTurns: activeTurns.size,
-    }),
     dispose: () => {
       disposed = true;
       disposal ??= (async () => {

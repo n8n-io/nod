@@ -54,11 +54,10 @@ export interface Run {
     kind: string;
     runAt: number | null;
   }>;
-  scheduleRuns: Array<{ title: string; observation: any; turnId: string | null }>;
+  scheduleRuns: Array<{ title: string; turnId: string | null }>;
   memory: string;
   modelErrors: string[];
   approvals: Array<{ action: string; status: string; args: unknown }>;
-  profile: { name: string; location: string; preferences: string } | undefined;
   visits: Visit[];
   usage: { tokens: number; modelCalls: number; costUsd: number | null };
   firstReplySeconds: number | null;
@@ -294,14 +293,8 @@ export async function collect(options: {
     runAt: row.run_at ? new Date(row.run_at).getTime() : null,
   }));
   const scheduleRuns = (
-    await stack.pool.query(
-      'SELECT title,observation,turn_id FROM schedule_runs ORDER BY created_at',
-    )
-  ).rows.map((row) => ({
-    title: row.title as string,
-    observation: row.observation,
-    turnId: row.turn_id as string | null,
-  }));
+    await stack.pool.query('SELECT title,turn_id FROM schedule_runs ORDER BY created_at')
+  ).rows.map((row) => ({ title: row.title as string, turnId: row.turn_id as string | null }));
   const view = (await (await stack.request('/api/memory')).json()) as {
     notes?: Array<{ path: string; text: string; status: string }>;
     archive?: Array<{ path: string; text: string; reason: string }>;
@@ -311,15 +304,12 @@ export async function collect(options: {
     archive: (view.archive ?? []).map(({ path, text, reason }) => ({ path, text, reason })),
   });
   const approvals = (
-    await stack.pool.query('SELECT action,status,args FROM approvals ORDER BY expires_at')
+    await stack.pool.query('SELECT action,status,args FROM approvals ORDER BY created_at')
   ).rows.map((row) => ({
     action: row.action as string,
     status: row.status as string,
     args: row.args,
   }));
-  const profileRow = (
-    await stack.pool.query('SELECT data FROM profiles LIMIT 1').catch(() => ({ rows: [] as any[] }))
-  ).rows[0]?.data as { name?: string; location?: string; preferences?: string } | undefined;
   const firstUser = messages.find((message) => message.role === 'user');
   const firstAnswer = messages.find(
     (message) => message.role === 'assistant' && message.text.trim(),
@@ -349,13 +339,6 @@ export async function collect(options: {
     memory,
     modelErrors,
     approvals,
-    profile: profileRow
-      ? {
-          name: profileRow.name ?? '',
-          location: profileRow.location ?? '',
-          preferences: profileRow.preferences ?? '',
-        }
-      : undefined,
     visits: options.visits,
     usage: { tokens, modelCalls, costUsd: costKnown ? cost : null },
     firstReplySeconds,
@@ -412,7 +395,7 @@ export async function collect(options: {
         }.`,
         `Workspace files: ${files.length ? files.join(', ') : 'none'}.`,
         `Actions the user approved or declined (the server runs these itself, so they never appear as tool calls): ${approvals.length ? approvals.map((item) => `${item.action} ${item.status} ${JSON.stringify(item.args).slice(0, 220)}`).join('; ') : 'none'}.`,
-        `Saved profile: ${profileRow ? `name "${profileRow.name ?? ''}", location "${profileRow.location ?? ''}", preferences "${String(profileRow.preferences ?? '').slice(0, 300)}"` : 'none'}. Saved memory: ${memory.slice(0, 700)}`,
+        `Saved memory: ${memory.slice(0, 700)}`,
         failedTurns.length
           ? `Turns that did not succeed: ${failedTurns.map((turn) => `${turn.status}${turn.error ? ` (${turn.error})` : ''}`).join('; ')}.`
           : 'Every turn finished.',

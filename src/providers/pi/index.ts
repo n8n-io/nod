@@ -136,15 +136,6 @@ export function createPiAgent(options: {
   >();
   let disposed = false;
   return {
-    nativeTools: createSandbox({
-      path: '/workspace',
-      instructions: '',
-      exec: async () => ({ exitCode: 1 }),
-    }).map(({ name, description, parameters }) => ({
-      name,
-      description,
-      parameters: structuredClone(parameters) as Record<string, unknown>,
-    })),
     async open(input) {
       if (disposed) throw new Error('The agent service has stopped.');
       const access = await options.resolve?.();

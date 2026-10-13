@@ -23,7 +23,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
-import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
+import type { RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
@@ -40,7 +40,7 @@ import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import type { runProcess } from '../src/providers/process.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { inspectToolCatalog, rootObject } from '../src/runtime/tools.ts';
+import { rootObject, toolDefinitions } from '../src/runtime/tools.ts';
 import { Type } from '@sinclair/typebox';
 import { createBrowserFixture as createAgentBrowserComputer } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
@@ -451,10 +451,6 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     },
   });
   try {
-    assert.deepEqual(
-      agent.nativeTools?.map((tool) => tool.name),
-      nativeNames,
-    );
     const session = await agent.open({
       threadId: randomUUID(),
       turnId: randomUUID(),
@@ -1924,80 +1920,6 @@ test('a subagent that needs the owner pauses the whole turn', async (t) => {
   }
 });
 
-test('stalled observations release active tasks on cancellation and disposal', async (t) => {
-  for (const method of ['cancel', 'dispose'] as const) {
-    await t.test(method, async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'otto-stalled-observer-'));
-      const controller = new AbortController();
-      let entered!: () => void;
-      const observed = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let rejectObservation!: (error: Error) => void;
-      const stalled = new Promise<void>((_resolve, reject) => {
-        rejectObservation = reject;
-      });
-      let executed = false;
-      const runtime = createAgentRuntime({
-        agent: {
-          open: async (input) => ({
-            resumed: false,
-            abort: () => {},
-            dispose: () => {},
-            prompt: async () => {
-              await input.tools
-                .find((tool) => tool.name === 'apps')!
-                .execute({ action: 'FIXTURE_ACTION', args: {} });
-              executed = true;
-            },
-          }),
-          dispose: () => {},
-        },
-        computer: fakeComputer(),
-        workspace: fakeWorkspace(),
-      });
-      const running = runtime
-        .runTurn({
-          ...context(directory),
-          signal: controller.signal,
-          observe: async () => {
-            entered();
-            return stalled;
-          },
-          integration: async () => {
-            executed = true;
-            return {};
-          },
-        })
-        .then(
-          () => 'succeeded',
-          (error: unknown) => error,
-        );
-      try {
-        await observed;
-        const disposing =
-          method === 'dispose' ? runtime.dispose() : Promise.resolve(controller.abort());
-        const completed = await Promise.race([
-          Promise.all([running, disposing]),
-          setTimeout(250).then(() => null),
-        ]);
-        assert.ok(completed, 'A stalled optional observer blocked cancellation');
-        assert.match(String(completed[0]), /cancelled/);
-        assert.equal(runtime.status().activeTurns, 0);
-        assert.equal(executed, false);
-        rejectObservation(new Error('Late private observer failure'));
-        await setTimeout(0);
-      } finally {
-        rejectObservation(new Error('Fixture observer cleanup'));
-        controller.abort();
-        await running;
-        await runtime.dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    });
-  }
-});
-
 test('runtime shutdown drains tasks and releases every capability after adapter failures', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-disposal-failure-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -2050,275 +1972,12 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   assert.equal(runtime.dispose(), disposal);
   await assert.rejects(disposal, /Some runtime resources could not close/);
   await running;
-  assert.equal(runtime.status().activeTurns, 0);
   assert.equal(events.filter((value) => value === 'computer').length, 1);
   assert.equal(events.filter((value) => value === 'workspace').length, 1);
   assert.ok(events.indexOf('session') < events.indexOf('computer'));
   assert.ok(events.indexOf('computer') < events.indexOf('workspace'));
   await assert.rejects(runtime.runTurn(context(directory)), /stopped/);
 });
-
-test('turn tool limits fence custom and native execution through the same budget', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-tool-budget-'));
-  let appCalls = 0;
-  let nativeCalls = 0;
-  let aborts = 0;
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (options) => ({
-        resumed: false,
-        prompt: async () => {
-          const apps = options.tools.find((tool) => tool.name === 'apps')!;
-          await options.runTool('read', { path: 'fixture.txt' }, async () => {
-            nativeCalls++;
-            return { content: [] };
-          });
-          await apps.execute({ action: 'FIXTURE_READ', args: {} });
-          await assert.rejects(
-            apps.execute({ action: 'FIXTURE_READ', args: {} }),
-            /tool-call limit/,
-          );
-          await assert.rejects(
-            options.runTool('bash', { command: 'unused' }, async () => {
-              nativeCalls++;
-              return { content: [] };
-            }),
-            /tool-call limit/,
-          );
-        },
-        abort: () => {
-          aborts++;
-        },
-        dispose: () => {},
-      }),
-      dispose: () => {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    await assert.rejects(
-      runtime.runTurn({
-        ...context(directory),
-        limits: { maxToolCalls: 2, timeoutMs: 1000 },
-        integration: async () => {
-          appCalls++;
-          return { items: [] };
-        },
-      }),
-      /tool-call limit/,
-    );
-    assert.equal(appCalls, 1);
-    assert.equal(nativeCalls, 1);
-    assert.equal(aborts, 1);
-    assert.equal(runtime.status().activeTurns, 0);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('turn deadlines release stalled model, provider, native and disposal operations', async (t) => {
-  for (const stalledAt of ['model', 'provider', 'native', 'dispose'] as const) {
-    await t.test(stalledAt, { timeout: 1500 }, async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'otto-time-budget-'));
-      let aborted = false;
-      let providerSignal: AbortSignal | undefined;
-      let workspaceSignal: AbortSignal | undefined;
-      const stalled = new Promise<never>(() => {});
-      const workspace = fakeWorkspace();
-      const runtime = createAgentRuntime({
-        agent: {
-          open: async (options) => ({
-            resumed: false,
-            prompt: async () => {
-              if (stalledAt === 'model') await stalled;
-              if (stalledAt === 'provider')
-                await options.tools
-                  .find((tool) => tool.name === 'apps')!
-                  .execute({ action: 'FIXTURE_READ', args: {} });
-              if (stalledAt === 'native')
-                await options.runTool('read', { path: 'fixture.txt' }, () => stalled);
-            },
-            abort: () => {
-              aborted = true;
-            },
-            dispose: () => (stalledAt === 'dispose' ? stalled : undefined),
-          }),
-          dispose: () => {},
-        },
-        computer: fakeComputer(),
-        workspace: {
-          ...workspace,
-          open: (input) => {
-            workspaceSignal = input.signal;
-            return workspace.open(input);
-          },
-        },
-      });
-      try {
-        const running = runtime.runTurn({
-          ...context(directory),
-          limits: { maxToolCalls: 8, timeoutMs: stalledAt === 'dispose' ? 300 : 30 },
-          integration: async (_action, _args, signal) => {
-            providerSignal = signal;
-            return stalled;
-          },
-        });
-        if (stalledAt === 'dispose') await running;
-        else await assert.rejects(running, /time limit/);
-        assert.equal(runtime.status().activeTurns, 0);
-        assert.equal(workspaceSignal?.aborted, true);
-        if (stalledAt !== 'dispose') assert.equal(aborted, true);
-        if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, true);
-      } finally {
-        await runtime.dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    });
-  }
-});
-
-test('a delayed instrumentation callback cannot begin a tool after its turn deadline', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-delayed-tool-'));
-  let delayed: (() => unknown) | undefined;
-  let providerCalls = 0;
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (options) => ({
-        resumed: false,
-        prompt: async () => {
-          await options.tools
-            .find((tool) => tool.name === 'apps')!
-            .execute({ action: 'FIXTURE_READ', args: {} });
-        },
-        abort: () => {},
-        dispose: () => {},
-      }),
-      dispose: () => {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-    withTool: <T>(_turnId: string, _toolCallId: string, _toolName: string, action: () => T): T => {
-      delayed = action;
-      return new Promise<never>(() => {}) as T;
-    },
-  });
-  try {
-    await assert.rejects(
-      runtime.runTurn({
-        ...context(directory),
-        limits: { maxToolCalls: 8, timeoutMs: 30 },
-        integration: async () => {
-          providerCalls++;
-          return { items: [] };
-        },
-      }),
-      /time limit/,
-    );
-    assert.ok(delayed);
-    assert.throws(delayed, /time limit/);
-    assert.equal(providerCalls, 0);
-    assert.equal(runtime.status().activeTurns, 0);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('a session that opens after its deadline is aborted and disposed without receiving a prompt', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-late-session-'));
-  let finishOpening!: (session: AgentSession) => void;
-  const opening = new Promise<AgentSession>((resolve) => {
-    finishOpening = resolve;
-  });
-  const events: string[] = [];
-  const runtime = createAgentRuntime({
-    agent: { open: () => opening, dispose: () => {} },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    await assert.rejects(
-      runtime.runTurn({ ...context(directory), limits: { maxToolCalls: 8, timeoutMs: 30 } }),
-      /time limit/,
-    );
-    assert.equal(runtime.status().activeTurns, 0);
-    finishOpening({
-      resumed: false,
-      prompt: async () => {
-        events.push('prompt');
-      },
-      abort: () => {
-        events.push('abort');
-      },
-      dispose: () => {
-        events.push('dispose');
-      },
-    });
-    await setTimeout(0);
-    assert.deepEqual(events, ['abort', 'dispose']);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test(
-  'completed and failed turns clear their deadline instead of aborting disposed sessions later',
-  { timeout: 5000 },
-  async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const directory = await mkdtemp(join(tmpdir(), 'otto-cleared-deadline-'));
-    const signals: AbortSignal[] = [];
-    let prompts = 0;
-    let aborts = 0;
-    const workspace = fakeWorkspace();
-    const runtime = createAgentRuntime({
-      agent: {
-        open: async () => ({
-          resumed: false,
-          prompt: async () => {
-            if (++prompts === 2) throw new Error('Synthetic model failure');
-          },
-          abort: () => {
-            aborts++;
-          },
-          dispose: () => {},
-        }),
-        dispose: () => {},
-      },
-      computer: fakeComputer(),
-      workspace: {
-        ...workspace,
-        open: (input) => {
-          signals.push(input.signal);
-          return workspace.open(input);
-        },
-      },
-    });
-    try {
-      const input = {
-        ...context(directory),
-        signal: t.signal,
-        limits: { maxToolCalls: 8, timeoutMs: 30 },
-      };
-      await runtime.runTurn(input);
-      await assert.rejects(runtime.runTurn(input), /Synthetic model failure/);
-      t.mock.timers.tick(60);
-      assert.equal(aborts, 0);
-      assert.equal(signals.length, 2);
-      assert.equal(
-        signals.some((signal) => signal.aborted),
-        false,
-      );
-      assert.equal(runtime.status().activeTurns, 0);
-    } finally {
-      await runtime.dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
 
 test('the memory curator runs on the configured Pi provider, parses JSON and refuses provider failures', async () => {
   const faux = fauxProvider();
@@ -2337,7 +1996,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     runtime,
   });
   const ask = () =>
-    curator.curate({ task: 'search', instructions: 'Return JSON.', input: { query: 'sibling' } });
+    curator.curate({ task: 'reflect', instructions: 'Return JSON.', input: { query: 'sibling' } });
   faux.setResponses([
     fauxAssistantMessage('Here you go:\n```json\n{"paths":["people/ana"]}\n```'),
     fauxAssistantMessage('{"ops":[]}'),
@@ -2355,7 +2014,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
   assert.equal(createPiMemoryCurator({ provider, runtime }).configured, false);
   await assert.rejects(
     createPiMemoryCurator({ provider, apiKey: 'fixture-key', runtime }).curate({
-      task: 'search',
+      task: 'reflect',
       instructions: 'Return JSON.',
       input: {},
     }),
@@ -2376,7 +2035,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
       apiKey: 'fixture-key',
       model: 'no-such-model',
       runtime: real,
-    }).curate({ task: 'search', instructions: 'Return JSON.', input: {} }),
+    }).curate({ task: 'reflect', instructions: 'Return JSON.', input: {} }),
     /catalog/,
   );
 });
@@ -2520,7 +2179,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
 });
 
 test('every Otto tool schema reaches a model provider as a root object with its properties', () => {
-  for (const tool of inspectToolCatalog()) {
+  for (const tool of Object.values(toolDefinitions)) {
     const schema = tool.parameters as { type?: string; anyOf?: unknown; properties?: object };
     assert.equal(schema.type, 'object', tool.name);
     assert.equal(schema.anyOf, undefined, tool.name);

@@ -177,7 +177,6 @@ export interface CredentialRequest {
 }
 export interface Connection {
   canReconnect?: boolean;
-  reconnectRequired?: boolean;
   slug: string;
   name: string;
   logoUrl?: string;
@@ -261,13 +260,7 @@ export interface Schedule {
   revision: number;
   nextRun: string | null;
   lastRun: ScheduleRun | null;
-  baselineObservation: ScheduleObservation | null;
 }
-export type ScheduleObservation = {
-  sourceUrl: string;
-  summary: string;
-  checkedAt: string;
-} & ({ status: 'verified'; value: string } | { status: 'unavailable'; value: null });
 export interface ScheduleRun {
   id: string;
   scheduleId: string;
@@ -278,7 +271,6 @@ export interface ScheduleRun {
   createdAt: string;
   status: TurnStatus;
   error: string | null;
-  observation: ScheduleObservation | null;
   messageId: string | null;
   messagePreview: string | null;
   messageText: string | null;

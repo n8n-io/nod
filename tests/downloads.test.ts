@@ -695,13 +695,6 @@ test('Composio file outputs become private bytes wherever they appear and never 
       },
     },
   });
-  assert.deepEqual(await files({ file: fileObject() }, AbortSignal.timeout(1000), false), {
-    file: {
-      name: '../../invoice.pdf',
-      mimeType: 'application/pdf',
-      message: 'Files are not opened in activity checks.',
-    },
-  });
   assert.equal(calls.length, 5);
   const many = (await files(
     {

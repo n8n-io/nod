@@ -113,9 +113,13 @@ type ProposalRow = {
   oauth_state_hash: string | null;
   oauth_status: 'pending' | 'completing' | 'connected' | 'cancelled' | 'failed' | null;
   connection_id: string | null;
-  thread_id: string | null;
   turn_id: string | null;
 };
+
+export const officialMcp = new Map<string, { name: string; endpoint: string; scope?: string }>([
+  ['notion', { name: 'Notion', endpoint: 'https://mcp.notion.com/mcp' }],
+  ['linear', { name: 'Linear', endpoint: 'https://mcp.linear.app/mcp', scope: 'read write' }],
+]);
 
 export class DiscoveredConnectionError extends Error {
   constructor(
@@ -197,7 +201,6 @@ export async function createDiscoveredConnections(
       signal?: AbortSignal,
     ) => Promise<{ exitCode: number; output: string }>;
     resumeConnection?: (turnId: string, service: string) => Promise<boolean>;
-    accountReplaced?: (connectionId: string, client: PoolClient) => Promise<void>;
     refresh?: () => void;
   },
 ) {
@@ -210,13 +213,14 @@ export async function createDiscoveredConnections(
     );
     CREATE TABLE IF NOT EXISTS discovered_connection_proposals (
       id uuid PRIMARY KEY,owner_id text NOT NULL,service text NOT NULL,name text NOT NULL,
-      paths jsonb NOT NULL,connection_id uuid,thread_id uuid,turn_id uuid,
+      paths jsonb NOT NULL,connection_id uuid,turn_id uuid,
       setup_url text,setup_text text,
       account_name text,oauth_state_hash text,
       expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
     );
     ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext;
-    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text;
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
+      DROP COLUMN IF EXISTS thread_id;
   `);
   await transaction(async (recovery) => {
     const interrupted = await recovery.query<{ id: string }>(
@@ -273,7 +277,7 @@ export async function createDiscoveredConnections(
     );
     return result.rows;
   }
-  async function propose(input: unknown, turn?: TurnRef) {
+  async function create(input: unknown, turn?: TurnRef) {
     const parsed = proposalSchema.parse(input);
     let name = parsed.name;
     if (parsed.paths.some((path) => path.auth === 'oauth')) {
@@ -319,8 +323,8 @@ export async function createDiscoveredConnections(
     }
     await pool.query(
       `INSERT INTO discovered_connection_proposals
-       (id,owner_id,service,name,paths,connection_id,thread_id,turn_id,setup_url,setup_text)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+       (id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         id,
         owner,
@@ -328,18 +332,44 @@ export async function createDiscoveredConnections(
         name,
         JSON.stringify(paths),
         parsed.connectionId ?? null,
-        turn?.threadId ?? null,
         turn?.turnId ?? null,
         setupUrl,
         parsed.setupText ?? null,
       ],
     );
+    return { id, name };
+  }
+  async function propose(input: unknown, turn?: TurnRef) {
+    const { id, name } = await create(input, turn);
     return { name, url: `/apps?connect=${id}` };
+  }
+  function official(service: string, connectionId?: string) {
+    const server = officialMcp.get(service);
+    if (!server) throw error('This service is unavailable.', 404);
+    return {
+      service,
+      name: server.name,
+      paths: [
+        {
+          kind: 'mcp',
+          endpoint: server.endpoint,
+          auth: 'oauth',
+          ...(server.scope ? { scope: server.scope } : {}),
+        },
+      ],
+      ...(connectionId ? { connectionId } : {}),
+    };
+  }
+  async function link(service: string, turn?: TurnRef, connectionId?: string) {
+    return propose(official(service, connectionId), turn);
+  }
+  async function signIn(service: string) {
+    return beginOAuth((await create(official(service))).id, {});
   }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
       await client.query<ProposalRow>(
-        `SELECT id,owner_id,service,name,paths,connection_id,thread_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status
+        `SELECT id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status
        FROM discovered_connection_proposals
        WHERE id=$1 AND owner_id=$2 AND expires_at>now()${lock ? ' FOR UPDATE' : ''}`,
         [z.uuid().parse(id), owner],
@@ -392,7 +422,6 @@ export async function createDiscoveredConnections(
         );
       }
       await options.grantVault.put(idToSave, secret, client);
-      if (pending.connection_id) await options.accountReplaced?.(idToSave, client);
       if (pending.oauth_state_hash) await options.grantVault.remove(pending.id, client);
     }, pool);
     options.refresh?.();
@@ -878,6 +907,8 @@ export async function createDiscoveredConnections(
     list,
     setupServices,
     propose,
+    link,
+    signIn,
     completeOAuth,
     reconnect,
     search,

@@ -77,12 +77,6 @@ export function ScheduleRow({
         }
       >
         <p className="saved-plan-description">{schedule.prompt}</p>
-        {schedule.baselineObservation?.status === 'verified' && (
-          <p className="saved-plan-note">
-            Baseline: {schedule.baselineObservation.value} ·{' '}
-            {date(schedule.baselineObservation.checkedAt)}
-          </p>
-        )}
         <ScheduleTiming
           key={`${schedule.kind}:${schedule.cron}:${schedule.runAt}:${schedule.timeZone}`}
           schedule={schedule}
@@ -118,23 +112,12 @@ export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
         {run.timeZone !== dateFormat.timeZone && <span>{run.timeZone}</span>}
       </p>
       {run.error && <p className="schedule-run-error">{run.error}</p>}
-      {run.observation && (
-        <p className="saved-plan-note">
-          {run.observation.status === 'verified' ? run.observation.value : 'Source unavailable'} ·{' '}
-          Checked{' '}
-          <time dateTime={run.observation.checkedAt}>{date(run.observation.checkedAt)}</time> ·{' '}
-          {run.observation.summary}{' '}
-          <a href={run.observation.sourceUrl} target="_blank" rel="noopener noreferrer">
-            Source
-          </a>
-        </p>
-      )}
       {run.messageId ? (
         <PlanDetails label={run.title} summary={run.messagePreview}>
           <MessageText text={run.messageText ?? run.messagePreview ?? ''} />
         </PlanDetails>
       ) : (
-        !run.observation && <p className="saved-plan-note">No message</p>
+        <p className="saved-plan-note">No message</p>
       )}
     </article>
   );
