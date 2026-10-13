@@ -1651,6 +1651,75 @@ test('at the browser cap a leased browser stays open, a new one waits for a slot
   }
 });
 
+test('Stop during the first browser lease still discards the background browser', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-lease-stop-'));
+  const session = randomUUID();
+  const discarded: string[] = [];
+  const leasing = deferred();
+  const lease = deferred();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async ({ tools }) => {
+        const stopped = deferred();
+        return {
+          resumed: false,
+          prompt: async () => {
+            void tools
+              .find((tool) => tool.name === 'browser')!
+              .execute({ action: 'open', url: 'https://example.com/' })
+              .catch(() => {});
+            await stopped.promise;
+          },
+          abort: () => stopped.resolve(),
+          dispose() {},
+        };
+      },
+      dispose() {},
+    },
+    computer: fakeComputer({
+      hold: async () => {
+        leasing.resolve();
+        await lease.promise;
+      },
+      discard: async (id) => {
+        discarded.push(id);
+      },
+    }),
+    workspace: fakeWorkspace(),
+  });
+  const stop = new AbortController();
+  try {
+    const result = runtime.runTurn({
+      threadId: randomUUID(),
+      turnId: randomUUID(),
+      browserId: session,
+      background: true,
+      prompt: 'Use the browser.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: stop.signal,
+      emit: async () => {},
+      reply: async () => {},
+      delta() {},
+      publish: async () => {
+        throw new Error('unused');
+      },
+      requestCredential: async () => ({ filled: true }),
+      integration: async () => ({}),
+      manage: async () => ({}),
+    });
+    await leasing.promise;
+    stop.abort();
+    await result.catch(() => {});
+    assert.deepEqual(discarded, [session]);
+  } finally {
+    lease.resolve();
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('browser leases reach a worker that rejects requests it does not know', async () => {
   const known = new Set([
     'act',

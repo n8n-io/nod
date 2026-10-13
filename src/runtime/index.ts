@@ -447,8 +447,8 @@ export function createAgentRuntime(dependencies: {
           systemPrompt: system,
           systemContext: systemContext(context),
           tools: bind({ ...shared, browserId: childBrowser }, async () => {
-            await keep(childBrowser);
             browsed = true;
+            await keep(childBrowser);
           }).filter((tool) => !ownBrowserTools.has(tool.name)),
           workspace,
           timeZone: context.timeZone,
@@ -478,8 +478,8 @@ export function createAgentRuntime(dependencies: {
         return answer || 'The subagent finished without an answer.';
       };
       const tools = bind({ ...shared, browserId, delegate }, async () => {
-        await keep(browserId);
         browsed = true;
+        await keep(browserId);
       });
       const instruct = (instruction: string) =>
         `${currentUserTime(context.timeZone)}\n${instruction}`;
