@@ -152,7 +152,6 @@ test(
         }),
       },
       keyStore,
-      relevance: { id: 'fixture', configured: false, classify: async () => 'ignore' },
       model: { provider: 'fixture', name: 'fixture', configured: false },
       integrations: {
         id: 'fixture',

@@ -271,7 +271,6 @@ export async function startStack(options: {
       { activeThread, resetThread },
       { createContainerBrowserComputer },
       { createDockerWorkspace },
-      { createOpenAIRelevanceClassifier },
       { createPublicLinkPreviewProvider },
     ] = await Promise.all([
       load<typeof import('../../src/server/composition.ts')>('src/server/composition.ts'),
@@ -285,9 +284,6 @@ export async function startStack(options: {
         'src/providers/container-browser/index.ts',
       ),
       load<typeof import('../../src/providers/docker/index.ts')>('src/providers/docker/index.ts'),
-      load<typeof import('../../src/providers/openai/relevance.ts')>(
-        'src/providers/openai/relevance.ts',
-      ),
       load<typeof import('../../src/providers/public-web/link-preview.ts')>(
         'src/providers/public-web/link-preview.ts',
       ),
@@ -343,7 +339,14 @@ export async function startStack(options: {
         },
       },
       keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-      relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+      ...(await load<{
+        createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
+      }>('src/providers/openai/relevance.ts').then(
+        (module) => ({
+          relevance: module.createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+        }),
+        () => ({}),
+      )),
       memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
       onboardingCurator: createPiMemoryCurator({
         provider: model.provider,

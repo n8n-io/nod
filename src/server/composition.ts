@@ -14,7 +14,6 @@ import type { IntegrationProvider, IntegrationService } from '../ports/integrati
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
-import type { RelevanceClassifier } from '../ports/relevance.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelAccountRegistry, ChannelSetupVerifier } from '../ports/channel-settings.ts';
@@ -45,7 +44,6 @@ import { createGoogleAuthentication } from '../providers/better-auth/index.ts';
 import { createCloudflareRuntimeTransport } from '../providers/runtime-host/cloudflare.ts';
 import { createLocalRuntimeTransport } from '../providers/runtime-host/local.ts';
 import { createComputerShutdownConfirmation } from '../providers/runtime-host/computer-shutdown.ts';
-import { createJevRelevanceClassifier } from '../providers/jev/relevance.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
@@ -158,7 +156,6 @@ export interface ApplicationAdapters {
     ownerId: string,
   ) => IntegrationProvider;
   keyStore: CredentialKeyStore;
-  relevance: RelevanceClassifier;
   memoryCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   messaging?: MessagingTransport;
@@ -366,35 +363,6 @@ export function createDefaultAdapters(
         }
       : {}),
     keyStore,
-    relevance: env.TYPESAFE_API_KEY
-      ? createJevRelevanceClassifier({ apiKey: env.TYPESAFE_API_KEY, model: env.TYPESAFE_MODEL })
-      : {
-          get id() {
-            return modelCurator.id;
-          },
-          get configured() {
-            return models.configured;
-          },
-          async classify(context, policy, signal) {
-            const answer = (await modelCurator.curate(
-              {
-                task: 'search',
-                instructions: `Return JSON {"decision":"ignore"|"digest"|"wake","confidence":0.0}. ${policy.instructions} Decision criteria: ${JSON.stringify(policy.criteria)}`,
-                input: context,
-              },
-              signal,
-            )) as { decision?: string; confidence?: number } | null;
-            const parsed = z
-              .object({
-                decision: z.enum(['ignore', 'digest', 'wake']),
-                confidence: z.number().min(0).max(1),
-              })
-              .parse(answer);
-            return parsed.decision === 'wake' && parsed.confidence < policy.minWakeConfidence
-              ? 'digest'
-              : parsed.decision;
-          },
-        },
     memoryCurator: modelCurator,
     onboardingCurator: selectedCurator,
     messagingSetup: {
@@ -521,12 +489,7 @@ async function initializeApplication(
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({ pool, ownerId, refresh });
   await tasks.initialize();
-  const triage = createTriage({
-    consumers,
-    classifier: adapters.relevance,
-    getProfile: personal.getProfile,
-    connectedApps: () => integrations.connectedApps(),
-  });
+  const triage = createTriage({ consumers, connectedApps: () => integrations.connectedApps() });
   const grantVault = await createAppGrantVault(pool, {
     ownerId,
     keyStore: adapters.keyStore,

@@ -338,7 +338,6 @@ try {
     { createPiAgent },
     { createContainerBrowserComputer },
     { createDockerWorkspace },
-    { createOpenAIRelevanceClassifier },
     { createPublicLinkPreviewProvider },
     { events },
   ] = await Promise.all([
@@ -347,7 +346,6 @@ try {
     import('../src/providers/pi/index.ts'),
     import('../src/providers/container-browser/index.ts'),
     import('../src/providers/docker/index.ts'),
-    import('../src/providers/openai/relevance.ts'),
     import('../src/providers/public-web/link-preview.ts'),
     import('../src/server/events.ts'),
   ]);
@@ -376,7 +374,6 @@ try {
       synthesize: unavailable,
     },
     keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-    relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
     linkPreviews: createPublicLinkPreviewProvider(),
     model: { provider, name: model, configured: true },
   });

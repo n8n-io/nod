@@ -148,7 +148,6 @@ test(
           }),
         },
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
-        relevance: { id: 'fixture', configured: false, classify: async () => 'ignore' },
         model: { provider: 'fixture', name: 'fixture', configured: true },
       },
       { channels: false },
