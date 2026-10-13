@@ -38,6 +38,7 @@ async function fixture(
     agent?: Agent;
     computer?: Computer;
     workspace?: Workspace;
+    observe?: () => void;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-session-'));
@@ -495,6 +496,22 @@ test('an app call issued after one that asks never runs, unless the ask fails fi
   });
   assert.equal(failed.result.status, 'succeeded');
   assert.ok(events.includes('end GMAIL_LIST_LABELS'));
+});
+
+test('a failing observer never breaks a tool call', async () => {
+  let result: AgentToolResult | undefined;
+  await fixture(
+    async (tools) => {
+      result = await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} });
+    },
+    { integration: async () => ({ messages: ['Receipt'] }) },
+    {
+      observe: () => {
+        throw new Error('Synthetic observer failure');
+      },
+    },
+  );
+  assert.match(JSON.stringify(result), /Receipt/);
 });
 
 test('saved memory reaches Pi in the owner context and through memory tools', async () => {
