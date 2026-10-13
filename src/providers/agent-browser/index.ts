@@ -188,6 +188,7 @@ export function createAgentBrowserComputer(options: {
   platform?: NodeJS.Platform;
   headless?: boolean;
   idleTimeoutMs?: number;
+  slotWaitMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
@@ -225,6 +226,7 @@ export function createAgentBrowserComputer(options: {
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
+  const slotWaitMs = options.slotWaitMs ?? 2 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
   let disposed = false;
   let activeCalls = 0;
@@ -332,6 +334,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + slotWaitMs;
     const reserve = () =>
       allocate(async () => {
         if (state.started || state.saved.navigationFailed) return true;
@@ -370,6 +373,8 @@ export function createAgentBrowserComputer(options: {
     while (!(await reserve())) {
       if (disposed || state.closed || state.closing)
         throw new Error('The browser session has expired. Open the URL again.');
+      if (Date.now() >= deadline)
+        throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
       await delay(500, undefined, { signal });
     }
   }

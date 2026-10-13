@@ -1643,6 +1643,7 @@ test('at the browser cap a running session keeps its browser and a new one waits
     dataRoot: directory,
     run: fixture.run,
     maxLiveSessions: 2,
+    slotWaitMs: 4000,
   });
   const open = async (id: string, signal?: AbortSignal) => {
     await computer.pin(id, true);
@@ -1666,6 +1667,8 @@ test('at the browser cap a running session keeps its browser and a new one waits
     assert.deepEqual([...fixture.pages.keys()].sort(), ['chat', 'scheduled']);
     await computer.pin('chat', false);
     await open('event');
+    assert.deepEqual([...fixture.pages.keys()].sort(), ['event', 'scheduled']);
+    await assert.rejects(open('late'), /The browser sessions are busy/);
     assert.deepEqual([...fixture.pages.keys()].sort(), ['event', 'scheduled']);
   } finally {
     await computer.dispose();
