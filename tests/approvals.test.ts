@@ -447,11 +447,10 @@ test(
         return started;
       };
       const routed = async (taskId: string, text: string) => {
-        const submitted = await thread.submitUserMessage(text);
-        await db.pool.query('UPDATE turns SET session_id=$2,background=true WHERE id=$1', [
-          submitted.turnId,
-          taskId,
-        ]);
+        const onIt = (
+          await db.pool.query('SELECT on_it_message_id FROM tasks WHERE id=$1', [taskId])
+        ).rows[0].on_it_message_id as string;
+        const submitted = await thread.submitUserMessage(text, [], { replyToMessageId: onIt });
         return { ...(await running(submitted.turnId)), messageId: submitted.messageId };
       };
       const say = (turnId: string, text: string) =>

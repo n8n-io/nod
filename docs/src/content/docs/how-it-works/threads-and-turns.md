@@ -19,13 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/otto/blob/m
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Session                |
-| ---------- | ------------------------------------------------------------------------------------------ | ---------------------- |
-| `user`     | A message from you                                                                         | The chat               |
-| `schedule` | A schedule firing                                                                          | A new session          |
-| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session          |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked |
-| `task`     | The chat starting a task with `start_task`                                                 | The task's session     |
+| `source`   | Created by                                                                                 | Session                                                |
+| ---------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `user`     | A message from you                                                                         | The chat, or a task's session for a reply to that task |
+| `schedule` | A schedule firing                                                                          | A new session                                          |
+| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session                                          |
+| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                                 |
+| `task`     | The chat starting a task with `start_task`                                                 | The task's session                                     |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -77,7 +77,7 @@ A message with attachments, a reply target or another channel stops the take. It
 
 A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
 
-A secure form or a verification code request stays open until a later turn starts in the same session. A payment request stays open until you send a newer message to the session that asked for it. So a chat message doesn't close a schedule or event session's sign-in or payment. A code you send as a reply goes to the request of the session that wrote the message you replied to.
+A secure form or a verification code request stays open until a later turn starts in the same session. A payment request stays open until you send a newer message to the session that asked for it. So a chat message doesn't close a schedule or event session's sign-in or payment. A code you send as a reply goes to the request of the session that wrote the message you replied to. A task's "On it" message belongs to the task, so a code that replies to it goes to the task's request.
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn.
 
@@ -126,7 +126,17 @@ A task turn runs in task mode, which replaces the rules of a background session:
 
 A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
 
-The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its title, status and the ID of its "On it" message, so Otto knows what's running. The list is in the turn message, not the system prompt, so a status change doesn't change the chat's prompt.
+The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its ID, title, status and the ID of its "On it" message, so Otto knows what's running. The list is in the turn message, not the system prompt, so a status change doesn't change the chat's prompt.
+
+### Replies to a task
+
+Your reply to any message of a task goes to that task: its "On it" message, a question, a link or its result. The server finds the task from the message you replied to while it saves your message, and queues a `user` turn in the task's session. Every turn in a task's session is a background turn on the task's channel, so the task's answer goes where the task replies. A message without a reply target, or a reply to a chat message, stays in the chat.
+
+- **While the task works.** Your reply waits behind the running turn and runs after it. The task stays open until your reply has run. If the running turn stops the task first, your reply opens it again when it starts.
+- **While the task waits for you.** Your reply starts the task's next turn. A reply to the task's confirmation question itself is your yes or no. Any other reply cancels the task's open confirmations. A confirmation the task asks while an earlier reply of yours waits is cancelled too, and your yes or no to it reaches the task as an ordinary reply. So an action you were asked about can't run twice.
+- **After the task closed.** A reply to a done, stopped or failed task opens it again as **Queued**, in the same session and saved Pi session. It runs when fewer than three other tasks work.
+
+The chat can also hand your message to a task. When your message answers, corrects or adds to an open task, Otto calls `route_to_task {taskId}`. The server moves your message itself, with its text and ID, into the task's session as your reply, and the chat writes nothing more about it. Otto never writes your words for a task, so the trust check sees exactly what you sent. A message the chat moved answers no Otto message, so a moved "yes" can't approve what the task proposed. The server refuses to move a message into a task that waits for your yes or no to a confirmation, so Otto asks you to reply to that confirmation. When a bare yes or no could answer more than one task, Otto asks which one.
 
 ## Sessions
 

@@ -2184,11 +2184,19 @@ test('delegated subagents run two at a time, each in its own browser, and answer
       ...context(directory),
       turnId: randomUUID(),
       startTask: async () => ({}),
+      routeToTask: async () => ({}),
     });
     assert.equal(result.status, 'succeeded');
     assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
-    assert.ok(parentTools.includes('start_task'));
-    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session', 'start_task'])
+    for (const name of ['start_task', 'route_to_task']) assert.ok(parentTools.includes(name));
+    for (const name of [
+      'delegate',
+      'sign_in',
+      'pay',
+      'browser_session',
+      'start_task',
+      'route_to_task',
+    ])
       assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];
     assert.equal(new Set(browsers).size, 3);

@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { TurnRef } from './thread.ts';
 import { turnOrigin } from './approvals.ts';
-import { taskSessionSql } from './turn-chain.ts';
+import { sessionOfMessageSql, taskSessionSql } from './turn-chain.ts';
 
 export type TrustReason = 'background' | 'schedule' | 'task' | 'unrequested';
 
@@ -55,15 +55,19 @@ export function createTrust(options: {
 
   async function conversation(threadId: string, sessionId: string) {
     const users = (
-      await pool.query<{ id: string; text: string; created_at: Date }>(
-        `SELECT m.id,m.text,m.created_at ${recent} AND ${own} AND m.role='user'
+      await pool.query<{ id: string; text: string; created_at: Date; moved: boolean }>(
+        `SELECT m.id,m.text,m.created_at,u.source='user' AND $3::uuid<>$2 AND NOT EXISTS (SELECT 1 FROM messages r
+           WHERE r.id=m.reply_to_message_id AND r.owner_id=m.owner_id AND ${sessionOfMessageSql('r')}=$3) AS moved
+         ${recent} AND ${own} AND m.role='user'
          AND m.text NOT IN (${tapped}) ORDER BY m.created_at DESC,m.id DESC LIMIT 5`,
         [ownerId, threadId, sessionId],
       )
     ).rows;
     const latest = users[0];
     if (!latest) return undefined;
-    const before = await answered(pool, ownerId, threadId, sessionId, latest.id);
+    const before = latest.moved
+      ? undefined
+      : await answered(pool, ownerId, threadId, sessionId, latest.id);
     return {
       userMessages: users
         .reverse()

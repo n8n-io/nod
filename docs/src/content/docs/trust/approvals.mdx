@@ -24,7 +24,7 @@ The checker is your selected model at its fastest setting. It checks every app a
 
 Only your words carry authority. A web page or email can't argue for an action, because the checker never reads it.
 
-Each [task](/how-it-works/threads-and-turns/#tasks) has its own words. For an action in a task, the checker sees your message that started the task, however long ago you sent it, and the Otto message it answered. So a task you start with "yes, do that" keeps the proposal you agreed to. It also sees your last five messages to that task from the past day, and the task's Otto message your latest one answered. It never sees your chat messages or another task's messages, so a chat message you send later doesn't widen what a task can do.
+Each [task](/how-it-works/threads-and-turns/#tasks) has its own words. For an action in a task, the checker sees your message that started the task, however long ago you sent it, and the Otto message it answered. So a task you start with "yes, do that" keeps the proposal you agreed to. It also sees your last five messages to that task from the past day, and the task's Otto message your latest one answered. It never sees your chat messages or another task's messages, so a chat message you send later doesn't widen what a task can do. Your message reaches a task when you reply to one of the task's messages, or when the chat moves your exact message there. A message the chat moved has no Otto message it answered, so a short "yes" moved to a task can't approve what the task proposed. A reply to a task that isn't your answer to its confirmation cancels that confirmation, so the action can't run twice.
 
 For an action in the chat, the checker reads only messages outside tasks: those of the chat, scheduled runs and background work. So a "yes" in the chat to a scheduled run's result still has the message it answered. A task's messages, such as its check-ins, its questions and your replies to it, never reach it. If the last Otto message before yours came from a task, the checker sees no Otto message. A short "yes" then can't approve an older chat question, so Otto asks you.
 
@@ -67,7 +67,7 @@ Reply yes to go ahead, no to skip it, or tell me what to change.
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
 - The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale".
-- A yes with a change or condition, a question or anything else closes the question, and Otto treats your message as a new request. So does a reply to a question that was already answered or whose task has ended.
+- A yes with a change or condition, a question or anything else closes the question, and Otto treats your message as a new request. So does a reply to a question that was already answered, whose task has ended, or whose task still has an earlier reply of yours to read.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
 
 ```mermaid

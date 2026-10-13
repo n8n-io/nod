@@ -20,6 +20,11 @@ export function taskSessionSql(alias = 'u') {
   return `EXISTS (SELECT 1 FROM tasks t WHERE t.id=${alias}.session_id AND t.owner_id=${alias}.owner_id)`;
 }
 
+export function sessionOfMessageSql(alias = 'm') {
+  return `COALESCE((SELECT t.id FROM tasks t WHERE t.on_it_message_id=${alias}.id AND t.owner_id=${alias}.owner_id),
+    (SELECT u.session_id FROM turns u WHERE u.id=${alias}.turn_id AND u.owner_id=${alias}.owner_id))`;
+}
+
 export async function taskOfTurn(
   database: Pick<PoolClient, 'query'>,
   ownerId: string,

@@ -27,7 +27,14 @@ import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
-const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'start_task', 'task_progress']);
+const parentTools = new Set([
+  'sign_in',
+  'pay',
+  'browser_session',
+  'start_task',
+  'route_to_task',
+  'task_progress',
+]);
 const parallelTools = new Set([
   'delegate',
   'share_file',

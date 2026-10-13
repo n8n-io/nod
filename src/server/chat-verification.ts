@@ -5,6 +5,7 @@ import type { SubmitMessageResponse, VerificationRequest } from '../shared/contr
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { waitingTurnSql } from './vault.ts';
+import { sessionOfMessageSql } from './turn-chain.ts';
 
 interface VerificationInput {
   clientMessageId: string;
@@ -177,7 +178,7 @@ export async function createChatVerification(
       if (input.replyToMessageId) {
         const target = (
           await client.query(
-            `SELECT u.session_id FROM messages m JOIN turns u ON u.id=m.turn_id
+            `SELECT ${sessionOfMessageSql('m')} AS session_id FROM messages m JOIN turns u ON u.id=m.turn_id
              WHERE m.id=$1 AND m.owner_id=$2 AND u.owner_id=$2 AND u.channel=$3 AND m.thread_id=$4`,
             [input.replyToMessageId, options.ownerId, channel, thread.id],
           )

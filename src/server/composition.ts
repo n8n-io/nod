@@ -771,6 +771,7 @@ async function initializeApplication(
       activityCheck: triage.activityCheck,
       memoryContext: memory.context,
       startTask: tasksEnabled ? tasks.dispatch : undefined,
+      routeToTask: tasksEnabled ? tasks.route : undefined,
       taskProgress: tasks.progress,
       openTasks: tasksEnabled ? tasks.open : undefined,
       connections: integrations.manageConnections,

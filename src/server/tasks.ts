@@ -7,8 +7,10 @@ import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
   enqueueTurn,
   insertAssistantMessage,
+  insertUserTurn,
   lockThread,
   withTurnLock,
+  type TaskTarget,
   type TurnRef,
 } from './thread.ts';
 import { turnChain } from './turn-chain.ts';
@@ -25,6 +27,7 @@ const dispatchInput = z
     steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
   })
   .strict();
+const routeInput = z.object({ taskId: z.uuid() }).strict();
 const progressInput = z
   .object({
     steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
@@ -101,7 +104,14 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
       const value = status(row);
       return ended(value) || !row.on_it_message_id
         ? []
-        : [{ title: row.title, status: value, onItMessageId: row.on_it_message_id }];
+        : [
+            {
+              taskId: row.id,
+              title: row.title,
+              status: value,
+              onItMessageId: row.on_it_message_id,
+            },
+          ];
     });
   }
 
@@ -228,6 +238,65 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     return started;
   }
 
+  async function route(
+    turn: TurnRef,
+    raw: unknown,
+    provenance: { sourceMessageId: string | null },
+  ) {
+    const { taskId } = routeInput.parse(raw);
+    await transaction(async (client) => {
+      const thread = await lockThread(client, ownerId);
+      const current = await client.query(
+        `SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND status='running'
+           AND session_id=thread_id AND NOT background FOR NO KEY UPDATE`,
+        [turn.turnId, ownerId, thread.id],
+      );
+      if (!current.rowCount) throw failure('Only a running chat turn can route a message.', 409);
+      if ((await turnChain(client, ownerId, turn)).readOnly)
+        throw failure('This turn can only read, so it cannot route a message to a task.');
+      const message = (
+        await client.query<{ id: string; text: string }>(
+          `SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'
+             AND turn_id=$4`,
+          [provenance.sourceMessageId, ownerId, thread.id, turn.turnId],
+        )
+      ).rows[0];
+      if (!message) throw failure("Only the user's current message can go to a task.");
+      const task = (
+        await client.query<TaskTarget>(
+          `SELECT id,channel,channel_source_id FROM tasks
+           WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND on_it_message_id IS NOT NULL
+           FOR NO KEY UPDATE`,
+          [taskId, ownerId, thread.id],
+        )
+      ).rows[0];
+      if (!task) throw failure('Task not found.', 404);
+      const confirming = await client.query(
+        `SELECT 1 FROM approvals a JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+         WHERE a.owner_id=$1 AND a.status='pending' AND u.session_id=$2 LIMIT 1`,
+        [ownerId, task.id],
+      );
+      if (confirming.rowCount)
+        throw failure(
+          'This task waits for the user to answer its confirmation. Ask them to reply to that confirmation instead.',
+          409,
+        );
+      const routed = await insertUserTurn(
+        client,
+        thread.id,
+        { messageId: message.id, prompt: message.text, channel: 'web' },
+        task,
+      );
+      await client.query('UPDATE messages SET turn_id=$1 WHERE id=$2 AND owner_id=$3', [
+        routed,
+        message.id,
+        ownerId,
+      ]);
+    });
+    refresh();
+    return 'The message is with the task now. The task answers it, so write nothing more about it.';
+  }
+
   async function progress(turn: TurnRef, raw: unknown) {
     const input = progressInput.parse(raw);
     const result = await withTurnLock(turn.turnId, async (client) => {
@@ -308,6 +377,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
       END $$;
       ALTER TABLE turns DROP COLUMN IF EXISTS task_id;
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
+      CREATE INDEX IF NOT EXISTS tasks_on_it ON tasks(on_it_message_id);
     `);
   }
 
@@ -363,5 +433,5 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     );
   }
 
-  return { initialize, dispatch, progress, open, read, registerRoutes };
+  return { initialize, dispatch, route, progress, open, read, registerRoutes };
 }

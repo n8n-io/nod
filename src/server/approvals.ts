@@ -310,7 +310,8 @@ export async function createApprovals(
     return (
       await database.query(
         `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt,
-         ${taskSessionSql()} AS turn_task_session
+         ${taskSessionSql()} AS turn_task_session,${taskSessionSql()} AND EXISTS (SELECT 1 FROM turns q
+           WHERE q.owner_id=u.owner_id AND q.session_id=u.session_id AND q.status='queued' AND q.source='user') AS task_replied
        FROM approvals a JOIN turns u ON u.id=a.turn_id
        WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
@@ -334,7 +335,7 @@ export async function createApprovals(
     if (!approval) return undefined;
     const answer = input.answer;
     const approved = answer && answer.approvalId === approval.id ? answer.approved : undefined;
-    if (approved === undefined) {
+    if (approved === undefined || approval.task_replied) {
       if (approval.status === 'pending') {
         await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
           approval.id,

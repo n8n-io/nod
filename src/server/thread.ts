@@ -28,7 +28,7 @@ import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
-import { taskSessionSql } from './turn-chain.ts';
+import { sessionOfMessageSql, taskSessionSql } from './turn-chain.ts';
 
 const queue = 'thread-drain';
 const maxRunningTasks = 3;
@@ -103,6 +103,11 @@ export interface ThreadDependencies {
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   startTask?: (
+    turn: TurnRef,
+    input: unknown,
+    provenance: { sourceMessageId: string | null },
+  ) => Promise<unknown>;
+  routeToTask?: (
     turn: TurnRef,
     input: unknown,
     provenance: { sourceMessageId: string | null },
@@ -290,8 +295,11 @@ function validateSource(sourceId?: string, channel?: string) {
 
 export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   validateSource(options.sourceId, options.channel);
+  const background = options.background ?? options.source !== 'resume';
   const create = async (client: PoolClient) => {
     const thread = await lockThread(client);
+    if (!background && options.sessionId && options.sessionId !== thread.id)
+      throw new Error('A foreground turn runs only in the chat session.');
     const id = randomUUID();
     const inserted = await client.query(
       `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id,session_id)
@@ -305,7 +313,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.sourceId ?? null,
         prompt,
         options.channel ?? 'web',
-        options.background ?? options.source !== 'resume',
+        background,
         options.readOnly ?? false,
         options.channelSourceId ?? null,
         options.sessionId ?? null,
@@ -324,6 +332,64 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   const turnId = options.client ? await create(options.client) : await transaction(create);
   if (!options.client) refresh();
   return turnId;
+}
+
+export type TaskTarget = { id: string; channel: string | null; channel_source_id: string | null };
+
+async function taskOfMessage(client: PoolClient, threadId: string, messageId?: string) {
+  if (!messageId) return undefined;
+  return (
+    await client.query<TaskTarget>(
+      `SELECT t.id,t.channel,t.channel_source_id FROM messages m
+       JOIN tasks t ON t.id=${sessionOfMessageSql('m')} AND t.owner_id=m.owner_id AND t.thread_id=m.thread_id
+       WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND t.on_it_message_id IS NOT NULL
+       FOR NO KEY UPDATE OF t`,
+      [messageId, ownerId, threadId],
+    )
+  ).rows[0];
+}
+
+export async function insertUserTurn(
+  client: PoolClient,
+  threadId: string,
+  turn: { messageId: string; prompt: string; channel: string; sourceId?: string },
+  task?: TaskTarget,
+) {
+  const id = randomUUID();
+  await client.query(
+    `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,background,channel_source_id,session_id)
+     VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10)`,
+    [
+      id,
+      ownerId,
+      threadId,
+      turn.sourceId ?? null,
+      turn.messageId,
+      turn.prompt,
+      task?.channel ?? turn.channel,
+      Boolean(task),
+      task?.channel_source_id ?? null,
+      task?.id ?? null,
+    ],
+  );
+  if (task) {
+    await client.query(
+      "UPDATE tasks SET state='queued',closed_at=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND state NOT IN ('queued','open')",
+      [task.id, ownerId],
+    );
+    await expireSessionApprovals(client, [task.id]);
+  }
+  await sendDrain(client, threadId);
+  return id;
+}
+
+async function expireSessionApprovals(client: PoolClient, sessionIds: string[]) {
+  await client.query(
+    `UPDATE approvals a SET status='expired' FROM turns u
+     WHERE u.id=a.turn_id AND u.owner_id=a.owner_id AND a.owner_id=$1 AND a.status='pending'
+       AND u.session_id=ANY($2::uuid[])`,
+    [ownerId, sessionIds],
+  );
 }
 
 export function createUserMessageService(options: { confirmAction?: ConfirmAction } = {}) {
@@ -418,19 +484,11 @@ export async function submitUserMessage(
       else if (confirmed) return confirmed;
     }
     const messageId = options.clientMessageId ?? randomUUID();
-    const turnId = randomUUID();
-    await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7)`,
-      [
-        turnId,
-        ownerId,
-        thread.id,
-        options.sourceId ?? null,
-        messageId,
-        options.prompt ?? text,
-        channel,
-      ],
+    const turnId = await insertUserTurn(
+      client,
+      thread.id,
+      { messageId, prompt: options.prompt ?? text, channel, sourceId: options.sourceId },
+      await taskOfMessage(client, thread.id, options.replyToMessageId),
     );
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
@@ -449,7 +507,6 @@ export async function submitUserMessage(
         "UPDATE approvals SET confirmation_reply_id=$1 WHERE id=$2 AND owner_id=$3 AND thread_id=$4 AND status='expired'",
         [messageId, supersededApprovalId, ownerId, thread.id],
       );
-    await sendDrain(client, thread.id);
     return { threadId: thread.id, turnId, messageId };
   };
   let result: SubmitUserMessageResult;
@@ -747,8 +804,9 @@ async function claimTurns(threadId: string) {
       [threadId, ownerId],
     );
     const { rows } = await client.query(
-      `SELECT u.*,${taskSessionSql()} AS task_session FROM turns u
-       WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='queued'
+      `SELECT u.*,${taskSessionSql()} AS task_session,EXISTS (SELECT 1 FROM turns p
+         WHERE p.owner_id=u.owner_id AND p.session_id=u.session_id AND p.created_at<u.created_at) AS continued
+       FROM turns u WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='queued'
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [threadId, ownerId],
     );
@@ -765,10 +823,13 @@ async function claimTurns(threadId: string) {
       "UPDATE turns SET status='running',started_at=now() WHERE id=ANY($1::uuid[])",
       [claimed.map((row) => row.id)],
     );
+    const taskTurns = claimed.filter((row) => row.task_session);
     await client.query(
-      "UPDATE tasks SET state='open',updated_at=now() WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND state='queued'",
-      [ownerId, claimed.filter((row) => row.task_session).map((row) => row.session_id)],
+      "UPDATE tasks SET state='open',closed_at=NULL,updated_at=now() WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND state<>'open'",
+      [ownerId, taskTurns.map((row) => row.session_id)],
     );
+    const replies = taskTurns.filter((row) => row.source === 'user').map((row) => row.session_id);
+    if (replies.length) await expireSessionApprovals(client, replies);
     return claimed;
   });
 }
@@ -1162,7 +1223,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       threadId,
       turnId,
       sessionId: turn.session_id,
-      resumed: turn.source === 'resume',
+      resumed: turn.source === 'resume' || (turn.background && turn.continued),
       prompt: turn.prompt,
       background: turn.background,
       task: task && {
@@ -1262,13 +1323,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           : value;
       }),
       manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
-      startTask:
-        dependencies.startTask &&
-        !turn.background &&
-        !turn.read_only &&
-        !String(turn.source_id).startsWith('onboarding:')
-          ? fenced((input) => dependencies.startTask!(ref, input, { sourceMessageId }))
-          : undefined,
+      ...(!turn.background && !turn.read_only && !String(turn.source_id).startsWith('onboarding:')
+        ? {
+            startTask:
+              dependencies.startTask &&
+              fenced((input: unknown) => dependencies.startTask!(ref, input, { sourceMessageId })),
+            routeToTask:
+              dependencies.routeToTask &&
+              fenced((input: unknown) =>
+                dependencies.routeToTask!(ref, input, { sourceMessageId }),
+              ),
+          }
+        : {}),
       takeMessages:
         turn.background || turn.read_only
           ? undefined
@@ -1318,11 +1384,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               : (result.waitingFor ?? 'question'),
         });
       await finishTurn(client, turnId, 'succeeded');
-      if (task)
-        await client.query(
-          "UPDATE tasks SET state='done',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'",
-          [task.id, ownerId],
-        );
+      if (!task) return;
+      await client.query('SELECT 1 FROM tasks WHERE id=$1 AND owner_id=$2 FOR NO KEY UPDATE', [
+        task.id,
+        ownerId,
+      ]);
+      await client.query(
+        `UPDATE tasks SET state='done',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'
+         AND NOT EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=$2 AND q.session_id=$1 AND q.status='queued')`,
+        [task.id, ownerId],
+      );
     }).catch((error) => {
       if (!signal.aborted) throw error;
     });

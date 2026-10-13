@@ -219,6 +219,34 @@ test(
       computer: fakeComputer(),
       workspace: fakeWorkspace(),
     });
+    let routedGate: Promise<void> | undefined;
+    const routedOpens = new Map<string, { sessionKey: string; saved: boolean }>();
+    const routedDiscards: string[] = [];
+    const routedRuntime = createAgentRuntime({
+      agent: {
+        open: async (input) => {
+          routedOpens.set(input.turnId, { sessionKey: input.sessionKey, saved: input.saved });
+          return {
+            resumed: true,
+            abort() {},
+            dispose() {},
+            async prompt() {
+              await routedGate;
+              input.onEvent({ type: 'final', text: 'The routed synthetic result.' });
+            },
+          };
+        },
+        dispose() {},
+      },
+      computer: fakeComputer({
+        discard: async (id) => {
+          routedDiscards.push(id);
+        },
+      }),
+      workspace: fakeWorkspace(),
+    });
+    let routeTarget: string | undefined;
+    const routeResults = new Map<string, unknown>();
     let quietBackgroundWork = false;
     let currentApps: ConnectedApp[] = [];
     let inventoryGate: Promise<void> | undefined;
@@ -302,6 +330,7 @@ test(
         throw new Error('Unused fixture');
       },
       startTask: tasks.dispatch,
+      routeToTask: tasks.route,
       taskProgress: tasks.progress,
       openTasks: tasks.open,
       artifacts: {
@@ -318,8 +347,19 @@ test(
       runTurn: async (context) => {
         runs.push(context);
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
+        if (context.prompt.startsWith('routed-') && context.task)
+          return routedRuntime.runTurn(context);
+        if (context.prompt.startsWith('routed-') && routeTarget) {
+          routeResults.set(
+            context.turnId,
+            await context.routeToTask!({ taskId: routeTarget }).catch((error: Error) => error),
+          );
+          return { status: 'succeeded' };
+        }
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
+          if (context.prompt === 'session-fixture-stop')
+            await context.task!.progress!({ stop: 'Stopped as you asked.' });
           return { status: 'succeeded' };
         }
         if (context.prompt === 'dispatch-fixture') {
@@ -1752,6 +1792,7 @@ test(
           assert.equal(ran(chat.turnId)?.task, undefined);
           assert.deepEqual(ran(chat.turnId)?.openTasks, [
             {
+              taskId: asking.taskId,
               title: 'Synthetic status task',
               status: 'needs_you',
               onItMessageId: asking.onItMessageId,
@@ -1857,6 +1898,378 @@ test(
         await waitFor(settledThread);
         await closeDispatched();
       });
+
+      await t.test(
+        'an owner reply goes to its task: behind a running turn, after a question, into a done task or through route_to_task',
+        async () => {
+          await waitFor(settledThread);
+          const { createTrust } = await import('../src/server/trust.ts');
+          const threadId = (await thread.activeThread(db.pool)).id;
+          const start = async (instruction: string) => {
+            const chat = await thread.submitUserMessage(`dispatch-status:${instruction}`, [], {
+              channel: 'web',
+            });
+            await waitFor(() => dispatched.has(chat.turnId));
+            const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
+            const turnId = (
+              await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId])
+            ).rows[0].id as string;
+            return { taskId, onItMessageId, turnId };
+          };
+          const reply = (text: string, replyToMessageId?: string) =>
+            thread.submitUserMessage(text, [], { channel: 'web', replyToMessageId });
+          const turnRow = async (id: string) =>
+            (
+              await db.pool.query(
+                'SELECT source,background,session_id,channel,status FROM turns WHERE id=$1',
+                [id],
+              )
+            ).rows[0];
+          const taskRow = async (id: string) =>
+            (
+              await db.pool.query(
+                `SELECT t.state,t.closed_at,t.result_message_id,m.text AS result,
+                   m.reply_to_message_id AS result_reply_to
+                 FROM tasks t LEFT JOIN messages m ON m.id=t.result_message_id WHERE t.id=$1`,
+                [id],
+              )
+            ).rows[0];
+          const card = async (id: string) =>
+            ((await request('GET', '/api/tasks')).json() as Task[]).find((task) => task.id === id);
+
+          let releaseTask = () => {};
+          let releaseRouted = () => {};
+          sessionGates.set(
+            'session-fixture-routing',
+            new Promise<void>((resolve) => {
+              releaseTask = resolve;
+            }),
+          );
+          routedGate = new Promise<void>((resolve) => {
+            releaseRouted = resolve;
+          });
+          const running = await start('session-fixture-routing');
+          let early: { turnId: string; messageId: string };
+          try {
+            await waitFor(async () => (await turnStatus(running.turnId)) === 'running');
+            early = await reply('routed-while-running', running.onItMessageId);
+            assert.deepEqual(await turnRow(early.turnId), {
+              source: 'user',
+              background: true,
+              session_id: running.taskId,
+              channel: 'web',
+              status: 'queued',
+            });
+            await delay(300);
+            assert.equal(await turnStatus(early.turnId), 'queued');
+            assert.equal((await card(running.taskId))?.status, 'working');
+            releaseTask();
+            await waitFor(settled(running.turnId));
+            await waitFor(async () => (await turnStatus(early.turnId)) === 'running');
+            assert.deepEqual(
+              [(await taskRow(running.taskId)).state, (await card(running.taskId))?.status],
+              ['open', 'working'],
+            );
+          } finally {
+            releaseTask();
+            releaseRouted();
+            routedGate = undefined;
+          }
+          await waitFor(settled(early.turnId));
+          const routed = ran(early.turnId)!;
+          assert.deepEqual(
+            [
+              routed.sessionId,
+              routed.background,
+              routed.resumed,
+              routed.task?.title,
+              routed.currentMessageId,
+              routed.startTask,
+              routed.routeToTask,
+            ],
+            [
+              running.taskId,
+              true,
+              true,
+              'Synthetic status task',
+              early.messageId,
+              undefined,
+              undefined,
+            ],
+          );
+          assert.deepEqual(routedOpens.get(early.turnId), {
+            sessionKey: running.taskId,
+            saved: true,
+          });
+          assert.ok(routedDiscards.includes(running.taskId));
+          const finished = await taskRow(running.taskId);
+          assert.deepEqual(
+            [finished.state, finished.result, finished.result_reply_to],
+            ['done', 'The routed synthetic result.', running.onItMessageId],
+          );
+
+          const asking = await start('ask-question');
+          await waitFor(settled(asking.turnId));
+          assert.equal(await turnStatus(asking.turnId), 'waiting');
+          const question = (
+            await db.pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+              asking.turnId,
+            ])
+          ).rows[0].id as string;
+          const answer = await reply('routed-answer', question);
+          await waitFor(settled(answer.turnId));
+          assert.equal(ran(answer.turnId)?.sessionId, asking.taskId);
+          assert.ok(
+            ran(answer.turnId)!.history.some(
+              (message) => message.text === 'Which account should I use?',
+            ),
+          );
+          assert.equal((await taskRow(asking.taskId)).state, 'done');
+
+          const busy = [randomUUID(), randomUUID(), randomUUID()];
+          let reopened: { turnId: string; messageId: string } | undefined;
+          try {
+            for (const id of busy) {
+              await db.pool.query(
+                "INSERT INTO tasks(id,owner_id,thread_id,title) VALUES($1,$2,$3,'Busy synthetic task')",
+                [id, ownerId, threadId],
+              );
+              await db.pool.query(
+                `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,started_at)
+                 VALUES($1,$2,$3,'task','busy-fixture','running',true,$4,now())`,
+                [randomUUID(), ownerId, threadId, id],
+              );
+            }
+            reopened = await reply('routed-reopen', finished.result_message_id);
+            assert.equal((await turnRow(reopened.turnId)).session_id, running.taskId);
+            await delay(300);
+            assert.equal(await turnStatus(reopened.turnId), 'queued');
+            const waitingRow = await taskRow(running.taskId);
+            assert.deepEqual([waitingRow.state, waitingRow.closed_at], ['queued', null]);
+            assert.equal((await card(running.taskId))?.status, 'queued');
+          } finally {
+            await db.pool.query('DELETE FROM turns WHERE session_id=ANY($1::uuid[])', [busy]);
+            await db.pool.query('DELETE FROM tasks WHERE id=ANY($1::uuid[])', [busy]);
+          }
+          await thread.enqueueTurn('session-fixture-kick', {
+            source: 'event',
+            sourceId: `routing-fixture:${randomUUID()}`,
+          });
+          await waitFor(settled(reopened!.turnId));
+          assert.deepEqual(routedOpens.get(reopened!.turnId), {
+            sessionKey: running.taskId,
+            saved: true,
+          });
+          assert.ok(
+            ran(reopened!.turnId)!.history.some(
+              (message) => message.text === 'The routed synthetic result.',
+            ),
+          );
+          assert.equal((await taskRow(running.taskId)).state, 'done');
+
+          const plain = await reply('a plain synthetic message');
+          await waitFor(settled(plain.turnId));
+          const chatAnswer = (
+            await db.pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+              plain.turnId,
+            ])
+          ).rows[0].id as string;
+          const followUp = await reply('a reply to a synthetic chat answer', chatAnswer);
+          await waitFor(settled(followUp.turnId));
+          for (const id of [plain.turnId, followUp.turnId])
+            assert.deepEqual([ran(id)?.sessionId, ran(id)?.background], [threadId, false]);
+
+          const target = await start('ask-question');
+          await waitFor(settled(target.turnId));
+          const routedText = 'routed-by-chat: use the synthetic work account';
+          routeTarget = target.taskId;
+          let moved: { turnId: string; messageId: string };
+          try {
+            moved = await reply(routedText);
+            await waitFor(settled(moved.turnId));
+          } finally {
+            routeTarget = undefined;
+          }
+          const movedTurn = (
+            await db.pool.query(
+              "SELECT id,message_id,prompt,background FROM turns WHERE session_id=$1 AND source='user'",
+              [target.taskId],
+            )
+          ).rows[0];
+          assert.deepEqual(
+            [movedTurn.message_id, movedTurn.prompt, movedTurn.background],
+            [moved.messageId, routedText, true],
+          );
+          assert.equal(
+            (await db.pool.query('SELECT turn_id FROM messages WHERE id=$1', [moved.messageId]))
+              .rows[0].turn_id,
+            movedTurn.id,
+          );
+          await waitFor(settled(movedTurn.id));
+          assert.equal(ran(movedTurn.id)?.sessionId, target.taskId);
+          const reviews: Array<{
+            userMessages?: Array<{ text: string }>;
+            taskInstruction?: string;
+            assistantMessageBeforeLatestUserMessage?: string;
+          }> = [];
+          const trust = createTrust({
+            pool: db.pool,
+            ownerId,
+            review: async (_instructions, input) => {
+              reviews.push(input as (typeof reviews)[number]);
+              return { run: false };
+            },
+          });
+          const send = { to: 'someone@example.test', body: 'Synthetic note' };
+          await trust.check({ threadId, turnId: movedTurn.id }, 'GMAIL_SEND_EMAIL', send);
+          await trust.check({ threadId, turnId: moved.turnId }, 'GMAIL_SEND_EMAIL', send);
+          await trust.check({ threadId, turnId: answer.turnId }, 'GMAIL_SEND_EMAIL', send);
+          assert.deepEqual(
+            [
+              reviews[0]!.taskInstruction,
+              reviews[0]!.userMessages?.map((item) => item.text),
+              reviews[0]!.assistantMessageBeforeLatestUserMessage,
+            ],
+            ['dispatch-status:ask-question', [routedText], undefined],
+          );
+          assert.ok(!reviews[1]!.userMessages?.some((item) => item.text === routedText));
+          assert.equal(
+            reviews[2]!.assistantMessageBeforeLatestUserMessage,
+            'Which account should I use?',
+          );
+          await assert.rejects(
+            thread.enqueueTurn('foreground-fixture', {
+              source: 'resume',
+              sourceId: `routing-fixture:${randomUUID()}`,
+              sessionId: target.taskId,
+            }),
+            /foreground turn/,
+          );
+
+          let releaseStop = () => {};
+          sessionGates.set(
+            'session-fixture-stop',
+            new Promise<void>((resolve) => {
+              releaseStop = resolve;
+            }),
+          );
+          const stopping = await start('session-fixture-stop');
+          let afterStop: { turnId: string; messageId: string };
+          try {
+            await waitFor(async () => (await turnStatus(stopping.turnId)) === 'running');
+            afterStop = await reply('routed-after-stop', stopping.onItMessageId);
+          } finally {
+            releaseStop();
+          }
+          await waitFor(settled(afterStop.turnId));
+          assert.equal(ran(afterStop.turnId)?.sessionId, stopping.taskId);
+          assert.equal((await taskRow(stopping.taskId)).state, 'done');
+
+          const confirming = await start('ask-question');
+          await waitFor(settled(confirming.turnId));
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [confirming.turnId]);
+          await approvals.request({ threadId, turnId: confirming.turnId }, 'FIXTURE_WRITE', {});
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='approval' WHERE id=$1",
+            [confirming.turnId],
+          );
+          const pending = (
+            await db.pool.query(
+              'SELECT id,confirmation_message_id FROM approvals WHERE turn_id=$1',
+              [confirming.turnId],
+            )
+          ).rows[0];
+          const approval = async () =>
+            (
+              await db.pool.query('SELECT status,execution_turn_id FROM approvals WHERE id=$1', [
+                pending.id,
+              ])
+            ).rows[0];
+          routeTarget = confirming.taskId;
+          let untargeted: { turnId: string; messageId: string };
+          try {
+            untargeted = await reply('routed-by-chat: yes');
+            await waitFor(settled(untargeted.turnId));
+          } finally {
+            routeTarget = undefined;
+          }
+          assert.match(String(routeResults.get(untargeted.turnId)), /confirmation/);
+          assert.equal((await turnRow(untargeted.turnId)).session_id, threadId);
+          assert.equal((await approval()).status, 'pending');
+          const toOnIt = await reply('routed-to-on-it', confirming.onItMessageId);
+          assert.equal((await turnRow(toOnIt.turnId)).session_id, confirming.taskId);
+          assert.equal((await approval()).status, 'expired');
+          await waitFor(settled(toOnIt.turnId));
+          const late = await db.transaction((client) =>
+            thread.submitUserMessage(
+              'yes',
+              [],
+              {
+                channel: 'web',
+                client,
+                replyToMessageId: pending.confirmation_message_id,
+                answer: { approvalId: pending.id, approved: true },
+              },
+              approvals.chat,
+            ),
+          );
+          await waitFor(settled(late.turnId));
+          assert.deepEqual(await approval(), { status: 'expired', execution_turn_id: null });
+          const lateTurn = await turnRow(late.turnId);
+          assert.deepEqual([lateTurn.source, lateTurn.session_id], ['user', confirming.taskId]);
+
+          const behind = await start('ask-question');
+          await waitFor(settled(behind.turnId));
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [behind.turnId]);
+          const queuedReply = await reply('routed-before-confirmation', behind.onItMessageId);
+          await approvals.request({ threadId, turnId: behind.turnId }, 'FIXTURE_WRITE', {});
+          const raced = (
+            await db.pool.query(
+              'SELECT id,confirmation_message_id FROM approvals WHERE turn_id=$1',
+              [behind.turnId],
+            )
+          ).rows[0];
+          const executedBefore = executed;
+          const racedYes = await db.transaction((client) =>
+            thread.submitUserMessage(
+              'yes',
+              [],
+              {
+                channel: 'web',
+                client,
+                replyToMessageId: raced.confirmation_message_id,
+                answer: { approvalId: raced.id, approved: true },
+              },
+              approvals.chat,
+            ),
+          );
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='approval' WHERE id=$1",
+            [behind.turnId],
+          );
+          await thread.enqueueTurn('session-fixture-kick', {
+            source: 'event',
+            sourceId: `routing-fixture:${randomUUID()}`,
+          });
+          await waitFor(settled(queuedReply.turnId));
+          await waitFor(settled(racedYes.turnId));
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT status,execution_turn_id FROM approvals WHERE id=$1', [
+                raced.id,
+              ])
+            ).rows[0],
+            { status: 'expired', execution_turn_id: null },
+          );
+          assert.deepEqual(
+            [(await turnRow(racedYes.turnId)).source, (await turnRow(racedYes.turnId)).session_id],
+            ['user', behind.taskId],
+          );
+          assert.equal(executed, executedBefore);
+          await waitFor(settledThread);
+          await closeDispatched();
+        },
+      );
 
       await t.test(
         'at most three tasks run at once, and waiting tasks, other sessions and activity checks are not held back',

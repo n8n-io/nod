@@ -61,6 +61,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                             |
 | `manage_personal_context`                                           | Profile, schedules, notification preferences, memory, history and usage.                            |
 | `start_task`                                                        | Hands long work to a task in its own session. Only chat turns get it, with `OTTO_TASKS` on.         |
+| `route_to_task`                                                     | Moves your current message, word for word, into an open task. Only chat turns get it.               |
 | `task_progress`                                                     | Changes the task's own steps and status line, or stops the task. Only task turns get it.            |
 | `share_file`                                                        | Sends a workspace file to you.                                                                      |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                         |
@@ -109,13 +110,13 @@ Results from apps, the browser, browser flows, the web and codemode reach Pi ins
 
 The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/prompt.ts).
 
-| Layer         | Contains                                                                                                                                                                                                                        | Sent                       |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| Static prompt | Otto's personality and rules, the rules for the turn's mode, the core guides, the skill catalog and Pi's tool guidelines                                                                                                        | Once per session           |
-| Owner context | Account details, date format, saved profile and the memory index                                                                                                                                                                | Again only when it changes |
-| Turn message  | Mode, time, channel, message ID, reply target, the task's title and your words that started it, the chat's open tasks with their status when `OTTO_TASKS` is on, recent conversation, activity-check limits and the instruction | Every turn                 |
+| Layer         | Contains                                                                                                                                                                                                                               | Sent                       |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Static prompt | Otto's personality and rules, the rules for the turn's mode, the core guides, the skill catalog and Pi's tool guidelines                                                                                                               | Once per session           |
+| Owner context | Account details, date format, saved profile and the memory index                                                                                                                                                                       | Again only when it changes |
+| Turn message  | Mode, time, channel, message ID, reply target, the task's title and your words that started it, the chat's open tasks with their ID and status when `OTTO_TASKS` is on, recent conversation, activity-check limits and the instruction | Every turn                 |
 
-The mode rules cover conversation, background and activity-check turns, or task turns in place of background ones. With `OTTO_TASKS` on, a chat turn that can start a task also gets the rule for when to call `start_task`. In task mode, the final text is delivered as the task's result. See [Tasks](/how-it-works/threads-and-turns/#tasks).
+The mode rules cover conversation, background and activity-check turns, or task turns in place of background ones. With `OTTO_TASKS` on, a chat turn that can start a task also gets the rules for when to call `start_task` and `route_to_task`. In task mode, the final text is delivered as the task's result. See [Tasks](/how-it-works/threads-and-turns/#tasks).
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
 

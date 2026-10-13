@@ -107,7 +107,7 @@ export interface RuntimeContext {
     unseen?: boolean;
   }>;
   unanswered?: { messages: number; since: string | Date };
-  openTasks?: Array<{ title: string; status: TaskStatus; onItMessageId: string }>;
+  openTasks?: Array<{ taskId: string; title: string; status: TaskStatus; onItMessageId: string }>;
   personalContext?: {
     profile: { name: string; location: string; phone: string; preferences: string };
   };
@@ -166,6 +166,7 @@ export interface RuntimeContext {
 
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
   startTask?(input: unknown): Promise<unknown>;
+  routeToTask?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
 }
 export interface PromptSnapshot {

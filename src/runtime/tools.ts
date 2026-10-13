@@ -426,6 +426,11 @@ export const toolDefinitions = {
       ),
     }),
   ),
+  route_to_task: defineTool(
+    'route_to_task',
+    "Move the user's current message, word for word, into an open task from openTasks when it belongs to that task: an answer, a correction or more detail for it. The task gets the message as the user's reply and answers it itself, so after this call write nothing more about it.",
+    Type.Object({ taskId: Type.String({ maxLength: 36 }) }, { additionalProperties: false }),
+  ),
   task_progress: defineTool(
     'task_progress',
     "Update this task's preview. It changes only this task and sends the user nothing. steps replaces the planned steps with 2 to 8 short items. current is the number of the step in progress, starting at 1. now is one short line about what you are doing. stop ends this task as stopped and posts its one-line note to the user; use it only when the user asked to stop, then end without a final message.",
@@ -695,6 +700,9 @@ export function ottoTools(
       return context.manage(p.action, p.args);
     }),
     ...(context.startTask ? [bind(toolDefinitions.start_task, (p) => context.startTask!(p))] : []),
+    ...(context.routeToTask
+      ? [bind(toolDefinitions.route_to_task, (p) => context.routeToTask!(p))]
+      : []),
     ...(context.task?.progress
       ? [
           bind(toolDefinitions.task_progress, async (p) => {
