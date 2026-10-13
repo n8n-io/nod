@@ -2306,6 +2306,21 @@ test(
               undefined,
             );
             assert.deepEqual(await eventTurns([revokedEvent]), []);
+            const rule = (await preferences.get()).notificationRule;
+            const clearedEvent = randomUUID();
+            assert.equal(
+              await triage.triageEvent(
+                'Synthetic event as the rule is cleared',
+                clearedEvent,
+                async () => {
+                  await preferences.update({ notificationRule: '' });
+                  return true;
+                },
+              ),
+              undefined,
+            );
+            assert.deepEqual(await eventTurns([clearedEvent]), []);
+            await preferences.update({ notificationRule: rule });
             const queued = await Promise.all(
               [...ids, ids[0], ids[0]].map((id) =>
                 triage.triageEvent(`Synthetic app event ${id}`, id),
