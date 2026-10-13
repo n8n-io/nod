@@ -36,7 +36,10 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const orderedTools = new Set(['apps', 'manage_personal_context']);
-const admissions = new AsyncLocalStorage<(asks: boolean) => Promise<void>>();
+const admissions = new AsyncLocalStorage<{
+  asked: boolean;
+  admit(asks: boolean): Promise<void>;
+}>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -52,39 +55,6 @@ const delimitedTools = new Set([
   'source_check',
   'codemode',
 ]);
-const readOnlyTools: Record<string, true | string[]> = {
-  skills: true,
-  read: true,
-  find: true,
-  ls: true,
-  send_message: true,
-  apps: true,
-  web_search: true,
-  fetch_content: true,
-  source_check: true,
-  get_search_content: true,
-  browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
-  manage_apps: ['list', 'discover'],
-  manage_personal_context: [
-    'notification_preferences_get',
-    'history_search',
-    'memory_find',
-    'memory_read',
-    'schedule_list',
-    'usage_get',
-  ],
-  task: ['list'],
-};
-const readOnlyRefusal =
-  'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
-
-class ReadOnlyTurnError extends Error {}
-
-function allowedReadOnly(name: string, params: unknown) {
-  const rule = readOnlyTools[name];
-  return rule === true || rule?.includes(String((params as { action?: unknown })?.action)) === true;
-}
-
 function textResult(value: unknown): AgentToolResult {
   return {
     content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }],
@@ -217,6 +187,8 @@ export function createAgentRuntime(dependencies: {
       if (!result.requiresConfirmation) return result;
       const text =
         'question' in result && typeof result.question === 'string' ? result.question : undefined;
+      const gate = admissions.getStore();
+      if (gate) gate.asked = true;
       await pause('approval', text, { post: false });
       return confirmationNotice;
     };
@@ -291,7 +263,6 @@ export function createAgentRuntime(dependencies: {
         let result: AgentToolResult;
         try {
           assertActive();
-          if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
           await pendingReplies;
           assertActive();
           await context.emit('tool_start', label);
@@ -312,11 +283,9 @@ export function createAgentRuntime(dependencies: {
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'
-            : error instanceof ReadOnlyTurnError
-              ? readOnlyRefusal
-              : (dependencies.redactError ?? String)(
-                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
-                );
+            : (dependencies.redactError ?? String)(
+                browserFailure ?? (error instanceof Error ? error.message : String(error)),
+              );
           end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
             !signal.aborted &&
@@ -361,14 +330,15 @@ export function createAgentRuntime(dependencies: {
           decide = resolve;
         });
         decided = Promise.all([earlier, own]).then(([before, asks]) => before || asks);
-        return {
-          decide,
+        const gate = {
+          asked: false,
           admit: async (asks: boolean) => {
-            decide(asks);
+            if (!asks) decide(false);
             if (await earlier)
               throw new Error("This turn is waiting for the owner's answer. Ask again after it.");
           },
         };
+        return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
         ottoTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
@@ -377,12 +347,8 @@ export function createAgentRuntime(dependencies: {
           parameters,
           parallel: parallelTools.has(name),
           execute: async (params) => {
-            if (
-              (!context.readOnly || allowedReadOnly(name, params)) &&
-              (browserTools.has(name) || handsOverBrowser(name, params))
-            )
-              await take();
-            const gate = orderedTools.has(name) ? admission() : undefined;
+            if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
+            const admitted = orderedTools.has(name) ? admission() : undefined;
             const run = () =>
               guard(name, params, async () => {
                 if (!Value.Check(parameters, params))
@@ -393,7 +359,7 @@ export function createAgentRuntime(dependencies: {
                   });
                 return execute(params);
               });
-            return gate ? admissions.run(gate.admit, run).finally(() => gate.decide(false)) : run();
+            return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
           },
         }));
       const system = systemPrompt(workspace, dependencies.skills);
@@ -401,9 +367,9 @@ export function createAgentRuntime(dependencies: {
         context: {
           ...context,
           integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
-            context.integration(action, args, callSignal, admissions.getStore()),
+            context.integration(action, args, callSignal, admissions.getStore()?.admit),
           manage: (action: string, args: Record<string, unknown>) =>
-            context.manage(action, args, admissions.getStore()),
+            context.manage(action, args, admissions.getStore()?.admit),
         },
         computer: browser,
         reply,

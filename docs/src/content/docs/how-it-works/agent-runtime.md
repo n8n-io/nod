@@ -72,19 +72,16 @@ Every tool call, including every call a codemode script makes, passes the same g
 flowchart TD
   call[Tool call] --> live{{Turn still<br/>running?}}
   live -- no --> refuse[Refused]:::stop
-  live -- yes --> mode{{Allowed in<br/>this turn mode?}}
-  mode -- no --> refuse
-  mode -- yes --> run[Run the tool]:::go
+  live -- yes --> run[Run the tool]:::go
   run --> wrap[Wrap outside results<br/>as untrusted data]
   wrap --> pi[Back to Pi]:::accent
 ```
 
 - **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before they run.
-- **Turn mode:** read-only turns can use only read tools and browser open, snapshot, scroll, screenshot and wait.
 - **Observations:** the guard reports each call to an optional observer. Only the evals harness sets one, and it redacts typed text and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
-App and memory calls run in parallel with each other and with subagents, and so do their trust checks. A call acts only once every app or memory call issued before it in the turn has been checked, and if one of those asked the owner, it's refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
+App and memory calls run in parallel with each other and with subagents, and so do their trust checks. A call acts only once every app or memory call issued before it in the turn has been checked, and each of those that asks has opened its question or failed. If one of them opened a question, the call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
 
 ## Codemode
 

@@ -34,7 +34,6 @@ type TurnRow = {
   parent_turn_id: string | null;
   message_id: string | null;
   prompt: string;
-  read_only: boolean;
   background: boolean;
   channel: string;
 };
@@ -46,7 +45,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      'SELECT id,thread_id,source,parent_turn_id,message_id,prompt,read_only,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
+      'SELECT id,thread_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
       [turnId, ownerId],
     )
   ).rows[0];
@@ -80,8 +79,6 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
   ).rows[0];
 }
 
-const readOnlyChain = (chain: TurnRow[]) => chain.some((item) => item.read_only);
-
 export async function turnOrigin(turnId: string) {
   const client = await pool.connect();
   try {
@@ -92,7 +89,6 @@ export async function turnOrigin(turnId: string) {
     return {
       source: origin.source,
       channel: current.channel,
-      readOnly: readOnlyChain(chain),
       scheduleInstruction:
         origin.source === 'schedule'
           ? ((await scheduleAuthority(client, origin.id))?.authority_instruction ?? undefined)
@@ -179,10 +175,6 @@ export async function createApprovals(
       const chain = await turnChain(client, current);
       const origin = chain?.at(-1);
       if (!chain || !origin) throw new Error('This action needs a direct request from the user.');
-      if (readOnlyChain(chain))
-        throw new Error(
-          'This action needs a direct request from the user; this turn is read-only.',
-        );
       let steering: { id: string; text: string } | undefined;
       if (options.sourceMessageId && options.sourceMessageId !== current.message_id) {
         if (!current.background)

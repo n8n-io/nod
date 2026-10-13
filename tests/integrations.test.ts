@@ -1791,10 +1791,30 @@ test(
       [directId, ownerId],
     );
     await f.pool.query(
-      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES
-       ($1,'linear',$2,'direct'),($1,'notion','legacy-composio','fixture')`,
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,trigger_id) VALUES
+       ($1,'linear',$2,'direct',NULL),($1,'notion','legacy-composio','fixture','legacy-trigger')`,
       [ownerId, directId],
     );
+    let release = () => {};
+    const revoking = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const unsubscribe = f.provider.unsubscribe;
+    f.provider.unsubscribe = async (id) => {
+      await revoking;
+      await unsubscribe(id);
+    };
+    await createIntegrations(f.pool, {
+      ownerId,
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+    });
+    assert.equal((await f.pool.query('SELECT * FROM app_connections')).rowCount, 0);
+    assert.deepEqual(f.removed, []);
+    release();
+    for (let attempt = 0; attempt < 100 && f.removed.length < 2; attempt++) await delay(10);
+    assert.deepEqual(f.removed, ['legacy-trigger', 'legacy-composio']);
     const begun: Array<{ endpoint: string; scope?: string }> = [];
     const discovered = await createDiscoveredConnections(f.pool, {
       ownerId,
@@ -5839,7 +5859,7 @@ test(
       await pool.query(`
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
-          read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
+          error text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);

@@ -2388,7 +2388,7 @@ test(
           const checks = async (connectionId = '') =>
             (
               await db.pool.query(
-                "SELECT id,source,background,read_only,prompt,started_at FROM turns WHERE owner_id=$1 AND source_id LIKE 'activity-check:'||$2||'%' ORDER BY created_at,id",
+                "SELECT id,source,background,prompt,started_at FROM turns WHERE owner_id=$1 AND source_id LIKE 'activity-check:'||$2||'%' ORDER BY created_at,id",
                 [ownerId, connectionId],
               )
             ).rows;
@@ -2403,7 +2403,6 @@ test(
             for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
             assert.equal(first.source, 'event');
             assert.equal(first.background, true);
-            assert.equal(first.read_only, false);
             for (const check of await checks()) await waitFor(settled(check.id));
             const request = quietInstructions.get(first.id) as {
               mode: string;
@@ -2441,6 +2440,49 @@ test(
             currentApps = [];
             await preferences.update(original);
           }
+        },
+      );
+      await t.test(
+        'the heartbeat clears an expired held sign-in value without a new request',
+        async () => {
+          const turnId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Held sign-in fixture','succeeded')",
+            [turnId, ownerId, (await thread.activeThread()).id],
+          );
+          await db.pool.query(
+            `INSERT INTO credential_account_selections(id,root_turn_id,owner_id,origin,ciphertext,expires_at,login_label)
+             VALUES($1,$2,$3,'https://expired.fixture.test','sealed-held-fixture',now()-interval '1 second','Held'),
+                   ($4,$2,$3,'https://live.fixture.test','sealed-held-fixture',now()+interval '5 minutes','Held')`,
+            [randomUUID(), turnId, ownerId, randomUUID()],
+          );
+          const triage = createTriage({
+            connectedApps: readConnectedApps,
+            sweep: vault.forgetExpiredHolds,
+          });
+          await triage.heartbeat();
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                'SELECT origin,ciphertext,login_label,blocked FROM credential_account_selections WHERE root_turn_id=$1 ORDER BY origin',
+                [turnId],
+              )
+            ).rows,
+            [
+              {
+                origin: 'https://expired.fixture.test',
+                ciphertext: '',
+                login_label: '',
+                blocked: true,
+              },
+              {
+                origin: 'https://live.fixture.test',
+                ciphertext: 'sealed-held-fixture',
+                login_label: 'Held',
+                blocked: false,
+              },
+            ],
+          );
         },
       );
       await t.test(

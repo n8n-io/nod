@@ -37,7 +37,6 @@ import type {
 } from '../src/shared/contracts.ts';
 import { parsePasswordCsv } from '../src/shared/password-import.ts';
 import { createPayments } from '../src/server/payments.ts';
-import type { PaymentPolicy } from '../src/server/trust.ts';
 import type { CardEntry } from '../src/ports/computer.ts';
 
 async function seedTurns(pool: pg.Pool) {
@@ -2977,7 +2976,7 @@ test(
       const resumed: string[] = [];
       const recorded: Array<{ action: string; reason: string; origin: string }> = [];
       const remembered: Array<[string, boolean]> = [];
-      let policy: PaymentPolicy = { allowed: true, inOtto: true };
+      let inOtto = true;
       let url = 'https://shop.fixture.test/checkout';
       let elsewhere: string | undefined;
       let captureFails = false;
@@ -2988,7 +2987,7 @@ test(
           ownerId: 'local-development',
           uses: vault.uses,
           local,
-          policy: async () => policy,
+          inOtto: async () => inOtto,
           page: async () => ({ origin: new URL(url).origin, url }),
           destinations: async () => {
             const origin = new URL(url).origin;
@@ -3198,7 +3197,7 @@ test(
       await assert.rejects(payments.request(turn, order), /Synthetic paused page/);
       captureFails = false;
 
-      policy = { allowed: true, inOtto: false };
+      inOtto = false;
       const linked = await payments.request(turn, order);
       const linkedId = linked.url!.split('/').at(-1)!;
       const securePath = `/api/payment-requests/${linkedId}`;
@@ -3226,9 +3225,7 @@ test(
       );
       assert.match(await payments.setting(turn, { doItForMe: false }, true), /off for Visa ••4242/);
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
-      policy = { allowed: false, reason: 'readonly' };
-      await assert.rejects(payments.request(turn, order), /can only read/);
-      policy = { allowed: true, inOtto: true };
+      inOtto = true;
 
       await save('Travel card', '5555 5555 5555 4444');
       await assert.rejects(payments.request(turn, order), /Ask the owner which card/);
@@ -3268,12 +3265,11 @@ test(
           ['uncertain', 'payment'],
           ['asked', 'payment'],
           ['card', 'said_yes'],
-          ['held', 'readonly'],
           ['asked', 'payment'],
           ['asked', 'payment'],
         ],
       );
-      policy = { allowed: true, inOtto: false };
+      inOtto = false;
       const privateCode = await payments.request(turn, { ...order, card: card.id });
       const codeId = privateCode.url!.split('/').at(-1)!;
       const codePath = `/api/payment-requests/${codeId}`;

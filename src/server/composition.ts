@@ -468,7 +468,11 @@ async function initializeApplication(
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({ pool, ownerId, refresh });
   await tasks.initialize();
-  const triage = createTriage({ consumers, connectedApps: () => integrations.connectedApps() });
+  const triage = createTriage({
+    consumers,
+    connectedApps: () => integrations.connectedApps(),
+    sweep: () => vault.forgetExpiredHolds(),
+  });
   const grantVault = await createAppGrantVault(pool, {
     ownerId,
     keyStore: adapters.keyStore,
@@ -636,7 +640,6 @@ async function initializeApplication(
   ): Promise<{ reason: VaultActivityReason } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);
     if (access.ok) return { reason: access.reason };
-    if ('message' in access) throw new Error(access.message);
     const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
       question: access.question,
     });
@@ -661,7 +664,7 @@ async function initializeApplication(
     ownerId,
     uses: vault.uses,
     local: runtimeMode === 'local',
-    policy: trust.payment,
+    inOtto: trust.inOtto,
     page: (threadId) => computer.currentPage(threadId),
     destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
     capture: (threadId) => computer.checkoutImage(threadId),
