@@ -23,7 +23,7 @@ Each entry has an address, `area/slug`, a text of up to 600 characters and an op
 | `routines`    | Recurring procedures they described |
 | `lessons`     | Corrections and what to avoid       |
 
-Earlier versions kept the owner's name, location, phone and preferences in a separate profile. On upgrade, each filled field becomes one confirmed note, such as `Name: …` in `about` or `Preferences: …` in `preferences`, cut at 600 characters.
+Earlier versions kept the owner's name, location, phone and preferences in a separate profile. On upgrade, its text becomes confirmed notes, such as `Name: …` in `about` and the preferences in `preferences`. Long text is split at sentence and line breaks into notes of up to 120 characters, so each shows in full in the index. Text that looks like a secret is skipped. If memory is full, the profile stays and Otto tries again at the next start.
 
 The code is in [`src/server/memory.ts`](https://github.com/n8n-io/otto/blob/main/src/server/memory.ts) and [`src/server/memory-tree.ts`](https://github.com/n8n-io/otto/blob/main/src/server/memory-tree.ts).
 

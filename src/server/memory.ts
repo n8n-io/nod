@@ -267,6 +267,30 @@ export function createMemoryService(options: {
     });
   }
 
+  async function adopt(notes: Array<{ area: Area; text: string }>) {
+    const valid = notes.map((note) => ({
+      area: area.parse(note.area),
+      text: line(600).parse(note.text),
+    }));
+    return owned((tree, now) =>
+      valid.every((note) => {
+        if (unsafe(note.text) || areaEntries(tree, note.area).some((e) => same(e.text, note.text)))
+          return true;
+        if (tree.entries.length >= maxEntries) return false;
+        tree.entries.push({
+          area: note.area,
+          slug: slugFor(tree, note.area, note.text),
+          text: note.text,
+          origin: 'stated',
+          updated: now,
+          edited: now,
+          sources: [],
+        });
+        return true;
+      }),
+    );
+  }
+
   async function restate(raw: unknown) {
     const notes = restateInput.parse(raw);
     notes.forEach((note) => safe(note.text));
@@ -417,6 +441,7 @@ export function createMemoryService(options: {
     forget,
     edit,
     add,
+    adopt,
     restate,
     style,
     change,
