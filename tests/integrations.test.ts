@@ -2306,6 +2306,29 @@ test(
       statusCode: 404,
     });
     assert.equal(f.executed.length, 1);
+    const deleting: string[] = [];
+    f.provider.deleteSession = async (id) => {
+      deleting.push(id);
+      await new Promise(() => {});
+    };
+    await f.pool.query('UPDATE app_connections SET revoked=false WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    const unblocked = <T>(work: Promise<T>) =>
+      Promise.race([
+        work,
+        delay(2000).then(() => assert.fail('Session cleanup must not hold the result.')),
+      ]);
+    assert.deepEqual(await unblocked(f.service.execute('local-development', action, args)), {
+      ok: true,
+    });
+    f.session.execute = async () => {
+      throw new Error('Synthetic provider failure.');
+    };
+    await assert.rejects(unblocked(f.service.execute('local-development', action, args)), {
+      statusCode: 502,
+    });
+    assert.deepEqual(deleting, [f.session.id, f.session.id]);
   },
 );
 

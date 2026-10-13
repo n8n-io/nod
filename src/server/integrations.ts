@@ -310,7 +310,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       }
       return await operation(session);
     } finally {
-      await provider.deleteSession(session.id).catch(() => {});
+      provider.deleteSession(session.id).catch(() => {});
     }
   }
 
