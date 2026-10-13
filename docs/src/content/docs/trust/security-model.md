@@ -40,7 +40,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - Only your messages, a schedule's instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
 - A confirmation is bound to the exact action and arguments, and runs once.
-- Background work Otto starts itself only reads and drafts on its own; anything else, including a sign-in or a payment, waits for your yes. Read-only and onboarding work refuses anything the checker doesn't judge a read, and never signs in or pays.
+- Background work Otto starts itself only reads and drafts on its own; anything else, including a sign-in or a payment, waits for your yes. Read-only work refuses anything the checker doesn't judge a read, and never signs in or pays.
 
 ### Secrets
 

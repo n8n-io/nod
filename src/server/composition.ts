@@ -111,7 +111,6 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
-  restartOnboarding,
   resumeAfterConnection,
   resumeAfterCredentials,
   resumeAfterPayment,
@@ -587,32 +586,30 @@ async function initializeApplication(
   });
   const approvals = await createApprovals(
     (action, args, provenance) =>
-      action === 'OTTO_memory_save'
-        ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
-        : action === 'OTTO_vault_allow'
-          ? vaultAccess.allow(args)
-          : action === 'OTTO_payment_setting'
-            ? payments.setting(provenance, args, true)
-            : action === 'OTTO_payment_approve'
-              ? payments.approve(provenance, args)
-              : action.startsWith('OTTO_')
-                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                : (async () => {
-                    const result = await integrations.executeApproved(ownerId, action, args, {
-                      threadId: provenance.threadId,
-                      turnId: provenance.turnId,
+      action === 'OTTO_vault_allow'
+        ? vaultAccess.allow(args)
+        : action === 'OTTO_payment_setting'
+          ? payments.setting(provenance, args, true)
+          : action === 'OTTO_payment_approve'
+            ? payments.approve(provenance, args)
+            : action.startsWith('OTTO_')
+              ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+              : (async () => {
+                  const result = await integrations.executeApproved(ownerId, action, args, {
+                    threadId: provenance.threadId,
+                    turnId: provenance.turnId,
+                  });
+                  await ledger.action(provenance.turnId, action, args);
+                  const write = workspace.writeArtifact?.bind(workspace);
+                  const save =
+                    write &&
+                    (async (file: { name: string; bytes: Uint8Array }) => {
+                      const name = `${randomUUID()}-${basename(file.name)}`;
+                      await write(provenance.threadId, name, file.bytes);
+                      return name;
                     });
-                    await ledger.action(provenance.turnId, action, args);
-                    const write = workspace.writeArtifact?.bind(workspace);
-                    const save =
-                      write &&
-                      (async (file: { name: string; bytes: Uint8Array }) => {
-                        const name = `${randomUUID()}-${basename(file.name)}`;
-                        await write(provenance.threadId, name, file.bytes);
-                        return name;
-                      });
-                    return (await saveIntegrationFiles(result, save)).value;
-                  })(),
+                  return (await saveIntegrationFiles(result, save)).value;
+                })(),
     async (action, args) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
         return;
@@ -935,10 +932,6 @@ async function initializeApplication(
     artifacts,
     submitMessage: userMessages.submit,
     verification: chatVerification,
-    onboard: async (timeZone, threadId) => {
-      if (timeZone) await triage.updatePreferences({ timeZone });
-      return restartOnboarding(threadId);
-    },
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,

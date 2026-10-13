@@ -33,7 +33,6 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
     };
   const source: TrustSource = row.read_only ? 'check' : 'event';
   if (id.startsWith('activity-check:')) return { source, title: 'Checked a connected app' };
-  if (id.startsWith('onboarding:')) return { source, title: 'Welcome' };
   return { source, title: 'Woke for an email or app event' };
 }
 

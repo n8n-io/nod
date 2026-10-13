@@ -7,7 +7,6 @@ const labels: Record<string, string> = {
   OTTO_schedule_cancel: 'Pause this schedule',
   OTTO_profile_update: 'Save these preferences',
   OTTO_notification_preferences_update: 'Save these notification preferences',
-  OTTO_memory_save: 'Remember this',
 };
 
 function plain(value: string) {
@@ -231,7 +230,6 @@ export function actionConfirmation(
               : `Custom timing (${plain(args.cron)})`,
     );
   }
-  for (const key of ['text', 'prompt'])
-    add(action === 'OTTO_memory_save' ? 'Note' : 'Instructions', text(args[key]));
+  for (const key of ['text', 'prompt']) add('Instructions', text(args[key]));
   return `${label}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm, no to leave it unchanged, or tell me what to change.`;
 }

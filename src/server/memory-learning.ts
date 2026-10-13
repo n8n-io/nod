@@ -62,7 +62,6 @@ export function createMemoryLearning(options: {
       `SELECT m.id,m.text,${utc('m.created_at')} AS at FROM messages m
        WHERE m.owner_id=$1 AND m.role='user' AND m.attachments='[]'::jsonb AND length(m.text)<=1000
          AND m.created_at<=now()-interval '10 minutes' AND (m.created_at,m.id)>($2::timestamptz,$3::uuid)
-         AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='OTTO_memory_save')
        ORDER BY m.created_at,m.id LIMIT 40`,
       [options.ownerId, from, after],
     );

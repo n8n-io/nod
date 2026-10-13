@@ -100,8 +100,7 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
   ).rows[0];
 }
 
-const readOnlyChain = (chain: TurnRow[]) =>
-  chain.some((item) => item.read_only || item.source_id?.startsWith('onboarding:'));
+const readOnlyChain = (chain: TurnRow[]) => chain.some((item) => item.read_only);
 
 export async function turnOrigin(turnId: string) {
   const client = await pool.connect();

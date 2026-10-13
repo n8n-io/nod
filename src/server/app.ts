@@ -263,25 +263,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
       void dependencies.computer?.discard?.(id).catch(() => {});
     return reset;
   });
-  app.post('/api/onboarding', async (request) => {
-    const { timeZone, threadId } = z
-      .object({
-        timeZone: z.string().max(100).optional(),
-        threadId: z.uuid().optional(),
-      })
-      .strict()
-      .parse(request.body);
-    if (timeZone) {
-      try {
-        new Intl.DateTimeFormat('en', { timeZone });
-      } catch {
-        throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
-      }
-    }
-    if (!dependencies.onboard)
-      throw Object.assign(new Error('Setup is unavailable.'), { statusCode: 503 });
-    return dependencies.onboard(timeZone, threadId);
-  });
   app.post('/api/onboarding/start', async (request) => {
     const { name } = z
       .object({ name: z.string().trim().max(100).optional() })
