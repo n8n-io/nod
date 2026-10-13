@@ -1,6 +1,6 @@
 ---
 title: Otto's browser
-description: What Otto can do in its own browser, how to take over when it needs you, and how it handles CAPTCHAs, passkeys, routines and downloads.
+description: What Otto can do in its own browser, how to take over when it needs you, and how it handles CAPTCHAs, passkeys and downloads.
 sidebar:
   order: 5
 ---
@@ -61,12 +61,6 @@ flowchart LR
 When you ask for several independent things, such as prices from three shops, Otto can split the work between subagents that browse at the same time, then combine what they found.
 
 The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to two browsers run at once, and an idle one closes until it's needed again.
-
-## Saved routines
-
-When Otto repeats the same steps on a website, it can save them as a routine and reuse it next time. A routine stops if a step fails, the browser leaves the website or the page doesn't match a saved check, so Otto can look and fix it.
-
-Routines never store passwords or codes. They're kept in `/workspace/.otto/browser-flows` and stay even if the chat is cleared. To make one, ask Otto to save what it just did as a routine.
 
 ## Downloads
 

@@ -7,7 +7,6 @@ import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { vaultInvitation } from './communication.ts';
-import { browserFlowParameters } from './browser-flows.ts';
 import type { Turn } from './turn.ts';
 
 export const personalActions = [
@@ -274,11 +273,6 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
   ),
-  browser_flow: defineTool(
-    'browser_flow',
-    'Reuse known website routines in the current private browser. list {query?} reads the flow registry and ranks matches. get {id} shows a flow. save {flow} stores a checked flow as a file. run {id, inputs?} replays it and checks expectText or expectUrl after each step. It stops with the current page if a check fails. Files live in the owner flow library and remain available after a conversation reset. Start with open and end with a checked snapshot. Use stable selectors, and named inputs for text that changes between runs. Never store passwords or codes.',
-    browserFlowParameters,
-  ),
   sign_in: defineTool(
     'sign_in',
     'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
@@ -511,11 +505,7 @@ function pageText(page: BrowserObservation) {
   return `URL: ${page.url}\n${page.text}`;
 }
 
-export function ottoTools(
-  turn: Turn,
-  browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
-  skills?: SkillLibrary,
-): OttoTool[] {
+export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   const { context, computer, pause, confirm, browserId } = turn;
   const { signal } = context;
   const screenshot = async () => {
@@ -610,7 +600,6 @@ export function ottoTools(
       }
       return pageText(await computer.act(browserId, { action, ...rest } as BrowserAction, signal));
     }),
-    bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
       if (appConfirmation in result)

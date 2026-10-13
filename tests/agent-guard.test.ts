@@ -960,7 +960,6 @@ const refused: Array<[string, Record<string, unknown>]> = [
   ['browser', { action: 'type', selector: '@reply', text: 'Synthetic reply' }],
   ['browser', { action: 'accept_dialog' }],
   ['browser', { action: 'share_screenshot' }],
-  ['browser_flow', { action: 'run', id: 'fixture' }],
   [
     'browser_session',
     { action: 'use', url: 'https://mail.example.test/', connectionId: randomUUID() },

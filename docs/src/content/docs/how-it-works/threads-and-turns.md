@@ -127,9 +127,9 @@ When the monthly spending limit is reached, new turns end `failed` with a limit 
 
 Reset is a development tool. In a local development build, **Clear messages** archives the thread and cancels its turns. The next turn starts a new Pi session, workspace and browser.
 
-| Archived                               | Deleted                                                    | Kept                                                                                         |
-| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions, saved browser routines and memory |
+| Archived                               | Deleted                                                    | Kept                                                                 |
+| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions and memory |
 
 The web client sends its `threadId` with each message, so a late message from before the reset is refused.
 

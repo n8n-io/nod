@@ -49,7 +49,6 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                  |
 | `react_to_message`                                                  | Reacts to a message with one emoji, on web only.                                                 |
 | `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.            |
-| `browser_flow`                                                      | Lists, saves and runs saved browser routines.                                                    |
 | `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                      |
 | `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                        |
 | `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                               |
@@ -84,7 +83,7 @@ flowchart TD
 
 - **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before and after they run.
 - **Turn mode:** read-only turns can use only read tools and browser open, snapshot, scroll, screenshot and wait. Activity checks can read only the selected account.
-- **Observations:** the guard records each call, with typed text, flows and memory arguments redacted.
+- **Observations:** the guard records each call, with typed text and memory arguments redacted.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
 App and memory changes run one at a time in call order, even when other calls run in parallel.
@@ -99,7 +98,7 @@ Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no 
 
 ## Untrusted results
 
-Results from apps, the browser, browser flows, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. See [Untrusted content](/trust/untrusted-content/).
+Results from apps, the browser, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. See [Untrusted content](/trust/untrusted-content/).
 
 ## How the prompt is built
 

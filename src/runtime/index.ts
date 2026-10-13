@@ -17,7 +17,6 @@ import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { actionEffect } from '../shared/action-effect.ts';
-import { createBrowserFlows } from './browser-flows.ts';
 import { createObservationQueue } from './observations.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
@@ -37,7 +36,7 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
-const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
+const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
@@ -46,7 +45,6 @@ const delimitedTools = new Set([
   'apps',
   'delegate',
   'browser',
-  'browser_flow',
   'web_search',
   'fetch_content',
   'get_search_content',
@@ -66,7 +64,6 @@ const readOnlyTools: Record<string, true | string[]> = {
   source_check: true,
   get_search_content: true,
   browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
-  browser_flow: ['list', 'get'],
   manage_apps: ['list', 'discover'],
   manage_personal_context: [
     'profile_get',
@@ -192,7 +189,7 @@ export function createAgentRuntime(dependencies: {
   withTool?<T>(turnId: string, toolCallId: string, toolName: string, action: () => T): T;
   redactError?(text: string): string;
 }) {
-  const { agent, computer } = dependencies;
+  const { agent, computer, skills } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
   let disposed = false;
   let disposal: Promise<void> | undefined;
@@ -411,11 +408,7 @@ export function createAgentRuntime(dependencies: {
                   String((params as { action?: unknown }).action),
                 )
               ? { ...params, text: '[redacted]' }
-              : name === 'browser_flow' && params && typeof params === 'object'
-                ? (params as { action?: unknown }).action === 'save'
-                  ? { action: 'save', flow: '[redacted]' }
-                  : { ...params, query: '[redacted]', inputs: '[redacted]' }
-                : params;
+              : params;
           await observe({
             type: 'tool_start',
             id,
@@ -485,7 +478,7 @@ export function createAgentRuntime(dependencies: {
               result = delimit(name, result);
             await end({
               status: 'succeeded',
-              ...(['sign_in', 'browser_flow'].includes(name) || memoryAction ? {} : { output }),
+              ...(name === 'sign_in' || memoryAction ? {} : { output }),
             });
           } catch (error) {
             if (reservedRecord) checkRecording = false;
@@ -543,11 +536,7 @@ export function createAgentRuntime(dependencies: {
         return next;
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
-        ottoTools(
-          turn,
-          createBrowserFlows(workspace, browser, turn.browserId, signal),
-          dependencies.skills,
-        ).map(({ name, description, parameters, execute }): AgentTool => ({
+        ottoTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
           name,
           description,
           parameters,
