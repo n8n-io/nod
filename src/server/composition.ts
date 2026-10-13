@@ -470,7 +470,7 @@ async function initializeApplication(
   await tasks.initialize();
   const triage = createTriage({
     consumers,
-    connectedApps: () => integrations.connectedApps(),
+    connectedApps: () => integrations.connectedApps(ownerId, true),
     sweep: () => vault.forgetExpiredHolds(),
   });
   const grantVault = await createAppGrantVault(pool, {
@@ -690,6 +690,7 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
+      skipTurn: triage.staleCheck,
       accountProfile,
       connectedApps: integrations.connectedApps,
       memoryContext: memory.context,
