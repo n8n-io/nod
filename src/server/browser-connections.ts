@@ -95,10 +95,10 @@ export async function createBrowserConnections(
       state text NOT NULL,
       browser_id uuid,
       checked_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
+      created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE browser_connections ADD COLUMN IF NOT EXISTS browser_id uuid;
+    ALTER TABLE browser_connections DROP COLUMN IF EXISTS updated_at;
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
         AND table_name='browser_connections' AND column_name='thread_id') THEN
@@ -218,7 +218,7 @@ export async function createBrowserConnections(
           return { status: 'needs_sign_in' as const, connectionId: row.id, observation };
         signal?.throwIfAborted();
         const saved = await pool.query(
-          `UPDATE browser_connections SET state='saved',checked_at=now(),updated_at=now()
+          `UPDATE browser_connections SET state='saved',checked_at=now()
            WHERE id=$1 AND owner_id=$2 AND browser_id=$5
            AND EXISTS (
              SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
@@ -256,7 +256,7 @@ export async function createBrowserConnections(
         (new URL(observation.url).origin !== row.origin || page.origin !== row.origin);
       signal?.throwIfAborted();
       const updated = await pool.query(
-        `UPDATE browser_connections SET state=CASE WHEN $3 THEN 'needs_sign_in' ELSE state END,browser_id=$6,updated_at=now()
+        `UPDATE browser_connections SET state=CASE WHEN $3 THEN 'needs_sign_in' ELSE state END,browser_id=$6
          WHERE id=$1 AND owner_id=$2
          AND EXISTS (
            SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
@@ -315,7 +315,7 @@ export async function createBrowserConnections(
       if (row.browser_id && (await inUse(row.browser_id)))
         throw new BrowserConnectionError('Stop the active work before disconnecting this account.');
       await pool.query(
-        "UPDATE browser_connections SET state='disconnecting',updated_at=now() WHERE id=$1 AND owner_id=$2",
+        "UPDATE browser_connections SET state='disconnecting' WHERE id=$1 AND owner_id=$2",
         [id, options.ownerId],
       );
       await browser.deleteProfile(row.profile_id);

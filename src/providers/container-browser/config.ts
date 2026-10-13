@@ -13,7 +13,7 @@ export function containerBrowserOptions(
     platform: 'linux',
     headless: false,
     sandbox: false,
-    maxLiveSessions: 2,
+    maxLiveSessions: 3,
     viewport: { width: 1440, height: 900 },
   };
 }

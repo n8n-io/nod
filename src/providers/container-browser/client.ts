@@ -392,6 +392,9 @@ export function createBridgeComputer(options: {
     hold: async (id, until) => {
       await call({ method: 'hold', threadId: threadIdentity(id), until });
     },
+    pin: async (id, pinned) => {
+      await call({ method: 'pin', threadId: threadIdentity(id), pinned });
+    },
     close: async (id) => {
       await call({ method: 'close', threadId: threadIdentity(id) });
     },

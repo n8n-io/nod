@@ -111,11 +111,12 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 ## Every session has its own browser
 
-A session opens its browser on its first browser call, so a session that never browses never starts one. Nothing waits for another session's browser.
+A session opens its browser on its first browser call, so a session that never browses never starts one. Sessions never share a browser.
 
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most two browsers live at once. An idle one closes and keeps its profile until it's used again. One waiting for you stays open for 30 minutes.
+- The browser container keeps at most three browsers live at once, enough for the chat and two subagents. At that limit, a new browser replaces the least recently used idle one, which closes and keeps its profile until it's used again.
+- A browser is never closed for another while its session or subagent is running, and one waiting for you stays open for 30 minutes. When none can close, a new browser waits for a free slot, and **Stop** cancels the wait.
 
 ## Stop and failures
 
@@ -129,9 +130,9 @@ When the monthly spending limit is reached, new turns end `failed` with a limit 
 
 Reset is a development tool. In a local development build, **Clear messages** archives the thread and cancels its turns. The next turn starts a new Pi session, workspace and browser.
 
-| Archived                               | Deleted                                                    | Kept                                                                                         |
-| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions, saved browser routines and memory |
+| Archived                               | Deleted                                                    | Kept                                                                 |
+| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions and memory |
 
 The web client sends its `threadId` with each message, so a late message from before the reset is refused.
 

@@ -63,7 +63,7 @@ Files Otto saves along the way stay private in the workspace until it shares the
 
 Files stay in the workspace for the whole conversation. Otto can come back to them days later.
 
-In a development run, **Clear messages** gives Otto a new, empty workspace folder. Saved browser routines in `/workspace/.otto/browser-flows` stay. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
+In a development run, **Clear messages** gives Otto a new, empty workspace folder. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
 
 ## Related resources
 

@@ -9,10 +9,6 @@ function redactedInput(name: string, input: unknown) {
   if (!input || typeof input !== 'object') return input;
   if (name === 'browser' && ['fill', 'type', 'accept_dialog'].includes(String(action)))
     return { ...input, text: '[redacted]' };
-  if (name === 'browser_flow')
-    return action === 'save'
-      ? { action: 'save', flow: '[redacted]' }
-      : { ...input, query: '[redacted]', inputs: '[redacted]' };
   return input;
 }
 
@@ -28,7 +24,7 @@ export function createCapture() {
       if (event.type === 'model_usage') return;
       if (event.type === 'tool_start') {
         if (
-          ['sign_in', 'browser_flow'].includes(event.name) ||
+          event.name === 'sign_in' ||
           (event.name === 'manage_personal_context' &&
             String((event.input as { action?: unknown } | null)?.action).startsWith('memory_'))
         )

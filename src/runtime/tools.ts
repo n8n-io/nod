@@ -7,7 +7,6 @@ import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { vaultInvitation } from './communication.ts';
-import { browserFlowParameters } from './browser-flows.ts';
 import type { Turn } from './turn.ts';
 
 export const personalActions = [
@@ -214,11 +213,6 @@ export const toolDefinitions = {
       offset: Type.Optional(Type.Integer({ minimum: 0 })),
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
-  ),
-  browser_flow: defineTool(
-    'browser_flow',
-    'Reuse known website routines in the current private browser. list {query?} reads the flow registry and ranks matches. get {id} shows a flow. save {flow} stores a checked flow as a file. run {id, inputs?} replays it and checks expectText or expectUrl after each step. It stops with the current page if a check fails. Files live in the owner flow library and remain available after a conversation reset. Start with open and end with a checked snapshot. Use stable selectors, and named inputs for text that changes between runs. Never store passwords or codes.',
-    browserFlowParameters,
   ),
   sign_in: defineTool(
     'sign_in',
@@ -452,11 +446,7 @@ function pageText(page: BrowserObservation) {
   return `URL: ${page.url}\n${page.text}`;
 }
 
-export function ottoTools(
-  turn: Turn,
-  browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
-  skills?: SkillLibrary,
-): OttoTool[] {
+export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   const { context, computer, pause, confirm, browserId } = turn;
   const { signal } = context;
   const screenshot = async () => {
@@ -551,7 +541,6 @@ export function ottoTools(
       }
       return pageText(await computer.act(browserId, { action, ...rest } as BrowserAction, signal));
     }),
-    bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
       if (appConfirmation in result)

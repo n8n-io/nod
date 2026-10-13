@@ -19,6 +19,7 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     injectCredentials: async () => {},
     currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
     hold: async () => {},
+    pin: async () => {},
     close: async () => {},
     fillCard: async () => {},
     cardDestinations: async () => ({ document: 'fixture', destinations: {} }),

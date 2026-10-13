@@ -17,7 +17,6 @@ import type {
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
-import { createBrowserFlows } from './browser-flows.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
@@ -37,7 +36,7 @@ const parallelTools = new Set([
 ]);
 const orderedTools = new Set(['apps', 'manage_personal_context']);
 const admissions = new AsyncLocalStorage<(asks: boolean) => Promise<void>>();
-const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
+const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
@@ -46,7 +45,6 @@ const delimitedTools = new Set([
   'apps',
   'delegate',
   'browser',
-  'browser_flow',
   'web_search',
   'fetch_content',
   'get_search_content',
@@ -65,7 +63,6 @@ const readOnlyTools: Record<string, true | string[]> = {
   source_check: true,
   get_search_content: true,
   browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
-  browser_flow: ['list', 'get'],
   manage_apps: ['list', 'discover'],
   manage_personal_context: [
     'notification_preferences_get',
@@ -118,7 +115,7 @@ export function createAgentRuntime(dependencies: {
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
 }) {
-  const { agent, computer } = dependencies;
+  const { agent, computer, skills } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
   let disposed = false;
   let disposal: Promise<void> | undefined;
@@ -354,11 +351,7 @@ export function createAgentRuntime(dependencies: {
         };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
-        ottoTools(
-          turn,
-          createBrowserFlows(workspace, browser, turn.browserId, signal),
-          dependencies.skills,
-        ).map(({ name, description, parameters, execute }): AgentTool => ({
+        ottoTools(turn, skills).map(({ name, description, parameters, execute }): AgentTool => ({
           name,
           description,
           parameters,
@@ -434,6 +427,7 @@ export function createAgentRuntime(dependencies: {
           systemPrompt: system,
           systemContext: systemContext(context),
           tools: bind({ ...shared, browserId: childBrowser }, async () => {
+            if (!browsed) await computer.pin(childBrowser, true).catch(() => {});
             browsed = true;
           }).filter((tool) => !ownBrowserTools.has(tool.name)),
           workspace,
@@ -463,6 +457,7 @@ export function createAgentRuntime(dependencies: {
         return answer || 'The subagent finished without an answer.';
       };
       const tools = bind({ ...shared, browserId, delegate }, async () => {
+        if (!browsed) await computer.pin(browserId, true).catch(() => {});
         browsed = true;
       });
       const instruct = (instruction: string) =>
@@ -563,6 +558,7 @@ export function createAgentRuntime(dependencies: {
         activeTurns.delete(context.turnId);
         if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard(browserId).catch(() => {});
+        else if (browsed) await computer.pin(browserId, false).catch(() => {});
         finished();
       }
     }

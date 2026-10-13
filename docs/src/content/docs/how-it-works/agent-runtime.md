@@ -49,7 +49,6 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                  |
 | `react_to_message`                                                  | Reacts to a message with one emoji, on web only.                                                 |
 | `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.            |
-| `browser_flow`                                                      | Lists, saves and runs saved browser routines.                                                    |
 | `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                      |
 | `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                        |
 | `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                               |
@@ -82,7 +81,7 @@ flowchart TD
 
 - **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before they run.
 - **Turn mode:** read-only turns can use only read tools and browser open, snapshot, scroll, screenshot and wait.
-- **Observations:** the guard reports each call to an optional observer. Only the evals harness sets one, and it redacts typed text, flows and memory arguments.
+- **Observations:** the guard reports each call to an optional observer. Only the evals harness sets one, and it redacts typed text and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
 App and memory calls run in parallel with each other and with subagents, and so do their trust checks. A call acts only once every app or memory call issued before it in the turn has been checked, and if one of those asked the owner, it's refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
@@ -97,7 +96,7 @@ Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no 
 
 ## Untrusted results
 
-Results from apps, the browser, browser flows, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. See [Untrusted content](/trust/untrusted-content/).
+Results from apps, the browser, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. See [Untrusted content](/trust/untrusted-content/).
 
 ## How the prompt is built
 

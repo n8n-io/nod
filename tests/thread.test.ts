@@ -4144,7 +4144,6 @@ test('feedback diagnostics build bounded private tool activity from the saved se
     ).map((entry) => ({ ...entry, message: { ...entry.message, timestamp: NaN } })),
     ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
     ...activity('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
-    ...activity('flow', 'browser_flow', { query: 'synthetic-private-flow' }, 'private-flow-output'),
     ...activity(
       'memory',
       'manage_personal_context',
@@ -4172,7 +4171,7 @@ test('feedback diagnostics build bounded private tool activity from the saved se
     const report = JSON.parse(encoded);
     assert.equal(report.coverage.toolTraceSource, 'saved-session');
     assert.equal(report.coverage.truncated, false);
-    assert.equal(report.trace.length, 7);
+    assert.equal(report.trace.length, 6);
     const browser = report.trace.find((item: { id: string }) => item.id === 'recent');
     assert.deepEqual(browser.input, { action: 'snapshot' });
     assert.deepEqual(browser.output, ['Visible activity [redacted]']);
@@ -4194,10 +4193,8 @@ test('feedback diagnostics build bounded private tool activity from the saved se
       'synthetic-rebased-old-output',
       'synthetic-private-fill',
       'synthetic-private-origin',
-      'synthetic-private-flow',
       'synthetic-private-profile',
       'private-login',
-      'private-flow-output',
       'private-memory-output',
       'synthetic-private-reasoning',
       'synthetic-assistant-prose',
