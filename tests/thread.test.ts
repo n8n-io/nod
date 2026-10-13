@@ -2306,6 +2306,21 @@ test(
               undefined,
             );
             assert.deepEqual(await eventTurns([revokedEvent]), []);
+            const rule = (await preferences.get()).notificationRule;
+            const clearedEvent = randomUUID();
+            assert.equal(
+              await triage.triageEvent(
+                'Synthetic event as the rule is cleared',
+                clearedEvent,
+                async () => {
+                  await preferences.update({ notificationRule: '' });
+                  return true;
+                },
+              ),
+              undefined,
+            );
+            assert.deepEqual(await eventTurns([clearedEvent]), []);
+            await preferences.update({ notificationRule: rule });
             const queued = await Promise.all(
               [...ids, ids[0], ids[0]].map((id) =>
                 triage.triageEvent(`Synthetic app event ${id}`, id),
@@ -2416,12 +2431,18 @@ test(
             assert.equal(first.source, 'event');
             assert.equal(first.background, true);
             for (const check of await checks()) await waitFor(settled(check.id));
-            const request = quietInstructions.get(first.id) as {
-              mode: string;
-              notificationRule: string;
-              connectedApps: ConnectedApp[];
-              currentInstruction: string;
-            };
+            const request = quietInstructions.get(first.id) as
+              | {
+                  mode: string;
+                  notificationRule: string;
+                  connectedApps: ConnectedApp[];
+                  currentInstruction: string;
+                }
+              | undefined;
+            assert.ok(
+              request,
+              `The activity check ended as ${await turnStatus(first.id)} without running Pi.`,
+            );
             assert.equal(request.mode, 'background');
             assert.equal(request.notificationRule, 'Tell me about new requests.');
             assert.ok(request.connectedApps.some((item) => item.connectionId === app.connectionId));

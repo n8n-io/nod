@@ -313,7 +313,7 @@ test(
     const routedRuns = async (id: string) =>
       (
         await db.pool.query(
-          `SELECT r.turn_id,u.channel,u.source,u.background FROM schedule_runs r
+          `SELECT r.turn_id,u.channel,u.source,u.background,u.prompt FROM schedule_runs r
            JOIN turns u ON u.id=r.turn_id
            WHERE r.schedule_id=$1 ORDER BY r.created_at,r.id`,
           [id],
@@ -776,6 +776,7 @@ test(
           assert.equal(dispatched[0].channel, origin.channel);
           assert.equal(dispatched[0].source, 'schedule');
           assert.equal(dispatched[0].background, true);
+          assert.ok(dispatched[0].prompt.includes(schedule.id));
           await reply(dispatched[0].turn_id, 'One-off fixture reminder.');
           await channels!.drain();
           assert.deepEqual(sent, [

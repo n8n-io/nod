@@ -53,8 +53,8 @@ Each run appears in **Tasks → Previous**.
 
 You don't need a schedule for Otto to keep an eye on things.
 
-- **Gmail.** Otto checks for new inbox mail every five minutes, and each new message is an update like any other app's.
-- **Other connected apps.** When you've told Otto what's worth interrupting you for, it looks at each update in a quiet background run and decides whether there's useful work; otherwise it only saves the update. For an app without updates, it checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
+- **Gmail.** Otto checks for new inbox mail every five minutes. When you've told Otto what's worth interrupting you for, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Without that, Otto only saves the message.
+- **Other connected apps.** Each update works the same way. For an app without updates, once you've said what's worth interrupting you for, Otto checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
 
 Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. Tell Otto what's worth interrupting you for, and it follows that.
 

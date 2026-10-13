@@ -47,7 +47,7 @@ async function seedTurns(pool: pg.Pool) {
     "CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)",
   );
   const threads = new Map<string, string>();
-  const turn = async (owner = 'local-development') => {
+  const turn = async (owner = 'local-development', background = false) => {
     let threadId = threads.get(owner);
     if (!threadId) {
       threadId = randomUUID();
@@ -55,10 +55,11 @@ async function seedTurns(pool: pg.Pool) {
       await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
     }
     const turnId = randomUUID();
-    await pool.query('INSERT INTO turns(id,owner_id,thread_id) VALUES($1,$2,$3)', [
+    await pool.query('INSERT INTO turns(id,owner_id,thread_id,background) VALUES($1,$2,$3,$4)', [
       turnId,
       owner,
       threadId,
+      background,
     ]);
     return { threadId, turnId };
   };
@@ -796,8 +797,7 @@ test(
           },
         })
       ).json<VaultCardEntry>();
-      const background = await turns.turn();
-      await pool.query('UPDATE turns SET background=true WHERE id=$1', [background.turnId]);
+      const background = await turns.turn('local-development', true);
       const open = await vault.request(
         { ...background, browserId: randomUUID() },
         'local-development',
@@ -991,8 +991,7 @@ test(
       await f.wait(running);
       assert.equal(await f.status(url), 'pending');
 
-      const check = await f.turn();
-      await f.pool.query('UPDATE turns SET background=true WHERE id=$1', [check.turnId]);
+      const check = await f.turn('local-development', true);
       const checkUrl = await f.link({ ...check, browserId: randomUUID() });
       await f.wait(check);
       assert.equal(await f.status(url), 'pending');
@@ -3534,8 +3533,7 @@ test(
         200,
       );
       await pool.query("UPDATE turns SET source='user' WHERE id=$1", [laterTurn]);
-      await pool.query('UPDATE turns SET background=true WHERE id=$1', [turn.turnId]);
-      await payments.request(turn, { ...order, card: card.id });
+      await payments.request(parallel, { ...order, card: card.id });
       const parallelPayment = (await latest()).id;
       assert.equal(
         (
@@ -3549,7 +3547,6 @@ test(
         200,
       );
       await pool.query('DELETE FROM turns WHERE id=$1', [laterTurn]);
-      await pool.query('UPDATE turns SET background=false WHERE id=$1', [turn.turnId]);
       const beforeCancelled = { fills: fills.length, resumes: resumed.length };
       await payments.request(turn, { ...order, card: card.id });
       const stoppedPayment = (await latest()).id;
