@@ -423,6 +423,43 @@ test(
         );
       };
 
+      const dispatch = async (
+        chat: { threadId: string; turnId: string },
+        sourceMessageId: string,
+      ) => {
+        const { taskId } = await tasks.dispatch(
+          chat,
+          { title: 'Synthetic task', ack: '', instruction: 'Do the synthetic work.' },
+          { sourceMessageId },
+        );
+        const turnId = (
+          await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [`task:${taskId}`])
+        ).rows[0].id;
+        return { taskId, sourceMessageId, turn: await running(turnId) };
+      };
+      const startTask = async (text: string, steered?: string) => {
+        const chat = await begin(text);
+        const started = await dispatch(
+          chat,
+          steered ? await steer(chat.turnId, steered) : (await row(chat.turnId)).message_id,
+        );
+        await finish(chat.turnId, 'succeeded');
+        return started;
+      };
+      const routed = async (taskId: string, text: string) => {
+        const submitted = await thread.submitUserMessage(text);
+        await db.pool.query('UPDATE turns SET session_id=$2,background=true WHERE id=$1', [
+          submitted.turnId,
+          taskId,
+        ]);
+        return { ...(await running(submitted.turnId)), messageId: submitted.messageId };
+      };
+      const say = (turnId: string, text: string) =>
+        db.pool.query(
+          "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) SELECT $1,owner_id,thread_id,id,'assistant',$3 FROM turns WHERE id=$2",
+          [randomUUID(), turnId, text],
+        );
+
       await t.test(
         'the checker sees only the owner words and the action, and what it does not run waits for one confirmation',
         async () => {
@@ -488,6 +525,75 @@ test(
             }),
             { confirm: false },
           );
+
+          const words = (input: Record<string, any>) =>
+            [input.taskInstruction, ...(input.userMessages ?? []).map((m: any) => m.text)].join(
+              '\n',
+            );
+          aligned = (input) => words(input).includes('bo.named@example.test');
+          const a = await startTask(
+            'Send the synthetic invoice summary to ana.named@example.test.',
+          );
+          await say(a.turn.turnId, 'Which synthetic month should the summary cover?');
+          await finish(a.turn.turnId, 'succeeded');
+          const b = await startTask('Collect my synthetic receipts.');
+          await say(b.turn.turnId, 'Should I include the synthetic travel receipts?');
+          await begin('What is on my synthetic calendar today?');
+          const chat = await begin('Email the synthetic receipts to bo.named@example.test.');
+          const answer = await routed(a.taskId, 'Use the March synthetic invoices.');
+          assert.deepEqual(await trust.check(answer, 'GMAIL_FETCH_EMAILS', {}), {
+            confirm: true,
+            reason: 'task',
+          });
+          const seen = reviews.at(-1)!;
+          assert.deepEqual(
+            { ...seen, userMessages: seen.userMessages.map((m: any) => m.text) },
+            {
+              taskInstruction: 'Send the synthetic invoice summary to ana.named@example.test.',
+              userMessages: ['Use the March synthetic invoices.'],
+              assistantMessageBeforeLatestUserMessage:
+                'Which synthetic month should the summary cover?',
+              action: { name: 'GMAIL_FETCH_EMAILS', arguments: {} },
+            },
+          );
+          assert.deepEqual(
+            await trust.check(b.turn, 'GMAIL_SEND_EMAIL', email('bo.named@example.test')),
+            { confirm: true, reason: 'task' },
+          );
+          assert.deepEqual(reviews.at(-1), {
+            taskInstruction: 'Collect my synthetic receipts.',
+            action: { name: 'GMAIL_SEND_EMAIL', arguments: email('bo.named@example.test') },
+          });
+          assert.deepEqual(
+            await trust.check(chat, 'GMAIL_SEND_EMAIL', email('bo.named@example.test')),
+            { confirm: false },
+          );
+          const chatReview = JSON.stringify(reviews.at(-1));
+          for (const text of [
+            'Use the March synthetic invoices.',
+            'Which synthetic month should the summary cover?',
+            'Should I include the synthetic travel receipts?',
+          ])
+            assert.equal(chatReview.includes(text), false, text);
+
+          const contract = 'Shall I send the synthetic contract to cy.named@example.test?';
+          aligned = (input) => input.assistantMessageBeforeLatestUserMessage === contract;
+          for (const interrupted of [true, false]) {
+            const asking = await begin('Prepare the synthetic contract email.');
+            await say(asking.turnId, contract);
+            await finish(asking.turnId, 'succeeded');
+            if (interrupted) await say(a.turn.turnId, 'The synthetic invoice summary is ready.');
+            const yes = await begin('yes');
+            assert.deepEqual(
+              await trust.check(yes, 'GMAIL_SEND_EMAIL', email('cy.named@example.test')),
+              interrupted ? { confirm: true, reason: 'unrequested' } : { confirm: false },
+            );
+            assert.equal(
+              reviews.at(-1)?.assistantMessageBeforeLatestUserMessage,
+              interrupted ? undefined : contract,
+            );
+          }
+          await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
         },
       );
 
@@ -529,6 +635,14 @@ test(
             reviews.at(-1)?.userMessages.at(-1).text,
             'Yes, send that reply to the client.',
           );
+          const task = await dispatch(tapped, (await row(tapped.turnId)).message_id);
+          aligned = (input) => /reply/i.test(input.taskInstruction ?? '');
+          assert.deepEqual(await trust.check(task.turn, 'GMAIL_REPLY_TO_THREAD', reply), {
+            confirm: true,
+            reason: 'task',
+          });
+          assert.equal(reviews.at(-1)?.taskInstruction, undefined);
+          await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
           aligned = true;
         },
       );
@@ -1614,37 +1728,6 @@ test(
         'a task acts on the owner message that started it, never as an event',
         async () => {
           aligned = false;
-          const dispatch = async (
-            chat: { threadId: string; turnId: string },
-            sourceMessageId: string,
-          ) => {
-            const { taskId } = await tasks.dispatch(
-              chat,
-              { title: 'Synthetic task', ack: '', instruction: 'Do the synthetic work.' },
-              { sourceMessageId },
-            );
-            const turnId = (
-              await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [`task:${taskId}`])
-            ).rows[0].id;
-            return { taskId, sourceMessageId, turn: await running(turnId) };
-          };
-          const startTask = async (text: string, steered?: string) => {
-            const chat = await begin(text);
-            const started = await dispatch(
-              chat,
-              steered ? await steer(chat.turnId, steered) : (await row(chat.turnId)).message_id,
-            );
-            await finish(chat.turnId, 'succeeded');
-            return started;
-          };
-          const routed = async (taskId: string, text: string) => {
-            const submitted = await thread.submitUserMessage(text);
-            await db.pool.query('UPDATE turns SET session_id=$2,background=true WHERE id=$1', [
-              submitted.turnId,
-              taskId,
-            ]);
-            return { ...(await running(submitted.turnId)), messageId: submitted.messageId };
-          };
           const pause = () => ({ id: randomUUID() });
 
           for (const steered of [undefined, 'Also pause the synthetic newsletter schedule.']) {

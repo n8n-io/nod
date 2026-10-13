@@ -115,8 +115,15 @@ test(
               : task === 'review'
                 ? {
                     run: asked.has(
-                      (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
-                        ?.text ?? '',
+                      (
+                        input as {
+                          taskInstruction?: string;
+                          userMessages?: Array<{ text: string }>;
+                        }
+                      ).taskInstruction ??
+                        (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                          ?.text ??
+                        '',
                     ),
                   }
                 : undefined,
@@ -252,6 +259,59 @@ test(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(held))[0].status, 'declined');
           assert.equal(sends(), 0);
+        },
+      );
+
+      await t.test(
+        'a task send runs from its own instruction, never from a later chat message',
+        async () => {
+          const sends = () =>
+            integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length;
+          const task = async (instruction: string, later: string) => {
+            const source = await request('POST', '/api/messages', {
+              text: instruction,
+              clientMessageId: randomUUID(),
+            });
+            await waitFor(source.json().turnId, 'succeeded');
+            const chat = await request('POST', '/api/messages', {
+              text: later,
+              clientMessageId: randomUUID(),
+            });
+            await waitFor(chat.json().turnId, 'succeeded');
+            const taskId = randomUUID();
+            await pool.query(
+              `INSERT INTO tasks(id,owner_id,thread_id,title,instruction,source_message_id)
+               VALUES($1,$2,$3,'Synthetic task',$4,$5)`,
+              [taskId, ownerId, source.json().threadId, instruction, source.json().messageId],
+            );
+            const prompt = `Synthetic task ${taskId}: send the invoices.`;
+            plans.set(prompt, {
+              tool: 'apps',
+              action: 'GMAIL_SEND_EMAIL',
+              args: {
+                recipient_email: 'payables@example.test',
+                subject: 'Synthetic invoices',
+                body: 'Synthetic summary.',
+              },
+            });
+            const turn = await enqueueTurn(prompt, {
+              source: 'task',
+              sourceId: `task:${taskId}`,
+              background: true,
+              sessionId: taskId,
+            });
+            await waitFor(turn, 'waiting|succeeded');
+            return (await approvalsFor(turn)).map((approval) => approval.status);
+          };
+          const before = sends();
+          const instruction = 'Email the synthetic invoices to payables@example.test.';
+          asked.add(instruction);
+          assert.deepEqual(await task(instruction, 'What is on my synthetic calendar?'), []);
+          assert.equal(sends(), before + 1);
+          const later = 'Email the synthetic receipts to payables@example.test.';
+          asked.add(later);
+          assert.deepEqual(await task('Look over my synthetic receipts.', later), ['pending']);
+          assert.equal(sends(), before + 1);
         },
       );
 

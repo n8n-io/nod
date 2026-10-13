@@ -92,6 +92,7 @@ The server starts the task in one transaction:
 
 Every turn of a task acts on your message that started it. A turn that holds a message of yours in the task's session, such as a reply routed to the task, acts on that message instead. The trust check never treats a task as background work, and a task started from read-only work stays read-only. The trust check, approvals and the Vault find the task from the turn's session:
 
+- The trust check reads only the task's own words: your message that started it and your messages in its session. A chat message never counts for a task, and a task's messages never count for the chat. See [what the checker sees](/trust/approvals/#what-the-checker-sees).
 - An approval's author is that message, so a schedule a task creates keeps your words as its instruction.
 - The same action and arguments in two tasks get two separate approvals.
 - A Vault yes in a task covers every later turn of that task, but not the chat or another task.

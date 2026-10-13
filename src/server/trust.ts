@@ -6,6 +6,7 @@ export type TrustReason = 'background' | 'schedule' | 'task' | 'unrequested';
 
 const checkInstructions = `You decide whether an AI assistant may run one action for its user now: an action in one of the user's connected apps, a change to the assistant's own schedules, profile or notification settings for the user, forgetting one of the assistant's saved notes about the user, or signing in to a website for the user (OTTO_sign_in, or OTTO_browser_session to open a saved signed-in browser).
 Reply with only JSON: {"run": true} or {"run": false}.
+The user's own words are userMessages, taskInstruction (the user's message that started this task) and scheduledTaskInstruction (the user's instruction for this scheduled run).
 run is true for an action that only reads, or only prepares something for the user without sending, publishing, sharing or deleting anything, such as a draft.
 For any other action, run is true only when the user's own words ask for this kind of action on this target, and false when there are no user words, the target differs from what the user named, the user asked to be asked first, or it is unclear. A short "yes" counts when it answers the assistant message that proposed this action.
 OTTO_sign_in and OTTO_browser_session are never only reads. For them, run is true only when the user's words need that website or business, such as reading their account there, downloading a document, booking or buying; the user may name the business instead of the website. A denial, a cancellation, a public search or a request to stay signed out does not ask for a sign-in.
@@ -26,34 +27,49 @@ export function createTrust(options: {
 }) {
   const { pool, ownerId } = options;
 
-  async function conversation(threadId: string) {
+  const tapped = `SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+    WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL`;
+
+  async function conversation(threadId: string, sessionId: string) {
+    const recent = `FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+      WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.text<>'' AND m.created_at>now()-interval '24 hours'`;
+    const own = `COALESCE(u.session_id,m.thread_id)=$3`;
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
-        `SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
-         AND text<>'' AND created_at>now()-interval '24 hours'
-         AND text NOT IN (
-           SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
-           WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL)
-         ORDER BY created_at DESC,id DESC LIMIT 5`,
-        [ownerId, threadId],
+        `SELECT m.id,m.text,m.created_at ${recent} AND ${own} AND m.role='user'
+         AND m.text NOT IN (${tapped}) ORDER BY m.created_at DESC,m.id DESC LIMIT 5`,
+        [ownerId, threadId, sessionId],
       )
     ).rows;
     const latest = users[0];
     if (!latest) return undefined;
     const before = (
-      await pool.query<{ text: string }>(
-        `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
-         AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [ownerId, threadId, latest.created_at, latest.id],
+      await pool.query<{ text: string; own: boolean }>(
+        `SELECT m.text,${own} AS own ${recent} AND m.role='assistant' AND ($2=$3 OR ${own})
+         AND (m.created_at,m.id)<(SELECT created_at,id FROM messages WHERE owner_id=$1 AND id=$4)
+         ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
+        [ownerId, threadId, sessionId, latest.id],
       )
     ).rows[0];
     return {
       userMessages: users
         .reverse()
         .map((row) => ({ at: row.created_at.toISOString(), text: row.text })),
-      ...(before ? { assistantMessageBeforeLatestUserMessage: before.text } : {}),
+      ...(before?.own ? { assistantMessageBeforeLatestUserMessage: before.text } : {}),
     };
+  }
+
+  async function taskWords(threadId: string, taskId: string) {
+    const [task, words] = await Promise.all([
+      pool.query<{ instruction: string }>(
+        `SELECT instruction FROM tasks WHERE owner_id=$1 AND thread_id=$2 AND id=$3
+         AND instruction<>'' AND instruction NOT IN (${tapped})`,
+        [ownerId, threadId, taskId],
+      ),
+      conversation(threadId, taskId),
+    ]);
+    const instruction = task.rows[0]?.instruction;
+    return { ...(instruction ? { taskInstruction: instruction } : {}), ...words };
   }
 
   async function check(
@@ -64,12 +80,13 @@ export function createTrust(options: {
     const origin = await turnOrigin(turn);
     if (!origin) throw new Error('This turn is no longer running.');
     const instruction = origin.scheduleInstruction?.trim();
-    const words =
-      origin.source === 'event'
+    const words = origin.taskId
+      ? await taskWords(turn.threadId, origin.taskId)
+      : origin.source === 'event'
         ? undefined
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction }
-          : await conversation(turn.threadId);
+          : await conversation(turn.threadId, turn.threadId);
     const answer = await options
       .review(checkInstructions, {
         ...words,

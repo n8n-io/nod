@@ -24,14 +24,17 @@ The checker is your selected model at its fastest setting. It checks every app a
 
 Only your words carry authority. A web page or email can't argue for an action, because the checker never reads it.
 
+Each [task](/how-it-works/threads-and-turns/#tasks) has its own words. For an action in a task, the checker sees your message that started the task, however long ago you sent it. It also sees your last five messages to that task from the past day, and the task's Otto message your latest one answered. It never sees your chat messages or another task's messages, so a chat message you send later doesn't widen what a task can do. For an action in the chat, the checker sees only your chat messages, never your messages to a task. If the last Otto message before yours came from a task, a scheduled run or background work, the checker sees no Otto message. A short "yes" then can't approve an older chat question, so Otto asks you.
+
 ## What runs directly
 
-| Kind of work                                      | Reads and drafts | Anything else                                 |
-| ------------------------------------------------- | ---------------- | --------------------------------------------- |
-| A conversation with you                           | Run              | Run if your messages ask for it               |
-| A scheduled run                                   | Run              | Run if the schedule's instruction asks for it |
-| Background work Otto starts, such as on new email | Run              | Ask                                           |
-| Read-only and onboarding work                     | Reads run        | Refused                                       |
+| Kind of work                                      | Reads and drafts | Anything else                                                         |
+| ------------------------------------------------- | ---------------- | --------------------------------------------------------------------- |
+| A conversation with you                           | Run              | Run if your messages ask for it                                       |
+| A task                                            | Run              | Run if the message that started it, or a later one to it, asks for it |
+| A scheduled run                                   | Run              | Run if the schedule's instruction asks for it                         |
+| Background work Otto starts, such as on new email | Run              | Ask                                                                   |
+| Read-only and onboarding work                     | Reads run        | Refused                                                               |
 
 ```mermaid
 flowchart TD
