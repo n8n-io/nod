@@ -64,7 +64,7 @@ import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
-import { createApprovals } from './approvals.ts';
+import { createApprovals, turnOrigin } from './approvals.ts';
 import { appActionConfirmation } from './action-presentation.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
@@ -805,6 +805,20 @@ async function initializeApplication(
             if (!schedule.enabled) return schedule;
           }
           return approvals.request(turn, `OTTO_${action}`, input, provenance);
+        }
+        if (action === 'memory_forget' || action === 'profile_learn') {
+          const origin = await turnOrigin(turn);
+          if (origin?.source === 'task') {
+            if (origin.readOnly) throw new Error('This turn can only read.');
+            if (
+              action === 'memory_forget' &&
+              (await trust.check(turn, 'OTTO_memory_forget', args)).confirm
+            )
+              throw new Error('Only a request from the owner can forget a note.');
+            return withTurnLock(turn.turnId, () =>
+              personal.manage(action, args, { sourceMessageId: origin.authorMessageId }),
+            );
+          }
         }
         if (action === 'memory_save') {
           const input = memory.validate(args);

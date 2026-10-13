@@ -57,6 +57,8 @@ The memory tools are actions of Pi's `manage_personal_context` tool. Each save i
 | `memory_forget`  | No confirmation. It deletes the entry and its archived versions.                             |
 | `memory_control` | The complete current owner message, quoted, asking to stop, resume or clear memory.          |
 
+In a task, `memory_forget` also needs the [trust check](/trust/approvals/) to find that the owner's words ask for it. Otherwise it's refused.
+
 The `memory_save` review rejects guesses, tasks, questions, instructions aimed at the assistant, pasted third-party content and anything the owner didn't say. It also rejects sensitive topics unless the owner allowed them or asked. An unsupported note, or a missing or malformed review, returns `skipped`. Nothing is saved, and the conversation carries on without a question.
 
 Saves are silent: no notice appears in chat or on Telegram or WhatsApp. Text containing a card number, an API key or a link with a login in it is refused. A correction uses `replace: true` and archives the old version.

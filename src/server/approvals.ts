@@ -7,7 +7,7 @@ import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef }
 import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
-import { taskSessionSql, turnChain } from './turn-chain.ts';
+import { taskOfTurn, taskSessionSql, turnChain } from './turn-chain.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -51,17 +51,27 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
   ).rows[0];
 }
 
+function author(
+  origin: { source: string; message_id: string | null },
+  task?: { source_message_id: string | null },
+) {
+  return origin.source === 'user' ? origin.message_id : (task?.source_message_id ?? null);
+}
+
 export async function turnOrigin(turn: TurnRef) {
   const client = await pool.connect();
   try {
     const { chain, origin, readOnly } = await turnChain(client, ownerId, turn);
     if (!origin) return undefined;
+    const task = await taskOfTurn(client, ownerId, turn.turnId);
     return {
-      source: origin.source,
+      source: task ? 'task' : origin.source,
+      taskId: task?.id,
       channel: chain[0].channel,
-      readOnly,
+      readOnly: readOnly || Boolean(task?.read_only),
+      authorMessageId: author(origin, task),
       scheduleInstruction:
-        origin.source === 'schedule'
+        !task && origin.source === 'schedule'
           ? ((await scheduleAuthority(client, origin.id))?.authority_instruction ?? undefined)
           : undefined,
     };
@@ -153,47 +163,39 @@ export async function createApprovals(
       const current = chain[0];
       if (!current) throw conflict('This turn is no longer running.');
       if (!origin) throw new Error('This action needs a direct request from the user.');
-      if (readOnly)
+      const task = await taskOfTurn(client, ownerId, turn.turnId);
+      if (readOnly || task?.read_only)
         throw new Error(
           'This action needs a direct request from the user; this turn is read-only.',
         );
-      let steering: { id: string; text: string } | undefined;
+      let steering: { id: string } | undefined;
       if (options.sourceMessageId && options.sourceMessageId !== current.message_id) {
-        if (!current.background)
+        if (!current.background || task)
           steering = (
-            await client.query<{ id: string; text: string }>(
-              "SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND turn_id=$4 AND role='user'",
+            await client.query<{ id: string }>(
+              "SELECT id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND turn_id=$4 AND role='user'",
               [options.sourceMessageId, ownerId, turn.threadId, turn.turnId],
             )
           ).rows[0];
         if (!steering) throw new Error('This action needs a direct request from the user.');
       }
-      const background = !steering && ['event', 'schedule'].includes(origin.source);
-      let authorInstruction: string;
-      let authorMessageId: string | null;
-      if (steering) {
-        authorInstruction = steering.text;
-        authorMessageId = steering.id;
-      } else if (origin.source === 'event') {
-        authorInstruction = '';
-        authorMessageId = null;
-      } else if (origin.source === 'schedule') {
-        const grant = await scheduleAuthority(client, origin.id);
-        authorInstruction = grant?.authority_instruction ?? '';
-        authorMessageId = grant?.authority_source_message_id ?? null;
-      } else {
-        const author =
-          origin.source === 'user' && origin.message_id
-            ? (
-                await client.query<{ id: string; text: string }>(
-                  "SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
-                  [origin.message_id, ownerId, origin.thread_id],
-                )
-              ).rows[0]
-            : undefined;
-        if (!author) throw new Error('This action needs a direct request from the user.');
-        authorInstruction = author.text;
-        authorMessageId = author.id;
+      const background = !steering && !task && ['event', 'schedule'].includes(origin.source);
+      let authorMessageId: string | null = null;
+      if (steering) authorMessageId = steering.id;
+      else if (background)
+        authorMessageId =
+          origin.source === 'schedule'
+            ? ((await scheduleAuthority(client, origin.id))?.authority_source_message_id ?? null)
+            : null;
+      else {
+        authorMessageId =
+          (
+            await client.query<{ id: string }>(
+              "SELECT id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
+              [author(origin, task), ownerId, origin.thread_id],
+            )
+          ).rows[0]?.id ?? null;
+        if (!authorMessageId) throw new Error('This action needs a direct request from the user.');
       }
       await preflight?.(action, snapshot);
       if (background)
@@ -207,8 +209,11 @@ export async function createApprovals(
               [chain.map((item) => item.id), ownerId, action, snapshot],
             )
           : await client.query(
-              'SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb ORDER BY id LIMIT 1',
-              [turn.threadId, ownerId, authorMessageId, action, snapshot],
+              `SELECT a.* FROM approvals a JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+               WHERE a.thread_id=$1 AND a.owner_id=$2 AND a.source_message_id=$3 AND a.action=$4
+                 AND a.args=$5::jsonb AND u.session_id=$6
+               ORDER BY a.id LIMIT 1`,
+              [turn.threadId, ownerId, authorMessageId, action, snapshot, current.session_id],
             )
       ).rows[0];
       if (previous) {

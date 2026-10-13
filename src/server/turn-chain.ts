@@ -13,10 +13,26 @@ type ChainTurn = {
   read_only: boolean;
   background: boolean;
   channel: string;
+  session_id: string;
 };
 
 export function taskSessionSql(alias = 'u') {
   return `EXISTS (SELECT 1 FROM tasks t WHERE t.id=${alias}.session_id AND t.owner_id=${alias}.owner_id)`;
+}
+
+export async function taskOfTurn(
+  database: Pick<PoolClient, 'query'>,
+  ownerId: string,
+  turnId: string,
+) {
+  return (
+    await database.query<{ id: string; source_message_id: string | null; read_only: boolean }>(
+      `SELECT t.id,t.source_message_id,t.read_only FROM turns u
+       JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
+       WHERE u.id=$1 AND u.owner_id=$2`,
+      [turnId, ownerId],
+    )
+  ).rows[0];
 }
 
 export function parentTurnSql(alias = 'u') {

@@ -90,6 +90,13 @@ The server starts the task in one transaction:
 3. It posts `ack`, or "On it.", as a reply to your message.
 4. It queues the task's first turn. The task ID is its session ID, so all of the task's turns run one at a time in that session, in parallel with the chat.
 
+Every turn of a task acts on your message that started it. A turn that holds a message of yours in the task's session, such as a reply routed to the task, acts on that message instead. The trust check never treats a task as background work, and a task started from read-only work stays read-only. The trust check, approvals and the Vault find the task from the turn's session:
+
+- An approval's author is that message, so a schedule a task creates keeps your words as its instruction.
+- The same action and arguments in two tasks get two separate approvals.
+- A Vault yes in a task covers every later turn of that task, but not the chat or another task.
+- A task can remember a profile detail only from that message, quoted in full, and can forget a note only when the trust check finds that your words ask for it.
+
 The Tasks page reads each task's status from its row and the latest turn of its session. An open task shows **Needs you** while that turn waits for you, and **Working** otherwise. A closed task shows **Done**, **Stopped** or **Failed** from its row. A turn in another session, such as a chat message, never changes it.
 
 Until the task mode is built, a task turn runs with the rules of a background session, except for its Pi session. A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.

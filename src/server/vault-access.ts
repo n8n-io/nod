@@ -9,7 +9,7 @@ import type {
 } from '../shared/contracts.ts';
 import type { TrustReason } from './trust.ts';
 import type { TurnRef } from './thread.ts';
-import { turnChain } from './turn-chain.ts';
+import { taskOfTurn, turnChain } from './turn-chain.ts';
 import { credentialOrigin, VaultError } from './vault.ts';
 
 type Kind = 'sign_in' | 'session' | 'form';
@@ -89,11 +89,12 @@ export async function createVaultAccess(
     };
   }
 
-  async function confirmed(chain: Chain, args: Record<string, unknown>) {
+  async function confirmed(chain: Chain, args: Record<string, unknown>, taskId?: string) {
     const { rowCount } = await pool.query(
-      `SELECT 1 FROM approvals WHERE owner_id=$1 AND action='OTTO_vault_allow' AND status='completed'
-       AND turn_id=ANY($2::uuid[]) AND args=$3::jsonb LIMIT 1`,
-      [ownerId, chain.ids, args],
+      `SELECT 1 FROM approvals a JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+       WHERE a.owner_id=$1 AND a.action='OTTO_vault_allow' AND a.status='completed'
+       AND (a.turn_id=ANY($2::uuid[]) OR u.session_id=$4) AND a.args=$3::jsonb LIMIT 1`,
+      [ownerId, chain.ids, args, taskId ?? null],
     );
     return Boolean(rowCount);
   }
@@ -171,8 +172,9 @@ export async function createVaultAccess(
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
     const chain = await root(turn);
+    const task = await taskOfTurn(pool, ownerId, turn.turnId);
     const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
-    if (chain.readOnly) {
+    if (chain.readOnly || task?.read_only) {
       await log(turn, chain, { action: 'held', origin, reason: 'readonly', ...itemKind });
       return { ok: false, message: readOnlyMessage };
     }
@@ -182,7 +184,7 @@ export async function createVaultAccess(
       kind: target.kind,
       ...(target.itemId ? { itemId: target.itemId } : {}),
     };
-    if (await confirmed(chain, args)) return { ok: true, reason: 'allowed' };
+    if (await confirmed(chain, args, task?.id)) return { ok: true, reason: 'allowed' };
     const verdict = await options.check(
       turn,
       target.kind === 'session' ? 'OTTO_browser_session' : 'OTTO_sign_in',

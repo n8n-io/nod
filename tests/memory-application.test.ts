@@ -473,6 +473,42 @@ test(
       });
       await settle(await enqueueTurn(trigger, { source: 'event' }), 'succeeded');
       assert.ok(await savedEntry(routine));
+      for (const [request, asked] of [
+        ['Plan my synthetic week around the project reviews.', false],
+        ['Forget my synthetic project review routine and plan my week.', true],
+      ] as const) {
+        const source = (
+          await pool.query("SELECT id,thread_id FROM messages WHERE turn_id=$1 AND role='user'", [
+            await ask(request, [], 'succeeded'),
+          ])
+        ).rows[0];
+        const taskId = randomUUID();
+        await pool.query(
+          `INSERT INTO tasks(id,owner_id,thread_id,title,instruction,source_message_id)
+           VALUES($1,$2,$3,'Synthetic task',$4,$5)`,
+          [taskId, ownerId, source.thread_id, request, source.id],
+        );
+        const instruction = `Synthetic task ${taskId}: tidy the routine notes.`;
+        plans.set(instruction, {
+          steps: [personal('memory_forget', { path: routinePath }, !asked)],
+        });
+        const previous = memoryReview;
+        memoryReview = { run: asked };
+        await settle(
+          await enqueueTurn(instruction, {
+            source: 'task',
+            sourceId: `task:${taskId}`,
+            background: true,
+            sessionId: taskId,
+          }),
+          'succeeded',
+        );
+        memoryReview = previous;
+        const review = reviews.at(-1) as { action: { name: string } };
+        assert.equal(review.action.name, 'OTTO_memory_forget');
+        assert.ok(JSON.stringify(review).includes(request));
+        assert.equal(Boolean(await savedEntry(routine)), !asked);
+      }
       assert.equal(
         (
           await pool.query('SELECT DISTINCT thread_id FROM turns WHERE id=ANY($1::uuid[])', [

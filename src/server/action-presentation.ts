@@ -44,6 +44,7 @@ const apps: Record<string, string> = {
 const reasons: Record<TrustReason, string> = {
   background: 'this came up in background work, not from a message of yours.',
   schedule: 'your scheduled task does not clearly ask for this.',
+  task: 'your request for this task does not clearly ask for this.',
   unrequested: 'I could not confirm that you asked for exactly this.',
 };
 

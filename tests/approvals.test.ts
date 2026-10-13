@@ -1611,6 +1611,167 @@ test(
       );
 
       await t.test(
+        'a task acts on the owner message that started it, never as an event',
+        async () => {
+          aligned = false;
+          const dispatch = async (
+            chat: { threadId: string; turnId: string },
+            sourceMessageId: string,
+          ) => {
+            const { taskId } = await tasks.dispatch(
+              chat,
+              { title: 'Synthetic task', ack: '', instruction: 'Do the synthetic work.' },
+              { sourceMessageId },
+            );
+            const turnId = (
+              await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [`task:${taskId}`])
+            ).rows[0].id;
+            return { taskId, sourceMessageId, turn: await running(turnId) };
+          };
+          const startTask = async (text: string, steered?: string) => {
+            const chat = await begin(text);
+            const started = await dispatch(
+              chat,
+              steered ? await steer(chat.turnId, steered) : (await row(chat.turnId)).message_id,
+            );
+            await finish(chat.turnId, 'succeeded');
+            return started;
+          };
+          const routed = async (taskId: string, text: string) => {
+            const submitted = await thread.submitUserMessage(text);
+            await db.pool.query('UPDATE turns SET session_id=$2,background=true WHERE id=$1', [
+              submitted.turnId,
+              taskId,
+            ]);
+            return { ...(await running(submitted.turnId)), messageId: submitted.messageId };
+          };
+          const pause = () => ({ id: randomUUID() });
+
+          for (const steered of [undefined, 'Also pause the synthetic newsletter schedule.']) {
+            const started = await startTask('Tidy up my synthetic schedules.', steered);
+            const first = await propose(started.turn, 'OTTO_schedule_cancel', pause());
+            assert.equal((await stored(first)).source_message_id, started.sourceMessageId);
+            const resumed = await afterCredentials(started.turn.turnId);
+            const next = await propose(resumed, 'OTTO_schedule_cancel', pause());
+            assert.equal((await stored(next)).source_message_id, started.sourceMessageId);
+            const steering = await steer(resumed.turnId, 'Pause the synthetic weekly report.');
+            await approvals.request(resumed, 'OTTO_schedule_cancel', pause(), {
+              sourceMessageId: steering,
+            });
+            assert.equal(
+              (
+                await db.pool.query(
+                  'SELECT 1 FROM approvals WHERE turn_id=$1 AND source_message_id=$2',
+                  [resumed.turnId, steering],
+                )
+              ).rowCount,
+              1,
+            );
+            await finish(resumed.turnId, 'succeeded');
+            const reply = await routed(started.taskId, 'Pause the synthetic digest too.');
+            const own = await propose(reply, 'OTTO_schedule_cancel', pause());
+            assert.equal((await stored(own)).source_message_id, reply.messageId);
+            await finish(reply.turnId, 'succeeded');
+          }
+
+          const chat = await begin('Pause the synthetic digest for both teams.');
+          const source = (await row(chat.turnId)).message_id;
+          const both = [await dispatch(chat, source), await dispatch(chat, source)];
+          const args = pause();
+          const separate = [
+            await propose(both[0]!.turn, 'OTTO_schedule_cancel', args),
+            await propose(both[1]!.turn, 'OTTO_schedule_cancel', args),
+          ];
+          assert.notEqual(separate[0], separate[1]);
+          assert.deepEqual(
+            await trust.check(both[0]!.turn, 'GMAIL_SEND_EMAIL', email('team@example.test')),
+            { confirm: true, reason: 'task' },
+          );
+          assert.ok(
+            JSON.stringify(reviews.at(-1)).includes('Pause the synthetic digest for both teams.'),
+          );
+
+          const { createVaultAccess } = await import('../src/server/vault-access.ts');
+          const access = await createVaultAccess(db.pool, { ownerId, check: trust.check });
+          const site = { origin: 'https://statements.example.test', kind: 'sign_in' as const };
+          const readOnly = await startTask('Look over my synthetic schedules.');
+          await db.pool.query('UPDATE tasks SET read_only=true WHERE id=$1', [readOnly.taskId]);
+          await assert.rejects(
+            approvals.request(readOnly.turn, 'OTTO_schedule_cancel', pause()),
+            /read-only/,
+          );
+          await assert.rejects(
+            trust.check(readOnly.turn, 'GMAIL_SEND_EMAIL', email('team@example.test')),
+            /only read/,
+          );
+          assert.ok('message' in (await access.authorize(readOnly.turn, site)));
+          assert.deepEqual(await trust.payment(readOnly.turn), {
+            allowed: false,
+            reason: 'readonly',
+          });
+
+          const a = await startTask('Download my synthetic bank statement.');
+          const signIn = await access.authorize(a.turn, site);
+          assert.ok('question' in signIn);
+          const grant = await propose(a.turn, 'OTTO_vault_allow', signIn.args);
+          await finish(a.turn.turnId);
+          await confirm(grant, true);
+          await execute(grant);
+          assert.equal((await stored(grant)).status, 'completed');
+          const resumed = await running((await stored(grant)).execution_turn_id);
+          assert.deepEqual(await access.authorize(resumed, site), { ok: true, reason: 'allowed' });
+          const retry = await afterCredentials(resumed.turnId);
+          assert.deepEqual(await access.authorize(retry, site), { ok: true, reason: 'allowed' });
+          await finish(retry.turnId, 'succeeded');
+          const reply = await routed(a.taskId, 'Also download last month.');
+          assert.deepEqual(await access.authorize(reply, site), { ok: true, reason: 'allowed' });
+          await finish(reply.turnId, 'succeeded');
+          await db.pool.query("UPDATE tasks SET state='done',closed_at=now() WHERE id=$1", [
+            a.taskId,
+          ]);
+          const reopened = await routed(a.taskId, 'Download the one before that too.');
+          assert.deepEqual(await access.authorize(reopened, site), { ok: true, reason: 'allowed' });
+          const b = await startTask('Download my synthetic card statement.');
+          assert.ok('question' in (await access.authorize(b.turn, site)));
+          assert.ok('question' in (await access.authorize(await begin('Sign in there.'), site)));
+
+          aligned = true;
+          const planning = await createApprovals(
+            (action, args, context) => personal.manage(action.replace(/^OTTO_/, ''), args, context),
+            async (action, args) => {
+              await personal.validateReview(action.replace(/^OTTO_/, ''), args);
+            },
+            async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
+          );
+          const instruction = 'Check my synthetic spending sheet every morning at 09:00.';
+          const scheduled = await startTask(instruction);
+          const created = await planning.request(scheduled.turn, 'OTTO_schedule_create', {
+            title: 'Synthetic spending check',
+            prompt: 'Check the synthetic spending sheet.',
+            kind: 'recurring',
+            cron: '0 9 * * *',
+            timeZone: 'Europe/Madrid',
+          });
+          aligned = false;
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                'SELECT authority_instruction,authority_source_message_id,delivery_channel FROM schedules WHERE id=$1',
+                [created.id],
+              )
+            ).rows[0],
+            {
+              authority_instruction: instruction,
+              authority_source_message_id: scheduled.sourceMessageId,
+              delivery_channel: 'web',
+            },
+          );
+          assert.equal((await request('DELETE', `/api/schedules/${created.id}`)).statusCode, 200);
+          await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
+        },
+      );
+
+      await t.test(
         'a direct execution keeps its exact snapshot and never replays pending or uncertain work',
         async () => {
           aligned = true;
