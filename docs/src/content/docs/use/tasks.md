@@ -9,6 +9,8 @@ The **Tasks** page shows what Otto is working on, what's scheduled and what's do
 
 Otto adds a card when a request runs for more than 30 seconds, or when you hand it work that continues later, such as chasing a reply. Quick answers don't get a card.
 
+Otto can also run a task in parallel while you keep chatting, such as comparing three shops at once. Each parallel task has its own card and its own browser, and they all share Otto's workspace.
+
 ## Three views
 
 | View          | Shows                                                                          |
@@ -64,9 +66,16 @@ stateDiagram-v2
 
 A failed or stopped task shows **Needs you** until you write again. When your next message is about something else, Otto can close the old card as **Stopped**.
 
-## Tasks only report
+## Parallel tasks
 
-A card is a view of the work. Apart from **Schedule task**, it doesn't schedule anything, grant any permission or post to chat. Otto's planned check-ins are ordinary [schedules](/use/schedules/), and every action still goes through the [trust check](/trust/approvals/).
+A parallel task works on its own and tells you in chat when there's something to know. When it asks you a question, reply to that message in Otto web to answer the task. Your yes or no to its confirmations goes back to it too.
+
+- Up to three run at once. **Stop** in chat stops them all.
+- A task has the same permission as the request that started it. Every action still goes through the [trust check](/trust/approvals/).
+
+## Cards only report
+
+A card is a view of the work. Apart from **Schedule task**, it doesn't schedule anything, grant any permission or post to chat. Otto's planned check-ins are ordinary [schedules](/use/schedules/).
 
 To change a task, tell Otto in [chat](/use/chat/).
 

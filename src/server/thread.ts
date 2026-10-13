@@ -60,6 +60,7 @@ export type TurnSource = 'user' | 'schedule' | 'event' | 'resume';
 export interface TurnRef {
   threadId: string;
   turnId: string;
+  sessionId?: string;
 }
 export interface EnqueueTurnOptions {
   source: Exclude<TurnSource, 'user'>;
@@ -67,6 +68,7 @@ export interface EnqueueTurnOptions {
   channel?: string;
   channelSourceId?: string | null;
   background?: boolean;
+  sessionId?: string;
   readOnly?: boolean;
   client?: PoolClient;
 }
@@ -291,8 +293,8 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
     const thread = await lockThread(client);
     const id = randomUUID();
     const inserted = await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id,session_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (owner_id,source_id) WHERE source_id IS NOT NULL DO NOTHING RETURNING id`,
       [
         id,
@@ -305,6 +307,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.background ?? options.source !== 'resume',
         options.readOnly ?? false,
         options.channelSourceId ?? null,
+        options.sessionId ?? null,
       ],
     );
     if (!inserted.rowCount)
@@ -320,6 +323,29 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   const turnId = options.client ? await create(options.client) : await transaction(create);
   if (!options.client) refresh();
   return turnId;
+}
+
+async function askingSession(client: PoolClient, replyToMessageId?: string) {
+  if (!replyToMessageId) return undefined;
+  const latest = (
+    await client.query<{
+      turn: {
+        session_id: string;
+        prompt: string;
+        task_id?: string | null;
+        status: string;
+        waiting_reason: string | null;
+      };
+    }>(
+      `SELECT row_to_json(w) AS turn FROM messages m
+       JOIN turns a ON a.id=m.turn_id AND a.owner_id=m.owner_id
+       JOIN LATERAL (SELECT * FROM turns w WHERE w.session_id=a.session_id AND w.owner_id=a.owner_id
+         ORDER BY w.created_at DESC,w.id DESC LIMIT 1) w ON true
+       WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND a.session_id<>a.thread_id`,
+      [replyToMessageId, ownerId],
+    )
+  ).rows[0]?.turn;
+  return latest?.status === 'waiting' && latest.waiting_reason === 'question' ? latest : undefined;
 }
 
 export function createUserMessageService(options: { confirmAction?: ConfirmAction } = {}) {
@@ -413,21 +439,26 @@ export async function submitUserMessage(
         supersededApprovalId = confirmed.supersededApprovalId;
       else if (confirmed) return confirmed;
     }
+    const asking = await askingSession(client, options.replyToMessageId);
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,background,session_id)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9)`,
       [
         turnId,
         ownerId,
         thread.id,
         options.sourceId ?? null,
         messageId,
-        options.prompt ?? text,
+        asking ? `${text}\nThe request was: ${asking.prompt}` : (options.prompt ?? text),
         channel,
+        Boolean(asking),
+        asking?.session_id ?? null,
       ],
     );
+    if (asking?.task_id)
+      await client.query('UPDATE turns SET task_id=$1 WHERE id=$2', [asking.task_id, turnId]);
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
       [
@@ -463,10 +494,17 @@ export async function submitUserMessage(
 
 async function cancelTurns(client: PoolClient, threadId: string) {
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND status IN ('queued','running','waiting') RETURNING id",
+    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND status IN ('queued','running','waiting') RETURNING id,session_id",
     [threadId, ownerId],
   );
-  return current.rows.map((row) => row.id as string);
+  return {
+    ids: current.rows.map((row) => row.id as string),
+    browsers: [
+      ...new Set(
+        current.rows.map((row) => row.session_id as string).filter((id) => id !== threadId),
+      ),
+    ],
+  };
 }
 
 function abortTurns(ids: string[]) {
@@ -477,8 +515,9 @@ export async function stopThread() {
   const cancelled = await transaction(async (client) =>
     cancelTurns(client, (await lockThread(client)).id),
   );
-  abortTurns(cancelled);
+  abortTurns(cancelled.ids);
   refresh();
+  return { browsers: cancelled.browsers };
 }
 
 export async function resetThread(expectedThreadId: string) {
@@ -492,10 +531,11 @@ export async function resetThread(expectedThreadId: string) {
     ]);
     return { cancelled, previousThreadId: thread.id, threadId: (await activeThread(client)).id };
   });
-  abortTurns(result.cancelled);
-  heldBrowsers.delete(result.previousThreadId);
+  abortTurns(result.cancelled.ids);
+  const browsers = [result.previousThreadId, ...result.cancelled.browsers];
+  for (const id of browsers) heldBrowsers.delete(id);
   refresh();
-  return { ok: true, threadId: result.threadId, previousThreadId: result.previousThreadId };
+  return { ok: true, threadId: result.threadId, browsers };
 }
 
 const onboardingPrompt =
@@ -566,7 +606,7 @@ async function resumeTurn(
     await lockThread(client);
     const turn = (
       await client.query(
-        `SELECT u.channel,u.status,u.background,u.prompt,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
+        `SELECT u.channel,u.status,u.background,u.prompt,u.session_id,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
          WHERE u.id=$1 AND u.owner_id=$2`,
         [turnId, ownerId],
       )
@@ -578,6 +618,7 @@ async function resumeTurn(
       sourceId,
       channel: turn?.channel ?? 'web',
       background: turn?.background ?? false,
+      sessionId: turn?.session_id,
       client,
     });
     return true;
@@ -721,8 +762,8 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
 async function claimTurns(threadId: string) {
   return transaction(async (client) => {
     if ((await lockThread(client)).id !== threadId) return [];
-    const talking = await client.query(
-      "SELECT 1 FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='running' AND NOT background",
+    const busy = await client.query(
+      "SELECT DISTINCT session_id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='running'",
       [threadId, ownerId],
     );
     const { rows } = await client.query(
@@ -730,8 +771,12 @@ async function claimTurns(threadId: string) {
        ORDER BY created_at,id FOR UPDATE`,
       [threadId, ownerId],
     );
-    const next = talking.rowCount ? undefined : rows.find((row) => !row.background);
-    const claimed = rows.filter((row) => row.background || row === next);
+    const sessions = new Set(busy.rows.map((row) => row.session_id as string));
+    const claimed = rows.filter((row) => {
+      if (sessions.has(row.session_id)) return false;
+      sessions.add(row.session_id);
+      return true;
+    });
     await client.query(
       "UPDATE turns SET status='running',started_at=now() WHERE id=ANY($1::uuid[])",
       [claimed.map((row) => row.id)],
@@ -740,15 +785,15 @@ async function claimTurns(threadId: string) {
   });
 }
 
-async function takeQueuedMessages(turnId: string, channel: string) {
+async function takeQueuedMessages(turnId: string, sessionId: string, channel: string) {
   return transaction(async (client) => {
     const thread = await lockThread(client);
     const { rows } = await client.query(
       `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt,m.attachments,m.reply_to_message_id
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id AND m.owner_id=u.owner_id
-       WHERE u.thread_id=$1 AND u.owner_id=$2 AND (u.status='queued' OR u.id=$3)
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.session_id=$4 AND (u.status='queued' OR u.id=$3)
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
-      [thread.id, ownerId, turnId],
+      [thread.id, ownerId, turnId, sessionId],
     );
     if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
     const queued = rows.filter((row) => row.status === 'queued');
@@ -780,7 +825,7 @@ async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   for (const turn of await claimTurns(threadId)) {
     const work = executeTurn(turn, dependencies)
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
-      .then(() => (turn.background ? undefined : drainNext(threadId)))
+      .then(() => drainNext(threadId))
       .finally(refresh);
     inflight.add(work);
     void work.finally(() => inflight.delete(work));
@@ -814,16 +859,9 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           )
         : undefined,
       pool.query(
-        `WITH RECURSIVE seen AS (SELECT max(started_at) AS at FROM turns
+        `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
-       boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4),
-       resuming AS (
-         SELECT id,source,source_id FROM turns
-         WHERE owner_id=$1 AND thread_id=$2 AND id=$4 AND background AND source='resume'
-         UNION
-         SELECT u.id,u.source,u.source_id FROM turns u JOIN resuming r ON r.source='resume'
-         AND r.source_id IN ('credentials:'||u.id::text,'credentials-retry:'||u.id::text,'connection:'||u.id::text)
-         WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.background)
+       boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
        SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
@@ -831,10 +869,10 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
        AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
-         (u.id IS NULL OR u.id IN (SELECT id FROM resuming)
+         (u.id IS NULL OR u.session_id=$6
           OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background)],
+        [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
       ),
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
       pool.query(
@@ -910,7 +948,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
-  const ref: TurnRef = { threadId, turnId };
+  const ref: TurnRef = { threadId, turnId, sessionId: turn.session_id };
   const artifacts = dependencies.artifacts ?? localArtifacts;
   const controller = new AbortController();
   const { signal } = controller;
@@ -942,7 +980,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   };
   try {
     unwatch = dependencies.watchTurn?.({ ...ref, source: turn.source });
-    if (heldBrowsers.delete(threadId)) await holdBrowser(dependencies, threadId, null);
+    if (heldBrowsers.delete(turn.session_id))
+      await holdBrowser(dependencies, turn.session_id, null);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
     const stage = async (
@@ -1071,6 +1110,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const result = await dependencies.runTurn({
       threadId,
       turnId,
+      sessionId: turn.session_id,
       prompt: turn.prompt,
       background: turn.background,
       readOnly: turn.read_only,
@@ -1161,7 +1201,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           : async () => {
               if (signal.aborted) throw turnStopped();
               if (await dependencies.spendingLimitReached?.()) return [];
-              const taken = await takeQueuedMessages(turnId, turn.channel);
+              const taken = await takeQueuedMessages(turnId, turn.session_id, turn.channel);
               if (taken.length) {
                 sourceMessageId = taken.at(-1)!.id;
                 refresh();
@@ -1206,8 +1246,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       if (!signal.aborted) throw error;
     });
     if (dependencies.holdBrowser && result.status !== 'succeeded' && !signal.aborted) {
-      heldBrowsers.add(threadId);
-      if (!turn.background) await holdBrowser(dependencies, threadId, Date.now() + 30 * 60_000);
+      heldBrowsers.add(turn.session_id);
+      await holdBrowser(dependencies, turn.session_id, Date.now() + 30 * 60_000);
     }
     outcome = signal.aborted ? 'cancelled' : result.status;
   } catch (error) {

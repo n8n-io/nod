@@ -207,7 +207,7 @@ function summary(flow: Flow, path: string) {
 export function createBrowserFlows(
   workspace: WorkspaceSession,
   computer: Computer,
-  threadId: string,
+  browserId: string,
   signal: AbortSignal,
 ) {
   const root = posix.join(posix.dirname(workspace.path), '.otto', 'browser-flows');
@@ -288,11 +288,11 @@ export function createBrowserFlows(
           observation,
         };
       try {
-        observation = await computer.act(threadId, action, signal);
+        observation = await computer.act(browserId, action, signal);
       } catch {
         signal.throwIfAborted();
         const current = await computer
-          .act(threadId, { action: 'snapshot' }, signal)
+          .act(browserId, { action: 'snapshot' }, signal)
           .catch(() => observation);
         return {
           status: 'needs_repair',

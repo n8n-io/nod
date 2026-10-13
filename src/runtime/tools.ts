@@ -424,7 +424,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?} returns its id; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. The card only reports: it schedules nothing, grants no permission and is not a chat message.',
+    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?, instruction?} returns its id; with instruction it also starts a parallel task that does the work in its own session and browser while you continue, reports with send_message and finishes its card; give it a complete, self-contained instruction; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. Without instruction the card only reports. A card schedules nothing, grants no permission and is not a chat message.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -435,6 +435,7 @@ export const toolDefinitions = {
           now: taskNow,
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
+          instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })),
         },
         { additionalProperties: false },
       ),
@@ -508,12 +509,12 @@ export function ottoTools(
   browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
   skills?: SkillLibrary,
 ): OttoTool[] {
-  const { context, computer, pause, confirm } = turn;
-  const { threadId, signal } = context;
+  const { context, computer, pause, confirm, browserId } = turn;
+  const { signal } = context;
   const screenshot = async () => {
-    const bytes = await computer.screenshot(threadId, signal);
+    const bytes = await computer.screenshot(browserId, signal);
     signal.throwIfAborted();
-    if (bytes && computer.screenStatus && computer.screenStatus(threadId).state !== 'live')
+    if (bytes && computer.screenStatus && computer.screenStatus(browserId).state !== 'live')
       throw new Error(
         'A live browser screenshot is unavailable. Reopen the page and take a fresh screenshot before continuing. Do not repeat an action whose result is uncertain.',
       );
@@ -577,7 +578,7 @@ export function ottoTools(
         if (!computer.download || !context.publishBrowserFile)
           throw new Error('Browser file delivery is unavailable.');
         const file = await computer.download(
-          threadId,
+          browserId,
           { selector: rest.selector, url: rest.url, name },
           signal,
         );
@@ -593,13 +594,13 @@ export function ottoTools(
         const bytes = await context.readWorkspaceFile(rest.path, browserUploadBytes);
         return pageText(
           await computer.upload(
-            threadId,
+            browserId,
             { selector: rest.selector, name: basename(rest.path), bytes },
             signal,
           ),
         );
       }
-      return pageText(await computer.act(threadId, { action, ...rest } as BrowserAction, signal));
+      return pageText(await computer.act(browserId, { action, ...rest } as BrowserAction, signal));
     }),
     bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {

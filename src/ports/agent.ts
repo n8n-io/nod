@@ -66,6 +66,7 @@ export type ActivityCheckResult =
 export interface RuntimeContext {
   threadId: string;
   turnId: string;
+  sessionId?: string;
   prompt: string;
   background?: boolean;
   readOnly?: boolean;

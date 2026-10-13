@@ -108,7 +108,6 @@ test(
     let currentId: string | undefined;
     let locked = false;
     let fail = false;
-    let browserHeld = false;
     let pageShown = true;
     let onView: ((signal: AbortSignal) => AsyncGenerator<Buffer>) | undefined;
     let onCapture: (() => Promise<void>) | undefined;
@@ -118,7 +117,6 @@ test(
       configuration: () => configuration(),
       runtime: {
         status: () => ({ browser: 'Ready', workspace: 'Ready' }),
-        holdBrowserForUser: () => !browserHeld,
       },
       computer: {
         status: () => 'Ready',
@@ -255,7 +253,7 @@ test(
       assert.equal(fallback.currentBrowser.title, 'Next browser');
       assert.deepEqual(Object.keys(fallback), ['currentBrowser']);
       currentId = thread.id;
-      assert.deepEqual((await request('/api/browser')).json(), { currentBrowser: null });
+      assert.equal((await request('/api/browser')).json().currentBrowser.threadId, next.id);
 
       fail = false;
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
@@ -312,11 +310,7 @@ test(
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [200, 200, 200]);
-      browserHeld = true;
-      assert.deepEqual(await handoff(), [423, 423, 423]);
-      browserHeld = false;
-      assert.deepEqual(await handoff(), [200, 200, 200]);
-      assert.equal(controls.length, 8);
+      assert.equal(controls.length, 6);
       for (const reason of ['timeout', 'revoked', 'archived', 'cancelled']) {
         const started = deferred<AbortSignal>();
         const aborted = deferred();
@@ -348,7 +342,8 @@ test(
         });
         try {
           const viewing = await started.promise;
-          if (reason === 'revoked') browserHeld = true;
+          if (reason === 'revoked')
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [nextTurnId]);
           if (reason === 'archived')
             await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [next.id]);
           if (reason === 'cancelled') controller.abort();
@@ -368,7 +363,8 @@ test(
           deadline.abort();
           controller.abort();
           await pending.catch(() => {});
-          browserHeld = false;
+          if (reason === 'revoked')
+            await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [nextTurnId]);
           if (reason === 'archived')
             await db.pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [next.id]);
           onView = undefined;
@@ -412,7 +408,7 @@ test(
         assert.ok(response.body.includes('synthetic-live-frame'));
         assert.equal(replacement.aborted, true);
         assert.equal(views, 2);
-        assert.equal(controls.length, 8);
+        assert.equal(controls.length, 6);
       } finally {
         deadline.abort();
         controller.abort();
@@ -425,7 +421,7 @@ test(
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
-      assert.equal(controls.length, 8);
+      assert.equal(controls.length, 6);
     } finally {
       await app.close();
       await db.pool.end();
@@ -1561,11 +1557,11 @@ async function runtimeFixture(
   };
 }
 
-test('the browser has one holder, and the conversation keeps it for the user until it is done', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-claim-'));
+test('every session drives its own browser, so background work never waits for the conversation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-session-'));
   const threadId = randomUUID();
-  const opened: string[] = [];
-  const replies: string[] = [];
+  const opened = new Map<string, string>();
+  const discarded: string[] = [];
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
     agent: {
@@ -1580,33 +1576,34 @@ test('the browser has one holder, and the conversation keeps it for the user unt
       dispose() {},
     },
     computer: fakeComputer({
-      act: async (_id, action) => {
-        if (action.action === 'open' && action.url) opened.push(action.url);
+      act: async (id, action) => {
+        if (action.action === 'open' && action.url) opened.set(id, action.url);
         return { text: 'Fixture page', url: 'https://example.com' };
+      },
+      discard: async (id) => {
+        discarded.push(id);
       },
     }),
     workspace: fakeWorkspace(),
   });
   const turn = (
-    background: boolean,
+    sessionId: string | undefined,
     script: (tools: Map<string, AgentTool>) => Promise<unknown>,
-    overrides: Partial<RuntimeContext> = {},
   ) => {
     const turnId = randomUUID();
     scripts.set(turnId, script);
     return runtime.runTurn({
       threadId,
       turnId,
-      background,
+      sessionId,
+      background: sessionId !== undefined,
       prompt: 'Use the browser.',
       history: [],
       attachments: [],
       workspacePath: directory,
       signal: new AbortController().signal,
       emit: async () => {},
-      reply: async (text) => {
-        replies.push(text);
-      },
+      reply: async () => {},
       delta() {},
       publish: async () => {
         throw new Error('unused');
@@ -1614,80 +1611,46 @@ test('the browser has one holder, and the conversation keeps it for the user unt
       requestCredential: async () => ({ filled: true }),
       integration: async () => ({}),
       manage: async () => ({}),
-      ...overrides,
     });
   };
   const open = (tools: Map<string, AgentTool>, url: string) =>
     tools.get('browser')!.execute({ action: 'open', url });
-  const handoff = deferred();
-  const backgroundDone = deferred();
+  const busy = deferred();
+  const deadline = new AbortController();
   try {
-    const asking = turn(false, async (tools) => {
+    const conversation = turn(undefined, async (tools) => {
       await open(tools, 'https://example.com/conversation');
-      await handoff.promise;
+      await busy.promise;
       await tools.get('ask_user')!.execute({ question: 'Sign in in [Open browser](/browser).' });
     });
-    await delay(10);
-    const background = turn(true, async (tools) => {
-      await open(tools, 'https://example.com/background');
-      await backgroundDone.promise;
+    const finished = randomUUID();
+    const asking = randomUUID();
+    const waiting = turn(asking, async (tools) => {
+      await open(tools, 'https://example.com/asking');
+      await tools.get('ask_user')!.execute({ question: 'Which date works?' });
     });
-    handoff.resolve();
-    assert.equal((await asking).status, 'waiting_user');
-    await delay(10);
-    assert.deepEqual(opened, ['https://example.com/conversation']);
-    assert.equal(runtime.holdBrowserForUser(threadId), true);
-    await turn(false, (tools) => open(tools, 'https://example.com/after-done'));
-    await delay(10);
-    assert.deepEqual(opened, [
-      'https://example.com/conversation',
-      'https://example.com/after-done',
-      'https://example.com/background',
+    const done = await Promise.race([
+      turn(finished, (tools) => open(tools, 'https://example.com/finished')),
+      delay(5_000, undefined, { signal: deadline.signal }).then(() =>
+        assert.fail('Background work waited for the conversation browser.'),
+      ),
     ]);
-    assert.equal(runtime.holdBrowserForUser(threadId), false);
-    const nextHandoff = turn(false, (tools) =>
-      tools.get('ask_user')!.execute({ question: 'Continue in [Open browser](/browser).' }),
+    assert.equal(done.status, 'succeeded');
+    assert.equal((await waiting).status, 'waiting_user');
+    busy.resolve();
+    assert.equal((await conversation).status, 'waiting_user');
+    assert.deepEqual(
+      Object.fromEntries(opened),
+      Object.fromEntries([
+        [threadId, 'https://example.com/conversation'],
+        [asking, 'https://example.com/asking'],
+        [finished, 'https://example.com/finished'],
+      ]),
     );
-    await delay(10);
-    assert.deepEqual(replies, ['Sign in in [Open browser](/browser).']);
-    backgroundDone.resolve();
-    await background;
-    assert.equal((await nextHandoff).status, 'waiting_user');
-    assert.equal(replies.at(-1), 'Continue in [Open browser](/browser).');
-    assert.equal(runtime.holdBrowserForUser(threadId), true);
-    await turn(false, async () => {});
-    const preparing = deferred();
-    const prepared = deferred();
-    const controller = new AbortController();
-    let stalledFinished = false;
-    const stalled = turn(true, (tools) => open(tools, 'https://example.com/stalled'), {
-      signal: controller.signal,
-      limits: { maxToolCalls: 8, timeoutMs: 10000 },
-      prepareBrowser: async () => {
-        preparing.resolve();
-        await prepared.promise;
-      },
-    }).finally(() => {
-      stalledFinished = true;
-    });
-    const stopped = assert.rejects(stalled);
-    await preparing.promise;
-    controller.abort(new Error('Synthetic Stop'));
-    const beforeStall = opened.length;
-    const afterStall = turn(true, (tools) => open(tools, 'https://example.com/after-preparation'));
-    try {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(stalledFinished, false);
-      assert.equal(opened.length, beforeStall);
-    } finally {
-      prepared.resolve();
-      await stopped;
-      await afterStall;
-    }
-    assert.equal(opened.at(-1), 'https://example.com/after-preparation');
+    assert.deepEqual(discarded, [finished]);
   } finally {
-    handoff.resolve();
-    backgroundDone.resolve();
+    deadline.abort();
+    busy.resolve();
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
   }

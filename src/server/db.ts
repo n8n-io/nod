@@ -46,6 +46,21 @@ export async function initializeDatabase() {
       created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
     );
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS channel_source_id text;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema=current_schema() AND table_name='turns' AND column_name='session_id') THEN
+        ALTER TABLE turns ADD COLUMN session_id uuid;
+        UPDATE turns SET session_id=CASE WHEN background THEN id ELSE thread_id END;
+        ALTER TABLE turns ALTER COLUMN session_id SET NOT NULL;
+      END IF;
+    END $$;
+    CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
+      RETURN NEW;
+    END $$;
+    DROP TRIGGER IF EXISTS turns_session ON turns;
+    CREATE TRIGGER turns_session BEFORE INSERT ON turns FOR EACH ROW EXECUTE FUNCTION turns_session();
+    CREATE INDEX IF NOT EXISTS turns_session_queue ON turns(session_id,status);
     CREATE UNIQUE INDEX IF NOT EXISTS turns_owner_source ON turns(owner_id,source_id) WHERE source_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS turns_thread_queue ON turns(thread_id,status,created_at,id);
     CREATE INDEX IF NOT EXISTS turns_owner_time ON turns(owner_id,created_at,id);

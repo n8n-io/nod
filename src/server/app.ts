@@ -82,7 +82,6 @@ export interface AppDependencies {
   >;
   runtime?: {
     status(): { browser: string; workspace: string; activeTurns?: number };
-    holdBrowserForUser?(threadId: string): boolean;
   };
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
@@ -266,8 +265,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!configuration().conversationResetEnabled)
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
-    const { previousThreadId, ...reset } = await resetThread(threadId);
-    void dependencies.computer?.discard?.(previousThreadId).catch(() => {});
+    const { browsers, ...reset } = await resetThread(threadId);
+    for (const id of browsers) void dependencies.computer?.discard?.(id).catch(() => {});
     return reset;
   });
   app.post('/api/onboarding', async (request) => {
@@ -352,7 +351,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
   });
   app.post('/api/thread/stop', async () => {
-    await stopThread();
+    const { browsers } = await stopThread();
+    for (const id of browsers) void dependencies.computer?.discard?.(id).catch(() => {});
     return { ok: true };
   });
   app.get('/api/events', async (request, reply) => {
@@ -442,13 +442,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   async function readCurrentBrowser() {
     const thread = await activeThread(pool);
-    const activeBrowser = dependencies.computer?.currentSession?.();
-    if (activeBrowser && activeBrowser.threadId !== thread.id) return undefined;
+    const current = dependencies.computer?.currentSession?.();
+    const activeBrowser = current?.threadId === thread.id ? current : undefined;
     const latest = await pool.query(
       `SELECT left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
        LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND summary='browser' ORDER BY created_at DESC LIMIT 1) e ON true
-       WHERE u.owner_id=$1 AND u.thread_id=$2 ${activeBrowser ? '' : 'AND e.created_at IS NOT NULL'}
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 ${activeBrowser ? '' : 'AND e.created_at IS NOT NULL'}
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
       [ownerId, thread.id],
     );
@@ -464,7 +464,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));
   async function credentialEntryOpen(threadId: string) {
     const latest = await pool.query(
-      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
+      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND session_id=$2 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
       [ownerId, threadId],
     );
     return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'credentials';
@@ -473,15 +473,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const latest = await pool.query(
       `SELECT u.status,u.waiting_reason FROM turns u
        JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND NOT u.background AND th.archived_at IS NULL
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND th.archived_at IS NULL
        ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
       [ownerId, threadId],
     );
-    return (
-      latest.rows[0]?.status === 'waiting' &&
-      latest.rows[0].waiting_reason === 'question' &&
-      (dependencies.runtime?.holdBrowserForUser?.(threadId) ?? true)
-    );
+    return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'question';
   }
   const handoffClosed = 'The browser opens here when Otto hands it to you.';
   async function readBrowserScreen(reply: FastifyReply) {

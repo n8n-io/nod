@@ -2024,67 +2024,6 @@ function context(directory: string): RuntimeContext {
   };
 }
 
-test('concurrent turns on one thread take the browser one turn at a time', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-turns-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const order: string[] = [];
-  let entered!: () => void;
-  const holding = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let queued!: () => void;
-  const waiting = new Promise<void>((resolve) => {
-    queued = resolve;
-  });
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (input) => ({
-        resumed: false,
-        abort() {},
-        dispose() {},
-        prompt: async () => {
-          order.push(`${input.turnId} started`);
-          if (input.turnId === 'schedule') queued();
-          await input.tools
-            .find((tool) => tool.name === 'browser')!
-            .execute({ action: 'snapshot' });
-          order.push(`${input.turnId} browser`);
-          if (input.turnId === 'conversation') {
-            entered();
-            await held;
-          }
-        },
-      }),
-      dispose() {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    const conversation = runtime.runTurn({ ...context(directory), turnId: 'conversation' });
-    await holding;
-    const schedule = runtime.runTurn({
-      ...context(directory),
-      turnId: 'schedule',
-      background: true,
-    });
-    await waiting;
-    await setTimeout(50);
-    assert.deepEqual(order, ['conversation started', 'conversation browser', 'schedule started']);
-    assert.equal(runtime.status().activeTurns, 2);
-    release();
-    await Promise.all([conversation, schedule]);
-    assert.deepEqual(order.slice(3), ['schedule browser']);
-  } finally {
-    release();
-    await runtime.dispose();
-  }
-});
-
 test('stalled observations release active tasks on cancellation and disposal', async (t) => {
   for (const method of ['cancel', 'dispose'] as const) {
     await t.test(method, async () => {

@@ -124,6 +124,7 @@ import {
   type ThreadDependencies,
   type TurnRef,
 } from './thread.ts';
+import { browserOf } from './turn-chain.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage } from './triage.ts';
 import { createTasks } from './tasks.ts';
@@ -520,7 +521,14 @@ async function initializeApplication(
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
   await personal.initialize({ workers: options.workers });
-  const tasks = createTasks({ pool, ownerId, curator, withTurnLock, refresh });
+  const tasks = createTasks({
+    pool,
+    ownerId,
+    curator,
+    withTurnLock,
+    refresh,
+    enqueue: enqueueTurn,
+  });
   await tasks.initialize();
   const triage = createTriage({
     consumers,
@@ -780,8 +788,8 @@ async function initializeApplication(
       connections: integrations.manageConnections,
       prepareBrowser: (turn) =>
         vaultAccess.prepare(turn, async () => {
-          await computer.signOut(turn.threadId);
-          await browserConnections.release(turn.threadId);
+          await computer.signOut(browserOf(turn));
+          await browserConnections.release(browserOf(turn));
         }),
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);

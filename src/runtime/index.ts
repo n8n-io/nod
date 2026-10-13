@@ -17,7 +17,6 @@ import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { actionEffect } from '../shared/action-effect.ts';
-import { conversation, createBrowserClaims } from './browser-claims.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { createObservationQueue } from './observations.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
@@ -192,7 +191,6 @@ export function createAgentRuntime(dependencies: {
 }) {
   const { agent, computer } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
-  const claims = createBrowserClaims(holdMs);
   let disposed = false;
   let disposal: Promise<void> | undefined;
   const completedDisposals = new Set<string>();
@@ -214,19 +212,15 @@ export function createAgentRuntime(dependencies: {
     const lifecycle = new AbortController();
     const context = { ...input, signal: AbortSignal.any([input.signal, lifecycle.signal]) };
     const { signal, threadId } = context;
+    const browserId = context.sessionId ?? context.threadId;
     let finished!: () => void;
     const done = new Promise<void>((resolve) => {
       finished = resolve;
     });
-    const owner = context.background ? context.turnId : conversation;
     let browserReady: Promise<void> | undefined;
     const takeBrowser = () =>
-      (browserReady ??= claims
-        .take(threadId, owner, signal)
-        .then(() => {
-          signal.throwIfAborted();
-          return context.prepareBrowser?.();
-        })
+      (browserReady ??= Promise.resolve()
+        .then(() => context.prepareBrowser?.())
         .then(() => signal.throwIfAborted())
         .catch((error: unknown) => {
           browserReady = undefined;
@@ -322,7 +316,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (hold) await computer.hold(threadId, Date.now() + holdMs).catch(() => {});
+      if (hold) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
       stopped = true;
       if (post && text) {
         if (context.waitForUser) await context.waitForUser(text);
@@ -544,6 +538,7 @@ export function createAgentRuntime(dependencies: {
       const turn: Turn = {
         context,
         computer: browser,
+        browserId,
         reply,
         invite: (text) => deliverReply(text),
         pause,
@@ -561,7 +556,7 @@ export function createAgentRuntime(dependencies: {
       };
       const tools = ottoTools(
         turn,
-        createBrowserFlows(workspace, browser, threadId, signal),
+        createBrowserFlows(workspace, browser, browserId, signal),
         dependencies.skills,
       ).map(({ name, description, parameters, execute }): AgentTool => ({
         name,
@@ -579,7 +574,7 @@ export function createAgentRuntime(dependencies: {
               if (!Value.Check(parameters, params))
                 throw new Error('The tool arguments do not match its schema.');
               if (handsOverBrowser(name, params))
-                await computer.currentPage(threadId).catch(() => {
+                await computer.currentPage(browserId).catch(() => {
                   throw new Error('Open the page in your browser before handing it to the user.');
                 });
               return execute(params);
@@ -732,7 +727,8 @@ export function createAgentRuntime(dependencies: {
         await browserReady?.catch(() => {});
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        claims.release(threadId, owner, waitingForUser);
+        if (context.background && !waitingForUser && browserReady)
+          await computer.discard?.(browserId).catch(() => {});
         finished();
       }
     }
@@ -740,7 +736,6 @@ export function createAgentRuntime(dependencies: {
 
   return {
     runTurn,
-    holdBrowserForUser: (threadId: string) => claims.holdForUser(threadId),
     status: () => ({
       browser: computer.status(),
       workspace: dependencies.workspace.status(),

@@ -1,34 +1,31 @@
 ---
 title: Threads and turns
-description: How every message, schedule fire and event becomes a turn on one thread, and how turns wait, run in parallel, stop and fail.
+description: How every message, schedule fire, event and parallel task becomes a turn in a session, and how sessions wait, run in parallel, stop and fail.
 sidebar:
   order: 2
 ---
 
 This page explains how Otto turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Everything that happens on it is a turn. Conversation turns run one at a time. Background turns run in parallel. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, and every schedule fire, app event and parallel task is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
-Each owner has one active row in the `threads` table, shared by web, Telegram and WhatsApp. The thread ID keys three things:
-
-- one persistent Pi session (the transcript)
-- one sandbox workspace
-- one browser computer
+Each owner has one active row in the `threads` table, shared by web, Telegram and WhatsApp. The thread ID keys the sandbox workspace and the chat session: its persistent Pi session (the transcript) and its browser.
 
 The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/otto/blob/main/src/server/thread.ts).
 
 ## Every piece of work is a turn
 
-A turn is one run of the agent. Each turn is a row in the `turns` table with a `source`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
+A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Kind                                                                               |
-| ---------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `user`     | A message from you                                                                         | Conversation                                                                       |
-| `schedule` | A schedule firing                                                                          | Background                                                                         |
-| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | Background                                                                         |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | Conversation, unless it resumes a background turn's sign-in, payment or connection |
+| `source`   | Created by                                                                                 | Session                                                       |
+| ---------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `user`     | A message from you                                                                         | The chat, or the task whose question you reply to on Otto web |
+| `schedule` | A schedule firing                                                                          | A new session                                                 |
+| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session                                                 |
+| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                                        |
+| `resume`   | A parallel task started with `task start`                                                  | A new session                                                 |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -38,13 +35,12 @@ Creating a turn also queues a `thread-drain` job in the same transaction.
 flowchart TD
   new[New turn row<br/>and drain job] --> worker[Worker takes<br/>up to 20 jobs]
   worker --> lock[Lock the thread once]
-  lock --> bg[Start every queued<br/>background turn]:::go
-  lock --> conv{{Conversation<br/>turn running?}}
-  conv -- no --> next[Start the oldest<br/>queued one]:::go
-  conv -- yes --> wait[Leave it queued]:::muted
+  lock --> each{{For each session:<br/>a turn running?}}
+  each -- no --> next[Start its oldest<br/>queued turn]:::go
+  each -- yes --> wait[Leave it queued]:::muted
 ```
 
-The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns without waiting for them. When a conversation turn finishes, it queues the next drain.
+The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns without waiting for them. When a turn finishes, it queues the next drain.
 
 ## Turn status
 
@@ -69,7 +65,7 @@ stateDiagram-v2
 
 ## Messages you send while Otto works
 
-The composer never blocks. After each Pi step, a running conversation turn takes the oldest queued plain messages from its own channel and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close.
+The composer never blocks. After each Pi step, a running chat turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close.
 
 A message with attachments, a reply target or another channel stops the take. It and every message after it stay queued and run as their own turns. Background and read-only turns never take queued messages.
 
@@ -77,42 +73,53 @@ A message with attachments, a reply target or another channel stops the take. It
 
 A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
 
-Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn that continues the work. A confirmed action runs once, in that resume turn.
+Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn.
 
-## Conversation and background turns
+On Otto web, replying to a background session's question continues that session while its latest turn waits on the question. Any other message goes to the chat.
+
+## Sessions
 
 ```mermaid
 sequenceDiagram
-  participant C as Conversation turns
-  participant B as Background turns
+  participant C as Chat session
+  participant T as Other sessions
   participant W as Shared workspace
-  C->>W: One at a time, thread's saved Pi session
-  B->>W: In parallel, each in its own in-memory session
-  B-->>C: Messages sent with send_message
-  Note over C: Next conversation turn sees them
+  C->>W: One turn at a time, saved Pi session
+  T->>W: In parallel, one turn at a time each
+  T-->>C: Messages sent with send_message
+  Note over C: Next chat turn sees them
 ```
 
-|             | Conversation turns         | Background turns                                                     |
-| ----------- | -------------------------- | -------------------------------------------------------------------- |
-| Sources     | `user` and their resumes   | `schedule`, `event` and their resumes                                |
-| Concurrency | One at a time              | Start when they fire, in parallel                                    |
-| Pi session  | The thread's saved session | A new in-memory session per turn                                     |
-| Context     | The full conversation      | Only conversation turns that finished before the trigger was created |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.        |
+|             | Chat                       | Schedule, event and task sessions                                                 |
+| ----------- | -------------------------- | --------------------------------------------------------------------------------- |
+| Key         | The thread ID              | The session's first turn                                                          |
+| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                         |
+| Pi session  | The thread's saved session | A new in-memory session per turn                                                  |
+| Context     | The full conversation      | Only chat turns that finished before the trigger, plus the session's own messages |
+| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                     |
+| Browser     | The thread's browser       | Its own browser, deleted when the session ends                                    |
 
-Active, queued, waiting and newer requests stay with the conversation. When the next conversation turn resumes the Pi session, it receives the messages background turns sent since the previous conversation turn started. All turns share the workspace.
+When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
 
-## The browser has one holder
+## Parallel tasks
 
-The browser belongs to one holder at a time: the conversation, a background turn or you. A turn takes it with its first browser call or browser handoff question. Others wait in order.
+`task start` with an `instruction` starts a parallel task: a background turn in a new session, linked to its card on the **Tasks** page. The chat keeps going while it works.
 
-- A background turn gives it back when it ends.
-- The conversation keeps it while it waits for you, so you can use it through the handoff.
-- The conversation gives it back when a conversation turn ends without waiting, or after 30 minutes in which you haven't used the handoff.
+- **Authority.** A task's `resume` source ID names the turn that started it, so the trust check and Vault trace it to that turn. It carries the same owner words, schedule instruction or none, and a read-only start makes it read-only.
+- **Limits.** At most three tasks run at once, and a task can't start another task.
+- **Talking to you.** It reports with `send_message`, asks with `ask_user` and finishes its own card.
+
+## Every session has its own browser
+
+A session opens its browser on its first browser call, so a session that never browses never starts one. Nothing waits for another session's browser.
+
+- The chat's browser is the one Otto hands to you, and the browser page shows it.
+- A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
+- At most four browsers run at once. An idle one closes and keeps its profile until it's used again. One waiting for you stays open for 30 minutes.
 
 ## Stop and failures
 
-**Stop** aborts running turns and cancels queued and waiting turns. It can't undo an external action that already started. Ordinary turns have no time limit.
+**Stop** aborts running turns and cancels queued and waiting turns in every session. It can't undo an external action that already started. Ordinary turns have no time limit.
 
 Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
 

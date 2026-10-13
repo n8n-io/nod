@@ -72,7 +72,7 @@ async function turnChain(client: PoolClient, turn: TurnRow) {
     if (current.source !== 'resume') return chain;
     const linked =
       (await confirmedBy(client, current))?.turn_id ??
-      /^(?:credentials|credentials-retry|connection):([0-9a-f-]{36})(?::|$)/.exec(
+      /^(?:credentials|credentials-retry|connection|task):([0-9a-f-]{36})(?::|$)/.exec(
         current.source_id ?? '',
       )?.[1];
     if (!linked) return chain;
@@ -360,7 +360,8 @@ export async function createApprovals(
     if (!target) return undefined;
     return (
       await database.query(
-        `SELECT a.*,u.status AS turn_status FROM approvals a JOIN turns u ON u.id=a.turn_id
+        `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
+       FROM approvals a JOIN turns u ON u.id=a.turn_id
        WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
       )
@@ -399,14 +400,19 @@ export async function createApprovals(
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'
       : 'The user declined the saved action. Do not execute it or ask for it again. Continue only other already-authorized work, or finish quietly.';
-    const turnId = await enqueueTurn(prompt, {
-      source: 'resume',
-      sourceId:
-        input.sourceId ?? `confirmation:${approval.id}:${approved ? 'accepted' : 'declined'}`,
-      channel: input.channel,
-      background: false,
-      client,
-    });
+    const background = Boolean(approval.turn_background);
+    const turnId = await enqueueTurn(
+      background ? `${prompt}\nThe request was: ${approval.turn_prompt}` : prompt,
+      {
+        source: 'resume',
+        sourceId:
+          input.sourceId ?? `confirmation:${approval.id}:${approved ? 'accepted' : 'declined'}`,
+        channel: input.channel,
+        background,
+        sessionId: approval.turn_session_id,
+        client,
+      },
+    );
     const messageId = input.clientMessageId ?? randomUUID();
     await client.query('UPDATE turns SET message_id=$2 WHERE id=$1 AND owner_id=$3', [
       turnId,

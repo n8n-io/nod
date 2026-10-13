@@ -26,7 +26,7 @@ test(
         'CREATE TABLE threads (id uuid PRIMARY KEY,owner_id text,status text,archived_at timestamptz)',
       );
       await pool.query(
-        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text)',
+        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,session_id uuid GENERATED ALWAYS AS (thread_id) STORED)',
       );
       const first = { threadId: randomUUID(), turnId: randomUUID() };
       const second = { threadId: randomUUID(), turnId: randomUUID() };

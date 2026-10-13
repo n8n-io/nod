@@ -30,7 +30,7 @@ import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
-import { turnChainSql } from './turn-chain.ts';
+import { browserOf, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 const passwordInput = z
   .object({
@@ -175,6 +175,7 @@ type CardRow = {
 type RequestRow = {
   id: string;
   thread_id: string;
+  browser_id: string | null;
   turn_id: string;
   root_turn_id: string;
   owner_id: string;
@@ -515,6 +516,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       selectors jsonb NOT NULL, inspection jsonb NOT NULL, expires_at timestamptz NOT NULL,
       resume_pending boolean NOT NULL DEFAULT false, failed_at timestamptz
     );
+    ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS browser_id text;
     CREATE TABLE IF NOT EXISTS credential_account_selections (
       id text NOT NULL, root_turn_id uuid NOT NULL REFERENCES turns(id), owner_id text NOT NULL, origin text NOT NULL,
       entry_id text, ciphertext text NOT NULL, blocked boolean NOT NULL DEFAULT false, expires_at timestamptz NOT NULL,
@@ -1223,11 +1225,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   ): Promise<{ url: string }> {
     if (!(await currentTurn(pool, turn, ownerId)))
       throw new VaultError('This task can no longer request credentials.', 409);
-    const { input, inspection } = await inspectRequest(turn.threadId, raw);
+    const { input, inspection } = await inspectRequest(browserOf(turn), raw);
     const token = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(token).digest('hex');
     const expiresAt = Date.now() + 10 * 60_000;
-    await options.hold?.(turn.threadId, expiresAt);
+    await options.hold?.(browserOf(turn), expiresAt);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1243,8 +1245,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         [turn.threadId, ownerId],
       );
       await client.query(
-        `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection,browser_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           randomUUID(),
           hash,
@@ -1258,6 +1260,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           storedSelectors(input),
           new Date(expiresAt),
           JSON.stringify(inspection),
+          browserOf(turn),
         ],
       );
       await client.query('COMMIT');
@@ -1370,7 +1373,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     request?: RequestRow,
   ) {
     if (ownerId !== owner) throw new VaultError('This task belongs to another owner.', 409);
-    const { input } = await inspectRequest(turn.threadId, raw);
+    const { input } = await inspectRequest(browserOf(turn), raw);
     const root = request?.root_turn_id ?? (await rootTurn(pool, turn, ownerId));
     if (!root) throw new VaultError('This task can no longer use credentials.', 409);
     const encryptionKey = input.kind === 'otp' ? undefined : await key();
@@ -1561,7 +1564,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       perform: async () => {
         await options.inject({
           ...input,
-          threadId: turn.threadId,
+          threadId: browserOf(turn),
           ...(input.kind === 'otp'
             ? { code: secret.code }
             : input.kind === 'identifier'
@@ -1646,7 +1649,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
     try {
       await enterLogin(
-        { threadId: row.thread_id, turnId: row.turn_id },
+        { threadId: row.thread_id, turnId: row.turn_id, sessionId: row.browser_id ?? undefined },
         row.owner_id,
         row.selectors,
         source,
@@ -1655,7 +1658,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       return { ok: true };
     } catch (error) {
       if (source.kind === 'saved' && error instanceof VaultError && error.statusCode === 404) {
-        const fresh = await inspectRequest(row.thread_id, row.selectors);
+        const fresh = await inspectRequest(row.browser_id ?? row.thread_id, row.selectors);
         const token = randomBytes(32).toString('base64url');
         await uses.transaction(async (client) => {
           if (!(await lockRequest(client, row.token_hash)))
@@ -1674,8 +1677,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             row.id,
           ]);
           await client.query(
-            `INSERT INTO credential_requests(id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            `INSERT INTO credential_requests(id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection,browser_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
             [
               randomUUID(),
               tokenHash(token),
@@ -1689,6 +1692,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               storedSelectors(fresh.input),
               row.expires_at,
               JSON.stringify(fresh.inspection),
+              row.browser_id,
             ],
           );
         });
@@ -1788,7 +1792,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       )
         return false;
       if (await automaticUse(pool, root, origin, 'otp', null, enteredAt)) return false;
-      const fresh = await inspectRequest(turn.threadId, raw);
+      const fresh = await inspectRequest(browserOf(turn), raw);
       const shown = fresh.input.emailRecipient?.toLowerCase();
       const username = verificationRecipient(
         shown ? (/[*•]/.test(shown) ? { recipientHint: shown } : { recipient: shown }) : {},

@@ -105,12 +105,12 @@ sequenceDiagram
   Pi->>You: Question with an Open browser link
   Browser-->>You: Live JPEG frames
   You->>Server: Clicks, typing and scrolling
-  Server->>Browser: Forwarded while the turn waits and holds the browser
+  Server->>Browser: Forwarded while the chat turn waits
   You->>Server: Done
   Note over Pi: Next turn takes a fresh snapshot
 ```
 
-- Input is forwarded only while the latest conversation turn waits on a question and holds the browser.
+- The handoff shows the chat's browser. Input is forwarded only while the latest chat turn waits on a question. Background sessions use their own browsers, so they never take it.
 - One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.

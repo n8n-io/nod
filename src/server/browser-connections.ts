@@ -7,6 +7,7 @@ import type { Computer } from '../ports/computer.ts';
 import type { BrowserConnectionRequest } from '../ports/agent.ts';
 import type { Connection, VaultSession } from '../shared/contracts.ts';
 import type { TurnRef } from './thread.ts';
+import { browserOf } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 
 const idSchema = z.uuid();
@@ -42,7 +43,7 @@ type Row = {
   label: string;
   profile_id: string;
   state: 'pending' | 'saved' | 'needs_sign_in' | 'disconnecting';
-  thread_id: string | null;
+  browser_id: string | null;
   checked_at: Date | null;
 };
 
@@ -92,11 +93,13 @@ export async function createBrowserConnections(
       label text NOT NULL,
       profile_id uuid NOT NULL UNIQUE,
       state text NOT NULL,
-      thread_id uuid,
+      browser_id uuid,
       checked_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE browser_connections ADD COLUMN IF NOT EXISTS browser_id uuid;
+    ALTER TABLE browser_connections DROP COLUMN IF EXISTS thread_id;
     CREATE INDEX IF NOT EXISTS browser_connections_owner ON browser_connections(owner_id,origin);
   `);
   const browser = options.computer;
@@ -159,7 +162,7 @@ export async function createBrowserConnections(
       const id = randomUUID();
       const profileId = randomUUID();
       await pool.query(
-        `INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state,thread_id)
+        `INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state,browser_id)
          VALUES($1,$2,$3,$4,$5,$6,'pending',$7)`,
         [
           id,
@@ -168,19 +171,19 @@ export async function createBrowserConnections(
           address.href,
           parsed.data.label ?? name(address.origin),
           profileId,
-          turn.threadId,
+          browserOf(turn),
         ],
       );
       let bound = false;
       try {
-        await browser.bindProfile(turn.threadId, profileId);
+        await browser.bindProfile(browserOf(turn), profileId);
         bound = true;
         const observation = await browser.act(
-          turn.threadId,
+          browserOf(turn),
           { action: 'open', url: address.href, ...launch },
           signal,
         );
-        await browser.hold(turn.threadId, Date.now() + 30 * 60_000);
+        await browser.hold(browserOf(turn), Date.now() + 30 * 60_000);
         options.refresh?.();
         return { status: 'profile_opened' as const, connectionId: id, observation };
       } catch (error) {
@@ -188,7 +191,7 @@ export async function createBrowserConnections(
           id,
           options.ownerId,
         ]);
-        if (bound) await browser.close(turn.threadId).catch(() => {});
+        if (bound) await browser.close(browserOf(turn)).catch(() => {});
         await browser.deleteProfile?.(profileId).catch(() => {});
         throw error;
       }
@@ -202,52 +205,52 @@ export async function createBrowserConnections(
           return { status: 'rejected' as const, code: 'browser_connection_origin_mismatch' };
         if (
           !['pending', 'needs_sign_in', 'saved'].includes(row.state) ||
-          row.thread_id !== turn.threadId
+          row.browser_id !== browserOf(turn)
         )
           return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-        const observation = await browser.act(turn.threadId, { action: 'snapshot' }, signal);
-        const page = await browser.currentPage(turn.threadId);
+        const observation = await browser.act(browserOf(turn), { action: 'snapshot' }, signal);
+        const page = await browser.currentPage(browserOf(turn));
         if (new URL(observation.url).origin !== row.origin || page.origin !== row.origin)
           return { status: 'needs_sign_in' as const, connectionId: row.id, observation };
         signal?.throwIfAborted();
         const saved = await pool.query(
           `UPDATE browser_connections SET state='saved',checked_at=now(),updated_at=now()
-           WHERE id=$1 AND owner_id=$2 AND thread_id=$3
+           WHERE id=$1 AND owner_id=$2 AND browser_id=$5
            AND EXISTS (
              SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
              WHERE u.id=$4 AND u.thread_id=$3 AND u.owner_id=$2 AND u.status='running'
              AND th.archived_at IS NULL FOR UPDATE OF u
            )`,
-          [row.id, options.ownerId, turn.threadId, turn.turnId],
+          [row.id, options.ownerId, turn.threadId, turn.turnId, browserOf(turn)],
         );
         if (!saved.rowCount)
           throw new BrowserConnectionError('This browser connection is unavailable.');
-        await browser.hold(turn.threadId, null);
+        await browser.hold(browserOf(turn), null);
         options.refresh?.();
         return { status: 'session_saved' as const, connectionId: row.id };
       }
       if (!['saved', 'needs_sign_in', 'pending'].includes(row.state) || !browser.bindProfile)
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-      await browser.bindProfile(turn.threadId, row.profile_id);
+      await browser.bindProfile(browserOf(turn), row.profile_id);
       const observation = await browser.act(
-        turn.threadId,
+        browserOf(turn),
         { action: 'open', url: address.href, ...launch },
         signal,
       );
-      const page = await browser.currentPage(turn.threadId);
+      const page = await browser.currentPage(browserOf(turn));
       const needsSignIn =
         address.origin === row.origin &&
         (new URL(observation.url).origin !== row.origin || page.origin !== row.origin);
       signal?.throwIfAborted();
       const updated = await pool.query(
-        `UPDATE browser_connections SET state=CASE WHEN $3 THEN 'needs_sign_in' ELSE state END,thread_id=$4,updated_at=now()
+        `UPDATE browser_connections SET state=CASE WHEN $3 THEN 'needs_sign_in' ELSE state END,browser_id=$6,updated_at=now()
          WHERE id=$1 AND owner_id=$2
          AND EXISTS (
            SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
            WHERE u.id=$5 AND u.thread_id=$4 AND u.owner_id=$2 AND u.status='running'
            AND th.archived_at IS NULL FOR UPDATE OF u
          )`,
-        [row.id, options.ownerId, needsSignIn, turn.threadId, turn.turnId],
+        [row.id, options.ownerId, needsSignIn, turn.threadId, turn.turnId, browserOf(turn)],
       );
       if (!updated.rowCount)
         throw new BrowserConnectionError('This browser task is no longer active.');
@@ -286,12 +289,12 @@ export async function createBrowserConnections(
     const id = idSchema.parse(rawId);
     return exclusive(id, async () => {
       const row = await owned(id, true);
-      const active = row.thread_id
+      const active = row.browser_id
         ? await pool.query(
             `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-             WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status IN ('queued','running','waiting')
+             WHERE u.session_id=$1 AND u.owner_id=$2 AND u.status IN ('queued','running','waiting')
              AND th.archived_at IS NULL LIMIT 1`,
-            [row.thread_id, options.ownerId],
+            [row.browser_id, options.ownerId],
           )
         : null;
       if (active?.rowCount)
@@ -391,10 +394,10 @@ export async function createBrowserConnections(
     });
   }
 
-  async function release(threadId: string) {
+  async function release(browserId: string) {
     await pool.query(
-      'UPDATE browser_connections SET thread_id=NULL WHERE owner_id=$1 AND thread_id=$2',
-      [options.ownerId, threadId],
+      'UPDATE browser_connections SET browser_id=NULL WHERE owner_id=$1 AND browser_id=$2',
+      [options.ownerId, browserId],
     );
   }
 

@@ -12,6 +12,7 @@ import type {
 import { logFailure } from './failure-log.ts';
 import { type createVaultUses, VaultUseError } from './vault-use.ts';
 import type { TurnRef } from './thread.ts';
+import { browserOf } from './turn-chain.ts';
 import type { PaymentPolicy } from './trust.ts';
 import { credentialOrigin } from './vault.ts';
 
@@ -20,6 +21,7 @@ export class PaymentError extends Error {}
 type Row = {
   id: string;
   thread_id: string;
+  browser_id: string | null;
   turn_id: string;
   origin: string;
   amount_minor: string;
@@ -135,6 +137,7 @@ export async function createPayments(
     ALTER TABLE vault_payments DROP COLUMN IF EXISTS flagged;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS submit_selector text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS card_version text;
+    ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS browser_id text;
     CREATE INDEX IF NOT EXISTS vault_payments_owner ON vault_payments(owner_id,created_at DESC);
     DELETE FROM vault_payments WHERE created_at<now()-interval '90 days';
   `);
@@ -222,7 +225,7 @@ export async function createPayments(
         },
         perform: async () => {
           await options.fill({
-            threadId: row.thread_id,
+            threadId: row.browser_id ?? row.thread_id,
             fields: row.fields,
             document: row.document,
             destinations: row.destinations,
@@ -302,7 +305,7 @@ export async function createPayments(
         'Hosted Otto does not pay with saved cards. Tell the owner to pay on the site themselves.',
       );
     const policy = await options.policy(turn);
-    const origin = credentialOrigin((await options.page(turn.threadId)).origin);
+    const origin = credentialOrigin((await options.page(browserOf(turn))).origin);
     if (!policy.allowed) {
       await record(turn, { action: 'held', origin, reason: policy.reason, itemKind: 'card' });
       throw new PaymentError('This turn can only read. Do not pay.');
@@ -314,12 +317,13 @@ export async function createPayments(
     const minor = Number(whole) * 10 ** places + Number(fraction.padEnd(places, '0') || '0');
     if (!minor) throw new PaymentError('Check the amount.');
     const card = await choose(parsed.card);
-    const { document, destinations } = await options.destinations(turn.threadId, parsed.fields);
+    const { document, destinations } = await options.destinations(browserOf(turn), parsed.fields);
     for (const destination of Object.values(destinations)) credentialOrigin(destination);
-    const image = await options.capture(turn.threadId);
+    const image = await options.capture(browserOf(turn));
     const row: Row = {
       id: randomUUID(),
       thread_id: turn.threadId,
+      browser_id: browserOf(turn),
       turn_id: turn.turnId,
       origin,
       amount_minor: String(minor),
@@ -338,8 +342,8 @@ export async function createPayments(
       [ownerId, turn.threadId, turn.turnId],
     );
     await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,expires_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now()+interval '10 minutes')`,
+      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,browser_id,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now()+interval '10 minutes')`,
       [
         row.id,
         ownerId,
@@ -355,6 +359,7 @@ export async function createPayments(
         row.keep_notice,
         row.submit_selector,
         row.card_version,
+        row.browser_id,
       ],
     );
     await record(turn, {
