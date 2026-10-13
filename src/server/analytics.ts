@@ -7,7 +7,7 @@ import type { ProductAnalytics } from '../ports/analytics.ts';
 import { posthogConfig, type AnalyticsConfiguration } from '../shared/analytics.ts';
 
 const turnProperties = z.object({
-  source: z.enum(['user', 'schedule', 'event', 'resume']),
+  source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
   background: z.boolean(),
 });

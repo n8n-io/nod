@@ -44,7 +44,7 @@ export interface VerificationRequest {
 export interface Turn {
   id: string;
   status: TurnStatus;
-  source: 'user' | 'schedule' | 'event' | 'resume';
+  source: 'user' | 'schedule' | 'event' | 'resume' | 'task';
   createdAt: string;
   finishedAt?: string | null;
   error?: string | null;

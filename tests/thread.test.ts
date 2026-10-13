@@ -253,6 +253,7 @@ test(
     let activityRun: ((context: RuntimeContext) => Promise<void>) | undefined;
 
     const runs: RuntimeContext[] = [];
+    const dispatched = new Map<string, { taskId: string; onItMessageId: string }>();
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<string, Array<{ id: string; text: string }>>();
     const gates = new Map<string, () => void>();
@@ -317,6 +318,7 @@ test(
       },
       task: (turn, input) =>
         thread.withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input)),
+      startTask: tasks.dispatch,
       watchTurn: (turn) => (watching ? tasks.watch(turn) : () => {}),
       artifacts: {
         ...localArtifacts,
@@ -334,6 +336,18 @@ test(
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
+          return { status: 'succeeded' };
+        }
+        if (context.prompt === 'dispatch-fixture') {
+          dispatched.set(
+            context.turnId,
+            (await context.startTask!({
+              title: 'Compare synthetic shops',
+              ack: 'On it. Comparing the shops.',
+              instruction: 'session-fixture-task',
+              steps: ['Read the shops', 'Compare prices'],
+            })) as { taskId: string; onItMessageId: string },
+          );
           return { status: 'succeeded' };
         }
         if (context.prompt === 'background-research-fixture') {
@@ -533,6 +547,10 @@ test(
       },
     };
 
+    const closeDispatched = () =>
+      db.pool.query(
+        "UPDATE tasks SET state='done',closed_at=now() WHERE on_it_message_id IS NOT NULL AND state='open'",
+      );
     const block = (prompt: string) => waiting.set(prompt, hold(prompt));
     const release = (prompt: string) => gates.get(prompt)?.();
 
@@ -951,6 +969,100 @@ test(
           assert.equal(ran(first)?.sessionId, first);
           assert.equal(ran(next)?.sessionId, first);
           assert.equal(ran(other)?.sessionId, other);
+
+          let releaseTask = () => {};
+          sessionGates.set(
+            'session-fixture-task',
+            new Promise<void>((resolve) => {
+              releaseTask = resolve;
+            }),
+          );
+          const chat = await thread.submitUserMessage('dispatch-fixture', [], { channel: 'web' });
+          let taskTurn = '';
+          try {
+            await waitFor(() => dispatched.has(chat.turnId));
+            const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
+            const taskTurns = await db.pool.query(
+              'SELECT id,source,source_id,background,channel FROM turns WHERE session_id=$1',
+              [taskId],
+            );
+            assert.deepEqual(
+              taskTurns.rows.map((row) => [row.source, row.source_id, row.background, row.channel]),
+              [['task', `task:${taskId}`, true, 'web']],
+            );
+            taskTurn = taskTurns.rows[0].id;
+            await waitFor(() => Boolean(ran(taskTurn)));
+            await waitFor(settled(chat.turnId));
+            assert.equal(await turnStatus(chat.turnId), 'succeeded');
+            assert.equal(await turnStatus(taskTurn), 'running');
+            assert.equal(ran(taskTurn)?.sessionId, taskId);
+            assert.equal(ran(taskTurn)?.background, true);
+            assert.equal(ran(taskTurn)?.startTask, undefined);
+            const task = (await db.pool.query('SELECT * FROM tasks WHERE id=$1', [taskId])).rows[0];
+            assert.deepEqual(
+              [
+                task.owner_id,
+                task.thread_id,
+                task.title,
+                task.instruction,
+                task.source_message_id,
+                task.on_it_message_id,
+                task.channel,
+                task.channel_source_id,
+                task.steps,
+                task.state,
+              ],
+              [
+                ownerId,
+                threadId,
+                'Compare synthetic shops',
+                'dispatch-fixture',
+                chat.messageId,
+                onItMessageId,
+                'web',
+                null,
+                ['Read the shops', 'Compare prices'],
+                'open',
+              ],
+            );
+            assert.deepEqual(
+              (
+                await db.pool.query(
+                  'SELECT role,text,turn_id,reply_to_message_id FROM messages WHERE id=$1',
+                  [onItMessageId],
+                )
+              ).rows[0],
+              {
+                role: 'assistant',
+                text: 'On it. Comparing the shops.',
+                turn_id: chat.turnId,
+                reply_to_message_id: chat.messageId,
+              },
+            );
+            assert.equal(
+              await thread.enqueueTurn('session-fixture-task', {
+                source: 'task',
+                sourceId: `task:${taskId}`,
+                background: true,
+                sessionId: taskId,
+              }),
+              taskTurn,
+            );
+            assert.equal(
+              (
+                await db.pool.query(
+                  'SELECT count(*)::int AS count FROM turns WHERE session_id=$1',
+                  [taskId],
+                )
+              ).rows[0].count,
+              1,
+            );
+          } finally {
+            releaseTask();
+          }
+          await waitFor(settled(taskTurn));
+          assert.equal(await turnStatus(taskTurn), 'succeeded');
+          await closeDispatched();
         },
       );
 
@@ -2121,6 +2233,120 @@ test(
             ).rowCount,
             2,
           );
+        },
+      );
+
+      await t.test(
+        'only a running chat turn that can act starts a task, and stop never deadlocks with it',
+        async () => {
+          await waitFor(settledThread);
+          const threadId = (await thread.activeThread(db.pool)).id;
+          const chatTurn = async (
+            fields: { readOnly?: boolean; sourceId?: string; source?: string; text?: string } = {},
+          ) => {
+            const turnId = randomUUID();
+            const messageId = randomUUID();
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,status,read_only,started_at)
+               VALUES($1,$2,$3,$7,$4,$5,'synthetic chat','running',$6,now())`,
+              [
+                turnId,
+                ownerId,
+                threadId,
+                fields.sourceId ?? null,
+                messageId,
+                fields.readOnly ?? false,
+                fields.source ?? 'user',
+              ],
+            );
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user',$3,$4,$5)",
+              [messageId, ownerId, fields.text ?? 'Book a synthetic table', threadId, turnId],
+            );
+            return [{ threadId, turnId }, { sourceMessageId: messageId }] as const;
+          };
+          const start = {
+            title: 'Refused synthetic task',
+            ack: '',
+            instruction: 'refused-fixture',
+          };
+          for (const fields of [{ readOnly: true }, { sourceId: `onboarding:${randomUUID()}` }]) {
+            const [turn, provenance] = await chatTurn(fields);
+            await assert.rejects(tasks.dispatch(turn, start, provenance), /can only read/);
+            await thread.stopThread();
+          }
+          const [stopped, provenance] = await chatTurn();
+          await thread.stopThread();
+          await assert.rejects(tasks.dispatch(stopped, start, provenance), { statusCode: 409 });
+          assert.equal(
+            (
+              await db.pool.query('SELECT count(*)::int AS count FROM tasks WHERE title=$1', [
+                start.title,
+              ])
+            ).rows[0].count,
+            0,
+          );
+
+          const [origin, asked] = await chatTurn();
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [origin.turnId]);
+          const approvalId = randomUUID();
+          const [resume, reply] = await chatTurn({
+            source: 'resume',
+            sourceId: `confirmation:${approvalId}:accepted`,
+            text: 'Yes',
+          });
+          await db.pool.query(
+            `INSERT INTO approvals(id,owner_id,thread_id,turn_id,execution_turn_id,action,args,status,confirmation_reply_id)
+             VALUES($1,$2,$3,$4,$5,'SYNTHETIC_ACTION','{}','confirmed',$6)`,
+            [approvalId, ownerId, threadId, origin.turnId, resume.turnId, reply.sourceMessageId],
+          );
+          const steeredId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user','Make it for four',$3,$4)",
+            [steeredId, ownerId, threadId, resume.turnId],
+          );
+          const authority = { ...start, title: 'Resumed synthetic task' };
+          const frozen = [
+            await tasks.dispatch(resume, authority, reply),
+            await tasks.dispatch(resume, authority, { sourceMessageId: steeredId }),
+          ];
+          await thread.stopThread();
+          await waitFor(settledThread);
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                `SELECT t.instruction,t.source_message_id,m.reply_to_message_id FROM tasks t
+                 JOIN messages m ON m.id=t.on_it_message_id WHERE t.id=ANY($1::uuid[]) ORDER BY array_position($1::uuid[],t.id)`,
+                [frozen.map((item) => item.taskId)],
+              )
+            ).rows,
+            [
+              {
+                instruction: 'Book a synthetic table',
+                source_message_id: asked.sourceMessageId,
+                reply_to_message_id: asked.sourceMessageId,
+              },
+              {
+                instruction: 'Make it for four',
+                source_message_id: steeredId,
+                reply_to_message_id: steeredId,
+              },
+            ],
+          );
+
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const [turn, provenance] = await chatTurn();
+            const [dispatch, stop] = await Promise.allSettled([
+              tasks.dispatch(turn, { ...start, title: 'Raced synthetic task' }, provenance),
+              thread.stopThread(),
+            ]);
+            assert.equal(stop.status, 'fulfilled');
+            if (dispatch.status === 'rejected')
+              assert.equal((dispatch.reason as { statusCode?: number }).statusCode, 409);
+            await waitFor(settledThread);
+            assert.equal(await turnStatus(turn.turnId), 'cancelled');
+          }
+          await closeDispatched();
         },
       );
 

@@ -430,6 +430,18 @@ export const toolDefinitions = {
       args: Type.Record(Type.String(), Type.Unknown()),
     }),
   ),
+  start_task: defineTool(
+    'start_task',
+    'Hand work to a task: a separate session that runs in parallel while the chat stays free. Use it when the work takes more than about 30 seconds, uses the browser or waits for other people; answer anything quicker directly. title names the task in a few words. ack is the one-line reply Otto posts now as your answer, such as "On it. I\'ll compare the three shops." instruction is the complete brief for the task, with every detail it needs from this conversation. steps lists 2 to 8 short planned steps when the work has clear stages. The task acts on the user\'s request and reports back itself, so after this call write nothing more about it.',
+    Type.Object({
+      title: Type.String({ minLength: 1, maxLength: 120 }),
+      ack: Type.String({ maxLength: 200 }),
+      instruction: Type.String({ minLength: 1, maxLength: 4000 }),
+      steps: Type.Optional(
+        Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { minItems: 2, maxItems: 8 }),
+      ),
+    }),
+  ),
   task: defineTool(
     'task',
     'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?} returns its id; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. The card only reports: it schedules nothing, grants no permission and is not a chat message.',
@@ -720,6 +732,7 @@ export function ottoTools(
       if (!context.task) throw new Error('Tasks are unavailable.');
       return context.task(p);
     }),
+    ...(context.startTask ? [bind(toolDefinitions.start_task, (p) => context.startTask!(p))] : []),
     bind(toolDefinitions.share_file, (p) => context.publish(p.path, p.name)),
     bind(toolDefinitions.create_audio, async (p) => {
       if (!context.createAudio)

@@ -5,8 +5,14 @@ import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
-import type { TurnRef, TurnSource } from './thread.ts';
-import { parentTurnSql } from './turn-chain.ts';
+import {
+  enqueueTurn,
+  insertAssistantMessage,
+  lockThread,
+  type TurnRef,
+  type TurnSource,
+} from './thread.ts';
+import { parentTurnSql, turnChain } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 
@@ -50,6 +56,14 @@ const input = z.discriminatedUnion('action', [
     })
     .strict(),
 ]);
+const dispatchInput = z
+  .object({
+    title: z.string().trim().min(1).max(120),
+    ack: z.string().trim().max(200),
+    instruction: z.string().trim().min(1).max(4000),
+    steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
+  })
+  .strict();
 const progress = z.object({
   title: z.string(),
   now: z.string(),
@@ -587,6 +601,93 @@ export function createTasks(options: {
     };
   }
 
+  async function dispatch(
+    turn: TurnRef,
+    raw: unknown,
+    provenance: { sourceMessageId: string | null },
+  ) {
+    const request = dispatchInput.parse(raw);
+    const started = await transaction(async (client) => {
+      const thread = await lockThread(client, ownerId);
+      const current = (
+        await client.query<{ channel: string }>(
+          `SELECT channel FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND status='running'
+             AND session_id=thread_id AND NOT background FOR NO KEY UPDATE`,
+          [turn.turnId, ownerId, thread.id],
+        )
+      ).rows[0];
+      if (!current) throw failure('Only a running chat turn can start a task.', 409);
+      const { chain, origin, readOnly } = await turnChain(client, ownerId, turn);
+      if (readOnly) throw failure('This turn can only read, so it cannot start a task.');
+      const steered =
+        provenance.sourceMessageId && provenance.sourceMessageId !== chain[0]?.message_id
+          ? provenance.sourceMessageId
+          : undefined;
+      const source = (
+        await client.query<{ id: string; text: string }>(
+          `SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'
+             AND turn_id=$4`,
+          steered
+            ? [steered, ownerId, thread.id, turn.turnId]
+            : origin?.source === 'user'
+              ? [origin.message_id, ownerId, thread.id, origin.id]
+              : [null, ownerId, thread.id, null],
+        )
+      ).rows[0];
+      if (!source) throw failure('A task needs a direct request from the user.');
+      const channelSourceId =
+        current.channel === 'web'
+          ? null
+          : (
+              await client.query<{ source_id: string }>(
+                `SELECT source_id FROM channel_inbox
+                 WHERE owner_id=$1 AND message_id=$2 AND channel=$3 AND state='submitted'`,
+                [ownerId, provenance.sourceMessageId ?? source.id, current.channel],
+              )
+            ).rows[0]?.source_id;
+      if (channelSourceId === undefined)
+        throw failure('The task delivery conversation is unavailable.');
+      const id = randomUUID();
+      const onItMessageId = await insertAssistantMessage(
+        client,
+        { threadId: thread.id, turnId: turn.turnId },
+        request.ack || 'On it.',
+        [],
+        undefined,
+        source.id,
+      );
+      await client.query(
+        `INSERT INTO tasks(id,owner_id,thread_id,title,done_when,now_text,instruction,source_message_id,
+           on_it_message_id,channel,channel_source_id,steps)
+         VALUES($1,$2,$3,$4,'','',$5,$6,$7,$8,$9,$10)`,
+        [
+          id,
+          ownerId,
+          thread.id,
+          request.title,
+          source.text,
+          source.id,
+          onItMessageId,
+          current.channel,
+          channelSourceId,
+          JSON.stringify(request.steps ?? []),
+        ],
+      );
+      await enqueueTurn(request.instruction, {
+        source: 'task',
+        sourceId: `task:${id}`,
+        background: true,
+        sessionId: id,
+        channel: current.channel,
+        channelSourceId,
+        client,
+      });
+      return { taskId: id, onItMessageId };
+    });
+    refresh();
+    return started;
+  }
+
   async function initialize() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
@@ -598,6 +699,26 @@ export function createTasks(options: {
         updated_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz
       );
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS auto boolean NOT NULL DEFAULT false;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS thread_id uuid REFERENCES threads(id),
+        ADD COLUMN IF NOT EXISTS source_message_id uuid REFERENCES messages(id),
+        ADD COLUMN IF NOT EXISTS instruction text,
+        ADD COLUMN IF NOT EXISTS on_it_message_id uuid REFERENCES messages(id),
+        ADD COLUMN IF NOT EXISTS channel text,
+        ADD COLUMN IF NOT EXISTS channel_source_id text,
+        ADD COLUMN IF NOT EXISTS read_only boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS steps jsonb NOT NULL DEFAULT '[]',
+        ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS check_ins integer NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_check_in_at timestamptz,
+        ADD COLUMN IF NOT EXISTS result_message_id uuid REFERENCES messages(id);
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='tasks'::regclass
+          AND conname='tasks_state_check' AND pg_get_constraintdef(oid) LIKE '%stopped%') THEN
+          ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_state_check;
+          ALTER TABLE tasks ADD CONSTRAINT tasks_state_check
+            CHECK (state IN ('queued','open','done','stopped','failed','cancelled'));
+        END IF;
+      END $$;
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id);
       CREATE INDEX IF NOT EXISTS turns_task ON turns(task_id) WHERE task_id IS NOT NULL;
@@ -647,5 +768,5 @@ export function createTasks(options: {
     );
   }
 
-  return { initialize, act, watch, registerRoutes };
+  return { initialize, act, dispatch, watch, registerRoutes };
 }

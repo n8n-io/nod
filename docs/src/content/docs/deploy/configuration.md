@@ -32,6 +32,7 @@ flowchart LR
 | `OTTO_POSTGRES_PASSWORD` | The password of the local PostgreSQL container. `pnpm start` generates one and saves it. A value you set needs at least 43 letters, digits, `_` or `-`. | Generated       |
 | `DATABASE_URL`           | The PostgreSQL connection. `pnpm start` fills it in for the local container on `127.0.0.1:54329`. Set another URL to use your own database.             | Local container |
 | `DATABASE_POOL_MAX`      | The most database connections the server opens.                                                                                                         | `12`            |
+| `OTTO_TASKS`             | `true` lets the chat hand long work to a task that runs in its own session. Otto then stops writing progress cards on the Tasks page. In development.   | `false`         |
 
 ## Models
 

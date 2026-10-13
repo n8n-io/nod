@@ -25,6 +25,7 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | `schedule` | A schedule firing                                                                          | A new session          |
 | `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session          |
 | `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked |
+| `task`     | The chat starting a task with `start_task`                                                 | The task's session     |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -77,6 +78,19 @@ A secure form or a verification code request stays open until a later turn start
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn.
 
 A resume turn acts with the authority of the work it continues. The trust check, approvals and the Vault follow its resumes back to the turn that started the work, so read-only work stays read-only. If that chain leads to another thread or loops, the action is refused.
+
+## Tasks
+
+A task is long work that runs in its own session while the chat stays free. It's in development behind `OTTO_TASKS`, which is off by default. When it's on, a chat turn can call `start_task {title, ack, instruction, steps?}`. Read-only and onboarding turns, background sessions and subagents don't get the tool.
+
+The server starts the task in one transaction:
+
+1. It locks the thread, then checks that the chat turn is still running and isn't read-only. Stop takes the same locks in the same order, so a stop and a start never deadlock.
+2. It saves the task row in `tasks`. The row keeps a frozen copy of your message that started the task, including a message you sent while the turn was running, and the channel to reply on. After you answer a confirmation, that's the message that started the work, not your answer.
+3. It posts `ack`, or "On it.", as a reply to your message.
+4. It queues the task's first turn. The task ID is its session ID, so all of the task's turns run one at a time in that session, in parallel with the chat.
+
+Until the task mode is built, a task turn runs with the rules of a background session.
 
 ## Sessions
 

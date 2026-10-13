@@ -26,6 +26,7 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
   if (row.source === 'user') return { source: 'chat', title: first(row.text) || 'Your message' };
   if (row.source === 'schedule')
     return { source: 'schedule', title: first(row.schedule) || 'Scheduled task' };
+  if (row.source === 'task') return { source: 'task', title: first(row.text) || 'Task' };
   if (row.source === 'resume')
     return {
       source: 'resume',

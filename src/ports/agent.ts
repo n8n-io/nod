@@ -154,6 +154,7 @@ export interface RuntimeContext {
 
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
+  startTask?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
 }
 export interface PromptSnapshot {

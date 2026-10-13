@@ -1,5 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import { CalendarClock, MessageCircle, Pencil, ScanSearch, Undo2, Zap } from 'lucide-react';
+import {
+  CalendarClock,
+  ListChecks,
+  MessageCircle,
+  Pencil,
+  ScanSearch,
+  Undo2,
+  Zap,
+} from 'lucide-react';
 import type { TrustEntry, TrustSource, TrustView } from '../../shared/trust';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
@@ -19,6 +27,7 @@ const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
   event: { icon: Zap, label: '' },
   check: { icon: ScanSearch, label: 'Activity check' },
   resume: { icon: Undo2, label: 'Approved action' },
+  task: { icon: ListChecks, label: 'Task' },
 };
 
 function date(ms: number, format: DateFormat) {

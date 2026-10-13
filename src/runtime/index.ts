@@ -27,7 +27,7 @@ import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
-const ownBrowserTools = new Set(['sign_in', 'pay', 'browser_session']);
+const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'start_task']);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -619,7 +619,7 @@ export function createAgentRuntime(dependencies: {
           systemContext: systemContext(context),
           tools: bind({ ...shared, browserId: childBrowser }, async () => {
             browsed = true;
-          }).filter((tool) => !ownBrowserTools.has(tool.name)),
+          }).filter((tool) => !parentTools.has(tool.name)),
           workspace,
           timeZone: context.timeZone,
           runTool: guard,

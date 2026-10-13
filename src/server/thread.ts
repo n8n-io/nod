@@ -41,7 +41,7 @@ const inflight = new Set<Promise<void>>();
 const toolRefreshes = new Set<string>();
 let stopping = false;
 
-export type TurnSource = 'user' | 'schedule' | 'event' | 'resume';
+export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
 export interface TurnRef {
   threadId: string;
   turnId: string;
@@ -101,6 +101,11 @@ export interface ThreadDependencies {
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
+  startTask?: (
+    turn: TurnRef,
+    input: unknown,
+    provenance: { sourceMessageId: string | null },
+  ) => Promise<unknown>;
   watchTurn?: (turn: TurnRef & { source: TurnSource }) => () => void;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
@@ -234,7 +239,7 @@ async function assertReplyTarget(client: PoolClient, threadId: string, messageId
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);
 }
 
-async function insertAssistantMessage(
+export async function insertAssistantMessage(
   client: PoolClient,
   turn: { threadId: string; turnId: string },
   text: string,
@@ -243,10 +248,11 @@ async function insertAssistantMessage(
   replyToMessageId?: string,
 ) {
   await assertReplyTarget(client, turn.threadId, replyToMessageId);
+  const id = randomUUID();
   await client.query(
     'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
     [
-      randomUUID(),
+      id,
       ownerId,
       'assistant',
       text,
@@ -257,6 +263,7 @@ async function insertAssistantMessage(
       replyToMessageId ?? null,
     ],
   );
+  return id;
 }
 
 export async function reply(
@@ -923,7 +930,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const startedAt = Date.now();
   const providerChannel = String(turn.channel).split(':')[0];
   const analyticsProperties = {
-    source: turn.source as 'user' | 'schedule' | 'event' | 'resume',
+    source: turn.source as TurnSource,
     channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
       ? providerChannel
       : 'other') as 'web' | 'telegram' | 'whatsapp' | 'other',
@@ -1174,6 +1181,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       }),
       manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
       task: dependencies.task && fenced((input) => dependencies.task!(ref, input)),
+      startTask:
+        dependencies.startTask &&
+        !turn.background &&
+        !turn.read_only &&
+        !String(turn.source_id).startsWith('onboarding:')
+          ? fenced((input) => dependencies.startTask!(ref, input, { sourceMessageId }))
+          : undefined,
       takeMessages:
         turn.background || turn.read_only
           ? undefined

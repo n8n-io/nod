@@ -2126,6 +2126,7 @@ test('delegated subagents run two at a time, each in its own browser, and answer
   });
   let results: unknown[] = [];
   let childTools: string[] = [];
+  let parentTools: string[] = [];
   const runtime = createAgentRuntime({
     agent: {
       open: async (input) => ({
@@ -2143,6 +2144,7 @@ test('delegated subagents run two at a time, each in its own browser, and answer
             input.onEvent({ type: 'final', text: `${shop} sells the drill for 89 EUR` });
             return;
           }
+          parentTools = input.tools.map((item) => item.name);
           const pending = Promise.all(
             ['shop-a', 'shop-b', 'shop-c'].map((shop) =>
               tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` }),
@@ -2170,10 +2172,15 @@ test('delegated subagents run two at a time, each in its own browser, and answer
     workspace: fakeWorkspace(),
   });
   try {
-    const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      startTask: async () => ({}),
+    });
     assert.equal(result.status, 'succeeded');
     assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
-    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session'])
+    assert.ok(parentTools.includes('start_task'));
+    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session', 'start_task'])
       assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];
     assert.equal(new Set(browsers).size, 3);

@@ -521,6 +521,7 @@ async function initializeApplication(
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({ pool, ownerId, curator, withTurnLock, refresh });
   await tasks.initialize();
+  const tasksEnabled = process.env.OTTO_TASKS === 'true';
   const triage = createTriage({
     consumers,
     classifier: adapters.relevance,
@@ -769,12 +770,18 @@ async function initializeApplication(
       connectedApps: integrations.connectedApps,
       activityCheck: triage.activityCheck,
       memoryContext: memory.context,
-      task: async (turn, input) => {
-        const result = await withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input));
-        refresh();
-        return result;
-      },
-      watchTurn: tasks.watch,
+      ...(tasksEnabled
+        ? { startTask: tasks.dispatch }
+        : {
+            task: async (turn: TurnRef, input: unknown) => {
+              const result = await withTurnLock(turn.turnId, (client) =>
+                tasks.act(client, turn, input),
+              );
+              refresh();
+              return result;
+            },
+            watchTurn: tasks.watch,
+          }),
       connections: integrations.manageConnections,
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
