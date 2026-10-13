@@ -115,7 +115,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
         await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
         assert.equal(writes.length, 1);
         assert.deepEqual(writes[0], { title: task.title, prompt: 'Read only overdue invoices in the synthetic EUR account. Keep results in Otto.', kind: 'recurring', cron: '35 7 * * 3', timeZone: selectedZone });
-        saved = { ...writes[0], id: crypto.randomUUID(), runAt: null, enabled: true, revision: 1, nextRun: '2035-10-31T01:50:00Z', lastRun: null };
+        saved = { ...writes[0], id: crypto.randomUUID(), runAt: null, enabled: true, revision: 1, nextRun: '2035-10-31T01:50:00Z', lastRun: null, baselineObservation: null };
         await act(async () => save(Response.json(saved)));
         assert.equal(scheduled, 1);
         assert.equal(pageDataCache.getSnapshot('/api/schedules').data[0].prompt, writes[0].prompt);
@@ -313,7 +313,7 @@ test(
     const routedRuns = async (id: string) =>
       (
         await db.pool.query(
-          `SELECT r.turn_id,u.channel,u.source,u.background,u.prompt FROM schedule_runs r
+          `SELECT r.turn_id,u.channel,u.source,u.background FROM schedule_runs r
            JOIN turns u ON u.id=r.turn_id
            WHERE r.schedule_id=$1 ORDER BY r.created_at,r.id`,
           [id],
@@ -776,7 +776,6 @@ test(
           assert.equal(dispatched[0].channel, origin.channel);
           assert.equal(dispatched[0].source, 'schedule');
           assert.equal(dispatched[0].background, true);
-          assert.ok(dispatched[0].prompt.includes(schedule.id));
           await reply(dispatched[0].turn_id, 'One-off fixture reminder.');
           await channels!.drain();
           assert.deepEqual(sent, [

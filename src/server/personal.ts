@@ -93,6 +93,8 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return result;
     }
     if (action === 'schedule_list') return schedules.list();
+    if (action === 'schedule_record_observation')
+      return schedules.recordObservation(provenance?.turnId ?? '', args);
     if (action === 'schedule_create') return schedules.create(args, provenance);
     if (action === 'schedule_update') {
       const { id, ...input } = args;

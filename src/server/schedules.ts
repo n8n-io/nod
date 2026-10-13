@@ -4,7 +4,12 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
-import type { Schedule, ScheduleRun, TurnStatus } from '../shared/contracts.ts';
+import type {
+  Schedule,
+  ScheduleObservation,
+  ScheduleRun,
+  TurnStatus,
+} from '../shared/contracts.ts';
 import { activeThreadSql, type enqueueTurn } from './thread.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
@@ -16,14 +21,30 @@ const timingSchema = z.object({
   runAt: z.iso.datetime({ offset: true }).nullable().optional(),
   timeZone: z.string().trim().min(1).max(100),
 });
+const observationFields = {
+  sourceUrl: z.url().refine((value) => new URL(value).protocol === 'https:'),
+  summary: z.string().trim().min(1).max(500),
+};
+const verifiedObservationSchema = z
+  .object({
+    status: z.literal('verified'),
+    ...observationFields,
+    value: z.string().trim().min(1).max(300),
+  })
+  .strict();
+const observationSchema = z.discriminatedUnion('status', [
+  verifiedObservationSchema,
+  z.object({ status: z.literal('unavailable'), ...observationFields, value: z.null() }).strict(),
+]);
 const createSchema = timingSchema
   .extend({
     title: z.string().trim().min(1).max(100),
     prompt: z.string().trim().min(1).max(6000),
+    baselineObservation: verifiedObservationSchema.optional(),
   })
   .strict();
 const updateSchema = createSchema
-  .omit({ kind: true })
+  .omit({ kind: true, baselineObservation: true })
   .partial()
   .extend({ kind: z.enum(['once', 'recurring']).optional(), enabled: z.boolean().optional() })
   .strict();
@@ -35,7 +56,7 @@ const historySchema = z
   })
   .strict();
 const columns =
-  'id,title,prompt,kind,cron,run_at AS "runAt",time_zone AS "timeZone",enabled,revision,next_run_at AS "nextRun",job_id AS "jobId",delivery_channel AS "deliveryChannel",channel_source_id AS "channelSourceId",authority_instruction AS "authorityInstruction",authority_source_message_id AS "authoritySourceMessageId"';
+  'id,title,prompt,kind,cron,run_at AS "runAt",time_zone AS "timeZone",enabled,revision,next_run_at AS "nextRun",job_id AS "jobId",delivery_channel AS "deliveryChannel",channel_source_id AS "channelSourceId",authority_instruction AS "authorityInstruction",authority_source_message_id AS "authoritySourceMessageId",baseline_observation AS "baselineObservation"';
 
 export interface ScheduleDependencies {
   analytics?: CaptureAnalytics;
@@ -68,6 +89,7 @@ interface ScheduleRow {
   channelSourceId: string | null;
   authorityInstruction: string | null;
   authoritySourceMessageId: string | null;
+  baselineObservation: ScheduleObservation | null;
 }
 
 interface ScheduleJob {
@@ -94,6 +116,8 @@ interface RunRow {
   messageId: string | null;
   messageText: string | null;
   cursorAt: string;
+  observation: ScheduleObservation | null;
+  observedAt: Date | null;
 }
 
 function invalid(message: string) {
@@ -116,6 +140,9 @@ function runValue(row: RunRow): ScheduleRun {
     createdAt: row.createdAt.toISOString(),
     status: row.status,
     error: row.error,
+    observation: row.observation
+      ? { ...row.observation, checkedAt: row.observedAt!.toISOString() }
+      : null,
     messageId: row.messageId,
     messagePreview: row.messageText && preview(row.messageText),
     messageText: row.messageText,
@@ -215,7 +242,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         return false;
       job.signal.throwIfAborted();
       const turnId = await enqueueTurn(
-        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.\nSchedule ID: ${row.id}`,
+        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.`,
         {
           sourceId: `schedule:${row.id}:${row.revision}:${job.data.scheduledFor}`,
           source: 'schedule',
@@ -226,8 +253,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         },
       );
       await client.query(
-        `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction,authority_source_message_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction,authority_source_message_id,baseline_observation)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           randomUUID(),
           ownerId,
@@ -240,6 +267,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           row.timeZone,
           row.authorityInstruction,
           row.authoritySourceMessageId,
+          row.baselineObservation ? JSON.stringify(row.baselineObservation) : null,
         ],
       );
       if (row.kind === 'once') {
@@ -269,7 +297,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         created_at timestamptz NOT NULL DEFAULT now(), kind text NOT NULL DEFAULT 'recurring',
         run_at timestamptz, revision integer NOT NULL DEFAULT 0, next_run_at timestamptz,
         job_id uuid, delivery_channel text NOT NULL DEFAULT 'web', channel_source_id text,
-        authority_instruction text, authority_source_message_id uuid
+        authority_instruction text, authority_source_message_id uuid, baseline_observation jsonb
       );
       CREATE TABLE IF NOT EXISTS schedule_runs (
         id uuid PRIMARY KEY, owner_id text NOT NULL, schedule_id uuid NOT NULL,
@@ -277,11 +305,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         title text NOT NULL, turn_id uuid REFERENCES turns(id), scheduled_for timestamptz NOT NULL,
         time_zone text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
         authority_instruction text, authority_source_message_id uuid,
+        baseline_observation jsonb, observation jsonb, observed_at timestamptz,
         UNIQUE(schedule_id,schedule_revision,scheduled_for)
       );
-      ALTER TABLE schedules DROP COLUMN IF EXISTS baseline_observation;
-      ALTER TABLE schedule_runs DROP COLUMN IF EXISTS action_prompt, DROP COLUMN IF EXISTS baseline_observation,
-        DROP COLUMN IF EXISTS observation, DROP COLUMN IF EXISTS observed_at;
+      ALTER TABLE schedule_runs DROP COLUMN IF EXISTS action_prompt;
+      ALTER TABLE schedules ADD COLUMN IF NOT EXISTS baseline_observation jsonb;
+      ALTER TABLE schedule_runs ADD COLUMN IF NOT EXISTS baseline_observation jsonb,
+        ADD COLUMN IF NOT EXISTS observation jsonb, ADD COLUMN IF NOT EXISTS observed_at timestamptz;
       CREATE INDEX IF NOT EXISTS schedule_runs_owner_time ON schedule_runs(owner_id,created_at DESC,id DESC);
       CREATE INDEX IF NOT EXISTS schedule_runs_schedule ON schedule_runs(owner_id,schedule_id,created_at DESC,id DESC);
       CREATE INDEX IF NOT EXISTS schedule_runs_turn ON schedule_runs(owner_id,turn_id);
@@ -349,7 +379,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       await pool.query<RunRow>(
         `SELECT r.id,r.schedule_id AS "scheduleId",r.title,r.turn_id AS "turnId",
            r.scheduled_for AS "scheduledFor",r.time_zone AS "timeZone",r.created_at AS "createdAt",
-           u.status,u.error,m.id AS "messageId",m.text AS "messageText",
+           u.status,u.error,r.observation,r.observed_at AS "observedAt",m.id AS "messageId",m.text AS "messageText",
            to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "cursorAt"
          FROM schedule_runs r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
          LEFT JOIN LATERAL (
@@ -383,6 +413,52 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     };
   }
 
+  async function recordObservation(turnId: string, raw: unknown) {
+    z.uuid().parse(turnId);
+    const input = observationSchema.parse(raw);
+    const result = await transaction(async (client) => {
+      const row = (
+        await client.query<{
+          id: string;
+          scheduleId: string;
+          baselineObservation: ScheduleObservation | null;
+          observation: ScheduleObservation | null;
+        }>(
+          `SELECT r.id,r.schedule_id AS "scheduleId",r.baseline_observation AS "baselineObservation",
+             r.observation
+           FROM schedule_runs r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
+           JOIN threads th ON th.id=u.thread_id AND th.archived_at IS NULL
+           WHERE r.turn_id=$1 AND r.owner_id=$2 AND u.status='running'
+           FOR UPDATE OF r,u`,
+          [turnId, ownerId],
+        )
+      ).rows[0];
+      if (!row) throw invalid('This task has no active scheduled run.');
+      if (row.observation) throw invalid('This run already has a saved observation.');
+      const previous = (
+        await client.query<{ observation: ScheduleObservation }>(
+          `SELECT observation FROM schedule_runs
+           WHERE owner_id=$1 AND schedule_id=$2 AND observation->>'status'='verified'
+           ORDER BY observed_at DESC,id DESC LIMIT 1`,
+          [ownerId, row.scheduleId],
+        )
+      ).rows[0]?.observation;
+      const prior = previous ?? row.baselineObservation;
+      const checkedAt = now().toISOString();
+      const observation = { ...input, checkedAt };
+      await client.query(
+        'UPDATE schedule_runs SET observation=$3,observed_at=$4 WHERE id=$1 AND owner_id=$2',
+        [row.id, ownerId, JSON.stringify(observation), checkedAt],
+      );
+      return {
+        observation,
+        previous: prior,
+      };
+    });
+    refresh();
+    return result;
+  }
+
   async function value(row: ScheduleRow): Promise<Schedule> {
     return {
       id: row.id,
@@ -396,6 +472,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       revision: row.revision,
       nextRun: row.nextRun?.toISOString() ?? null,
       lastRun: (await history({ limit: 1 }, row.id)).runs[0] ?? null,
+      baselineObservation: row.baselineObservation,
     };
   }
 
@@ -534,8 +611,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       const authorized = await authority(client, input.prompt, source);
       const saved = (
         await client.query<ScheduleRow>(
-          `INSERT INTO schedules(id,owner_id,title,prompt,kind,cron,run_at,time_zone,delivery_channel,channel_source_id,authority_instruction,authority_source_message_id)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING ${columns}`,
+          `INSERT INTO schedules(id,owner_id,title,prompt,kind,cron,run_at,time_zone,delivery_channel,channel_source_id,authority_instruction,authority_source_message_id,baseline_observation)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING ${columns}`,
           [
             randomUUID(),
             ownerId,
@@ -549,6 +626,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
             route.sourceId,
             authorized.instruction,
             authorized.sourceMessageId,
+            input.baselineObservation
+              ? JSON.stringify({ ...input.baselineObservation, checkedAt: now().toISOString() })
+              : null,
           ],
         )
       ).rows[0]!;
@@ -668,5 +748,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     registerRoutes,
     validateCreate,
     validateUpdate,
+    recordObservation,
   };
 }

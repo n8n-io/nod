@@ -22,6 +22,7 @@ export const personalActions = [
   'schedule_create',
   'schedule_update',
   'schedule_cancel',
+  'schedule_record_observation',
   'usage_get',
 ] as const;
 
@@ -94,6 +95,27 @@ function defineTool<const N extends string, P extends TSchema>(
 ) {
   return { name, description, parameters: rootObject(parameters), strict: parameters };
 }
+
+export const scheduleObservation = Type.Union([
+  Type.Object(
+    {
+      status: Type.Literal('verified'),
+      sourceUrl: Type.String(),
+      value: Type.String({ maxLength: 300 }),
+      summary: Type.String({ maxLength: 500 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      status: Type.Literal('unavailable'),
+      sourceUrl: Type.String(),
+      value: Type.Null(),
+      summary: Type.String({ maxLength: 500 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 const taskNow = Type.String({ minLength: 1, maxLength: 200 });
 const taskWaits = Type.Array(
@@ -359,7 +381,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 600 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
+    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 600 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -641,9 +663,13 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
           `I need access to your ${name} account for this task. [Connect ${name}](${url}) and I will continue here.`,
       );
     }),
-    bind(toolDefinitions.manage_personal_context, async (p) =>
-      confirm(await context.manage(p.action, p.args)),
-    ),
+    bind(toolDefinitions.manage_personal_context, async (p) => {
+      if (p.action !== 'schedule_record_observation')
+        return confirm(await context.manage(p.action, p.args));
+      if (!Value.Check(scheduleObservation, p.args))
+        return 'schedule_record_observation needs {status, sourceUrl, value, summary}; value is null when unavailable.';
+      return context.manage(p.action, p.args);
+    }),
     bind(toolDefinitions.task, async (p) => {
       if (!context.task) throw new Error('Tasks are unavailable.');
       return context.task(p);
