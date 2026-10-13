@@ -2664,7 +2664,7 @@ test(
   },
 );
 
-const memoryFixture = async () => {
+const memoryFixture = async (tables: string[] = []) => {
   const schema = `test_memory_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const root = await mkdtemp(join(tmpdir(), 'memory-test-'));
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -2675,6 +2675,7 @@ const memoryFixture = async () => {
   await pool.query(
     "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
   );
+  for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
   const store = createFilesystemObjectStore(root);
   const memory = createMemoryService({ pool, ownerId, store });
@@ -2838,6 +2839,8 @@ test(
   },
 );
 
+const approvalsTable =
+  'CREATE TABLE approvals (owner_id text NOT NULL, source_message_id uuid, action text NOT NULL, status text NOT NULL)';
 const nilMark = '2000-01-01T00:00:00.000000Z/00000000-0000-0000-0000-000000000000';
 
 type CuratorCall = {
@@ -2967,7 +2970,7 @@ test(
   'memory opt-out stops background work and rejects reflection started before disable and re-enable',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
-    const { pool, ownerId, post, memory, close } = await memoryFixture();
+    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
     const { calls, state, curator } = scriptedCurator();
     const learning = createMemoryLearning({ pool, ownerId, memory, curator });
     let release: (value: unknown) => void = () => {};
@@ -3027,8 +3030,8 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     t.mock.method(console, 'error', () => {});
-    const { pool, ownerId, post, memory, close } = await memoryFixture();
-    const idle = await memoryFixture();
+    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
+    const idle = await memoryFixture([approvalsTable]);
     try {
       const { calls, state, curator } = scriptedCurator();
       const learning = createMemoryLearning({ pool, ownerId, memory, curator });
@@ -3055,11 +3058,26 @@ test(
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
       await post('My card is 4111 1111 1111 1111 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
+      for (const [status, text] of [
+        ['declined', 'Remember that refunds go to account 1.'],
+        ['pending', 'Remember that I prefer window seats.'],
+        ['completed', 'Remember that my dentist is on Elm Street.'],
+      ] as const) {
+        const asked = await post(text, { at: '2026-01-01T10:04:30Z' });
+        await pool.query(
+          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
+          [ownerId, asked.id, status],
+        );
+      }
       await post('Other owner message that must not leak.', {
         owner: 'other-owner',
         at: '2026-01-01T10:04:45Z',
       });
       const call = await post(sister, { at: '2026-01-01T10:05:00Z' });
+      await pool.query(
+        "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'GMAIL_SEND_EMAIL','declined')",
+        [ownerId, call.id],
+      );
       await post('I am working on the budget today.');
 
       state.answer = () => ({

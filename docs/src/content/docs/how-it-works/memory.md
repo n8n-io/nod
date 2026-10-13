@@ -102,7 +102,7 @@ The archive keeps only its latest 40 records.
 
 ### Reflect
 
-Reflection reads up to 40 owner messages written since the last batch. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, and messages with secrets.
+Reflection reads up to 40 owner messages written since the last batch. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, and messages with secrets or a memory-save approval.
 
 - A small model from the selected connection proposes at most six operations: add an entry, or archive an inferred one the owner said is wrong.
 - Each operation cites messages and a verbatim quote. Only cited messages that contain the quote count as evidence.
