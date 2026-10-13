@@ -116,6 +116,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       };
       if (action === 'memory_learn') return memory.learn(args, source);
       const result = await memory.control(args, source);
+      if (result.cleared) await pool.query('DROP TABLE IF EXISTS profiles');
       refresh();
       return result;
     }
