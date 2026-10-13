@@ -246,18 +246,20 @@ export function ConnectedAccount({
         </p>
       </div>
       <div className="app-account-actions">
-        {account.canReconnect && account.status === 'disconnected' && onReconnect && (
-          <Button
-            size="sm"
-            aria-label={`Reconnect ${label} to ${account.name}`}
-            aria-busy={reconnecting}
-            disabled={busy}
-            onClick={onReconnect}
-          >
-            {reconnecting && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-            {reconnecting ? 'Opening…' : 'Reconnect'}
-          </Button>
-        )}
+        {account.canReconnect &&
+          (account.status === 'disconnected' || account.reconnectRequired) &&
+          onReconnect && (
+            <Button
+              size="sm"
+              aria-label={`Reconnect ${label} to ${account.name}`}
+              aria-busy={reconnecting}
+              disabled={busy}
+              onClick={onReconnect}
+            >
+              {reconnecting && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+              {reconnecting ? 'Opening…' : 'Reconnect'}
+            </Button>
+          )}
         <Button
           variant="ghost"
           size="sm"
