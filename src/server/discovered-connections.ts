@@ -117,6 +117,7 @@ type ProposalRow = {
   oauth_status: 'pending' | 'completing' | 'connected' | 'cancelled' | 'failed' | null;
   connection_id: string | null;
   turn_id: string | null;
+  created_at: Date;
 };
 
 export const officialMcp = new Map<string, { name: string; endpoint: string; scope?: string }>([
@@ -223,9 +224,11 @@ export async function createDiscoveredConnections(
     );
     ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext,
       ADD COLUMN IF NOT EXISTS account_id uuid NOT NULL DEFAULT gen_random_uuid(),
-      ADD COLUMN IF NOT EXISTS reconnect_required boolean NOT NULL DEFAULT false;
+      ADD COLUMN IF NOT EXISTS reconnect_required boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS replaced_at timestamptz;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
-      ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id;
+      ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id,
+      ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
   `);
   await transaction(async (recovery) => {
     const interrupted = await recovery.query<{ id: string }>(
@@ -376,7 +379,7 @@ export async function createDiscoveredConnections(
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
       await client.query<ProposalRow>(
-        `SELECT id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status
+        `SELECT id,owner_id,service,name,paths,connection_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status,created_at
        FROM discovered_connection_proposals
        WHERE id=$1 AND owner_id=$2 AND expires_at>now()${lock ? ' FOR UPDATE' : ''}`,
         [z.uuid().parse(id), owner],
@@ -401,9 +404,23 @@ export async function createDiscoveredConnections(
           );
       if (!used.rowCount) throw error('This connection request expired.', 409);
       if (pending.connection_id) {
-        const updated = await client.query(
-          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,account_id=gen_random_uuid(),reconnect_required=false
-           WHERE id=$1 AND owner_id=$2 AND service=$3`,
+        const target = await client.query<{ replaced_at: Date | null }>(
+          'SELECT replaced_at FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3 FOR UPDATE',
+          [idToSave, owner, pending.service],
+        );
+        if (!target.rows[0]) throw error('This connected account is unavailable.', 404);
+        const newer = await client.query(
+          `SELECT 1 FROM discovered_connection_proposals WHERE owner_id=$1 AND connection_id=$2 AND id<>$3
+           AND created_at>$4 AND (oauth_status='connected' OR (expires_at>now()
+           AND (oauth_status IS NULL OR oauth_status IN ('pending','completing')))) LIMIT 1`,
+          [owner, idToSave, pending.id, pending.created_at],
+        );
+        const replacedAt = target.rows[0].replaced_at;
+        if (newer.rowCount || (replacedAt && replacedAt >= pending.created_at))
+          throw error('A newer sign-in exists for this account. Use the newest link.', 409);
+        await client.query(
+          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,account_id=gen_random_uuid(),
+           reconnect_required=false,replaced_at=$7 WHERE id=$1 AND owner_id=$2 AND service=$3`,
           [
             idToSave,
             owner,
@@ -411,9 +428,9 @@ export async function createDiscoveredConnections(
             pending.name,
             accountName,
             JSON.stringify(pending.paths),
+            pending.created_at,
           ],
         );
-        if (!updated.rowCount) throw error('This connected account is unavailable.', 404);
       } else {
         await client.query(
           `INSERT INTO discovered_connections

@@ -192,6 +192,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (featured) return { slug, ...featured };
     return { slug, name: slug.replaceAll('_', ' '), description: '' };
   }
+  const savedSessions = (
+    await pool.query<{ name: string | null }>("SELECT to_regclass('integration_sessions') AS name")
+  ).rows[0].name
+    ? (
+        await pool.query<{ session_id: string }>(
+          'SELECT session_id FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2',
+          [configuredOwner, providerId],
+        )
+      ).rows
+    : [];
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_connections (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -257,6 +267,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     ]).catch(() => {});
   void background(async () => {
     if (!provider.configured) return;
+    for (const row of savedSessions) await bounded(() => provider.deleteSession(row.session_id));
     for (const row of stale.rows.filter((item) => item.provider_id === providerId)) {
       if (row.trigger_id) await bounded(() => provider.unsubscribe(row.trigger_id!));
       for (const account of new Set([row.account_id, row.pending_account_id]))
