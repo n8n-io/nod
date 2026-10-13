@@ -2,7 +2,6 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { transaction } from './transaction.ts';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import {
   ChannelSetupFailure,
@@ -343,20 +342,24 @@ export async function createChannelSettings(
           }
           return { ok: true, channel: summary, ...(pairingUrl ? { pairingUrl } : {}) };
         }
+        const client = await pool.connect();
         try {
-          await transaction(async (client) => {
-            await client.query(
-              `INSERT INTO channel_settings(owner_id,provider,enabled,ciphertext,summary) VALUES($1,$2,$3,$4,$5)
+          await client.query('BEGIN');
+          await client.query(
+            `INSERT INTO channel_settings(owner_id,provider,enabled,ciphertext,summary) VALUES($1,$2,$3,$4,$5)
           ON CONFLICT(owner_id,provider) DO UPDATE SET enabled=EXCLUDED.enabled,ciphertext=EXCLUDED.ciphertext,summary=EXCLUDED.summary,updated_at=now()`,
-              [owner, provider, input !== undefined, ciphertext, JSON.stringify(summary)],
-            );
-            await options.apply(nextEnvironment);
-          }, pool);
+            [owner, provider, input !== undefined, ciphertext, JSON.stringify(summary)],
+          );
+          await options.apply(nextEnvironment);
+          await client.query('COMMIT');
         } catch (error) {
+          await client.query('ROLLBACK');
           try {
             await options.apply(oldEnvironment);
           } catch {}
           throw error;
+        } finally {
+          client.release();
         }
         return { ok: true, channel: summary, ...(pairingUrl ? { pairingUrl } : {}) };
       } finally {
@@ -387,33 +390,38 @@ export async function createChannelSettings(
     candidate?: TelegramPairingCandidate,
   ) {
     const oldEnvironment = apply ? await environment() : {};
+    const client = await pool.connect();
     try {
-      return await transaction(async (client) => {
-        const updated = await client.query(
-          "UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now() WHERE owner_id=$1 AND provider='telegram' AND enabled=true AND ciphertext=$4",
-          [
-            owner,
-            seal(await encryptionKey(), owner, 'telegram', next),
-            JSON.stringify(summarySchema.parse(summary)),
-            row.ciphertext,
-          ],
-        );
-        if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
-        if (apply)
-          await options.apply({
-            ...Object.fromEntries(
-              Object.entries(oldEnvironment).filter(([key]) => !fields.telegram.has(key)),
-            ),
-            ...next,
-          });
-        return candidate ? await options.paired?.(candidate, client) : undefined;
-      }, pool);
+      await client.query('BEGIN');
+      const updated = await client.query(
+        "UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now() WHERE owner_id=$1 AND provider='telegram' AND enabled=true AND ciphertext=$4",
+        [
+          owner,
+          seal(await encryptionKey(), owner, 'telegram', next),
+          JSON.stringify(summarySchema.parse(summary)),
+          row.ciphertext,
+        ],
+      );
+      if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
+      if (apply)
+        await options.apply({
+          ...Object.fromEntries(
+            Object.entries(oldEnvironment).filter(([key]) => !fields.telegram.has(key)),
+          ),
+          ...next,
+        });
+      const notify = candidate ? await options.paired?.(candidate, client) : undefined;
+      await client.query('COMMIT');
+      return notify;
     } catch (error) {
+      await client.query('ROLLBACK');
       if (apply)
         try {
           await options.apply(oldEnvironment);
         } catch {}
       throw error;
+    } finally {
+      client.release();
     }
   }
   async function pair(request: ChannelPairingRequest) {
