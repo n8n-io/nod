@@ -215,7 +215,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         return false;
       job.signal.throwIfAborted();
       const turnId = await enqueueTurn(
-        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.`,
+        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.\nSchedule ID: ${row.id}`,
         {
           sourceId: `schedule:${row.id}:${row.revision}:${job.data.scheduledFor}`,
           source: 'schedule',
