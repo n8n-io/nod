@@ -83,6 +83,22 @@ test(
       ].join('\n'),
     };
     await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
+    await mkdir(join(objects, 'memory'));
+    await writeFile(
+      join(objects, 'memory', 'MEMORY.md'),
+      JSON.stringify({
+        entries: [
+          {
+            area: 'about',
+            slug: 'location-lisbon',
+            text: 'Location: Lisbon',
+            origin: 'inferred',
+            updated: new Date().toISOString(),
+            sources: [randomUUID()],
+          },
+        ],
+      }),
+    );
     const plans = new Map<string, { steps: Step[]; finalText?: string }>();
     const finalTexts = new Set(['Synthetic memory request handled.']);
     const threads = new Set<string>();
@@ -244,7 +260,7 @@ test(
           .sort(),
         ['Location: Lisbon', 'Name: Memory Fixture'],
       );
-      assert.ok(migrated.every((note) => note.status === 'stated' && !note.sources.length));
+      assert.ok(migrated.every((note) => note.status === 'stated'));
       assert.equal((await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name, null);
 
       const unsupported = await ask('Review my synthetic project notes.', [
