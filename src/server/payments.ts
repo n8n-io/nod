@@ -12,7 +12,7 @@ import type {
 import { logFailure } from './failure-log.ts';
 import { type createVaultUses, VaultUseError } from './vault-use.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf } from './turn-chain.ts';
+import { browserOf, supersededSql } from './turn-chain.ts';
 import type { PaymentPolicy } from './trust.ts';
 import { credentialOrigin } from './vault.ts';
 
@@ -74,10 +74,7 @@ const input = z
   .strict();
 
 const currencies = new Set(Intl.supportedValuesOf('currency'));
-const currentTurnSql = `u.status IN ('running','waiting') AND (u.background OR NOT EXISTS(
-  SELECT 1 FROM turns newer WHERE newer.owner_id=u.owner_id AND newer.thread_id=u.thread_id
-    AND newer.id<>u.id AND NOT newer.background AND newer.source='user'
-    AND newer.created_at>=u.created_at))`;
+const currentTurnSql = `u.status IN ('running','waiting') AND NOT ${supersededSql('u', "newer.source='user' AND newer.created_at>=u.created_at")}`;
 
 function digits(currency: string) {
   if (!currencies.has(currency))
@@ -147,8 +144,8 @@ export async function createPayments(
   );
 
   await pool.query(
-    `INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,origin,kind,item_id,status)
-    SELECT id::text,owner_id,thread_id,turn_id,origin,'card',card_id,
+    `INSERT INTO vault_uses(id,owner_id,origin,kind,item_id,status)
+    SELECT id::text,owner_id,origin,'card',card_id,
       CASE WHEN status='entered' THEN 'submitted' ELSE 'uncertain' END
     FROM vault_payments WHERE owner_id=$1 AND status IN ('entered','approved','entering','uncertain') ON CONFLICT DO NOTHING`,
     [ownerId],
@@ -198,8 +195,6 @@ export async function createPayments(
       {
         id: row.id,
         ownerId,
-        threadId: row.thread_id,
-        turnId: row.turn_id,
         origin: row.origin,
         kind: 'card',
         itemId: card.id,

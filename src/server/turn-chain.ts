@@ -2,6 +2,11 @@ import type { TurnRef } from './thread.ts';
 
 export const browserOf = (turn: TurnRef) => turn.browserId ?? turn.threadId;
 
+export function supersededSql(alias: string, newer: string) {
+  return `EXISTS(SELECT 1 FROM turns newer WHERE newer.owner_id=${alias}.owner_id AND newer.session_id=${alias}.session_id
+    AND newer.id<>${alias}.id AND ${newer})`;
+}
+
 export function parentTurnSql(alias = 'u') {
   return `COALESCE(CASE WHEN ${alias}.source='resume' THEN substring(${alias}.source_id from '^(?:credentials|credentials-retry|connection|control):([0-9a-f-]{36})(?::|$)')::uuid END,
       (SELECT a.turn_id FROM approvals a WHERE a.execution_turn_id=${alias}.id AND a.owner_id=${alias}.owner_id AND a.turn_id<>${alias}.id LIMIT 1))`;
