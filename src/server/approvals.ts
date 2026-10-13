@@ -7,7 +7,7 @@ import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef }
 import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
-import { turnChain } from './turn-chain.ts';
+import { taskSessionSql, turnChain } from './turn-chain.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -304,7 +304,8 @@ export async function createApprovals(
     if (!target) return undefined;
     return (
       await database.query(
-        `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
+        `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt,
+         ${taskSessionSql()} AS turn_task_session
        FROM approvals a JOIN turns u ON u.id=a.turn_id
        WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
@@ -346,7 +347,9 @@ export async function createApprovals(
       : 'The user declined the saved action. Do not execute it or ask for it again. Continue only other already-authorized work, or finish quietly.';
     const background = Boolean(approval.turn_background);
     const turnId = await enqueueTurn(
-      background ? `${prompt}\nThe request was: ${approval.turn_prompt}` : prompt,
+      background && !approval.turn_task_session
+        ? `${prompt}\nThe request was: ${approval.turn_prompt}`
+        : prompt,
       {
         source: 'resume',
         sourceId:

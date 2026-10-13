@@ -70,6 +70,7 @@ export interface RuntimeContext {
   resumed?: boolean;
   prompt: string;
   background?: boolean;
+  taskSession?: boolean;
   readOnly?: boolean;
   limits?: { maxToolCalls: number; timeoutMs: number };
   activityCheck?: {

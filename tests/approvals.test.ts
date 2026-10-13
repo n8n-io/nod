@@ -1578,6 +1578,7 @@ test(
           assert.ok(await confirm(question, false));
           const answered = await resumeTurns(question);
           assert.equal(answered.length, 1);
+          assert.ok(answered[0]!.prompt.includes('A synthetic background question.'));
           assert.deepEqual(
             (
               await db.pool.query('SELECT session_id,background FROM turns WHERE id=$1', [
@@ -1586,6 +1587,25 @@ test(
             ).rows[0],
             { session_id: asked.turnId, background: true },
           );
+          const taskId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,$2,'Synthetic task','','')",
+            [taskId, ownerId],
+          );
+          const tasked = await running(
+            await thread.enqueueTurn('A synthetic task question.', {
+              source: 'event',
+              sessionId: taskId,
+            }),
+          );
+          const taskQuestion = await propose(tasked, 'OTTO_schedule_cancel', { id: randomUUID() });
+          await finish(tasked.turnId);
+          assert.ok(await confirm(taskQuestion, false));
+          const taskAnswer = await resumeTurns(taskQuestion);
+          assert.equal(taskAnswer.length, 1);
+          assert.equal(taskAnswer[0]!.background, true);
+          assert.ok(!taskAnswer[0]!.prompt.includes('A synthetic task question.'));
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [taskId]);
           assert.equal(calls.length, before);
         },
       );

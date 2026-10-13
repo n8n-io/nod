@@ -67,6 +67,7 @@ test(
     const threads = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
+    const { createTasks } = await import('../src/server/tasks.ts');
     const { createArtifactService, localArtifacts } = await import('../src/server/artifacts.ts');
     const { ownerId, port } = await import('../src/server/config.ts');
     const app = await createApp();
@@ -153,6 +154,7 @@ test(
     try {
       await db.initializeDatabase();
       await threads.initializeThreads();
+      await createTasks({ pool: db.pool, ownerId }).initialize();
       await createPersonalService({
         pool: db.pool,
         ownerId,

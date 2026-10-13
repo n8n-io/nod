@@ -671,7 +671,7 @@ export function createAgentRuntime(dependencies: {
       const { takeMessages } = context;
       const opening = agent.open({
         sessionKey: sessionId,
-        saved: !context.background,
+        saved: !context.background || Boolean(context.taskSession),
         turnId: context.turnId,
         systemPrompt: system,
         systemContext: systemContext(context),

@@ -14,7 +14,8 @@ The short version: `src/runtime` runs each turn in a Pi session. Every tool call
 Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) can run any number of turns per thread at once, each in its own Pi session:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
-- Background turns each get a new in-memory session, which saves nothing.
+- A task's turns share the task's saved session, whose session ID is the task ID. A task that continues after a question or a confirmation still has its earlier tool results.
+- Schedule and event turns and subagents each get a new in-memory session, which saves nothing.
 
 A saved session is stored under its session ID: its own folder on disk, or its own object in hosted mode. The chat's session ID is the thread ID. Loading or cleaning up one saved session never reads or removes another session's files.
 

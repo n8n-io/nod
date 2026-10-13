@@ -41,6 +41,7 @@ test(
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
+    const { createTasks } = await import('../src/server/tasks.ts');
     const { port } = await import('../src/server/config.ts');
     const { events } = await import('../src/server/events.ts');
     const contexts = new Map<string, RuntimeContext>();
@@ -65,6 +66,7 @@ test(
     try {
       await db.initializeDatabase();
       await thread.initializeThreads();
+      await createTasks({ pool: db.pool, ownerId: 'local-development' }).initialize();
       const personal = createPersonalService({
         pool: db.pool,
         ownerId: 'local-development',

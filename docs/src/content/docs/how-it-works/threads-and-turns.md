@@ -90,7 +90,7 @@ The server starts the task in one transaction:
 3. It posts `ack`, or "On it.", as a reply to your message.
 4. It queues the task's first turn. The task ID is its session ID, so all of the task's turns run one at a time in that session, in parallel with the chat.
 
-Until the task mode is built, a task turn runs with the rules of a background session.
+Until the task mode is built, a task turn runs with the rules of a background session, except for its Pi session. A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
 
 ## Sessions
 

@@ -997,6 +997,8 @@ test(
             assert.equal(await turnStatus(taskTurn), 'running');
             assert.equal(ran(taskTurn)?.sessionId, taskId);
             assert.equal(ran(taskTurn)?.background, true);
+            assert.equal(ran(taskTurn)?.taskSession, true);
+            assert.equal(ran(chat.turnId)?.taskSession, false);
             assert.equal(ran(taskTurn)?.startTask, undefined);
             const task = (await db.pool.query('SELECT * FROM tasks WHERE id=$1', [taskId])).rows[0];
             assert.deepEqual(
@@ -1057,11 +1059,21 @@ test(
               ).rows[0].count,
               1,
             );
+            assert.equal(await thread.resumeAfterConnection(taskTurn, 'Synthetic source'), true);
           } finally {
             releaseTask();
           }
           await waitFor(settled(taskTurn));
           assert.equal(await turnStatus(taskTurn), 'succeeded');
+          const taskResume = (
+            await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
+              `connection:${taskTurn}`,
+            ])
+          ).rows[0].id;
+          await waitFor(settled(taskResume));
+          assert.equal(ran(taskResume)?.sessionId, ran(taskTurn)?.sessionId);
+          assert.equal(ran(taskResume)?.taskSession, true);
+          assert.ok(!ran(taskResume)?.prompt.includes('session-fixture-task'));
           await closeDispatched();
         },
       );
@@ -3407,6 +3419,8 @@ test(
               ).rows[0];
               assert.equal(resumed.background, true);
               await waitFor(settled(resumed.id));
+              assert.equal(ran(resumed.id)!.taskSession, false);
+              assert.ok(ran(resumed.id)!.prompt.includes('background-research-fixture'));
               const history = ran(resumed.id)!.history;
               assert.ok(
                 history.some(

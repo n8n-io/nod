@@ -2197,6 +2197,53 @@ test('delegated subagents run two at a time, each in its own browser, and answer
   }
 });
 
+test('the runtime saves the Pi session of the chat and of a task, and of nothing else', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-session-options-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const opened: Array<[string, boolean]> = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => {
+        opened.push([input.sessionKey, input.saved]);
+        return {
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            await input.tools
+              .find((tool) => tool.name === 'delegate')
+              ?.execute({ title: 'Part', instruction: 'Do one synthetic part.' });
+          },
+        };
+      },
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const threadId = randomUUID();
+  const taskId = randomUUID();
+  const scheduleId = randomUUID();
+  try {
+    for (const [fields, key, saved] of [
+      [{}, threadId, true],
+      [{ sessionId: taskId, background: true, taskSession: true }, taskId, true],
+      [{ sessionId: scheduleId, background: true }, scheduleId, false],
+    ] as const) {
+      opened.length = 0;
+      const turnId = randomUUID();
+      const result = await runtime.runTurn({ ...context(directory), ...fields, threadId, turnId });
+      assert.equal(result.status, 'succeeded');
+      assert.deepEqual(opened[0], [key, saved]);
+      assert.equal(opened.length, 2);
+      assert.ok(opened[1][0].startsWith(`${turnId}-`));
+      assert.equal(opened[1][1], false);
+    }
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test('a subagent that needs the owner pauses the whole turn', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-pause-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -3966,6 +4013,43 @@ test('the Pi transcript keeps model changes for the next turn and each saved ses
     assert.ok(requests[6].history.includes('Use the ChatGPT plan for the same label.'));
     assert.ok(!requests[6].history.includes('synthetic task'));
     assert.deepEqual((await readdir(directory)).sort(), [threadId, taskId].sort());
+
+    const runtime = createAgentRuntime({
+      agent,
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    const runtimeTask = randomUUID();
+    const turn = async (prompt: string, fields: Partial<RuntimeContext> = {}) => {
+      const result = await runtime.runTurn({
+        ...context(directory),
+        threadId,
+        turnId: randomUUID(),
+        prompt,
+        ...fields,
+      });
+      assert.equal(result.status, 'succeeded');
+      return requests.at(-1)!.history;
+    };
+    const queuedTask = { sessionId: runtimeTask, background: true, taskSession: true };
+    const schedule = { sessionId: scheduleId, background: true };
+    try {
+      await turn('Start the queued task.', queuedTask);
+      await turn('Note the chat aside.');
+      await turn('Run the queued schedule.', schedule);
+      const resumed = await turn('Resume the queued task.', { ...queuedTask, resumed: true });
+      assert.ok(resumed.includes('Start the queued task.'));
+      assert.ok(!resumed.includes('Note the chat aside.'));
+      assert.ok(!resumed.includes('Run the queued schedule.'));
+      const rerun = await turn('Run the queued schedule again.', { ...schedule, resumed: true });
+      assert.ok(!rerun.includes('Run the queued schedule.'));
+      const chat = await turn('Back to the chat after the task.');
+      assert.ok(chat.includes('Note the chat aside.'));
+      assert.ok(!chat.includes('queued task'));
+      assert.deepEqual((await readdir(directory)).sort(), [threadId, taskId, runtimeTask].sort());
+    } finally {
+      await runtime.dispose();
+    }
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });

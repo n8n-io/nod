@@ -42,6 +42,8 @@ test(
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     await db.initializeDatabase();
     await thread.initializeThreads();
+    const { createTasks } = await import('../src/server/tasks.ts');
+    await createTasks({ pool: db.pool, ownerId }).initialize();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
     owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending',

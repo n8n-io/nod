@@ -28,6 +28,7 @@ import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
+import { taskSessionSql } from './turn-chain.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -581,14 +582,16 @@ async function resumeTurn(
     await lockThread(client);
     const turn = (
       await client.query(
-        `SELECT u.channel,u.status,u.background,u.prompt,u.session_id,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
+        `SELECT u.channel,u.status,u.background,u.prompt,u.session_id,${taskSessionSql()} AS task_session,
+           th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
          WHERE u.id=$1 AND u.owner_id=$2`,
         [turnId, ownerId],
       )
     ).rows[0];
     if (pendingOnly && (!turn?.active || !['running', 'waiting'].includes(turn.status)))
       return false;
-    await enqueueTurn(turn?.background ? `${prompt}\nThe request was: ${turn.prompt}` : prompt, {
+    const inMemory = turn?.background && !turn.task_session;
+    await enqueueTurn(inMemory ? `${prompt}\nThe request was: ${turn.prompt}` : prompt, {
       source: 'resume',
       sourceId,
       channel: turn?.channel ?? 'web',
@@ -742,8 +745,9 @@ async function claimTurns(threadId: string) {
       [threadId, ownerId],
     );
     const { rows } = await client.query(
-      `SELECT * FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='queued'
-       ORDER BY created_at,id FOR UPDATE`,
+      `SELECT u.*,${taskSessionSql()} AS task_session FROM turns u
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='queued'
+       ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [threadId, ownerId],
     );
     const sessions = new Set(busy.rows.map((row) => row.session_id as string));
@@ -1100,6 +1104,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       resumed: turn.source === 'resume',
       prompt: turn.prompt,
       background: turn.background,
+      taskSession: turn.task_session,
       readOnly: turn.read_only,
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,

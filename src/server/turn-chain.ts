@@ -15,6 +15,10 @@ type ChainTurn = {
   channel: string;
 };
 
+export function taskSessionSql(alias = 'u') {
+  return `EXISTS (SELECT 1 FROM tasks t WHERE t.id=${alias}.session_id AND t.owner_id=${alias}.owner_id)`;
+}
+
 export function parentTurnSql(alias = 'u') {
   return `CASE WHEN ${alias}.source='resume' THEN COALESCE(
       substring(${alias}.source_id from '^(?:credentials|credentials-retry|connection):([0-9a-f-]{36})(?::|$)')::uuid,
