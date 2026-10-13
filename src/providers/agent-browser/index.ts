@@ -188,6 +188,8 @@ export function createAgentBrowserComputer(options: {
   platform?: NodeJS.Platform;
   headless?: boolean;
   idleTimeoutMs?: number;
+  slotWaitMs?: number;
+  evictIdleMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
@@ -197,7 +199,6 @@ export function createAgentBrowserComputer(options: {
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   const discarded = new Set<string>();
-  const pinned = new Set<string>();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
     resolve(runtimeRoot, 'profiles', state.saved.profileId ?? state.id);
@@ -225,6 +226,8 @@ export function createAgentBrowserComputer(options: {
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
+  const slotWaitMs = options.slotWaitMs ?? 2 * 60_000;
+  const evictIdleMs = options.evictIdleMs ?? 5 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
   let disposed = false;
   let activeCalls = 0;
@@ -332,6 +335,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + slotWaitMs;
     const reserve = () =>
       allocate(async () => {
         if (state.started || state.saved.navigationFailed) return true;
@@ -343,13 +347,13 @@ export function createAgentBrowserComputer(options: {
             .filter(
               (entry) =>
                 entry !== state &&
-                !pinned.has(entry.id) &&
                 !attempted.has(entry.id) &&
                 !entry.busy &&
                 !entry.closed &&
                 !entry.closing &&
                 !entry.injecting &&
-                entry.heldUntil <= Date.now(),
+                entry.heldUntil <= Date.now() &&
+                Date.now() - entry.lastUsed >= evictIdleMs,
             )
             .sort((a, b) => a.lastUsed - b.lastUsed)[0];
           if (!candidate) return false;
@@ -370,6 +374,8 @@ export function createAgentBrowserComputer(options: {
     while (!(await reserve())) {
       if (disposed || state.closed || state.closing)
         throw new Error('The browser session has expired. Open the URL again.');
+      if (Date.now() >= deadline)
+        throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
       await delay(500, undefined, { signal });
     }
   }
@@ -1754,7 +1760,6 @@ export function createAgentBrowserComputer(options: {
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
-    pinned.delete(id);
     await closeBrowser(id);
     await Promise.all([
       rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
@@ -1806,10 +1811,6 @@ export function createAgentBrowserComputer(options: {
     checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
-    pin: async (id, value) => {
-      if (value) pinned.add(threadIdentity(id));
-      else pinned.delete(threadIdentity(id));
-    },
     close: tracked(closeBrowser),
     discard: tracked(discard),
     dispose: async () => {

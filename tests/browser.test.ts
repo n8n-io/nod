@@ -1496,7 +1496,6 @@ test('every session drives its own browser, so background work never waits for t
   const opened = new Map<string, string>();
   const discarded: string[] = [];
   const held: string[] = [];
-  const pins: Array<[string, boolean]> = [];
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
     agent: {
@@ -1520,9 +1519,6 @@ test('every session drives its own browser, so background work never waits for t
       },
       hold: async (id) => {
         held.push(id);
-      },
-      pin: async (id, pinned) => {
-        pins.push([id, pinned]);
       },
     }),
     workspace: fakeWorkspace(),
@@ -1592,20 +1588,6 @@ test('every session drives its own browser, so background work never waits for t
     );
     assert.deepEqual(discarded, [finished]);
     assert.deepEqual(held.sort(), [asking, threadId].sort());
-    assert.deepEqual(
-      pins
-        .filter(([, pinned]) => pinned)
-        .map(([id]) => id)
-        .sort(),
-      [threadId, asking, finished].sort(),
-    );
-    assert.deepEqual(
-      pins
-        .filter(([, pinned]) => !pinned)
-        .map(([id]) => id)
-        .sort(),
-      [asking, threadId].sort(),
-    );
     assert.equal((await turn(asking, async () => {}, true)).status, 'succeeded');
     assert.deepEqual(discarded, [finished, asking]);
   } finally {
@@ -1616,37 +1598,34 @@ test('every session drives its own browser, so background work never waits for t
   }
 });
 
-test('at the browser cap a running session keeps its browser and a new one waits for a free slot', async () => {
+test('at the browser cap only a browser idle past the window and not held makes room, and a new one waits until then', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: fixture.run,
     maxLiveSessions: 2,
+    evictIdleMs: 3000,
+    slotWaitMs: 1000,
   });
-  const open = async (id: string, signal?: AbortSignal) => {
-    await computer.pin(id, true);
-    return computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
-  };
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
+  const pages = () => [...fixture.pages.keys()].sort();
   try {
-    await open('subagent');
     await open('chat');
-    let scheduled = false;
-    const waiting = open('scheduled').then(() => (scheduled = true));
-    const cancelled = new AbortController();
-    const event = open('event', cancelled.signal);
-    await delay(1200);
-    assert.equal(scheduled, false);
-    assert.deepEqual([...fixture.pages.keys()].sort(), ['chat', 'subagent']);
-    assert.match((await computer.act('subagent', { action: 'snapshot' })).text, /Sign in/);
-    cancelled.abort();
-    await assert.rejects(event, { name: 'AbortError' });
-    await computer.discard('subagent');
-    await waiting;
-    assert.deepEqual([...fixture.pages.keys()].sort(), ['chat', 'scheduled']);
-    await computer.pin('chat', false);
-    await open('event');
-    assert.deepEqual([...fixture.pages.keys()].sort(), ['event', 'scheduled']);
+    await open('subagent');
+    await assert.rejects(open('scheduled'), /The browser sessions are busy/);
+    assert.deepEqual(pages(), ['chat', 'subagent']);
+    const stop = new AbortController();
+    const stopped = open('event', stop.signal);
+    await delay(200);
+    stop.abort();
+    await assert.rejects(stopped, { name: 'AbortError' });
+    assert.deepEqual(pages(), ['chat', 'subagent']);
+    await computer.hold('chat', Date.now() + 60_000);
+    await delay(3200);
+    await open('scheduled');
+    assert.deepEqual(pages(), ['chat', 'scheduled']);
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

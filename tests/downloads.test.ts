@@ -56,6 +56,7 @@ async function createDownloadBrowser(root: string) {
         browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
         privateNetwork: true,
         headless: true,
+        evictIdleMs: 0,
       });
     },
   });
