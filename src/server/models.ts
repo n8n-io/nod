@@ -579,10 +579,11 @@ export function createModelService(options: {
         id uuid PRIMARY KEY,owner_id text NOT NULL,provider text NOT NULL,method text NOT NULL,label text NOT NULL,
         status text NOT NULL DEFAULT 'connected',models jsonb NOT NULL,managed boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now()
       ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);
-      CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,host_id text NOT NULL,selection jsonb,selection_set boolean NOT NULL DEFAULT false);`);
+      CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,selection jsonb,selection_set boolean NOT NULL DEFAULT false);
+      ALTER TABLE model_settings DROP COLUMN IF EXISTS host_id;`);
       await database.query(
-        'INSERT INTO model_settings(owner_id,host_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
-        [ownerId, `urn:uuid:${randomUUID()}`],
+        'INSERT INTO model_settings(owner_id) VALUES($1) ON CONFLICT DO NOTHING',
+        [ownerId],
       );
       await reload();
       for (const row of rows) {
