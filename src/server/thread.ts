@@ -88,6 +88,7 @@ export interface ThreadDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   spendingLimitReached?: () => Promise<boolean>;
+  skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
@@ -895,6 +896,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     refresh();
   };
   try {
+    if (turn.source_id && (await dependencies.skipTurn?.(turn.source_id))) {
+      await current((client) => finishTurn(client, turnId, 'cancelled'));
+      outcome = 'cancelled';
+      return;
+    }
     await dependencies.startTurn?.(ref);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });

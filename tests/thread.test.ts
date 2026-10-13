@@ -218,7 +218,7 @@ test(
       workspace: fakeWorkspace(),
     });
     let quietBackgroundWork = false;
-    let currentApps: ConnectedApp[] = [];
+    let currentApps: Array<ConnectedApp & { accountId?: string }> = [];
     const readConnectedApps = async () => structuredClone(currentApps);
 
     const runs: RuntimeContext[] = [];
@@ -2364,16 +2364,17 @@ test(
           const preferences = createPreferencesStore(db.pool, ownerId);
           const original = await preferences.get();
           const triage = createTriage({ connectedApps: readConnectedApps });
-          const app: ConnectedApp = {
+          const app: ConnectedApp & { accountId: string } = {
             slug: 'notion',
             name: 'Notion',
             status: 'connected',
             connectionId: randomUUID(),
+            accountId: 'account-1',
             access: ['api'],
             supportsTriggers: false,
             triggersEnabled: false,
           };
-          const other: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['mcp'] };
+          const other = { ...app, connectionId: randomUUID(), access: ['mcp' as const] };
           const ignored: ConnectedApp[] = [
             { ...app, connectionId: randomUUID(), access: ['browser'] },
             { ...app, connectionId: randomUUID(), status: 'disconnected' },
@@ -2388,12 +2389,23 @@ test(
           const checks = async (connectionId = '') =>
             (
               await db.pool.query(
-                "SELECT id,source,background,read_only,prompt,started_at FROM turns WHERE owner_id=$1 AND source_id LIKE 'activity-check:'||$2||'%' ORDER BY created_at,id",
+                "SELECT id,source,source_id,background,read_only,prompt,started_at FROM turns WHERE owner_id=$1 AND starts_with(source_id,'activity-check:'||$2) ORDER BY created_at,id",
                 [ownerId, connectionId],
               )
             ).rows;
+          const stale = async (sourceId: string) => {
+            const turnId = await thread.enqueueTurn('Synthetic stale check', {
+              source: 'event',
+              sourceId,
+              background: true,
+            });
+            await waitFor(settled(turnId));
+            assert.equal(await turnStatus(turnId), 'cancelled');
+            assert.equal(ran(turnId), undefined);
+          };
           try {
             quietBackgroundWork = true;
+            dependencies.skipTurn = triage.staleCheck;
             await preferences.update({ notificationRule: 'Tell me about new requests.' });
             currentApps = [app, other, ...ignored];
             await Promise.all([triage.heartbeat(), triage.heartbeat()]);
@@ -2418,26 +2430,50 @@ test(
             const { started_at: since } = (await checks(app.connectionId))[0];
             await triage.heartbeat();
             assert.equal((await checks()).length, 2);
+            const continuation = randomUUID();
             await db.pool.query(
-              "UPDATE turns SET status='running',created_at=created_at-interval '31 minutes' WHERE id=$1",
+              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE id=$1",
               [first.id],
+            );
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,parent_turn_id)
+               SELECT $1,owner_id,thread_id,'resume','Synthetic continuation','running',true,id,id FROM turns WHERE id=$2`,
+              [continuation, first.id],
             );
             await triage.heartbeat();
             assert.equal((await checks()).length, 2);
-            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [continuation]);
+            await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [first.id]);
             await triage.heartbeat();
             const [, second] = await checks(app.connectionId);
             assert.ok(second.prompt.includes(since.toISOString()));
             assert.equal((await checks()).length, 3);
             await waitFor(settled(second.id));
-            await db.pool.query(
-              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE source_id LIKE 'activity-check:%'",
-            );
-            await preferences.update({ notificationRule: '' });
+            const replaced = { ...app, accountId: 'account-2' };
+            currentApps = [replaced, other, ...ignored];
             await triage.heartbeat();
-            assert.equal((await checks()).length, 3);
+            const third = (await checks(app.connectionId)).at(-1);
+            assert.equal(third.source_id, `activity-check:${app.connectionId}:account-2:first`);
+            assert.ok(!third.prompt.includes(since.toISOString()));
+            assert.equal((await checks()).length, 4);
+            await waitFor(settled(third.id));
+            await preferences.update({ notificationRule: '' });
+            await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
+            await preferences.update({ notificationRule: 'Tell me about new requests.' });
+            currentApps = [other];
+            await stale(`activity-check:${app.connectionId}:account-2:${randomUUID()}`);
+            await db.pool.query(
+              "UPDATE turns SET created_at=created_at-interval '31 minutes' WHERE starts_with(source_id,'activity-check:')",
+            );
+            currentApps = [replaced, other];
+            await preferences.update({ notificationRule: '' });
+            const count = (await checks()).length;
+            await triage.heartbeat();
+            assert.equal((await checks()).length, count);
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.id]);
           } finally {
             quietBackgroundWork = false;
+            dependencies.skipTurn = undefined;
             currentApps = [];
             await preferences.update(original);
           }

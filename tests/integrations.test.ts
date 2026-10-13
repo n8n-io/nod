@@ -4442,9 +4442,16 @@ test(
           url: `/api/apps/discovery/${proposalId}/complete`,
           payload: { token: 'synthetic-new-token', accountName: 'Replacement account' },
         });
+      const account = async () =>
+        (await integrations.connectedApps(owner, true)).find(
+          (item) => item.connectionId === connectionId,
+        )?.accountId;
+      const replacedAccount = await account();
+      assert.ok(replacedAccount);
       assert.equal((await complete()).statusCode, 200);
       assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
+      assert.notEqual(await account(), replacedAccount);
     } finally {
       await app.close();
       await pool.end();
