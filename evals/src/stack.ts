@@ -57,6 +57,13 @@ export function selectModel(
   return { provider, name: name || agentModels[provider as 'openai' | 'anthropic'], apiKey };
 }
 
+export async function approvalOrder(pool: pg.Pool) {
+  const { rows } = await pool.query(
+    "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approvals' AND column_name='created_at'",
+  );
+  return rows.length ? 'created_at' : 'expires_at';
+}
+
 async function freePort() {
   const probe = createServer();
   await new Promise<void>((done) => probe.listen(0, '127.0.0.1', done));

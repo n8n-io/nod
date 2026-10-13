@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Write, AppsWorld } from './world/apps.ts';
 import type { Interaction, Session } from './session.ts';
-import type { Stack } from './stack.ts';
+import { approvalOrder, type Stack } from './stack.ts';
 import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
 
@@ -303,7 +303,9 @@ export async function collect(options: {
     archive: (view.archive ?? []).map(({ path, text, reason }) => ({ path, text, reason })),
   });
   const approvals = (
-    await stack.pool.query('SELECT action,status,args FROM approvals ORDER BY created_at')
+    await stack.pool.query(
+      `SELECT action,status,args FROM approvals ORDER BY ${await approvalOrder(stack.pool)}`,
+    )
   ).rows.map((row) => ({
     action: row.action as string,
     status: row.status as string,
