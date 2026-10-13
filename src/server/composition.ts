@@ -519,7 +519,7 @@ async function initializeApplication(
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
   await personal.initialize({ workers: options.workers });
-  const tasks = createTasks({ pool, ownerId, curator, withTurnLock, refresh });
+  const tasks = createTasks({ pool, ownerId, refresh });
   await tasks.initialize();
   const triage = createTriage({
     consumers,
@@ -774,7 +774,7 @@ async function initializeApplication(
         refresh();
         return result;
       },
-      watchTurn: tasks.watch,
+      startTurn: tasks.inherit,
       connections: integrations.manageConnections,
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);

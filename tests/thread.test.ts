@@ -169,27 +169,7 @@ test(
       },
     });
     onboarding.registerRoutes(app);
-    type ProgressInput = { steps: string[]; cards: Array<{ id: string; title: string }> };
-    const progressInputs: ProgressInput[] = [];
-    let progressAnswer: (input: ProgressInput) => unknown = () => null;
-    let progressGate: Promise<void> | undefined;
-    let watching = false;
-    const tasks = createTasks({
-      pool: db.pool,
-      ownerId,
-      withTurnLock: thread.withTurnLock,
-      everyMs: 100,
-      curator: {
-        id: 'fixture',
-        configured: true,
-        curate: async ({ input }) => {
-          if (!('cards' in input)) return null;
-          progressInputs.push(structuredClone(input) as ProgressInput);
-          await progressGate;
-          return progressAnswer(input as ProgressInput);
-        },
-      },
-    });
+    const tasks = createTasks({ pool: db.pool, ownerId });
     await tasks.initialize();
     personal.registerRoutes(app);
     tasks.registerRoutes(app);
@@ -317,7 +297,7 @@ test(
       },
       task: (turn, input) =>
         thread.withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input)),
-      watchTurn: (turn) => (watching ? tasks.watch(turn) : () => {}),
+      startTurn: tasks.inherit,
       artifacts: {
         ...localArtifacts,
         storeArtifact: async (...input) => {
@@ -1543,6 +1523,19 @@ test(
           current = await card();
           assert.equal(current.status, 'needs_you');
           assert.equal(current.question, 'Rui quoted 180 EUR for Saturday. Should I book him?');
+          assert.equal(await thread.resumeAfterConnection(asked.turnId, 'synthetic'), true);
+          const resumed = (
+            await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
+              `connection:${asked.turnId}`,
+            ])
+          ).rows[0].id as string;
+          await waitFor(settled(resumed));
+          await idle();
+          assert.equal(
+            (await db.pool.query('SELECT task_id FROM turns WHERE id=$1', [resumed])).rows[0]
+              .task_id,
+            current.id,
+          );
           const answer = await thread.submitUserMessage('Yes, book Rui');
           await waitFor(settled(answer.turnId));
           await idle();
@@ -1566,247 +1559,6 @@ test(
           assert.equal(current.result, 'Rui is booked for Saturday at 10:00 for 180 EUR.');
           assert.deepEqual([current.nextCheck, current.waitingFor], [null, []]);
           assert.ok(current.closedAt);
-        },
-      );
-
-      await t.test(
-        'the watcher keeps one card per job across checks, replies and Pi reports, and never writes late',
-        async (t) => {
-          const logged = t.mock.method(console, 'error', () => {});
-          watching = true;
-          t.after(() => {
-            watching = false;
-            progressGate = undefined;
-          });
-          const idle = () => waitFor(settledThread);
-          const cards = async () => (await request('GET', '/api/tasks')).json() as Task[];
-          const autoCards = async () =>
-            (
-              await db.pool.query(
-                'SELECT count(*)::int AS count FROM tasks WHERE owner_id=$1 AND auto',
-                [ownerId],
-              )
-            ).rows[0].count as number;
-          const turnTask = async (turnId: string) =>
-            (await db.pool.query('SELECT task_id FROM turns WHERE id=$1', [turnId])).rows[0]
-              .task_id as string | null;
-          const foreignCard = async () =>
-            (
-              await db.pool.query(
-                "SELECT id,now_text,turn_id,state FROM tasks WHERE owner_id='task-other-owner'",
-              )
-            ).rows[0];
-          const foreign = await foreignCard();
-          progressAnswer = (input) => ({
-            title: 'Kayak reviews',
-            now: `Searched ${input.steps.length} times`,
-            task: input.cards.at(0)?.id ?? foreign.id,
-          });
-
-          block('watch-ask-fixture');
-          const asked = await thread.submitUserMessage('watch-ask-fixture');
-          await waitFor(async () =>
-            (await cards()).some(
-              (card) => card.title === 'Kayak reviews' && card.status === 'working',
-            ),
-          );
-          await delay(400);
-          const working = (await cards()).filter((card) => card.title === 'Kayak reviews');
-          assert.equal(working.length, 1);
-          assert.equal(working[0].now, 'Searched 1 times');
-          release('watch-ask-fixture');
-          await waitFor(settled(asked.turnId));
-          await idle();
-          let card = (await cards()).find((item) => item.id === working[0].id)!;
-          assert.deepEqual([card.status, card.question], ['needs_you', 'Which kayak do you mean?']);
-          const answered = await thread.submitUserMessage('the touring one');
-          await waitFor(
-            async () =>
-              (await cards()).find((item) => item.id === working[0].id)?.status === 'done',
-          );
-          card = (await cards()).find((item) => item.id === working[0].id)!;
-          assert.equal(card.result, 'done: the touring one');
-          assert.equal(await turnTask(answered.turnId), working[0].id);
-          assert.equal(await autoCards(), 1);
-
-          block('watch-pi-fixture');
-          const reported = await thread.submitUserMessage('watch-pi-fixture');
-          await waitFor(async () => (await autoCards()) === 2);
-          const auto = (
-            await db.pool.query(
-              "SELECT id FROM tasks WHERE owner_id=$1 AND auto AND state='open'",
-              [ownerId],
-            )
-          ).rows[0].id as string;
-          release('watch-pi-fixture');
-          await waitFor(settled(reported.turnId));
-          await idle();
-          card = (await cards()).find((item) => item.id === auto)!;
-          assert.deepEqual(
-            [card.title, card.doneWhen, card.now, card.status],
-            [
-              'Kayak comparison',
-              'A sourced comparison is shared',
-              'Reading the spec sheets',
-              'stalled',
-            ],
-          );
-          assert.equal((await cards()).filter((item) => item.title.startsWith('Kayak')).length, 2);
-          assert.equal(await autoCards(), 1);
-          assert.equal(await turnTask(reported.turnId), auto);
-
-          let releaseProgress!: () => void;
-          progressGate = new Promise((resolve) => {
-            releaseProgress = resolve;
-          });
-          const asks = progressInputs.length;
-          block('watch-late-fixture');
-          const late = await thread.submitUserMessage('watch-late-fixture');
-          await waitFor(() => progressInputs.length > asks);
-          assert.ok(progressInputs.at(-1)!.cards.some((offered) => offered.id === auto));
-          release('watch-late-fixture');
-          await waitFor(settled(late.turnId));
-          await idle();
-          releaseProgress();
-          await delay(300);
-          assert.equal(await turnTask(late.turnId), null);
-          assert.equal(
-            (await cards()).find((item) => item.id === auto)!.now,
-            'Reading the spec sheets',
-          );
-          assert.equal(await autoCards(), 1);
-
-          progressGate = undefined;
-          progressAnswer = (input) => ({
-            title: 'Kayak trip',
-            now: 'Checking the trip',
-            task: input.cards.find((offered) => offered.title === 'Kayak trip')?.id ?? null,
-          });
-          block('watch-ask-fixture');
-          const trip = await thread.submitUserMessage('watch-ask-fixture');
-          await waitFor(async () =>
-            (await cards()).some(
-              (item) => item.title === 'Kayak trip' && item.status === 'working',
-            ),
-          );
-          release('watch-ask-fixture');
-          await waitFor(settled(trip.turnId));
-          await idle();
-          const tripId = (await cards()).find((item) => item.title === 'Kayak trip')!.id;
-          progressGate = new Promise((resolve) => {
-            releaseProgress = resolve;
-          });
-          const decisions = progressInputs.length;
-          const reply = await thread.submitUserMessage('the sea kayak');
-          await waitFor(() => progressInputs.length > decisions);
-          await waitFor(settled(reply.turnId));
-          await idle();
-          block('watch-update-fixture');
-          const updating = await thread.submitUserMessage('watch-update-fixture');
-          await waitFor(
-            async () =>
-              (await cards()).find((item) => item.id === tripId)?.now ===
-              'Booking the touring kayak',
-          );
-          releaseProgress();
-          await waitFor(async () => (await turnTask(reply.turnId)) === tripId);
-          assert.equal((await cards()).find((item) => item.id === tripId)!.status, 'working');
-          release('watch-update-fixture');
-          await waitFor(settled(updating.turnId));
-          await idle();
-
-          progressAnswer = () => ({ title: 'Daily digest', now: 'Reading the inbox', task: null });
-          block('watch-schedule-fixture');
-          const fired = await thread.enqueueTurn('watch-schedule-fixture', {
-            source: 'schedule',
-            sourceId: `schedule:${randomUUID()}`,
-          });
-          await waitFor(async () =>
-            (await cards()).some(
-              (item) => item.title === 'Daily digest' && item.status === 'working',
-            ),
-          );
-          release('watch-schedule-fixture');
-          await waitFor(settled(fired));
-          await idle();
-          await waitFor(
-            async () =>
-              (
-                await db.pool.query(
-                  "SELECT 1 FROM tasks WHERE owner_id=$1 AND title='Daily digest' AND state='done'",
-                  [ownerId],
-                )
-              ).rowCount === 1,
-          );
-          assert.equal(
-            (await cards()).some((item) => item.title === 'Daily digest'),
-            false,
-          );
-
-          progressAnswer = (input) => ({
-            title: 'Flat hunt',
-            now: 'Reading listings',
-            task: input.cards.find((offered) => offered.title === 'Flat hunt')?.id ?? null,
-          });
-          block('watch-ask-fixture');
-          const hunt = await thread.submitUserMessage('watch-ask-fixture');
-          await waitFor(async () =>
-            (await cards()).some((item) => item.title === 'Flat hunt' && item.status === 'working'),
-          );
-          release('watch-ask-fixture');
-          await waitFor(settled(hunt.turnId));
-          await idle();
-          const huntId = (await cards()).find((item) => item.title === 'Flat hunt')!.id;
-          block('watch-schedule-fixture');
-          const continued = await thread.enqueueTurn('watch-schedule-fixture', {
-            source: 'schedule',
-            sourceId: `schedule:${randomUUID()}`,
-          });
-          await waitFor(async () => (await turnTask(continued)) === huntId);
-          release('watch-schedule-fixture');
-          await waitFor(settled(continued));
-          await idle();
-          await waitFor(
-            async () => (await cards()).find((item) => item.id === huntId)?.status === 'done',
-          );
-
-          progressAnswer = (input) => ({
-            title: 'Garden quote',
-            now: 'Asking for a quote',
-            task: input.cards.find((offered) => offered.title === 'Garden quote')?.id ?? null,
-          });
-          block('watch-ask-fixture');
-          const asking = await thread.enqueueTurn('watch-ask-fixture', {
-            source: 'schedule',
-            sourceId: `schedule:${randomUUID()}`,
-          });
-          await waitFor(async () =>
-            (await cards()).some(
-              (item) => item.title === 'Garden quote' && item.status === 'working',
-            ),
-          );
-          release('watch-ask-fixture');
-          await waitFor(settled(asking));
-          await idle();
-          const quoteId = (await cards()).find((item) => item.title === 'Garden quote')!.id;
-          const chosen = await thread.submitUserMessage('the cheaper one');
-          await waitFor(settled(chosen.turnId));
-          await idle();
-          await waitFor(
-            async () => (await cards()).find((item) => item.id === quoteId)?.status === 'done',
-          );
-
-          assert.ok(
-            progressInputs.every((input) =>
-              input.cards.every((offered) => offered.id !== foreign.id),
-            ),
-          );
-          assert.deepEqual(await foreignCard(), foreign);
-          assert.equal(
-            logged.mock.calls.filter((call) => String(call.arguments[0]).includes('task watcher'))
-              .length,
-            0,
-          );
         },
       );
 

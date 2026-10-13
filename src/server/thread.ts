@@ -100,7 +100,7 @@ export interface ThreadDependencies {
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
-  watchTurn?: (turn: TurnRef & { source: TurnSource }) => () => void;
+  startTurn?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -902,7 +902,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   };
   let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
     'failed';
-  let unwatch: (() => void) | undefined;
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
@@ -937,7 +936,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     refresh();
   };
   try {
-    unwatch = dependencies.watchTurn?.({ ...ref, source: turn.source });
+    await dependencies.startTurn?.(ref);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
     const stage = async (
@@ -1208,7 +1207,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     else if (await interruptTurn(turnId))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
-    unwatch?.();
     dependencies.analytics?.({
       event: 'otto_turn_completed',
       properties: {
