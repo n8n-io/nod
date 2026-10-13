@@ -230,6 +230,7 @@ export const viewFrame = z
 export const viewBytes = 12 * 1024 * 1024;
 export const browserMetadata = z
   .object({
+    status: z.string().max(256),
     screen: z
       .object({
         threadId: thread,

@@ -43,9 +43,12 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
         : undefined);
   try {
     const screen = threadId ? computer?.screenStatus(threadId) : undefined;
-    return browserMetadata.parse(screen ? { screen: { threadId, ...screen } } : {});
+    return browserMetadata.parse({
+      status: 'Workspace browser is ready.',
+      ...(screen && { screen: { threadId, ...screen } }),
+    });
   } catch {
-    return {};
+    return { status: 'Workspace browser is unavailable.' };
   }
 }
 
