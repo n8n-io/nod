@@ -72,15 +72,12 @@ Every tool call, including every call a codemode script makes, passes the same g
 flowchart TD
   call[Tool call] --> live{{Turn still<br/>running?}}
   live -- no --> refuse[Refused]:::stop
-  live -- yes --> mode{{Allowed in<br/>this turn mode?}}
-  mode -- no --> refuse
-  mode -- yes --> run[Run the tool]:::go
+  live -- yes --> run[Run the tool]:::go
   run --> wrap[Wrap outside results<br/>as untrusted data]
   wrap --> pi[Back to Pi]:::accent
 ```
 
 - **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before they run.
-- **Turn mode:** read-only turns can use only read tools and browser open, snapshot, scroll, screenshot and wait.
 - **Observations:** the guard reports each call to an optional observer. Only the evals harness sets one, and it redacts typed text and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 

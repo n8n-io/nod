@@ -60,7 +60,6 @@ export interface RuntimeContext {
   resumed?: boolean;
   prompt: string;
   background?: boolean;
-  readOnly?: boolean;
   channel?: string;
   timeZone?: string;
   locale?: string;

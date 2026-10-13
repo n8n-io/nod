@@ -2388,7 +2388,7 @@ test(
           const checks = async (connectionId = '') =>
             (
               await db.pool.query(
-                "SELECT id,source,background,read_only,prompt,started_at FROM turns WHERE owner_id=$1 AND source_id LIKE 'activity-check:'||$2||'%' ORDER BY created_at,id",
+                "SELECT id,source,background,prompt,started_at FROM turns WHERE owner_id=$1 AND source_id LIKE 'activity-check:'||$2||'%' ORDER BY created_at,id",
                 [ownerId, connectionId],
               )
             ).rows;
@@ -2403,7 +2403,6 @@ test(
             for (const ignore of ignored) assert.deepEqual(await checks(ignore.connectionId), []);
             assert.equal(first.source, 'event');
             assert.equal(first.background, true);
-            assert.equal(first.read_only, false);
             for (const check of await checks()) await waitFor(settled(check.id));
             const request = quietInstructions.get(first.id) as {
               mode: string;
