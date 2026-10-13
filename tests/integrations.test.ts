@@ -11,7 +11,7 @@ import Fastify from 'fastify';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
-import type { DiscoveredOAuthState } from '../src/ports/discovered.ts';
+import { DiscoveredSignInRequired, type DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
   IntegrationInboxCursorExpired,
@@ -1844,9 +1844,16 @@ test(
         },
         finish: async (_endpoint, saved) => ({
           ...saved,
-          tokens: { access_token: 'synthetic-private-token', token_type: 'Bearer' },
+          tokens: {
+            access_token: 'synthetic-private-token',
+            refresh_token: 'synthetic-private-refresh',
+            token_type: 'Bearer',
+          },
+          expiresAt: Date.now() - 1000,
         }),
-        refresh: async () => assert.fail('No refresh is expected.'),
+        refresh: async () => {
+          throw new DiscoveredSignInRequired();
+        },
       },
       resumeConnection: async (turnId, service) => {
         resumed.push({ turnId, service });
@@ -1919,9 +1926,33 @@ test(
     assert.equal(new URL(callback.headers.location!).searchParams.get('connection'), 'continued');
     assert.deepEqual(resumed, [{ turnId: turn.turnId, service: 'Linear' }]);
     assert.deepEqual(await status(), { completed: [hash], apps: [] });
+    const [linear] = await discovered.list();
+    assert.equal(linear.status, 'connected');
+    await assert.rejects(
+      service.execute(ownerId, 'CONNECTED_MCP_CALL', {
+        connectionId: linear.connectionId,
+        pathId: linear.accessPaths![0].id,
+        tool: 'list_issues',
+      }),
+      { statusCode: 409 },
+    );
+    const expired = (await service.list()).find(
+      (item) => item.connectionId === linear.connectionId,
+    );
+    assert.equal(expired?.status, 'disconnected');
+    assert.equal(expired?.canReconnect, true);
+    const again = await app.inject({
+      method: 'POST',
+      url: '/api/apps/linear/connect',
+      payload: { returnTo: 'apps', connectionId: linear.connectionId },
+    });
+    assert.equal(again.statusCode, 200, again.body);
+    await app.inject({
+      url: `/api/apps/callback?state=${new URL(again.json().url).searchParams.get('state')}&code=fixture-code`,
+    });
     assert.deepEqual(
-      (await discovered.list()).map(({ slug, status }) => ({ slug, status })),
-      [{ slug: 'linear', status: 'connected' }],
+      (await discovered.list()).map(({ connectionId, status }) => ({ connectionId, status })),
+      [{ connectionId: linear.connectionId, status: 'connected' }],
     );
     f.session.search = async () => ({
       tools: { NOTION_SEARCH: {}, LINEAR_LIST_ISSUES: {}, GMAIL_LIST_LABELS: {} },

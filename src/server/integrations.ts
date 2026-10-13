@@ -1611,11 +1611,21 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           })
           .strict()
           .parse(request.body ?? {});
-        if (officialMcp.has(request.params.slug))
-          return (
-            options.discovered?.signIn(request.params.slug) ??
-            Promise.reject(new IntegrationError('Discovered connections are unavailable.', 503))
+        if (officialMcp.has(request.params.slug)) {
+          if (!options.discovered)
+            throw new IntegrationError('Discovered connections are unavailable.', 503);
+          const expired = (await options.discovered.list()).some(
+            (entry) =>
+              entry.connectionId === input.connectionId &&
+              entry.slug === request.params.slug &&
+              entry.status === 'disconnected',
           );
+          return options.discovered.signIn(
+            request.params.slug,
+            undefined,
+            expired ? input.connectionId : undefined,
+          );
+        }
         const discovered = input.connectionId
           ? (await options.discovered?.list())?.some(
               (entry) =>
