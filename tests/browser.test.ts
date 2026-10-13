@@ -1632,6 +1632,56 @@ test('at the browser cap only a browser idle past the window and not held makes 
   }
 });
 
+test('Stop ends a browser slot wait queued behind a slow close and leaves no phantom browser', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-slot-stop-'));
+  const fixture = stagedLoginBrowser();
+  const closing = deferred();
+  let slowClose = false;
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    maxLiveSessions: 1,
+    evictIdleMs: 1000,
+    slotWaitMs: 1000,
+    onDaemonCommand: async (command) => {
+      if (slowClose && command.action === 'close') await closing.promise;
+    },
+  });
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
+  const settle = (pending: Promise<unknown>) =>
+    Promise.race([
+      pending.then(
+        () => 'opened',
+        (error: Error) => error.name,
+      ),
+      delay(2000).then(() => 'still waiting'),
+    ]);
+  try {
+    await open('idle');
+    await delay(1100);
+    slowClose = true;
+    const stop = new AbortController();
+    const evicting = open('evicting', stop.signal);
+    await delay(100);
+    const queued = open('queued', stop.signal);
+    await delay(100);
+    stop.abort();
+    assert.deepEqual(await Promise.all([settle(evicting), settle(queued)]), [
+      'AbortError',
+      'AbortError',
+    ]);
+    closing.resolve();
+    await delay(200);
+    await open('next');
+    assert.deepEqual([...fixture.pages.keys()], ['next']);
+  } finally {
+    closing.resolve();
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('a browser handoff needs an open page, so Pi reopens it instead of handing over nothing', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-page-'));
   const replies: string[] = [];
