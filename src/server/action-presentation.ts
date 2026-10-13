@@ -1,4 +1,3 @@
-import { actionPayload, sentPath } from '../shared/action-effect.ts';
 import type { TrustReason } from './trust.ts';
 
 const labels: Record<string, string> = {
@@ -71,6 +70,19 @@ function leaves(value: unknown, path: string, found: Array<[string, string]>) {
     for (const [key, item] of Object.entries(value))
       leaves(item, path ? `${path} › ${label(key)}` : label(key), found);
   return found;
+}
+
+function actionPayload(action: string, args: Record<string, unknown>) {
+  if (action === 'CONNECTED_HTTP')
+    return String(args.method ?? 'GET').toUpperCase() === 'GET' ? undefined : args.body;
+  if (action === 'CONNECTED_MCP_CALL') return args.input;
+  if (action === 'CONNECTED_CLI') return undefined;
+  return args;
+}
+
+function sentPath(path: string) {
+  const url = new URL(`./${path.replace(/^\/+/, '')}`, 'http://request.invalid/');
+  return `${url.pathname}${url.search}`;
 }
 
 function argument(value: string) {

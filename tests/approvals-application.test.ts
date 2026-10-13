@@ -44,10 +44,19 @@ test(
       string,
       { tool?: string; action: string; args: Record<string, unknown> }
     >();
+    const batches = new Map<
+      string,
+      { subagents: boolean; calls: Array<{ action: string; args: Record<string, unknown> }> }
+    >();
+    const parts = new Map<string, { action: string; args: Record<string, unknown> }>();
+    let partsWaiting = 0;
+    let partsArrived = () => {};
+    let partsReady = Promise.resolve();
     let steering:
       { entered(turnId: string): void; wait: Promise<void>; messages: string[] } | undefined;
     const ids: string[] = [];
     const asked = new Set<string>();
+    const cleared = new Set<string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -62,6 +71,36 @@ test(
               abort() {},
               dispose() {},
               async prompt(text) {
+                const tool = (name: string) => options.tools.find((item) => item.name === name)!;
+                const part = parts.get(
+                  /one part of the owner's request: (\S+)/.exec(text)?.[1] ?? '',
+                );
+                if (part) {
+                  if (--partsWaiting === 0) partsArrived();
+                  await partsReady;
+                  await tool('apps')
+                    .execute(part)
+                    .catch(() => {});
+                  return;
+                }
+                const batch =
+                  phase === 0
+                    ? batches.get(
+                        JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
+                          .currentInstruction,
+                      )
+                    : undefined;
+                if (batch) {
+                  await Promise.allSettled(
+                    batch.calls.map((call, index) => {
+                      if (!batch.subagents) return tool('apps').execute(call);
+                      const title = `${options.turnId}-${index}`;
+                      parts.set(title, call);
+                      return tool('delegate').execute({ title, instruction: 'Run this part.' });
+                    }),
+                  );
+                  return;
+                }
                 if (held) {
                   held.entered(options.turnId);
                   await held.wait;
@@ -114,10 +153,17 @@ test(
                 }
               : task === 'review'
                 ? {
-                    run: asked.has(
-                      (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
-                        ?.text ?? '',
-                    ),
+                    run:
+                      asked.has(
+                        (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                          ?.text ?? '',
+                      ) ||
+                      cleared.has(
+                        String(
+                          (input as { action?: { arguments?: { recipient_email?: unknown } } })
+                            .action?.arguments?.recipient_email,
+                        ),
+                      ),
                   }
                 : undefined,
         },
@@ -264,6 +310,94 @@ test(
         const text = result.content.map((part) => ('text' in part ? part.text : '')).join('');
         assert.match(text, /GMAIL_FETCH_EMAILS/);
         assert.equal((await approvalsFor(turn)).length, 0);
+      });
+
+      await t.test(
+        'parallel app calls in one turn open one confirmation, in a batch or across subagents',
+        async () => {
+          const sends = () =>
+            integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length;
+          for (const subagents of [false, true]) {
+            partsWaiting = 2;
+            partsReady = new Promise<void>((resolve) => {
+              partsArrived = resolve;
+            });
+            const text = `Synthetic parallel sends ${randomUUID()}`;
+            batches.set(text, {
+              subagents,
+              calls: ['first', 'second'].map((name) => ({
+                action: 'GMAIL_SEND_EMAIL',
+                args: {
+                  recipient_email: `${name}@example.test`,
+                  subject: 'Synthetic invoices',
+                  body: 'Synthetic content.',
+                },
+              })),
+            });
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            await waitFor(turn, 'waiting');
+            const cards = await approvalsFor(turn);
+            assert.deepEqual(
+              cards.map((card) => card.status),
+              ['pending'],
+            );
+            assert.equal(
+              (
+                await pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+                  turn,
+                ])
+              ).rowCount,
+              1,
+            );
+            assert.equal(sends(), 0);
+            const declined = await request('POST', '/api/messages', {
+              text: 'No',
+              replyToMessageId: cards[0].confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(declined.statusCode, 200, declined.body);
+            await waitFor(declined.json().turnId, 'succeeded');
+          }
+        },
+      );
+
+      await t.test('an allowed send issued after one that asks never runs', async () => {
+        cleared.add('allowed@example.test');
+        const text = `Synthetic ordered sends ${randomUUID()}`;
+        batches.set(text, {
+          subagents: false,
+          calls: ['asked', 'allowed'].map((name) => ({
+            action: 'GMAIL_SEND_EMAIL',
+            args: {
+              recipient_email: `${name}@example.test`,
+              subject: 'Synthetic invoices',
+              body: 'Synthetic content.',
+            },
+          })),
+        });
+        const response = await request('POST', '/api/messages', { text });
+        assert.equal(response.statusCode, 200, response.body);
+        const turn = response.json().turnId as string;
+        await waitFor(turn, 'waiting');
+        const cards = await approvalsFor(turn);
+        assert.deepEqual(
+          cards.map((card) => [card.status, card.args.recipient_email]),
+          [['pending', 'asked@example.test']],
+        );
+        assert.equal(
+          integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length,
+          0,
+        );
+        const declined = await request('POST', '/api/messages', {
+          text: 'No',
+          replyToMessageId: cards[0].confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(declined.statusCode, 200, declined.body);
+        await waitFor(declined.json().turnId, 'succeeded');
+        cleared.clear();
       });
 
       await t.test(

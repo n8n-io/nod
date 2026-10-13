@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
@@ -8,17 +9,15 @@ import type {
   AgentSession,
   AgentTool,
   AgentToolResult,
-  PromptSnapshot,
   RuntimeContext,
+  RuntimeObservation,
   RuntimeResult,
   SkillLibrary,
 } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
-import { actionEffect } from '../shared/action-effect.ts';
 import { createBrowserFlows } from './browser-flows.ts';
-import { createObservationQueue } from './observations.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
@@ -36,7 +35,8 @@ const parallelTools = new Set([
   'apps',
   'manage_personal_context',
 ]);
-const mixedTools = new Set(['apps', 'manage_personal_context']);
+const orderedTools = new Set(['apps', 'manage_personal_context']);
+const admissions = new AsyncLocalStorage<(asks: boolean) => Promise<void>>();
 const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -87,18 +87,6 @@ function allowedReadOnly(name: string, params: unknown) {
   return rule === true || rule?.includes(String((params as { action?: unknown })?.action)) === true;
 }
 
-function readCall(name: string, params: unknown) {
-  if (name !== 'apps') return allowedReadOnly(name, params);
-  const { action, args } = params as { action?: unknown; args?: unknown };
-  return (
-    typeof action === 'string' &&
-    actionEffect(
-      action,
-      args && typeof args === 'object' ? (args as Record<string, unknown>) : {},
-    ) === 'read'
-  );
-}
-
 function textResult(value: unknown): AgentToolResult {
   return {
     content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }],
@@ -127,9 +115,8 @@ export function createAgentRuntime(dependencies: {
   computer: Computer;
   workspace: Workspace;
   skills?: SkillLibrary;
-  observationTimeoutMs?: number;
-  withTool?<T>(turnId: string, toolCallId: string, toolName: string, action: () => T): T;
   redactError?(text: string): string;
+  observe?(turnId: string, event: RuntimeObservation): void;
 }) {
   const { agent, computer } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -166,17 +153,10 @@ export function createAgentRuntime(dependencies: {
     let streamedText = '';
     let streamSubmitted = false;
     const activeToolCalls = new Set<Promise<unknown>>();
-    const observations = createObservationQueue({
-      observe: context.observe,
-      signal,
-      timeoutMs: dependencies.observationTimeoutMs,
-    });
-    const promptCaptures = createObservationQueue({
-      observe: context.inspectPrompt,
-      signal,
-      timeoutMs: dependencies.observationTimeoutMs,
-    });
-    const observe = observations.record;
+    const observe = (event: RuntimeObservation) => {
+      if (!signal.aborted || (event.type === 'tool_end' && event.status === 'cancelled'))
+        dependencies.observe?.(context.turnId, event);
+    };
     const children = new Set<AgentSession>();
     const abortSession = () => {
       for (const child of [session, ...children])
@@ -285,31 +265,15 @@ export function createAgentRuntime(dependencies: {
             finishedAt: new Date().toISOString(),
             durationMs: performance.now() - started,
           });
-        const personalAction = String((params as { action?: unknown })?.action);
-        const memoryAction =
-          name === 'manage_personal_context' && personalAction.startsWith('memory_');
-        const catalogResult = name === 'manage_apps' && personalAction === 'discover';
-        const observedInput = memoryAction
-          ? { action: (params as { action?: unknown }).action, args: '[private memory omitted]' }
-          : name === 'browser' &&
-              params &&
-              typeof params === 'object' &&
-              ['fill', 'type', 'accept_dialog'].includes(
-                String((params as { action?: unknown }).action),
-              )
-            ? { ...params, text: '[redacted]' }
-            : name === 'browser_flow' && params && typeof params === 'object'
-              ? (params as { action?: unknown }).action === 'save'
-                ? { action: 'save', flow: '[redacted]' }
-                : { ...params, query: '[redacted]', inputs: '[redacted]' }
-              : params;
-        await observe({
+        observe({
           type: 'tool_start',
           id,
           name,
-          input: observedInput,
+          input: params,
           startedAt: new Date().toISOString(),
         });
+        const catalogResult =
+          name === 'manage_apps' && (params as { action?: unknown })?.action === 'discover';
         let result: AgentToolResult;
         try {
           assertActive();
@@ -317,13 +281,8 @@ export function createAgentRuntime(dependencies: {
           await pendingReplies;
           assertActive();
           await context.emit('tool_start', label);
-          const executeCurrent = () => {
-            assertActive();
-            return execute();
-          };
-          const output = await (dependencies.withTool
-            ? dependencies.withTool(context.turnId, id, name, executeCurrent)
-            : executeCurrent());
+          assertActive();
+          const output = await execute();
           signal.throwIfAborted();
           if (!stopped) await context.emit('tool_complete', label);
           result = isToolResult(output) ? output : textResult(output);
@@ -333,10 +292,7 @@ export function createAgentRuntime(dependencies: {
             (delimitedTools.has(name) || catalogResult)
           )
             result = delimit(name, result);
-          await end({
-            status: 'succeeded',
-            ...(['sign_in', 'browser_flow'].includes(name) || memoryAction ? {} : { output }),
-          });
+          end({ status: 'succeeded', output });
         } catch (error) {
           if (!stopped) await context.emit('tool_failed', label).catch(() => {});
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
@@ -347,7 +303,7 @@ export function createAgentRuntime(dependencies: {
               : (dependencies.redactError ?? String)(
                   browserFailure ?? (error instanceof Error ? error.message : String(error)),
                 );
-          await end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
+          end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
             !signal.aborted &&
             !stopped &&
@@ -380,15 +336,22 @@ export function createAgentRuntime(dependencies: {
             actionSignal,
           ),
       };
-      let exclusive = Promise.resolve();
-      const inTurn = (name: string, params: unknown, run: () => Promise<AgentToolResult>) => {
-        if (!mixedTools.has(name) || readCall(name, params)) return run();
-        const next = exclusive.then(run);
-        exclusive = next.then(
-          () => {},
-          () => {},
-        );
-        return next;
+      let decided = Promise.resolve(false);
+      const admission = () => {
+        const earlier = decided;
+        let decide!: (asks: boolean) => void;
+        const own = new Promise<boolean>((resolve) => {
+          decide = resolve;
+        });
+        decided = Promise.all([earlier, own]).then(([before, asks]) => before || asks);
+        return {
+          decide,
+          admit: async (asks: boolean) => {
+            decide(asks);
+            if (await earlier)
+              throw new Error("This turn is waiting for the owner's answer. Ask again after it.");
+          },
+        };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
         ottoTools(
@@ -406,7 +369,8 @@ export function createAgentRuntime(dependencies: {
               (browserTools.has(name) || handsOverBrowser(name, params))
             )
               await take();
-            return inTurn(name, params, () =>
+            const gate = orderedTools.has(name) ? admission() : undefined;
+            const run = () =>
               guard(name, params, async () => {
                 if (!Value.Check(parameters, params))
                   throw new Error('The tool arguments do not match its schema.');
@@ -415,13 +379,19 @@ export function createAgentRuntime(dependencies: {
                     throw new Error('Open the page in your browser before handing it to the user.');
                   });
                 return execute(params);
-              }),
-            );
+              });
+            return gate ? admissions.run(gate.admit, run).finally(() => gate.decide(false)) : run();
           },
         }));
       const system = systemPrompt(workspace, dependencies.skills);
       const shared = {
-        context,
+        context: {
+          ...context,
+          integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
+            context.integration(action, args, callSignal, admissions.getStore()),
+          manage: (action: string, args: Record<string, unknown>) =>
+            context.manage(action, args, admissions.getStore()),
+        },
         computer: browser,
         reply,
         invite: (text: string) => deliverReply(text),
@@ -472,7 +442,6 @@ export function createAgentRuntime(dependencies: {
           runTool: guard,
           shouldStop: () => stopped,
           onEvent: (event) => {
-            if (event.type === 'model_usage') void observe(event);
             if (event.type === 'final') answer = event.text;
           },
         });
@@ -496,25 +465,8 @@ export function createAgentRuntime(dependencies: {
       const tools = bind({ ...shared, browserId, delegate }, async () => {
         browsed = true;
       });
-      const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
-      const instruct = (
-        instruction: string,
-        imageCount: number,
-        reason: PromptSnapshot['reason'],
-        resumed: boolean,
-      ) => {
-        const currentInstruction = `${currentUserTime(context.timeZone)}\n${instruction}`;
-        void promptCaptures.record({
-          id: randomUUID(),
-          system: inspectedSystem,
-          instruction: currentInstruction,
-          resumed,
-          imageCount,
-          reason,
-          createdAt: new Date().toISOString(),
-        });
-        return currentInstruction;
-      };
+      const instruct = (instruction: string) =>
+        `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
       const opening = agent.open({
         threadId,
@@ -530,11 +482,8 @@ export function createAgentRuntime(dependencies: {
         nextMessages:
           takeMessages &&
           (async () =>
-            (await takeMessages()).map((message) =>
-              instruct(steeredInstruction(message), 0, 'steer', true),
-            )),
+            (await takeMessages()).map((message) => instruct(steeredInstruction(message)))),
         onEvent: (event) => {
-          if (event.type === 'model_usage') void observe(event);
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
@@ -589,10 +538,7 @@ export function createAgentRuntime(dependencies: {
           omittedImages.add(attachment.path);
         }
       }
-      await session!.prompt(
-        instruct(firstInstruction(context, resumed, omittedImages), images.length, 'user', resumed),
-        images,
-      );
+      await session!.prompt(instruct(firstInstruction(context, resumed, omittedImages)), images);
       await pendingReplies;
       signal.throwIfAborted();
       if (modelFailed)
@@ -614,7 +560,6 @@ export function createAgentRuntime(dependencies: {
           });
       } finally {
         await Promise.allSettled([...activeToolCalls]);
-        await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
         if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard(browserId).catch(() => {});
@@ -625,11 +570,6 @@ export function createAgentRuntime(dependencies: {
 
   return {
     runTurn,
-    status: () => ({
-      browser: computer.status(),
-      workspace: dependencies.workspace.status(),
-      activeTurns: activeTurns.size,
-    }),
     dispose: () => {
       disposed = true;
       disposal ??= (async () => {

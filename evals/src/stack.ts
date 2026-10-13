@@ -9,12 +9,12 @@ import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import type { IntegrationProvider } from '../../src/ports/integrations.ts';
-import type { RuntimeObservation } from '../../src/ports/agent.ts';
 import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
 import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
 import { accessCookie, accessKey } from '../../src/server/access.ts';
+import { createCapture, type Observation } from './capture.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
@@ -81,7 +81,7 @@ export interface Stack {
   pool: pg.Pool;
   bossSchema: string;
   sessionRoot: string;
-  observations: Array<{ turnId: string; event: RuntimeObservation }>;
+  observations: Array<{ turnId: string; event: Observation }>;
   prompts: Array<{ turnId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
@@ -296,18 +296,18 @@ export async function startStack(options: {
       dataRoot: join(directory, '.local'),
       container: browserContainer,
     });
-    const observations: Stack['observations'] = [];
-    const prompts: Stack['prompts'] = [];
+    const capture = createCapture();
+    const { observations, prompts } = capture;
     application = await createApplication({
-      observe: (turnId, event) => observations.push({ turnId, event }),
-      inspectPrompt: (turnId, snapshot) =>
-        prompts.push({ turnId, instruction: snapshot.instruction }),
-      agent: createPiAgent({
-        provider: model.provider,
-        model: model.name,
-        apiKey: model.apiKey,
-        sessionRoot,
-      }),
+      observe: capture.observe,
+      agent: capture.agent(
+        createPiAgent({
+          provider: model.provider,
+          model: model.name,
+          apiKey: model.apiKey,
+          sessionRoot,
+        }),
+      ),
       computer,
       workspace: createDockerWorkspace({ container, workspaceRoot }),
       integrations: options.integrations,

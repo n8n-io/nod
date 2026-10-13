@@ -40,7 +40,7 @@ import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import type { runProcess } from '../src/providers/process.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { inspectToolCatalog, rootObject } from '../src/runtime/tools.ts';
+import { rootObject, toolDefinitions } from '../src/runtime/tools.ts';
 import { Type } from '@sinclair/typebox';
 import { createBrowserFlows } from '../src/runtime/browser-flows.ts';
 import { createBrowserFixture as createAgentBrowserComputer } from './browser-fixture.ts';
@@ -452,10 +452,6 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     },
   });
   try {
-    assert.deepEqual(
-      agent.nativeTools?.map((tool) => tool.name),
-      nativeNames,
-    );
     const session = await agent.open({
       threadId: randomUUID(),
       turnId: randomUUID(),
@@ -2139,80 +2135,6 @@ test('a subagent that needs the owner pauses the whole turn', async (t) => {
   }
 });
 
-test('stalled observations release active tasks on cancellation and disposal', async (t) => {
-  for (const method of ['cancel', 'dispose'] as const) {
-    await t.test(method, async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'otto-stalled-observer-'));
-      const controller = new AbortController();
-      let entered!: () => void;
-      const observed = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let rejectObservation!: (error: Error) => void;
-      const stalled = new Promise<void>((_resolve, reject) => {
-        rejectObservation = reject;
-      });
-      let executed = false;
-      const runtime = createAgentRuntime({
-        agent: {
-          open: async (input) => ({
-            resumed: false,
-            abort: () => {},
-            dispose: () => {},
-            prompt: async () => {
-              await input.tools
-                .find((tool) => tool.name === 'apps')!
-                .execute({ action: 'FIXTURE_ACTION', args: {} });
-              executed = true;
-            },
-          }),
-          dispose: () => {},
-        },
-        computer: fakeComputer(),
-        workspace: fakeWorkspace(),
-      });
-      const running = runtime
-        .runTurn({
-          ...context(directory),
-          signal: controller.signal,
-          observe: async () => {
-            entered();
-            return stalled;
-          },
-          integration: async () => {
-            executed = true;
-            return {};
-          },
-        })
-        .then(
-          () => 'succeeded',
-          (error: unknown) => error,
-        );
-      try {
-        await observed;
-        const disposing =
-          method === 'dispose' ? runtime.dispose() : Promise.resolve(controller.abort());
-        const completed = await Promise.race([
-          Promise.all([running, disposing]),
-          setTimeout(250).then(() => null),
-        ]);
-        assert.ok(completed, 'A stalled optional observer blocked cancellation');
-        assert.match(String(completed[0]), /cancelled/);
-        assert.equal(runtime.status().activeTurns, 0);
-        assert.equal(executed, false);
-        rejectObservation(new Error('Late private observer failure'));
-        await setTimeout(0);
-      } finally {
-        rejectObservation(new Error('Fixture observer cleanup'));
-        controller.abort();
-        await running;
-        await runtime.dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    });
-  }
-});
-
 test('runtime shutdown drains tasks and releases every capability after adapter failures', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-disposal-failure-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -2265,7 +2187,6 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   assert.equal(runtime.dispose(), disposal);
   await assert.rejects(disposal, /Some runtime resources could not close/);
   await running;
-  assert.equal(runtime.status().activeTurns, 0);
   assert.equal(events.filter((value) => value === 'computer').length, 1);
   assert.equal(events.filter((value) => value === 'workspace').length, 1);
   assert.ok(events.indexOf('session') < events.indexOf('computer'));
@@ -2473,7 +2394,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
 });
 
 test('every Otto tool schema reaches a model provider as a root object with its properties', () => {
-  for (const tool of inspectToolCatalog()) {
+  for (const tool of Object.values(toolDefinitions)) {
     const schema = tool.parameters as { type?: string; anyOf?: unknown; properties?: object };
     assert.equal(schema.type, 'object', tool.name);
     assert.equal(schema.anyOf, undefined, tool.name);

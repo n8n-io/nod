@@ -876,6 +876,26 @@ test(
         }
       });
 
+      await t.test('a turn holds one open confirmation at a time', async () => {
+        const turn = await begin('Update my synthetic notification rule.');
+        const asks = await Promise.allSettled(
+          ['First synthetic rule', 'Second synthetic rule'].map((notificationRule) =>
+            approvals.request(
+              turn,
+              'OTTO_notification_preferences_update',
+              { notificationRule },
+              { allowed: false },
+            ),
+          ),
+        );
+        assert.deepEqual(asks.map((ask) => ask.status).sort(), ['fulfilled', 'rejected']);
+        assert.equal(await assistantMessages(turn.turnId), 1);
+        await finish(turn.turnId);
+        await db.pool.query("UPDATE approvals SET status='expired' WHERE turn_id=$1", [
+          turn.turnId,
+        ]);
+      });
+
       await t.test(
         'a change the checker matches to the request runs directly once without a confirmation',
         async () => {

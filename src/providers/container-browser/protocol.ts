@@ -205,7 +205,6 @@ export const browserRequest = z.discriminatedUnion('method', [
   z.object({ ...identity, method: z.literal('discard'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('dispose') }).strict(),
   z.object({ ...identity, method: z.literal('quiesce') }).strict(),
-  z.object({ ...identity, method: z.literal('status') }).strict(),
 ]);
 
 export type BrowserRequest = z.infer<typeof browserRequest>;

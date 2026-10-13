@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { appConfirmation, type Agent } from '../ports/agent.ts';
+import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/agent.ts';
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
@@ -116,7 +116,6 @@ import {
   startThreadWorkers,
   stopThreadWorkers,
   withTurnLock,
-  type ThreadDependencies,
   type TurnRef,
 } from './thread.ts';
 import { browserOf } from './turn-chain.ts';
@@ -132,8 +131,7 @@ import { cachedIcons, createLinkPreviews } from './link-previews.ts';
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
-  observe?: ThreadDependencies['observe'];
-  inspectPrompt?: ThreadDependencies['inspectPrompt'];
+  observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   prepareComputer?(): Promise<void>;
@@ -444,6 +442,7 @@ async function initializeApplication(
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
+    observe: adapters.observe,
   });
   const speech = createSpeech(adapters.speech);
   let memoryStore = adapters.objectStore;
@@ -568,7 +567,7 @@ async function initializeApplication(
                     threadId: provenance.threadId,
                     turnId: provenance.turnId,
                   });
-                  await ledger.action(provenance.turnId, action, args);
+                  await ledger.action(provenance.turnId, action);
                   return (
                     await saveIntegrationFiles(result, async (file) => {
                       const name = `${randomUUID()}-${basename(file.name)}`;
@@ -688,8 +687,6 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
-      observe: adapters.observe,
-      inspectPrompt: adapters.inspectPrompt,
       accountProfile,
       connectedApps: integrations.connectedApps,
       memoryContext: memory.context,
@@ -717,7 +714,7 @@ async function initializeApplication(
         return result;
       },
       speech,
-      manage: async (turn, action, args, provenance) => {
+      manage: async (turn, action, args, { admit, ...provenance }) => {
         if (
           [
             'notification_preferences_update',
@@ -735,8 +732,10 @@ async function initializeApplication(
           return approvals.request(turn, `OTTO_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            admit,
           });
         }
+        await admit?.(false);
         if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
           return withTurnLock(turn.turnId, () =>
             personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
@@ -830,6 +829,7 @@ async function initializeApplication(
           action === 'SEARCH_TOOLS'
             ? ({ confirm: false } as const)
             : await trust.check(turn, action, args);
+        await options.admit?.(verdict.confirm);
         if (hasWorkspaceFiles(args))
           args = await withTurnLock(turn.turnId, () =>
             integrations.prepare(ownerId, action, args, turn, options.signal),
@@ -860,7 +860,7 @@ async function initializeApplication(
             : result;
         }
         const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
-        await ledger.action(turn.turnId, action, args);
+        if (action !== 'SEARCH_TOOLS') await ledger.action(turn.turnId, action);
         return result;
       },
     });
@@ -879,7 +879,6 @@ async function initializeApplication(
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
     computer,
-    runtime,
     configuration: () =>
       configuration({
         provider: adapters.model.provider,

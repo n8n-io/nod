@@ -69,13 +69,7 @@ export interface AppDependencies {
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
-  computer?: Pick<
-    Computer,
-    'act' | 'screenshot' | 'control' | 'view' | 'status' | 'screenStatus' | 'discard'
-  >;
-  runtime?: {
-    status(): { browser: string; workspace: string; activeTurns?: number };
-  };
+  computer?: Pick<Computer, 'act' | 'screenshot' | 'control' | 'view' | 'screenStatus' | 'discard'>;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;

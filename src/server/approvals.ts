@@ -160,11 +160,18 @@ export async function createApprovals(
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { allowed?: boolean; question?: string; sourceMessageId?: string | null } = {},
+    options: {
+      allowed?: boolean;
+      question?: string;
+      sourceMessageId?: string | null;
+      admit?: (asks: boolean) => Promise<void>;
+    } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded) throw new Error('The action has no arguments to save.');
     const snapshot = JSON.parse(encoded) as Record<string, unknown>;
+    const allowed = options.allowed === true;
+    await options.admit?.(!allowed);
     const proposal = await withTurnLock(turn.turnId, async (client) => {
       const current = await turnRow(client, turn.turnId);
       if (!current || current.thread_id !== turn.threadId)
@@ -235,6 +242,16 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
+      if (
+        !allowed &&
+        (
+          await client.query(
+            "SELECT 1 FROM approvals WHERE turn_id=$1 AND owner_id=$2 AND status='pending'",
+            [turn.turnId, ownerId],
+          )
+        ).rowCount
+      )
+        throw conflict('This turn is already waiting for an answer. Ask again after it.');
       if (background) {
         const pending = (
           await client.query(
@@ -254,7 +271,7 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      const direct = options.allowed === true;
+      const direct = allowed;
       const id = randomUUID();
       let targetTitle: string | undefined;
       if (!direct && typeof snapshot.id === 'string') {

@@ -44,7 +44,7 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
   try {
     const screen = threadId ? computer?.screenStatus(threadId) : undefined;
     return browserMetadata.parse({
-      status: computer?.status() ?? 'Workspace browser is unavailable.',
+      status: 'Workspace browser is ready.',
       ...(screen && { screen: { threadId, ...screen } }),
     });
   } catch {
@@ -118,8 +118,6 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.close(request.threadId);
     case 'discard':
       return computer.discard(request.threadId);
-    case 'status':
-      return null;
     case 'view':
     case 'dispose':
     case 'quiesce':

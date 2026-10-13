@@ -153,7 +153,6 @@ export interface Computer {
   close(threadId: string): Promise<void>;
   discard(threadId: string): Promise<void>;
   dispose(): Promise<void>;
-  status(): string;
 }
 export interface WorkspaceExecOptions {
   input?: string;
@@ -194,6 +193,5 @@ export interface Workspace {
     purpose?: 'attachment' | 'publication',
   ): Promise<Uint8Array>;
   open(input: { threadId: string; workspacePath: string; signal: AbortSignal }): WorkspaceSession;
-  status(): string;
   dispose(): void | Promise<void>;
 }

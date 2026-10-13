@@ -1,6 +1,6 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { appConfirmation, type AgentToolMetadata, type SkillLibrary } from '../ports/agent.ts';
+import { appConfirmation, type SkillLibrary } from '../ports/agent.ts';
 import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
 import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
@@ -666,10 +666,4 @@ export function ottoTools(
       return context.createAudio(p.text);
     }),
   ];
-}
-
-export function inspectToolCatalog(): AgentToolMetadata[] {
-  return Object.values(toolDefinitions).map(({ name, description, parameters }) =>
-    structuredClone({ name, description, parameters }),
-  );
 }

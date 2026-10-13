@@ -11,13 +11,7 @@ import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { Artifact, MessageReaction } from '../shared/contracts.ts';
-import type {
-  BrowserConnectionRequest,
-  PromptSnapshot,
-  RuntimeContext,
-  RuntimeObservation,
-  RuntimeResult,
-} from '../ports/agent.ts';
+import type { BrowserConnectionRequest, RuntimeContext, RuntimeResult } from '../ports/agent.ts';
 import { appConfirmation } from '../ports/agent.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import { defaultPreferences, isQuietTime } from './preferences.ts';
@@ -94,8 +88,6 @@ export interface ThreadDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   spendingLimitReached?: () => Promise<boolean>;
-  observe?: (turnId: string, event: RuntimeObservation) => void;
-  inspectPrompt?: (turnId: string, snapshot: PromptSnapshot) => void;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
@@ -120,7 +112,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { signal: AbortSignal },
+    options: { signal: AbortSignal; admit?: (asks: boolean) => Promise<void> },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'discover' | 'connect' | 'propose',
@@ -144,7 +136,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    provenance: { sourceMessageId: string | null },
+    provenance: { sourceMessageId: string | null; admit?: (asks: boolean) => Promise<void> },
   ) => Promise<unknown>;
 }
 
@@ -889,9 +881,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     <A extends unknown[], R>(call: (...args: A) => Promise<R>) =>
     async (...args: A) => {
       await ensureCurrent();
-      const result = await call(...args);
-      await ensureCurrent();
-      return result;
+      return call(...args);
     };
   const post = async (
     text: string,
@@ -1016,7 +1006,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) => insertEvent(client, turnId, type, summary));
       refresh();
     };
-    const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
+    const { reactToMessage, connections, browserConnection } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
@@ -1040,8 +1030,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       workspacePath,
       signal,
       attachments,
-      observe: observe && (async (event) => observe(turnId, event)),
-      inspectPrompt: inspectPrompt && (async (snapshot) => inspectPrompt(turnId, snapshot)),
       emit,
       reply: (text, streamId, replyToMessageId) => post(text, [], streamId, replyToMessageId),
       waitForUser: (question) => post(question),
@@ -1083,10 +1071,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             paymentSetting: fenced((input: unknown) => dependencies.paymentSetting!(ref, input)),
           }
         : {}),
-      integration: fenced(async (action, args, callSignal?: AbortSignal) => {
+      integration: fenced(async (action, args, callSignal?: AbortSignal, admit?) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();
-        const result = await dependencies.integration(ref, action, args, { signal: operation });
+        const result = await dependencies.integration(ref, action, args, {
+          signal: operation,
+          admit,
+        });
         operation.throwIfAborted();
         if (result && typeof result === 'object' && appConfirmation in result) return result;
         const saved = await saveIntegrationFiles(result, (file) =>
@@ -1097,7 +1088,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ? { content: [{ type: 'text', text: JSON.stringify(value) }, ...saved.images] }
           : value;
       }),
-      manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
+      manage: fenced((action, args, admit) =>
+        dependencies.manage(ref, action, args, { sourceMessageId, admit }),
+      ),
       task: dependencies.task && fenced((input) => dependencies.task!(ref, input)),
       takeMessages:
         turn.background || turn.read_only

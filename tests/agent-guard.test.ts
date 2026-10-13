@@ -17,7 +17,6 @@ import type {
   AgentSessionOptions,
   AgentTool,
   RuntimeContext,
-  RuntimeObservation,
 } from '../src/ports/agent.ts';
 import { createSkillLibrary } from '../src/providers/pi/skills.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
@@ -37,7 +36,6 @@ async function fixture(
   overrides: Partial<RuntimeContext> = {},
   runtimeOptions: {
     agent?: Agent;
-    observationTimeoutMs?: number;
     computer?: Computer;
     workspace?: Workspace;
   } = {},
@@ -132,7 +130,6 @@ async function browserSessionFixture(
   browserConnection: NonNullable<RuntimeContext['browserConnection']>,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-session-contract-'));
-  const observed: RuntimeObservation[] = [];
   let returned: Array<{ toolCallId: string; isError: boolean; content: unknown }> = [];
   let step = 0;
   const agent = createPiAgent({
@@ -168,21 +165,8 @@ async function browserSessionFixture(
     },
   });
   try {
-    await fixture(
-      async () => {},
-      {
-        browserConnection,
-        observe: async (entry) => {
-          observed.push(entry);
-        },
-      },
-      { agent },
-    );
-    return {
-      returned,
-      observed,
-      ended: observed.filter((entry) => entry.type === 'tool_end'),
-    };
+    await fixture(async () => {}, { browserConnection }, { agent });
+    return returned;
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -197,7 +181,7 @@ test('browser session action fields fail before dispatch and a corrected save ca
   const requested: unknown[] = [];
   let opened = 0;
   let saved = 0;
-  const { returned, ended } = await browserSessionFixture(
+  const returned = await browserSessionFixture(
     [
       connect,
       { ...save, label: 'Synthetic account' },
@@ -227,14 +211,8 @@ test('browser session action fields fail before dispatch and a corrected save ca
     returned.map((result) => result.isError),
     [false, true, false, true, true, false],
   );
-  assert.deepEqual(
-    ended.map((entry) => entry.status),
-    ['succeeded', 'failed', 'succeeded', 'failed', 'failed', 'succeeded'],
-  );
-  for (const index of [1, 3, 4]) {
+  for (const index of [1, 3, 4])
     assert.match(JSON.stringify(returned[index].content), /Valid forms:/);
-    assert.equal(ended[index].output, undefined);
-  }
 });
 
 test('browser session rejections reach Pi as failures while sign-in continuation stays available', async () => {
@@ -253,7 +231,7 @@ test('browser session rejections reach Pi as failures while sign-in continuation
   ];
   const requested: unknown[] = [];
   let rejected = 0;
-  const { returned, observed, ended } = await browserSessionFixture(
+  const returned = await browserSessionFixture(
     [...codes.map(() => save), connect, use],
     async (request) => {
       requested.push(structuredClone(request));
@@ -270,23 +248,14 @@ test('browser session rejections reach Pi as failures while sign-in continuation
     returned.map((result) => result.isError),
     [true, true, true, true, false, false],
   );
-  assert.deepEqual(
-    ended.map((entry) => entry.status),
-    ['failed', 'failed', 'failed', 'failed', 'succeeded', 'succeeded'],
-  );
-  for (const entry of ended.slice(0, codes.length)) {
-    assert.equal(entry.output, undefined);
-    assert.ok(entry.error);
-  }
   const text = (index: number) => JSON.stringify(returned[index].content);
   assert.match(text(codes.length), /profile_opened/);
   assert.match(text(codes.length + 1), /needs_sign_in/);
   assert.equal(JSON.stringify(returned).includes(privateUrl), false);
   assert.equal(JSON.stringify(returned).includes(privateMarker), false);
-  assert.equal(JSON.stringify(observed).includes(privateMarker), false);
 });
 
-test('verification email codes stay out of app tool results, observations and workspace files', async () => {
+test('verification email codes stay out of app tool results and workspace files', async () => {
   const privateCodes = ['318742', '640193', '729461', '803527', '516294'];
   const encodedBody = Buffer.from(
     `<p>Your sign-in code is <b>${privateCodes[2]}</b>.</p>`,
@@ -373,7 +342,6 @@ test('verification email codes stay out of app tool results, observations and wo
     { data: { messages: mails, unrelated: 'ordinary '.repeat(6000) }, error: null },
   ];
   const returned: unknown[] = [];
-  const observed: RuntimeObservation[] = [];
   const saved: string[] = [];
   await fixture(
     async (tools) => {
@@ -386,14 +354,11 @@ test('verification email codes stay out of app tool results, observations and wo
           saved.push(text);
           return 'private-result.json';
         }),
-      observe: async (entry) => {
-        observed.push(entry);
-      },
     },
   );
   assert.equal(saved.length, 1);
-  assert.equal(observed.filter((entry) => entry.type === 'tool_end').length, 2);
-  for (const record of [...returned, ...observed, ...saved])
+  assert.equal(returned.length, 2);
+  for (const record of [...returned, ...saved])
     for (const code of [...privateCodes, encodedBody])
       assert.ok(!JSON.stringify(record).includes(code));
   const full = JSON.parse(saved[0]);
@@ -500,38 +465,34 @@ test('a read-only turn can load a trusted skill without changing the workspace',
   assert.equal(writes, 0);
 });
 
-test('app reads in one batch run together while app changes run one at a time in call order', async () => {
+test('an app call issued after one that asks never runs, while reads still run together', async () => {
   const events: string[] = [];
-  await fixture(
-    async (tools) => {
-      const apps = tools.get('apps')!;
-      assert.equal(apps.parallel, true);
-      await Promise.all(
-        [
-          ['GMAIL_FETCH_EMAILS', {}],
-          ['GMAIL_LIST_LABELS', {}],
-          ['GMAIL_CREATE_DRAFT', { subject: 'One' }],
-          ['NOTION_UPDATE_PAGE', { title: 'Two' }],
-        ].map(([action, args]) => apps.execute({ action, args })),
-      );
-    },
-    {
-      integration: async (action) => {
-        events.push(`start ${action}`);
-        await setTimeout(20);
-        events.push(`end ${action}`);
-        return { ok: true };
-      },
-    },
+  const integration: RuntimeContext['integration'] = async (action, _args, _signal, admit) => {
+    const asks = action === 'GMAIL_SEND_EMAIL';
+    await setTimeout(asks ? 30 : 0);
+    await admit?.(asks);
+    if (asks) return { [appConfirmation]: 'Send this email?' };
+    events.push(`start ${action}`);
+    await setTimeout(20);
+    events.push(`end ${action}`);
+    return { ok: true };
+  };
+  const batch = (actions: string[]) => async (tools: Map<string, AgentTool>) => {
+    await Promise.allSettled(
+      actions.map((action) => tools.get('apps')!.execute({ action, args: {} })),
+    );
+  };
+  const asked = await fixture(batch(['GMAIL_SEND_EMAIL', 'SLACK_SEND_MESSAGE']), { integration });
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.equal(events.length, 0);
+  await fixture(batch(['GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS']), { integration });
+  assert.ok(
+    events.indexOf('start GOOGLECALENDAR_LIST_EVENTS') < events.indexOf('end GMAIL_FETCH_EMAILS'),
   );
-  assert.ok(events.indexOf('start GMAIL_LIST_LABELS') < events.indexOf('end GMAIL_FETCH_EMAILS'));
-  assert.ok(events.indexOf('end GMAIL_CREATE_DRAFT') < events.indexOf('start NOTION_UPDATE_PAGE'));
 });
 
-test('saved memory reaches Pi but stays out of observations and prompt snapshots', async () => {
+test('saved memory reaches Pi in the owner context and through memory tools', async () => {
   const note = 'Prefers short synthetic reports.';
-  const observations: unknown[] = [];
-  const snapshots: unknown[] = [];
   const result = await fixture(
     async (tools) => {
       const found = await call(tools, 'manage_personal_context', {
@@ -543,19 +504,9 @@ test('saved memory reaches Pi but stays out of observations and prompt snapshots
     {
       memory: JSON.stringify({ preferences: [`short-reports: ${note}`] }),
       manage: async () => [{ text: note }],
-      observe: async (event) => {
-        observations.push(event);
-      },
-      inspectPrompt: async (snapshot) => {
-        snapshots.push(snapshot);
-      },
     },
   );
   assert.match(result.supplied.systemContext ?? '', /short synthetic reports/);
-  assert.ok(observations.length > 0);
-  assert.ok(snapshots.length > 0);
-  assert.doesNotMatch(JSON.stringify(observations), /short synthetic reports/);
-  assert.doesNotMatch(JSON.stringify(snapshots), /short synthetic reports/);
 });
 
 test('Pi gets the owner time zone in its turn message and sandbox, and an unset one is never guessed', async () => {
@@ -696,8 +647,11 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
     release = resolve;
   });
   await fixture(
-    async (tools) => {
-      const read = call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} });
+    async (tools, _emit, options) => {
+      const read = options.runTool('fetch_content', { urls: [] }, async () => {
+        await held;
+        return { content: [{ type: 'text' as const, text: injected }] };
+      });
       await call(tools, 'apps', {
         action: 'GMAIL_SEND_EMAIL',
         args: { recipient_email: 'stranger@example.test' },
@@ -705,14 +659,9 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
       release();
       readAfterPause = text(await read);
     },
-    {
-      integration: async (action) =>
-        action === 'GMAIL_SEND_EMAIL'
-          ? { [appConfirmation]: 'Send this email?' }
-          : held.then(() => ({ messages: [injected] })),
-    },
+    { integration: async () => ({ [appConfirmation]: 'Send this email?' }) },
   );
-  assert.match(readAfterPause, /^<untrusted_tool_result source="apps">/);
+  assert.match(readAfterPause, /^<untrusted_tool_result source="fetch_content">/);
 });
 
 test('reconnecting an app forwards the saved account and pauses at its sign-in link', async () => {
@@ -869,7 +818,6 @@ test('a chosen saved login reaches the credential broker without pausing the tur
 
 test('sign_in never returns a saved value to Pi and pauses for the owner when Otto asks first', async () => {
   const secret = 'synthetic-vault-password';
-  const observations: unknown[] = [];
   const input = {
     origin: 'https://example.test',
     label: 'Example',
@@ -887,27 +835,9 @@ test('sign_in never returns a saved value to Pi and pauses for the owner when Ot
         content: [{ type: 'text', text: 'Saved login entered.' }],
         details: {},
       });
-      await call(tools, 'browser', {
-        action: 'fill',
-        selector: '#search',
-        text: 'private fixture text',
-      });
-      await call(tools, 'browser', {
-        action: 'type',
-        selector: '#search',
-        text: 'private typed text',
-      });
     },
-    {
-      observe: async (event) => {
-        observations.push(event);
-      },
-      requestCredential: async () => ({ filled: true }),
-    },
+    { requestCredential: async () => ({ filled: true }) },
   );
-  assert.equal(JSON.stringify(observations).includes(secret), false);
-  assert.equal(JSON.stringify(observations).includes('private fixture text'), false);
-  assert.equal(JSON.stringify(observations).includes('private typed text'), false);
   const asked = await fixture(
     async (tools) => {
       await call(tools, 'sign_in', input);
