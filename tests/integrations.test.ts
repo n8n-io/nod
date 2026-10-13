@@ -3151,6 +3151,9 @@ test(
       (await f.pool.query("SELECT to_regclass('integration_sessions') AS name")).rows[0].name,
       null,
     );
+    for (let attempt = 0; attempt < 100 && !f.removed.includes('old-session'); attempt++)
+      await delay(10);
+    assert.ok(f.removed.includes('old-session'));
     assert.equal(
       (
         await f.pool.query('SELECT inbox_cursor FROM app_connections WHERE id=$1', [
