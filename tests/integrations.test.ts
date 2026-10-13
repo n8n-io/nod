@@ -1791,10 +1791,30 @@ test(
       [directId, ownerId],
     );
     await f.pool.query(
-      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES
-       ($1,'linear',$2,'direct'),($1,'notion','legacy-composio','fixture')`,
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,trigger_id) VALUES
+       ($1,'linear',$2,'direct',NULL),($1,'notion','legacy-composio','fixture','legacy-trigger')`,
       [ownerId, directId],
     );
+    let release = () => {};
+    const revoking = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const unsubscribe = f.provider.unsubscribe;
+    f.provider.unsubscribe = async (id) => {
+      await revoking;
+      await unsubscribe(id);
+    };
+    await createIntegrations(f.pool, {
+      ownerId,
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+    });
+    assert.equal((await f.pool.query('SELECT * FROM app_connections')).rowCount, 0);
+    assert.deepEqual(f.removed, []);
+    release();
+    for (let attempt = 0; attempt < 100 && f.removed.length < 2; attempt++) await delay(10);
+    assert.deepEqual(f.removed, ['legacy-trigger', 'legacy-composio']);
     const begun: Array<{ endpoint: string; scope?: string }> = [];
     const discovered = await createDiscoveredConnections(f.pool, {
       ownerId,
