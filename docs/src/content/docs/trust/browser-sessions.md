@@ -22,6 +22,8 @@ When a task needs the website, Otto opens the saved profile. It's the same permi
 
 Opening a profile doesn't prove it's still signed in, so Otto checks the page. If opening it lands on another website, such as a sign-in service, Vault shows **Sign-in needed** and a **Sign in again** button.
 
+A session opens in one browser at a time. While you're still signing in to it in the chat, other tasks can't open it, and they visit public pages without it.
+
 ## When the browser stays signed in
 
 | Situation                                      | What happens                                                                                                                                   |

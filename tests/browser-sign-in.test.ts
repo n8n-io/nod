@@ -41,10 +41,12 @@ test(
       }
       let cancelTurnId: string | undefined;
       let changeOrigin = false;
+      let held = false;
       const bindings: string[] = [];
       const removed: string[] = [];
       const computer = {
         async bindProfile(_threadId: string, profileId: string) {
+          if (held) throw Object.assign(new Error('Synthetic held profile'), { statusCode: 423 });
           bindings.push(profileId);
         },
         async act() {
@@ -160,6 +162,15 @@ test(
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [second.turnId]);
       cancelTurnId = undefined;
       page();
+      held = true;
+      assert.deepEqual(
+        await service.request(
+          { action: 'use', url: 'https://example.test/account', connectionId },
+          second,
+        ),
+        { status: 'rejected', code: 'browser_connection_busy' },
+      );
+      held = false;
       assert.equal(
         (
           await service.request(

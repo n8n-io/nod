@@ -238,7 +238,13 @@ export async function createBrowserConnections(
         (row.browser_id && row.browser_id !== browserOf(turn) && (await inUse(row.browser_id)))
       )
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-      await browser.bindProfile(browserOf(turn), row.profile_id);
+      try {
+        await browser.bindProfile(browserOf(turn), row.profile_id);
+      } catch (error) {
+        if ((error as { statusCode?: number }).statusCode === 423)
+          return { status: 'rejected' as const, code: 'browser_connection_busy' };
+        throw error;
+      }
       const observation = await browser.act(
         browserOf(turn),
         { action: 'open', url: address.href, ...launch },

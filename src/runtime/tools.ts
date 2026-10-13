@@ -329,7 +329,7 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens a saved profile after the same permission check as a sign-in, without verifying that it is still signed in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
+    'Browser profiles for website accounts the user signs in to; public pages need no profile, so open them with browser. connect {url, label?} opens a new private profile. use {url, connectionId} opens a saved profile after the same permission check as a sign-in, without verifying that it is still signed in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
       Type.Object(
         {
@@ -663,6 +663,10 @@ export function ottoTools(
           case 'browser_connection_unavailable':
             throw new Error(
               'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
+            );
+          case 'browser_connection_busy':
+            throw new Error(
+              'This browser profile is open in another task, waiting for the user to finish signing in. Open public pages with browser instead, or try again later.',
             );
           default:
             throw new Error(
