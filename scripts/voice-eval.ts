@@ -238,6 +238,22 @@ const workspace: Workspace = {
   dispose: () => {},
 };
 
+function profileMemory(profile: NonNullable<VoiceScenario['profile']>, memory = '{}') {
+  const index = JSON.parse(memory) as Record<string, string[]>;
+  const about = [
+    ['name', 'Name', profile.name],
+    ['location', 'Location', profile.location],
+    ['phone', 'Phone', profile.phone],
+  ].flatMap(([slug, label, value]) => (value ? [`${slug}: ${label}: ${value}`] : []));
+  return JSON.stringify({
+    ...index,
+    about: [...about, ...(index.about ?? [])],
+    ...(profile.preferences
+      ? { preferences: [`profile: ${profile.preferences}`, ...(index.preferences ?? [])] }
+      : {}),
+  });
+}
+
 async function runScenario(
   runtime: ReturnType<typeof createAgentRuntime>,
   scenario: VoiceScenario,
@@ -291,15 +307,15 @@ async function runScenario(
       text: item.text,
       createdAt: new Date(started - item.hoursAgo * 3_600_000),
     })),
-    personalContext: {
-      profile: scenario.profile ?? {
+    memory: profileMemory(
+      scenario.profile ?? {
         name: 'Maya Horak',
         location: 'Prague',
         phone: '',
         preferences: scenario.preferences ?? '',
       },
-    },
-    memory: scenario.memory,
+      scenario.memory,
+    ),
     workspacePath: directory,
     signal: AbortSignal.timeout(scenario.answer ? 90_000 : 240_000),
     ...(scenario.answer ? { limits: { maxToolCalls: 12, timeoutMs: 90_000 } } : {}),
@@ -410,7 +426,6 @@ async function runScenario(
       return record('task', input, task);
     },
     manage: async (action, input) => {
-      if (action === 'profile_get') return record(action, input, context.personalContext!.profile);
       if (action === 'history_search') return record(action, input, []);
       if (['memory_find', 'memory_read', 'schedule_list'].includes(action))
         return record(action, input, scenario.personalData?.[action] ?? []);

@@ -472,7 +472,7 @@ async function initializeApplication(
     await importMemoryFile(objects, join(dataRoot, 'objects', 'memory'));
     memoryStore = objects;
   }
-  const memory = createMemoryService({ pool, ownerId, store: memoryStore, curator });
+  const memory = createMemoryService({ pool, ownerId, store: memoryStore });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
     analytics: captureAnalytics,
@@ -752,7 +752,6 @@ async function initializeApplication(
       manage: async (turn, action, args, provenance) => {
         if (
           [
-            'profile_update',
             'notification_preferences_update',
             'schedule_create',
             'schedule_update',
@@ -766,20 +765,7 @@ async function initializeApplication(
           }
           return approvals.request(turn, `OTTO_${action}`, input, provenance);
         }
-        if (action === 'memory_save') {
-          const input = memory.validate(args);
-          if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
-            return { status: 'skipped', reason: 'unsupported_memory' };
-        }
-        if (
-          [
-            'memory_save',
-            'memory_forget',
-            'memory_learn',
-            'memory_control',
-            'profile_learn',
-          ].includes(action)
-        ) {
+        if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
           return withTurnLock(turn.turnId, () =>
             personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
           );
@@ -1150,6 +1136,7 @@ async function initializeApplication(
     app,
     runtime,
     personal,
+    memory,
     triage,
     integrations,
     vault,

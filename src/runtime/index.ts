@@ -69,7 +69,6 @@ const readOnlyTools: Record<string, true | string[]> = {
   browser_flow: ['list', 'get'],
   manage_apps: ['list', 'discover'],
   manage_personal_context: [
-    'profile_get',
     'notification_preferences_get',
     'history_search',
     'memory_find',

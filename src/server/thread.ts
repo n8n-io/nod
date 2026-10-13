@@ -795,7 +795,7 @@ type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, profile, preferences, account, memory, connectedApps, activityCheck] =
+  const [source, history, preferences, account, memory, connectedApps, activityCheck] =
     await Promise.all([
       sourceMessageId
         ? pool.query(
@@ -821,7 +821,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
         [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
       ),
-      pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
       pool.query(
         'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
         [ownerId],
@@ -840,7 +839,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
         attachments: message.reply_attachments,
       }
     : undefined;
-  const stored = profile.rows[0]?.data ?? {};
   const preference = preferences.rows[0];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
@@ -867,14 +865,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
       ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 20, timeoutMs: 300_000 } } : {}),
-      personalContext: {
-        profile: {
-          name: String(stored.name ?? ''),
-          location: String(stored.location ?? ''),
-          phone: String(stored.phone ?? ''),
-          preferences: String(stored.preferences ?? ''),
-        },
-      },
     },
   };
 }

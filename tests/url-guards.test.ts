@@ -562,15 +562,16 @@ test('approval messages preserve source URLs and render supplied markup as text'
     '**keep this literal**',
   ];
   const body = `See <${links[0]}>.\n${links.slice(1).join('\n')}\n${unsafe.join('\n')}`;
-  const args = { text: body };
-  const document = new JSDOM(render(actionConfirmation('OTTO_memory_save', args))).window.document;
+  const args = { prompt: body };
+  const document = new JSDOM(render(actionConfirmation('OTTO_schedule_create', args))).window
+    .document;
   assert.deepEqual(
     [...document.querySelectorAll('a')].map((anchor) => anchor.getAttribute('href')),
     links,
   );
   assert.ok(document.body.textContent?.includes(body));
   assert.equal(document.querySelector('script,img,iframe,form,strong,em'), null);
-  assert.equal(args.text, body);
+  assert.equal(args.prompt, body);
 });
 
 test('plain browser connection paths hide their token behind one fixed action', () => {

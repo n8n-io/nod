@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { AgentToolResult } from '../src/ports/agent.ts';
+import type { Preferences } from '../src/server/preferences.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -201,7 +202,9 @@ test(
       );
     }
     async function pendingPlan(action: string, args: Record<string, unknown>) {
-      const id = await propose('profile_update', { preferences: 'Synthetic pending plan fixture' });
+      const id = await propose('notification_preferences_update', {
+        notificationRule: 'Synthetic pending plan fixture',
+      });
       const [pending] = await approvalsFor(id);
       await pool.query('UPDATE approvals SET action=$2,args=$3 WHERE id=$1', [
         pending.id,
@@ -267,8 +270,8 @@ test(
         'a schedule cancellation steered into a confirmed turn uses the fresh owner request',
         async () => {
           const schedule = await reminder();
-          const proposed = await propose('profile_update', {
-            preferences: 'Synthetic confirmed preference',
+          const proposed = await propose('notification_preferences_update', {
+            notificationRule: 'Synthetic confirmed preference',
           });
           const [approval] = await approvalsFor(proposed);
           let enter!: (turnId: string) => void;
@@ -443,13 +446,13 @@ test(
             404,
           );
           assert.equal((await approvalsFor(id))[0].status, 'pending');
-          const legacyId = await pendingPlan('profile_update', {
-            preferences: 'Valid at proposal',
+          const legacyId = await pendingPlan('notification_preferences_update', {
+            notificationRule: 'Valid at proposal',
           });
           const [legacy] = await approvalsFor(legacyId);
           await pool.query('UPDATE approvals SET args=$2 WHERE id=$1', [
             legacy.id,
-            { preferences: 'Invalid historical payload', unexpected: true },
+            { notificationRule: 'Invalid historical payload', unexpected: true },
           ]);
           assert.equal(
             (
@@ -463,7 +466,8 @@ test(
           );
           assert.equal((await approvalsFor(legacyId))[0].status, 'pending');
           assert.notEqual(
-            (await application.personal.getProfile()).preferences,
+            ((await application.personal.manage('notification_preferences_get', {})) as Preferences)
+              .notificationRule,
             'Invalid historical payload',
           );
         },

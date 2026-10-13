@@ -30,7 +30,6 @@ import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
-import { areaEntries, digest } from '../src/server/memory-tree.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
@@ -1649,7 +1648,9 @@ test(
         assert.equal(context.signal.aborted, true);
         await assert.rejects(context.reply('late-reply-fixture'));
         await assert.rejects(context.emit('late-event-fixture', 'must not persist'));
-        await assert.rejects(context.manage('profile_update', { name: 'Injected' }));
+        await assert.rejects(
+          context.manage('notification_preferences_update', { notificationRule: 'Injected' }),
+        );
         const reads = integrationReads.length;
         await assert.rejects(context.integration('GMAIL_FETCH_EMAILS', {}));
         assert.equal(integrationReads.length, reads);
@@ -1960,12 +1961,6 @@ test(
               old.turnId,
             ])
           ).rows[0].id as string;
-          await personal.manage('profile_update', {
-            name: 'Fixture name',
-            location: 'Lisbon',
-            phone: '',
-            preferences: 'Concise',
-          });
           await db.pool.query(
             "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,$2,'Saved task','Fixture done','Fixture step')",
             [randomUUID(), ownerId],
@@ -2154,10 +2149,6 @@ test(
           assert.equal((await request('GET', '/api/schedules')).json().length, 1);
           assert.equal((await request('GET', '/api/vault')).json().length, 1);
           assert.equal(
-            ((await personal.manage('profile_get', {})) as { name: string }).name,
-            'Fixture name',
-          );
-          assert.equal(
             (await db.pool.query('SELECT account_id FROM app_connections')).rows[0].account_id,
             'saved-fixture-account',
           );
@@ -2174,7 +2165,6 @@ test(
           assert.equal(current.workspacePath, join(root, 'workspaces', freshThread));
           assert.notEqual(current.workspacePath, heldContext.workspacePath);
           assert.deepEqual(current.history, []);
-          assert.equal(current.personalContext?.profile.name, 'Fixture name');
           assert.equal(
             deltas.find((event) => event.turnId === held.turnId)?.threadId,
             firstThreadId,
@@ -2867,7 +2857,7 @@ test(
   },
 );
 
-const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => {
+const memoryFixture = async () => {
   const schema = `test_memory_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const root = await mkdtemp(join(tmpdir(), 'memory-test-'));
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -2878,10 +2868,9 @@ const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => 
   await pool.query(
     "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
   );
-  for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
   const store = createFilesystemObjectStore(root);
-  const memory = createMemoryService({ pool, ownerId, store, curator });
+  const memory = createMemoryService({ pool, ownerId, store });
   const post = async (
     text: string,
     options: { owner?: string; role?: string; at?: string; attachments?: string } = {},
@@ -2924,72 +2913,41 @@ test(
   async () => {
     const { pool, ownerId, store, root, post, memory, close } = await memoryFixture();
     try {
-      const first = await post('Keep progress reports short.');
-      const saved = await memory.save(
-        { area: 'preferences', text: 'Prefers short progress reports.' },
-        first,
-      );
-      assert.deepEqual(saved, {
-        path: 'preferences/prefers-short-progress-reports',
-        text: 'Prefers short progress reports.',
-        status: 'stated',
-      });
+      const short = 'Keep progress reports short.';
+      const first = await post(short);
+      const saved = await memory.learn({ area: 'preferences', quote: short }, first);
+      const slug = 'keep-progress-reports-short';
+      assert.deepEqual(saved, { path: `preferences/${slug}`, text: short, status: 'stated' });
       assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: ['prefers-short-progress-reports: Prefers short progress reports.'],
+        preferences: [`${slug}: ${short}`],
       });
       const reopened = createMemoryService({ pool, ownerId, store });
       assert.equal(
         ((await reopened.read({ path: saved.path })) as { text: string }).text,
         saved.text,
       );
-      const slug = 'prefers-short-progress-reports';
-      const correction = await post('Make progress reports detailed from now on.');
-      const detailed = 'Prefers detailed progress reports.';
+      const detailed = 'Make progress reports detailed from now on.';
+      const correction = await post(detailed);
       await assert.rejects(
-        reopened.save({ area: 'preferences', slug, text: detailed }, correction),
+        reopened.learn({ area: 'preferences', slug, quote: detailed }, correction),
         /needs a replacement/,
       );
-      await reopened.save({ area: 'preferences', slug, text: detailed, replace: true }, correction);
+      await reopened.learn(
+        { area: 'preferences', slug, quote: detailed, replace: true },
+        correction,
+      );
       assert.deepEqual(
         (await memory.view()).archive.map((entry) => [entry.path, entry.reason]),
         [[saved.path, 'superseded']],
       );
-      await assert.rejects(
-        memory.save(
-          { area: 'about', text: 'Prefers a private account.' },
-          { ...correction, turnId: randomUUID() },
-        ),
-        /current owned user message/,
-      );
-      const other = await post('A different owner likes long notes.', { owner: 'other-owner' });
-      await assert.rejects(
-        memory.save({ area: 'preferences', text: 'Likes long notes.' }, other),
-        /current owned user message/,
-      );
-      const secret = await post('I prefer email updates. Also reset my password on the store.');
-      await assert.rejects(
-        memory.save({ area: 'about', text: 'Store key is sk-fixturefixture1234.' }, secret),
-        /cannot be remembered/,
-      );
-      await assert.rejects(
-        memory.save(
-          { area: 'preferences', text: 'Prefers detailed progress reports please.' },
-          secret,
-        ),
-        /similar memory exists at preferences\/prefers-short-progress-reports/,
-      );
-      await memory.save({ area: 'preferences', text: detailed }, secret);
+      const repeated = await post(detailed);
+      await memory.learn({ area: 'preferences', quote: detailed }, repeated);
       assert.deepEqual(
         (await memory.load()).entries.find((entry) => entry.slug === slug)?.sources,
-        [correction.sourceMessageId, secret.sourceMessageId],
+        [correction.sourceMessageId, repeated.sourceMessageId],
       );
-      const approved = await memory.save(
-        { area: 'about', text: 'Lives in Lisbon.' },
-        { sourceMessageId: first.sourceMessageId, approved: true },
-      );
-      assert.equal(approved.path, 'about/lives-in-lisbon');
-      const tokyo = await memory.save(
-        { area: 'about', text: '我住在东京' },
+      const tokyo = await memory.learn(
+        { area: 'about', quote: '我住在东京' },
         await post('我住在东京'),
       );
       assert.equal(tokyo.path, 'about/note');
@@ -3001,30 +2959,25 @@ test(
         (await memory.find({ query: '东京' })).map((hit) => hit.path),
         [tokyo.path],
       );
-      await assert.rejects(
-        memory.save(
-          { area: 'about', text: 'Lives in Porto.' },
-          { sourceMessageId: other.sourceMessageId, approved: true },
-        ),
-        /current owned user message/,
-      );
 
-      const marcMessage = await post('Marc is my manager.');
-      const anaMessage = await post('Ana is my sister.');
+      const marc = 'Marc is my manager.';
+      const ana = 'Ana is my sister.';
+      const marcMessage = await post(marc);
+      const anaMessage = await post(ana);
       let raced = false;
       const racing: PrivateObjectStore = {
         ...store,
         write: async (key, bytes, options) => {
           if (!raced) {
             raced = true;
-            await memory.save({ area: 'people', text: 'Marc is the manager.' }, marcMessage);
+            await memory.learn({ area: 'people', quote: marc }, marcMessage);
             throw new ObjectStoreConflict();
           }
           return store.write(key, bytes, options);
         },
       };
-      await createMemoryService({ pool, ownerId, store: racing }).save(
-        { area: 'people', text: 'Ana is the sister.' },
+      await createMemoryService({ pool, ownerId, store: racing }).learn(
+        { area: 'people', quote: ana },
         anaMessage,
       );
       assert.deepEqual(
@@ -3032,19 +2985,9 @@ test(
           .filter((note) => note.area === 'people')
           .map((note) => note.path)
           .sort(),
-        ['people/ana-is-the-sister', 'people/marc-is-the-manager'],
+        ['people/ana-is-my-sister', 'people/marc-is-my-manager'],
       );
 
-      await memory.edit((tree) => {
-        tree.overviews.preferences = {
-          text: 'Reports.',
-          digest: digest(areaEntries(tree, 'preferences')),
-        };
-      });
-      assert.equal(
-        ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
-        'Reports.',
-      );
       await memory.forget(saved.path);
       const view = await memory.view();
       assert.equal(
@@ -3052,12 +2995,9 @@ test(
         false,
       );
       assert.deepEqual(view.archive, []);
-      assert.equal(
-        ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
-        undefined,
-      );
       await assert.rejects(memory.forget(saved.path), { statusCode: 404 });
 
+      const chess = 'I play chess on Sundays.';
       const path = join(root, 'memory', 'MEMORY.md');
       const document = JSON.parse(await readFile(path, 'utf8'));
       document.entries.push(
@@ -3066,7 +3006,7 @@ test(
       );
       await writeFile(path, JSON.stringify(document));
       assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
-      await memory.save({ area: 'about', text: 'Plays chess on Sundays.' }, first);
+      await memory.learn({ area: 'about', quote: chess }, await post(chess));
       assert.doesNotMatch(await readFile(path, 'utf8'), /sk-fixture|broken/);
 
       await writeFile(
@@ -3080,7 +3020,7 @@ test(
         (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
         'tentative',
       );
-      await memory.save({ area: 'about', text: 'Plays chess on Sundays.' }, first);
+      await memory.learn({ area: 'about', quote: chess }, await post(chess));
       const migrated = await readFile(path, 'utf8');
       assert.match(migrated, /^\{/);
       assert.doesNotMatch(migrated, /Broken entry/);
@@ -3091,8 +3031,6 @@ test(
   },
 );
 
-const approvalsTable =
-  'CREATE TABLE approvals (owner_id text NOT NULL, source_message_id uuid, action text NOT NULL, status text NOT NULL)';
 const nilMark = '2000-01-01T00:00:00.000000Z/00000000-0000-0000-0000-000000000000';
 
 type CuratorCall = {
@@ -3153,6 +3091,13 @@ test(
       await assert.rejects(memory.learn({ area: 'about', quote: secret }, await post(secret)));
       assert.equal((await memory.load()).entries.length, 2);
       assert.equal(await memory.enabled(), true);
+      const listed = 'Remember this about me:\n- I live in Lisbon\n- I am vegetarian';
+      const listedSource = await post(listed);
+      assert.equal(
+        (await memory.learn({ area: 'about', quote: listed }, listedSource)).text,
+        'Remember this about me: - I live in Lisbon - I am vegetarian',
+      );
+      await memory.forget('about/remember-this-about-me-live-in');
 
       const correction = 'Prefiro relatórios detalhados.';
       await memory.learn(
@@ -3172,13 +3117,6 @@ test(
       const blocked = 'I always drink green tea.';
       const blockedSource = await post(blocked);
       await assert.rejects(reopened.learn({ area: 'preferences', quote: blocked }, blockedSource));
-      await assert.rejects(reopened.save({ area: 'preferences', text: blocked }, blockedSource));
-      await assert.rejects(
-        reopened.save(
-          { area: 'preferences', text: blocked },
-          { sourceMessageId: blockedSource.sourceMessageId, approved: true },
-        ),
-      );
       await assert.rejects(
         reopened.edit((tree) => {
           tree.entries = [];
@@ -3197,7 +3135,6 @@ test(
       const cleared = await createMemoryService({ pool, ownerId, store }).load();
       assert.deepEqual(cleared.entries, []);
       assert.deepEqual(cleared.archive, []);
-      assert.deepEqual(cleared.overviews, {});
       assert.equal(await memory.enabled(), false);
       assert.notEqual(cleared.reflected, undefined);
       assert.equal(
@@ -3223,7 +3160,7 @@ test(
   'memory opt-out stops background work and rejects reflection started before disable and re-enable',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
-    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
+    const { pool, ownerId, post, memory, close } = await memoryFixture();
     const { calls, state, curator } = scriptedCurator();
     const learning = createMemoryLearning({ pool, ownerId, memory, curator });
     let release: (value: unknown) => void = () => {};
@@ -3247,7 +3184,6 @@ test(
       await memory.control({ enabled: false, quote: disable }, await post(disable));
       const disabled = await memory.load();
       assert.equal(await learning.reflect(), 0);
-      assert.equal(await learning.consolidate(), 0);
       await learning.run();
       assert.equal(calls.length, 1);
       assert.deepEqual(await memory.load(), disabled);
@@ -3284,8 +3220,8 @@ test(
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     t.mock.method(console, 'error', () => {});
-    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
-    const idle = await memoryFixture([approvalsTable]);
+    const { pool, ownerId, post, memory, close } = await memoryFixture();
+    const idle = await memoryFixture();
     try {
       const { calls, state, curator } = scriptedCurator();
       const learning = createMemoryLearning({ pool, ownerId, memory, curator });
@@ -3312,26 +3248,11 @@ test(
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
       await post('My card is 4111 1111 1111 1111 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
-      for (const [status, text] of [
-        ['declined', 'Remember that refunds go to account 1.'],
-        ['pending', 'Remember that I prefer window seats.'],
-        ['completed', 'Remember that my dentist is on Elm Street.'],
-      ] as const) {
-        const asked = await post(text, { at: '2026-01-01T10:04:30Z' });
-        await pool.query(
-          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
-          [ownerId, asked.id, status],
-        );
-      }
       await post('Other owner message that must not leak.', {
         owner: 'other-owner',
         at: '2026-01-01T10:04:45Z',
       });
       const call = await post(sister, { at: '2026-01-01T10:05:00Z' });
-      await pool.query(
-        "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'GMAIL_SEND_EMAIL','declined')",
-        [ownerId, call.id],
-      );
       await post('I am working on the budget today.');
 
       state.answer = () => ({
@@ -3473,9 +3394,10 @@ test(
         false,
       );
 
-      const trip = await memory.save(
-        { area: 'preferences', text: 'Is travelling this week.', expires: '2020-01-01' },
-        await post('I am travelling this week.', { at: '2026-01-01T14:00:00Z' }),
+      const travelling = 'I am travelling this week.';
+      const trip = await memory.learn(
+        { area: 'preferences', quote: travelling, expires: '2020-01-01' },
+        await post(travelling, { at: '2026-01-01T14:00:00Z' }),
       );
       state.answer = () => {
         throw new Error('offline');
@@ -3499,153 +3421,6 @@ test(
       assert.equal(unconfigured.calls.length, 0);
     } finally {
       await idle.close();
-      await close();
-    }
-  },
-);
-
-test(
-  'consolidation tidies one area without touching entry text and runs at most daily',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
-    const { pool, ownerId, memory, close } = await memoryFixture();
-    try {
-      const { calls, state, curator } = scriptedCurator();
-      const learning = createMemoryLearning({ pool, ownerId, memory, curator });
-      const source = randomUUID();
-      const put = (area: 'lessons' | 'routines', slug: string, text: string, updated: string) => ({
-        area,
-        slug,
-        text,
-        origin: 'stated' as const,
-        updated,
-        sources: [source],
-      });
-      await memory.edit((tree) => {
-        tree.entries.push(
-          put('lessons', 'a', 'Reply to email within a day.', '2026-01-01T00:00:00.000Z'),
-          put('lessons', 'b', 'Answer emails inside one day.', '2026-01-02T00:00:00.000Z'),
-          put('lessons', 'old', 'Call before noon.', '2026-01-01T00:00:00.000Z'),
-          put('lessons', 'new', 'Call after lunch.', '2026-02-01T00:00:00.000Z'),
-          put('lessons', 'c', 'Send summaries on Fridays.', '2026-01-03T00:00:00.000Z'),
-          put('routines', 'r1', 'Water the plants on Monday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r2', 'Back up the laptop on Tuesday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r3', 'Review the budget on Wednesday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r4', 'Call the parents on Thursday.', '2026-01-01T00:00:00.000Z'),
-          put('routines', 'r5', 'Plan the weekend on Friday.', '2026-01-01T00:00:00.000Z'),
-        );
-      });
-      state.answer = () => ({
-        ops: [
-          { op: 'merge', keep: 'lessons/a', drop: ['lessons/b'] },
-          { op: 'archive', path: 'lessons/old', by: 'lessons/new', reason: 'superseded' },
-          { op: 'rewrite', path: 'lessons/a', text: 'Invented.' },
-          { op: 'archive', path: 'routines/r1', by: 'routines/r2', reason: 'superseded' },
-          { op: 'overview', area: 'lessons', text: 'Email and call timing habits.' },
-        ],
-      });
-      assert.equal(await learning.consolidate(), 3);
-      assert.deepEqual(
-        calls.map((entry) => [entry.task, entry.input.area]),
-        [
-          ['consolidate', 'routines'],
-          ['consolidate', 'lessons'],
-        ],
-      );
-      const tree = await memory.load();
-      assert.equal(
-        tree.entries.find((entry) => entry.slug === 'a')?.text,
-        'Reply to email within a day.',
-      );
-      assert.deepEqual(
-        tree.archive.map((entry) => [entry.slug, entry.reason, entry.by]),
-        [
-          ['b', 'merged', 'lessons/a'],
-          ['old', 'superseded', 'lessons/new'],
-        ],
-      );
-      assert.equal(
-        ((await memory.read({ path: 'lessons' })) as { overview?: string }).overview,
-        'Email and call timing habits.',
-      );
-      assert.equal(await learning.consolidate(), 0);
-      assert.equal(calls.length, 2);
-
-      const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
-      await memory.edit((tree) => {
-        tree.consolidated.routines = hoursAgo(12);
-      });
-      assert.equal(await learning.consolidate(), 0);
-      assert.equal(calls.length, 2);
-      await memory.edit((tree) => {
-        tree.consolidated.routines = hoursAgo(48);
-      });
-      await learning.consolidate();
-      assert.deepEqual(
-        calls.map((entry) => entry.input.area),
-        ['routines', 'lessons', 'routines'],
-      );
-    } finally {
-      await close();
-    }
-  },
-);
-
-test(
-  'memory search matches words first, asks the model only for sparse results and keeps real paths',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
-    const { calls, state, curator } = scriptedCurator();
-    const { pool, ownerId, store, post, memory, close } = await memoryFixture([], curator);
-    try {
-      const ana = await memory.save(
-        { area: 'people', text: 'Ana is the sister.' },
-        await post('Ana is my sister.'),
-      );
-      const coffee = await memory.save(
-        { area: 'preferences', text: 'Drinks strong coffee.' },
-        await post('I drink strong coffee.'),
-      );
-      const paths = async (query: string, area?: string) =>
-        ((await memory.find({ query, area })) as Array<{ path: string }>).map((hit) => hit.path);
-
-      state.answer = () => ({ paths: [ana.path, 'people/not-a-real-entry', ana.path] });
-      assert.deepEqual(await paths('sibling'), [ana.path]);
-      assert.equal(calls.length, 1);
-      assert.equal(calls[0].task, 'search');
-      assert.deepEqual(calls[0].input, {
-        query: 'sibling',
-        entries: [
-          { path: coffee.path, abstract: 'Drinks strong coffee.' },
-          { path: ana.path, abstract: 'Ana is the sister.' },
-        ],
-      });
-      assert.deepEqual(await paths('coffee'), [coffee.path, ana.path]);
-      assert.equal(calls.length, 2);
-      assert.deepEqual(await paths('sibling', 'preferences'), []);
-      assert.deepEqual(calls[2].input, {
-        query: 'sibling',
-        entries: [{ path: coffee.path, abstract: 'Drinks strong coffee.' }],
-      });
-
-      for (const text of ['Likes green tea.', 'Brews black tea at five.', 'Tea after lunch helps.'])
-        await memory.save({ area: 'preferences', text }, await post(text));
-      assert.equal((await paths('tea')).length, 3);
-      assert.equal(calls.length, 3);
-
-      state.answer = () => {
-        throw new Error('offline');
-      };
-      assert.deepEqual(await paths('sibling'), []);
-      state.answer = () => 'nonsense';
-      assert.deepEqual(await paths('sibling'), []);
-      assert.equal(calls.length, 5);
-
-      const idle = scriptedCurator(false);
-      const plain = createMemoryService({ pool, ownerId, store, curator: idle.curator });
-      assert.deepEqual(await plain.find({ query: 'sibling' }), []);
-      assert.equal(idle.calls.length, 0);
-    } finally {
       await close();
     }
   },
@@ -4644,7 +4419,7 @@ test('feedback diagnostics build bounded private tool activity from the saved se
     ...activity(
       'memory',
       'manage_personal_context',
-      { action: 'profile_get', args: 'synthetic-private-profile' },
+      { action: 'memory_read', args: 'synthetic-private-profile' },
       'private-memory-output',
     ),
     activity('unfinished', 'browser', { action: 'click' }, '')[0],

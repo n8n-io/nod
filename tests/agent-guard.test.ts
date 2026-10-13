@@ -1059,7 +1059,7 @@ test('read-only turns can search memory but not change it', async () => {
     async (tools) => {
       for (const action of ['memory_find', 'memory_read'])
         await call(tools, 'manage_personal_context', { action, args: {} });
-      for (const action of ['memory_save', 'memory_forget'])
+      for (const action of ['memory_learn', 'memory_forget'])
         await assert.rejects(
           call(tools, 'manage_personal_context', { action, args: {} }),
           (error: Error) => error.message === refusal,

@@ -58,7 +58,6 @@ export interface Run {
   memory: string;
   modelErrors: string[];
   approvals: Array<{ action: string; status: string; args: unknown }>;
-  profile: { name: string; location: string; preferences: string } | undefined;
   visits: Visit[];
   usage: { tokens: number; modelCalls: number; costUsd: number | null };
   firstReplySeconds: number | null;
@@ -317,9 +316,6 @@ export async function collect(options: {
     status: row.status as string,
     args: row.args,
   }));
-  const profileRow = (
-    await stack.pool.query('SELECT data FROM profiles LIMIT 1').catch(() => ({ rows: [] as any[] }))
-  ).rows[0]?.data as { name?: string; location?: string; preferences?: string } | undefined;
   const firstUser = messages.find((message) => message.role === 'user');
   const firstAnswer = messages.find(
     (message) => message.role === 'assistant' && message.text.trim(),
@@ -349,13 +345,6 @@ export async function collect(options: {
     memory,
     modelErrors,
     approvals,
-    profile: profileRow
-      ? {
-          name: profileRow.name ?? '',
-          location: profileRow.location ?? '',
-          preferences: profileRow.preferences ?? '',
-        }
-      : undefined,
     visits: options.visits,
     usage: { tokens, modelCalls, costUsd: costKnown ? cost : null },
     firstReplySeconds,
@@ -412,7 +401,7 @@ export async function collect(options: {
         }.`,
         `Workspace files: ${files.length ? files.join(', ') : 'none'}.`,
         `Actions the user approved or declined (the server runs these itself, so they never appear as tool calls): ${approvals.length ? approvals.map((item) => `${item.action} ${item.status} ${JSON.stringify(item.args).slice(0, 220)}`).join('; ') : 'none'}.`,
-        `Saved profile: ${profileRow ? `name "${profileRow.name ?? ''}", location "${profileRow.location ?? ''}", preferences "${String(profileRow.preferences ?? '').slice(0, 300)}"` : 'none'}. Saved memory: ${memory.slice(0, 700)}`,
+        `Saved memory: ${memory.slice(0, 700)}`,
         failedTurns.length
           ? `Turns that did not succeed: ${failedTurns.map((turn) => `${turn.status}${turn.error ? ` (${turn.error})` : ''}`).join('; ')}.`
           : 'Every turn finished.',

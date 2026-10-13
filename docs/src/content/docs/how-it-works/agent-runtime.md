@@ -56,7 +56,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in. |
 | `apps`                                                              | Runs an action on a connected account, after the trust check.                                    |
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                          |
-| `manage_personal_context`                                           | Profile, schedules, notification preferences, memory, history and usage.                         |
+| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                  |
 | `task`                                                              | Keeps a progress card on the Tasks page. It schedules and grants nothing.                        |
 | `share_file`                                                        | Sends a workspace file to you.                                                                   |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                      |
@@ -108,7 +108,7 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 | Layer         | Contains                                                                                                                                         | Sent                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
 | Static prompt | Otto's personality and rules, the conversation, background and activity-check rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
-| Owner context | Account details, date format, saved profile and the memory index                                                                                 | Again only when it changes |
+| Owner context | Account details, date format and the memory index                                                                                                | Again only when it changes |
 | Turn message  | Mode, time, channel, message ID, reply target, recent conversation, activity-check limits and the instruction                                    | Every turn                 |
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
