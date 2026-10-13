@@ -2,7 +2,6 @@ import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
 import { z } from 'zod';
 import { appConfirmation, type Agent } from '../ports/agent.ts';
 import { lightestEffort } from '../shared/models.ts';
@@ -26,7 +25,6 @@ import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
-import { createDirectProvider } from '../providers/direct/integrations.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
@@ -129,7 +127,7 @@ import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
-import { createLinkPreviews } from './link-previews.ts';
+import { cachedIcons, createLinkPreviews } from './link-previews.ts';
 
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
@@ -148,12 +146,6 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
-  directIntegrations?: (
-    pool: pg.Pool,
-    keyStore: CredentialKeyStore,
-    grantVault: Awaited<ReturnType<typeof createAppGrantVault>>,
-    ownerId: string,
-  ) => IntegrationProvider;
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
@@ -224,7 +216,6 @@ export function createDefaultAdapters(
     googlesheets: env.COMPOSIO_SHEETS_AUTH_CONFIG_ID,
     googledocs: env.COMPOSIO_DOCS_AUTH_CONFIG_ID,
     slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
-    notion: env.COMPOSIO_NOTION_AUTH_CONFIG_ID,
   };
   const integrations = createComposioProvider({
     apiKey: env.COMPOSIO_API_KEY,
@@ -351,16 +342,6 @@ export function createDefaultAdapters(
     }),
     integrations,
     ...(integrationKey ? { integrationKey } : {}),
-    ...(['local', 'tenant'].includes(runtimeMode)
-      ? {
-          directIntegrations: (
-            pool: pg.Pool,
-            keyStore: CredentialKeyStore,
-            grantVault: Awaited<ReturnType<typeof createAppGrantVault>>,
-            ownerId: string,
-          ) => createDirectProvider({ pool, keyStore, grantVault, ownerId }),
-        }
-      : {}),
     keyStore,
     memoryCurator: modelCurator,
     onboardingCurator: selectedCurator,
@@ -519,7 +500,7 @@ async function initializeApplication(
   let payments!: Awaited<ReturnType<typeof createPayments>>;
   let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
   const icon = adapters.linkPreviews?.icon
-    ? (origin: string) => adapters.linkPreviews!.icon!(origin)
+    ? cachedIcons((origin) => adapters.linkPreviews!.icon!(origin))
     : undefined;
   const integrations = await createIntegrations(pool, {
     admission,
@@ -530,13 +511,6 @@ async function initializeApplication(
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
-    ...(adapters.directIntegrations
-      ? {
-          additionalProviders: [
-            adapters.directIntegrations(pool, adapters.keyStore, grantVault, ownerId),
-          ],
-        }
-      : {}),
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,

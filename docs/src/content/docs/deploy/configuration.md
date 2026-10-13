@@ -59,7 +59,6 @@ Keys set here become server-managed connections. They stay in server memory and 
 | `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic |
 | `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic |
 | `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic |
-| `COMPOSIO_NOTION_AUTH_CONFIG_ID`   | The same for Notion.                                                                                                   | Automatic |
 
 "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. See [Apps](/connect/apps/) for the key permissions.
 

@@ -9,7 +9,6 @@ import { safeRemoteFetch } from '../discovered/remote.ts';
 import {
   IntegrationAuthConfigurationError,
   IntegrationCatalogAccessDenied,
-  IntegrationInboxCursorExpired,
   type IntegrationProvider,
   type IntegrationService,
   type IntegrationSession,
@@ -22,7 +21,6 @@ const toolkitVersions = {
   googlesheets: '20260915_00',
   googledocs: '20260826_00',
   slack: '20260915_00',
-  notion: '20260915_00',
 };
 const toolkits = Object.keys(toolkitVersions);
 const googleOAuthToolkits = new Set([
@@ -42,9 +40,8 @@ const subscriptions = {
     config: { interval: 15, calendarId: 'primary', showDeleted: true },
   },
   slack: { trigger: 'SLACK_DIRECT_MESSAGE_RECEIVED', config: {} },
-  notion: { trigger: 'NOTION_PAGE_CONTENT_UPDATED', config: {} },
 } as const;
-type ManagedSession = Awaited<ReturnType<Composio['sessions']['use']>> &
+type ManagedSession = Awaited<ReturnType<Composio['sessions']['create']>> &
   Pick<InstanceType<typeof ToolRouterSession>, 'search' | 'execute' | 'update' | 'authorize'>;
 type AccountIdentity = { expiresAt: number; accountName?: string; accountEmail?: string };
 const toolSlug = z
@@ -159,7 +156,6 @@ const toolSchemasResponse = z.object({
 const identityTools = {
   gmail: { action: 'GMAIL_GET_PROFILE', args: { user_id: 'me' } },
   slack: { action: 'SLACK_WHO_AM_I', args: {} },
-  notion: { action: 'NOTION_WHO_AM_I', args: {} },
   sentry: { action: 'SENTRY_VALIDATE_CREDENTIAL', args: {} },
   googlecalendar: { action: 'GOOGLECALENDAR_GET_CURRENT_USER', args: {} },
   googledrive: {
@@ -188,13 +184,6 @@ function identityFields(
           .filter((value) => typeof value === 'string' && value.trim())
           .join(' · '),
       };
-      break;
-    }
-    if (
-      service === 'notion' &&
-      (typeof data.workspace_name === 'string' || typeof data.owner_email === 'string')
-    ) {
-      data = { name: data.workspace_name ?? data.name, email: data.owner_email };
       break;
     }
     if (data.user && typeof data.user === 'object') {
@@ -534,19 +523,10 @@ export function createComposioProvider(options: {
   }
   function session(
     value: ManagedSession,
-    selectedToolkits?: string[],
-    sdk = required(),
+    selectedToolkits: string[],
+    sdk: Composio,
   ): IntegrationSession {
-    const savedToolkits = value.config?.toolkits;
-    const enabled = new Set(
-      selectedToolkits ??
-        (savedToolkits && 'enabled' in savedToolkits
-          ? savedToolkits.enabled
-          : [
-              ...legacyServices().map((service) => service.slug),
-              ...Object.keys(value.config?.connected_accounts ?? {}),
-            ].filter((slug) => !savedToolkits?.disabled.includes(slug))),
-    );
+    const enabled = new Set(selectedToolkits);
     function actionToolkit(action: string) {
       toolSlug.parse(action);
       const toolkit = [...enabled]
@@ -776,269 +756,11 @@ export function createComposioProvider(options: {
     get webhooksConfigured() {
       return Boolean(client && options.webhookSecret);
     },
-    supportsSubscriptions: ['gmail', 'googlecalendar', 'slack', 'notion'],
+    supportsSubscriptions: ['gmail', 'googlecalendar', 'slack'],
     verificationEmails: (accountId, query, signal) =>
       readVerificationEmails(required().tools, accountId, query, signal),
     sentEmails: (accountId, signal) => readSentEmails(required().tools, accountId, signal),
     inboxSnippets: (accountId, signal) => readInboxSnippets(required().tools, accountId, signal),
-    async pollInbox(accountId, cursor, signal) {
-      const deadline = AbortSignal.timeout(25_000);
-      const operation = AbortSignal.any([signal, deadline]);
-      let phase = 'cursor';
-      let category = 'cursor';
-      let status: number | undefined;
-      const id = z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/);
-      const historyId = z.string().regex(/^\d{1,32}$/);
-      const addedMessage = z.object({ message: z.object({ id }) });
-      const mailHeader = z.object({ name: z.string().max(100), value: z.string().max(8192) });
-      const stateSchema = z.object({
-        accountId: z.string().min(1).max(200),
-        historyId,
-        pageToken: z.string().min(1).max(2048).optional(),
-        pending: z.array(id).max(1000).default([]),
-        finalHistoryId: historyId.optional(),
-      });
-      async function get(path: string, parameters: Array<[string, string | number]>) {
-        operation.throwIfAborted();
-        phase = path === 'profile' ? 'baseline' : path === 'history' ? 'history' : 'message';
-        category = 'request';
-        status = undefined;
-        const response = await required().tools.proxyExecute(
-          {
-            connectedAccountId: accountId,
-            endpoint: `https://gmail.googleapis.com/gmail/v1/users/me/${path}`,
-            method: 'GET',
-            parameters: parameters.map(([name, value]) => ({ in: 'query', name, value })),
-          },
-          { signal: operation },
-        );
-        operation.throwIfAborted();
-        status = response.status;
-        if (response.status === 404 && path.startsWith('messages/')) return null;
-        if (response.status === 404 && path === 'history')
-          throw new IntegrationInboxCursorExpired();
-        category = 'http';
-        if (response.status !== 200) throw new Error();
-        category = 'response_size';
-        if (JSON.stringify(response.data).length > 1_000_000) {
-          if (path === 'history') throw new IntegrationInboxCursorExpired();
-          throw new Error();
-        }
-        category = 'response';
-        return response.data;
-      }
-      try {
-        if (cursor === null) {
-          const baseline = z
-            .object({ historyId })
-            .parse(await get('profile', [['fields', 'historyId']]));
-          return {
-            cursor: JSON.stringify(stateSchema.parse({ accountId, historyId: baseline.historyId })),
-            hasMore: false,
-            messages: [],
-          };
-        }
-        if (cursor.length > 220_000) throw new Error();
-        const state = stateSchema.parse(JSON.parse(cursor));
-        if (state.accountId !== accountId) throw new Error();
-        if (!state.pending.length) {
-          const page = z
-            .object({
-              historyId,
-              nextPageToken: z.string().min(1).max(2048).optional(),
-              history: z
-                .array(
-                  z.object({
-                    messagesAdded: z.array(addedMessage).optional(),
-                  }),
-                )
-                .max(20)
-                .optional(),
-            })
-            .parse(
-              await get('history', [
-                ['startHistoryId', state.historyId],
-                ['historyTypes', 'messageAdded'],
-                ['labelId', 'INBOX'],
-                ['maxResults', 20],
-                ['fields', 'history/messagesAdded/message/id,historyId,nextPageToken'],
-                ...(state.pageToken ? [['pageToken', state.pageToken] as [string, string]] : []),
-              ]),
-            );
-          const pending = stateSchema.shape.pending.safeParse([
-            ...new Set(
-              page.history?.flatMap(
-                (entry) => entry.messagesAdded?.map(({ message }) => message.id) ?? [],
-              ),
-            ),
-          ]);
-          if (!pending.success) throw new IntegrationInboxCursorExpired();
-          state.pending = pending.data;
-          state.pageToken = page.nextPageToken;
-          state.finalHistoryId = page.nextPageToken ? undefined : page.historyId;
-        }
-        const messages = [];
-        let consumed = 0;
-        for (const pendingId of state.pending.slice(0, 20)) {
-          let response;
-          try {
-            response = await get(`messages/${pendingId}`, [
-              ['format', 'metadata'],
-              ['fields', 'id,threadId,internalDate,labelIds,payload/headers'],
-            ]);
-          } catch (error) {
-            if (!signal.aborted && deadline.aborted && consumed) break;
-            throw error;
-          }
-          if (response === null) {
-            consumed++;
-            continue;
-          }
-          const message = z
-            .object({
-              id,
-              threadId: id,
-              internalDate: z.string().regex(/^\d{1,16}$/),
-              labelIds: z.array(z.string().max(200)).max(100),
-              payload: z.object({
-                headers: z.array(mailHeader).max(200).default([]),
-              }),
-            })
-            .parse(response);
-          if (message.id !== pendingId) {
-            category = 'identity';
-            throw new Error();
-          }
-          consumed++;
-          if (!message.labelIds.includes('INBOX')) continue;
-          const header = (name: string) =>
-            message.payload.headers
-              .find((item) => item.name.toLowerCase() === name)
-              ?.value.replace(/[\u0000-\u001f]/g, ' ')
-              .slice(0, 1000) ?? '';
-          messages.push({
-            id: message.id,
-            threadId: message.threadId,
-            subject: header('subject'),
-            sender: header('from'),
-            receivedAt: new Date(Number(message.internalDate)).toISOString(),
-          });
-        }
-        signal.throwIfAborted();
-        state.pending = state.pending.slice(consumed);
-        if (!state.pending.length && state.finalHistoryId) {
-          state.historyId = state.finalHistoryId;
-          delete state.finalHistoryId;
-        }
-        return {
-          cursor: JSON.stringify(state),
-          hasMore: Boolean(state.pending.length || state.pageToken),
-          messages,
-        };
-      } catch (error) {
-        if (signal.aborted) throw new DOMException('Inbox check was cancelled.', 'AbortError');
-        const issue = error instanceof z.ZodError ? error.issues[0] : undefined;
-        const errorKind =
-          error instanceof Error
-            ? new Map([
-                ['APIConnectionError', 'connection'],
-                ['APIConnectionTimeoutError', 'connection_timeout'],
-                ['APIUserAbortError', 'request_aborted'],
-                ['ComposioRequestCancelledError', 'request_cancelled'],
-                ['ValidationError', 'validation'],
-                ['SyntaxError', 'invalid_json'],
-                ['TypeError', 'type'],
-              ]).get(error.constructor.name)
-            : undefined;
-        const causes: Record<string, unknown>[] = [];
-        let cause: unknown = error;
-        for (let depth = 0; depth < 3 && cause && typeof cause === 'object'; depth++) {
-          const current = cause as Record<string, unknown>;
-          causes.push(current);
-          cause = current.cause;
-        }
-        const httpStatus = [
-          status,
-          ...causes.flatMap((cause) => [cause.status, cause.statusCode]),
-        ].find(
-          (value): value is number =>
-            typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599,
-        );
-        const causeCode = causes
-          .map((cause) => cause.code)
-          .find(
-            (code): code is string =>
-              typeof code === 'string' &&
-              [
-                'ECONNRESET',
-                'ECONNREFUSED',
-                'EHOSTUNREACH',
-                'ENETUNREACH',
-                'ENOTFOUND',
-                'EAI_AGAIN',
-                'ETIMEDOUT',
-                'UND_ERR_CONNECT_TIMEOUT',
-                'UND_ERR_HEADERS_TIMEOUT',
-                'UND_ERR_BODY_TIMEOUT',
-                'UND_ERR_SOCKET',
-              ].includes(code),
-          );
-        const fields = [
-          'accountId',
-          'historyId',
-          'pending',
-          'pageToken',
-          'finalHistoryId',
-          'history',
-          'messagesAdded',
-          'message',
-          'id',
-          'threadId',
-          'internalDate',
-          'labelIds',
-          'payload',
-          'headers',
-          'name',
-          'value',
-        ];
-        console.warn(
-          JSON.stringify({
-            event: 'gmail_inbox_poll_failed',
-            timestamp: new Date().toISOString(),
-            phase,
-            category: issue
-              ? 'schema'
-              : error instanceof IntegrationInboxCursorExpired
-                ? 'expired'
-                : error instanceof RangeError
-                  ? 'date'
-                  : operation.aborted
-                    ? 'timeout'
-                    : category,
-            ...(httpStatus === undefined ? {} : { status: httpStatus }),
-            ...(errorKind ? { errorKind } : {}),
-            ...(causeCode ? { causeCode } : {}),
-            ...(issue
-              ? {
-                  issue: issue.code,
-                  field: issue.path
-                    .slice(0, 8)
-                    .map((part) =>
-                      typeof part === 'number'
-                        ? '[]'
-                        : typeof part === 'string' && fields.includes(part)
-                          ? part
-                          : 'unknown',
-                    )
-                    .join('.'),
-                }
-              : {}),
-          }),
-        );
-        if (error instanceof IntegrationInboxCursorExpired) throw error;
-        throw new Error('The Gmail inbox could not be checked.');
-      }
-    },
     async createSession(ownerId, accounts, signal) {
       signal?.throwIfAborted();
       const sdk = required();
@@ -1079,13 +801,6 @@ export function createComposioProvider(options: {
         throw new Error('The connection provider changed. Try again.');
       }
       return session(value, selectedToolkits, sdk);
-    },
-    async restoreSession(id, signal) {
-      signal?.throwIfAborted();
-      const sdk = required();
-      const value = await sdk.sessions.use(id, undefined, { signal });
-      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-      return session(value, undefined, sdk);
     },
     async deleteSession(id) {
       await required().sessions.delete(id, { signal: AbortSignal.timeout(5_000) });

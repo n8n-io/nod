@@ -10,7 +10,6 @@ const integrationKeys = [
   'COMPOSIO_SHEETS_AUTH_CONFIG_ID',
   'COMPOSIO_DOCS_AUTH_CONFIG_ID',
   'COMPOSIO_SLACK_AUTH_CONFIG_ID',
-  'COMPOSIO_NOTION_AUTH_CONFIG_ID',
 ];
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 

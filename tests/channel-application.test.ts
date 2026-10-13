@@ -160,9 +160,6 @@ test(
         createSession: async () => {
           throw new Error('No integration');
         },
-        restoreSession: async () => {
-          throw new Error('No integration');
-        },
         deleteSession: async () => {},
         inspectAccount: async () => ({ active: false, service: 'gmail' }),
         deleteAccount: async () => {},

@@ -4426,9 +4426,6 @@ test(
       createSession: async () => {
         throw new Error('Mailbox reads must not use model sessions.');
       },
-      restoreSession: async () => {
-        throw new Error('Mailbox reads must not use model sessions.');
-      },
       deleteSession: async () => {},
       deleteAccount: async () => {
         assert.fail('Must not disconnect.');
@@ -4623,7 +4620,6 @@ test(
     assert.equal(await read(), undefined);
     const persisted = JSON.stringify([
       (await pool.query('SELECT * FROM integration_events')).rows,
-      (await pool.query('SELECT * FROM integration_sessions')).rows,
       (await pool.query('SELECT * FROM app_connections')).rows,
     ]);
     for (const secret of ['381742', '940173', 'private-message-body', mail.text])
