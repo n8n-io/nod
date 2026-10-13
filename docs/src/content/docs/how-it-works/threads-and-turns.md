@@ -93,7 +93,7 @@ sequenceDiagram
 | Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                                |
 | Pi session  | The thread's saved session | A new in-memory session per turn                                                         |
 | Context     | The full conversation      | Turns from any session that finished before the trigger, plus the session's own messages |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                            |
+| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` and `share_screenshot` calls.     |
 | Browser     | The thread's browser       | Its own browser, deleted when the session ends                                           |
 
 When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.

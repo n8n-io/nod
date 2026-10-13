@@ -336,10 +336,13 @@ test(
             data: Buffer.from('synthetic screenshot').toString('base64'),
             mimeType: 'image/png',
           });
-          assert.equal(
-            (await db.pool.query('SELECT id FROM messages WHERE turn_id=$1', [context.turnId]))
-              .rowCount,
-            0,
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [
+                context.turnId,
+              ])
+            ).rows.map((row) => row.attachments.map((item: { name: string }) => item.name)),
+            [['research.png']],
           );
           assert.equal(
             (await readFile(join(context.workspacePath, file.workspaceFile))).toString(),
@@ -2740,8 +2743,10 @@ test(
                 research,
               ])
             ).rows;
-            assert.equal(messages.length, 3);
-            const artifact = messages.find((message) => message.attachments.length);
+            assert.equal(messages.length, 4);
+            const artifact = messages.find(
+              (message) => message.attachments[0]?.name === 'finished.txt',
+            );
             assert.equal(artifact.attachments[0].name, 'finished.txt');
             assert.equal(artifact.text, '');
             const unrelated = await thread.enqueueTurn('ask-question', { source: 'event' });
