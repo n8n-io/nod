@@ -972,12 +972,7 @@ async function appsFixture(
   listing: Partial<
     Pick<
       Parameters<typeof createIntegrations>[1],
-      | 'browserConnections'
-      | 'browserAccounts'
-      | 'validateActivityCheck'
-      | 'wake'
-      | 'readWorkspaceFile'
-      | 'learnWritingStyle'
+      'browserConnections' | 'browserAccounts' | 'wake' | 'readWorkspaceFile' | 'learnWritingStyle'
     >
   > = {},
 ) {
@@ -997,7 +992,6 @@ async function appsFixture(
   const removed: string[] = [];
   const sessions: unknown[] = [];
   const wakes: string[] = [];
-  const wakeIntents: Array<string | undefined> = [];
   const session: IntegrationSession = {
     id: 'current-session',
     authorize: async (service, callback) => {
@@ -1058,9 +1052,8 @@ async function appsFixture(
     baseUrl: 'http://localhost:4310',
     wake:
       listing.wake ??
-      (async (_prompt, id, intent) => {
+      (async (_prompt, id) => {
         wakes.push(id);
-        wakeIntents.push(intent);
       }),
   });
   service.registerRoutes(app);
@@ -1098,7 +1091,6 @@ async function appsFixture(
     removed,
     sessions,
     wakes,
-    wakeIntents,
     callbacks,
   };
 }
@@ -2261,115 +2253,6 @@ test(
 );
 
 test(
-  'scoped activity discovery rechecks the account and receipt after temporary session creation',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const turn = { threadId: randomUUID(), turnId: randomUUID() };
-    let valid = true;
-    const f = await appsFixture(
-      t,
-      {},
-      {
-        validateActivityCheck: async (received) => {
-          assert.deepEqual(received, turn);
-          if (!valid) throw new Error('The activity receipt was invalidated.');
-        },
-      },
-    );
-    const selected = await f.connect('gmail');
-    await f.connect('gmail');
-    let entered = false,
-      searches = 0;
-    let release = () => {};
-    let pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    t.mock.method(
-      f.provider,
-      'createSession',
-      async (_owner: string, accounts: Parameters<IntegrationProvider['createSession']>[1]) => {
-        assert.deepEqual(accounts, { gmail: [selected.accountId] });
-        entered = true;
-        await pending;
-        return f.session;
-      },
-    );
-    t.mock.method(f.session, 'search', async () => {
-      searches++;
-      return { tools: { GMAIL_GET_PROFILE: {}, SLACK_SEARCH: {} }, suggestions: [] };
-    });
-    const search = () =>
-      f.service.execute(
-        'local-development',
-        'SEARCH_TOOLS',
-        { query: 'recent activity' },
-        turn,
-        undefined,
-        selected.connectionId,
-      );
-    const waitForSession = async () => {
-      for (let attempt = 0; attempt < 100 && !entered; attempt++) await delay(5);
-      assert.equal(entered, true);
-    };
-    const revoked = search();
-    await waitForSession();
-    await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
-      selected.connectionId,
-    ]);
-    release();
-    await assert.rejects(revoked);
-    assert.equal(searches, 0);
-    await f.pool.query('UPDATE app_connections SET revoked=false WHERE id=$1', [
-      selected.connectionId,
-    ]);
-    entered = false;
-    pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const replaced = search();
-    await waitForSession();
-    valid = false;
-    release();
-    await assert.rejects(replaced);
-    assert.equal(searches, 0);
-    valid = true;
-    const result = (await search()) as {
-      tools: Record<string, unknown>;
-      accounts: Array<{ connectionId: string }>;
-    };
-    assert.equal(searches, 1);
-    assert.deepEqual(Object.keys(result.tools), ['GMAIL_GET_PROFILE']);
-    assert.deepEqual(
-      result.accounts.map((account) => account.connectionId),
-      [selected.connectionId],
-    );
-    await assert.rejects(
-      f.service.execute(
-        'local-development',
-        'GMAIL_GET_PROFILE',
-        { connectionId: randomUUID() },
-        turn,
-        undefined,
-        selected.connectionId,
-      ),
-    );
-    assert.equal(f.executed.length, 0);
-    t.mock.method(f.session, 'execute', async (...input: unknown[]) => ({ options: input[4] }));
-    assert.deepEqual(
-      await f.service.execute(
-        'local-development',
-        'GMAIL_GET_ATTACHMENT',
-        {},
-        turn,
-        undefined,
-        selected.connectionId,
-      ),
-      { options: { files: false } },
-    );
-  },
-);
-
-test(
   'private Gmail drafts run on the selected active owned account',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -2455,7 +2338,6 @@ test(
     assert.equal(receipts.length, 2);
     assert.equal(new Set(f.wakes).size, 2);
     assert.equal(f.wakes.length, 2);
-    assert.deepEqual(f.wakeIntents, ['inspect_message', 'inspect_message']);
     assert.match(receipts[0].summary, /112233445566/);
     assert.match(receipts[1].summary, /223344556677/);
     assert.match(receipts[1].summary, /998877665544/);
@@ -2468,7 +2350,6 @@ test(
     await send('');
     for (let attempt = 0; attempt < 100 && f.wakes.length < 3; attempt++) await delay(10);
     assert.equal(f.wakes.length, 3);
-    assert.equal(f.wakeIntents.at(-1), 'classify');
     const calendar = await f.connect('googlecalendar');
     await f.app.inject({
       method: 'POST',
@@ -2486,7 +2367,6 @@ test(
     });
     for (let attempt = 0; attempt < 100 && f.wakes.length < 4; attempt++) await delay(10);
     assert.equal(f.wakes.length, 4);
-    assert.equal(f.wakeIntents.at(-1), 'classify');
     assert.equal(f.executed.length, 0);
   },
 );
@@ -2580,7 +2460,7 @@ test(
         t,
         {},
         {
-          wake: async (_summary, _id, _intent, current) => {
+          wake: async (_summary, _id, current) => {
             enter();
             await released;
             const client = await f.pool.connect();
@@ -4207,7 +4087,7 @@ test('a discovered MCP server can register, sign in and refresh without service 
 });
 
 test(
-  'discovered setup preserves owned paths, scoped checks, and atomic replacement invalidation',
+  'discovered setup preserves owned paths, scoped discovery and account replacement',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_discovery_${randomUUID().replaceAll('-', '')}`;
@@ -4228,8 +4108,6 @@ test(
       const catalogs: string[] = [];
       let cliCalls = 0;
       const cliRuns: unknown[] = [];
-      let replacementCalls = 0;
-      let failReplacement = false;
       let blocked: 'http' | 'listTools' | 'callTool' | 'cli' | undefined;
       let entered = () => {};
       const waitForAbort = async (method: typeof blocked, signal?: AbortSignal) => {
@@ -4241,9 +4119,6 @@ test(
           signal.addEventListener('abort', () => reject(signal.reason), { once: true });
         });
       };
-      await pool.query(
-        'CREATE TABLE fixture_checks(owner_id text,connection_id uuid,turn_id uuid)',
-      );
       const discovered = await createDiscoveredConnections(pool, {
         ownerId: owner,
         baseUrl: 'http://localhost:4310',
@@ -4278,14 +4153,6 @@ test(
           cliRuns.push(cli);
           await waitForAbort('cli', signal);
           throw new Error('The CLI must not run during setup.');
-        },
-        accountReplaced: async (connectionId, client) => {
-          replacementCalls++;
-          await client.query('DELETE FROM fixture_checks WHERE owner_id=$1 AND connection_id=$2', [
-            owner,
-            connectionId,
-          ]);
-          if (failReplacement) throw new Error('Synthetic replacement failure.');
         },
       });
       const cliProposal = (source?: unknown) => ({
@@ -4370,11 +4237,6 @@ test(
         if (accountOwner === owner) await grantVault.put(accountId, `synthetic-token-${accountId}`);
       }
       const ref = { threadId: randomUUID(), turnId: randomUUID() };
-      await pool.query('INSERT INTO fixture_checks VALUES($1,$2,$3)', [
-        owner,
-        connectionId,
-        ref.turnId,
-      ]);
       const provider = fakeProvider({
         id: 'unused',
         authorize: async () => {
@@ -4394,13 +4256,6 @@ test(
         discovered,
         baseUrl: 'http://localhost:4310',
         wake: async () => {},
-        validateActivityCheck: async (turn, selectedId) => {
-          const receipt = await pool.query(
-            'SELECT 1 FROM fixture_checks WHERE owner_id=$1 AND connection_id=$2 AND turn_id=$3',
-            [owner, selectedId, turn.turnId],
-          );
-          if (!receipt.rowCount) throw new Error('This activity check is unavailable.');
-        },
       });
       integrations.registerRoutes(app);
       const setupPage = await app.inject({ url: `/api/apps/discovery/${id}` });
@@ -4477,10 +4332,9 @@ test(
       const search = (await integrations.execute(
         owner,
         'SEARCH_TOOLS',
-        { query: 'list_records' },
+        { query: 'list_records', connectionId },
         ref,
         new AbortController().signal,
-        connectionId,
       )) as { accounts: Array<{ connectionId: string }> };
       assert.deepEqual(
         search.accounts.map((item) => item.connectionId),
@@ -4490,10 +4344,9 @@ test(
       const sentence = (await integrations.execute(
         owner,
         'SEARCH_TOOLS',
-        { query: 'please list the open records' },
+        { query: 'please list the open records', connectionId },
         ref,
         new AbortController().signal,
-        connectionId,
       )) as {
         discovered: Array<{ paths: Array<{ id: string; tools?: Array<{ name: string }> }> }>;
       };
@@ -4502,17 +4355,6 @@ test(
           .find((item) => item.id === mcpPath)
           ?.tools?.map((tool) => tool.name),
         ['list_records'],
-      );
-      await assert.rejects(
-        integrations.execute(
-          owner,
-          'CONNECTED_CLI',
-          { connectionId, pathId: cliPath, argv: ['list'] },
-          ref,
-          new AbortController().signal,
-          connectionId,
-        ),
-        /only read its selected account/,
       );
       assert.equal(cliCalls, 0);
       await assert.rejects(
@@ -4616,38 +4458,9 @@ test(
           url: `/api/apps/discovery/${proposalId}/complete`,
           payload: { token: 'synthetic-new-token', accountName: 'Replacement account' },
         });
-      failReplacement = true;
-      assert.equal((await complete()).statusCode, 502);
-      assert.deepEqual(captured, [connectionUpdated]);
-      assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 1);
-      assert.equal(
-        (
-          await pool.query('SELECT account_name FROM discovered_connections WHERE id=$1', [
-            connectionId,
-          ])
-        ).rows[0].account_name,
-        'Synthetic account',
-      );
-      assert.equal((await grantVault.read(connectionId)).value, `synthetic-token-${connectionId}`);
-      failReplacement = false;
       assert.equal((await complete()).statusCode, 200);
       assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
-      assert.equal(replacementCalls, 2);
-      assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 0);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
-      const count = catalogs.length;
-      await assert.rejects(
-        integrations.execute(
-          owner,
-          'SEARCH_TOOLS',
-          { query: 'list_records' },
-          ref,
-          new AbortController().signal,
-          connectionId,
-        ),
-        /unavailable/,
-      );
-      assert.equal(catalogs.length, count);
     } finally {
       await app.close();
       await pool.end();
@@ -6046,8 +5859,7 @@ test(
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
-        CREATE TABLE schedules(id uuid,owner_id text,title text);
-        CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
+        CREATE TABLE schedules(id uuid,owner_id text,title text)`);
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES
           ($1,'owner','user',NULL,'Tell Sam we take the quote',greatest(now()-interval '2 hours',date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),

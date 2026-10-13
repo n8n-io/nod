@@ -201,7 +201,6 @@ export async function createDiscoveredConnections(
       signal?: AbortSignal,
     ) => Promise<{ exitCode: number; output: string }>;
     resumeConnection?: (turnId: string, service: string) => Promise<boolean>;
-    accountReplaced?: (connectionId: string, client: PoolClient) => Promise<void>;
     refresh?: () => void;
   },
 ) {
@@ -423,7 +422,6 @@ export async function createDiscoveredConnections(
         );
       }
       await options.grantVault.put(idToSave, secret, client);
-      if (pending.connection_id) await options.accountReplaced?.(idToSave, client);
       if (pending.oauth_state_hash) await options.grantVault.remove(pending.id, client);
     }, pool);
     options.refresh?.();

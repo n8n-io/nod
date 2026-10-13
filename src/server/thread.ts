@@ -26,7 +26,7 @@ import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
-import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
+import { inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
 
@@ -54,7 +54,7 @@ export interface EnqueueTurnOptions {
   channelSourceId?: string | null;
   background?: boolean;
   sessionId?: string;
-  readOnly?: boolean;
+  parentTurnId?: string;
   client?: PoolClient;
 }
 export interface SubmitUserMessageOptions {
@@ -98,7 +98,6 @@ export interface ThreadDependencies {
   inspectPrompt?: (turnId: string, snapshot: PromptSnapshot) => void;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
-  activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   startTurn?: (turn: TurnRef) => Promise<void>;
@@ -121,7 +120,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { signal: AbortSignal; checkConnectionId?: string },
+    options: { signal: AbortSignal },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'discover' | 'connect' | 'propose',
@@ -276,7 +275,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
     const thread = await lockThread(client);
     const id = randomUUID();
     const inserted = await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id,session_id)
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,channel_source_id,session_id,parent_turn_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (owner_id,source_id) WHERE source_id IS NOT NULL DO NOTHING RETURNING id`,
       [
@@ -288,9 +287,9 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         prompt,
         options.channel ?? 'web',
         options.background ?? options.source !== 'resume',
-        options.readOnly ?? false,
         options.channelSourceId ?? null,
         options.sessionId ?? null,
+        options.parentTurnId ?? null,
       ],
     );
     if (!inserted.rowCount)
@@ -388,16 +387,13 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
-    let supersededApprovalId: string | undefined;
     if (confirmAction) {
       const confirmed = await confirmAction.accept(client, {
         ...confirmation,
         threadId: thread.id,
         answer,
       });
-      if (confirmed && 'supersededApprovalId' in confirmed)
-        supersededApprovalId = confirmed.supersededApprovalId;
-      else if (confirmed) return confirmed;
+      if (confirmed) return confirmed;
     }
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
@@ -426,11 +422,6 @@ export async function submitUserMessage(
         options.replyToMessageId ?? null,
       ],
     );
-    if (supersededApprovalId)
-      await client.query(
-        "UPDATE approvals SET confirmation_reply_id=$1 WHERE id=$2 AND owner_id=$3 AND thread_id=$4 AND status='expired'",
-        [messageId, supersededApprovalId, ownerId, thread.id],
-      );
     await sendDrain(client, thread.id);
     return { threadId: thread.id, turnId, messageId };
   };
@@ -566,6 +557,7 @@ async function resumeTurn(
       channel: turn?.channel ?? 'web',
       background: turn?.background ?? false,
       sessionId: turn?.session_id,
+      parentTurnId: turnId,
       client,
     });
     return true;
@@ -796,8 +788,8 @@ type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, profile, preferences, account, memory, connectedApps, activityCheck] =
-    await Promise.all([
+  const [source, history, profile, preferences, account, memory, connectedApps] = await Promise.all(
+    [
       sourceMessageId
         ? pool.query(
             `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
@@ -830,8 +822,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       dependencies.accountProfile?.().catch(() => undefined),
       dependencies.memoryContext?.().catch(() => ''),
       turn.background ? dependencies.connectedApps?.() : undefined,
-      turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
-    ]);
+    ],
+  );
   const message = source?.rows[0];
   const replyTo = message?.id
     ? {
@@ -867,7 +859,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ...(account ? { account } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
-      ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 20, timeoutMs: 300_000 } } : {}),
       personalContext: {
         profile: {
           name: String(stored.name ?? ''),
@@ -1107,25 +1098,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       integration: fenced(async (action, args, callSignal?: AbortSignal) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();
-        const result = await dependencies.integration(ref, action, args, {
-          signal: operation,
-          checkConnectionId: loaded.context.activityCheck?.connectionId,
-        });
+        const result = await dependencies.integration(ref, action, args, { signal: operation });
         operation.throwIfAborted();
         if (result && typeof result === 'object' && appConfirmation in result) return result;
-        const saved = await saveIntegrationFiles(
-          result,
-          loaded.context.activityCheck
-            ? undefined
-            : (file) => stage(randomUUID(), file.name, file.bytes, operation),
+        const saved = await saveIntegrationFiles(result, (file) =>
+          stage(randomUUID(), file.name, file.bytes, operation),
         );
-        if (
-          loaded.context.activityCheck &&
-          JSON.stringify(saved.value ?? null).length > appResultInlineChars
-        )
-          throw new Error(
-            'Activity check result is too large. Use a smaller page or narrower query.',
-          );
         const value = await inline(action, saved.value, operation);
         return saved.images.length
           ? { content: [{ type: 'text', text: JSON.stringify(value) }, ...saved.images] }

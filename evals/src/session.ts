@@ -142,7 +142,7 @@ export function createSession(options: {
     if (turn?.status !== 'waiting') return undefined;
     const approval = (
       await pool.query(
-        "SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY expires_at DESC LIMIT 1",
+        "SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY created_at DESC LIMIT 1",
         [turn.id],
       )
     ).rows[0];

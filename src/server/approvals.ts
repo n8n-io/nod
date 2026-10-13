@@ -4,7 +4,6 @@ import { pool } from './db.ts';
 import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
 import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
-import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 
@@ -12,7 +11,6 @@ export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
-  sourceTurnId?: string;
 }
 
 export interface ChatConfirmationInput {
@@ -27,14 +25,13 @@ export interface ChatConfirmationInput {
   answer?: { approvalId: string; approved: boolean };
 }
 
-export type ChatConfirmationResult =
-  SubmitUserMessageResult | { supersededApprovalId: string } | undefined;
+export type ChatConfirmationResult = SubmitUserMessageResult | undefined;
 
 type TurnRow = {
   id: string;
   thread_id: string;
   source: string;
-  source_id: string | null;
+  parent_turn_id: string | null;
   message_id: string | null;
   prompt: string;
   read_only: boolean;
@@ -49,39 +46,22 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      'SELECT id,thread_id,source,source_id,message_id,prompt,read_only,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
+      'SELECT id,thread_id,source,parent_turn_id,message_id,prompt,read_only,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
       [turnId, ownerId],
-    )
-  ).rows[0];
-}
-
-async function confirmedBy(client: PoolClient, turn: TurnRow) {
-  if (turn.source !== 'resume') return undefined;
-  return (
-    await client.query<{ turn_id: string; status: string }>(
-      'SELECT turn_id,status FROM approvals WHERE execution_turn_id=$1 AND owner_id=$2 AND turn_id IS DISTINCT FROM execution_turn_id LIMIT 1',
-      [turn.id, ownerId],
     )
   ).rows[0];
 }
 
 async function turnChain(client: PoolClient, turn: TurnRow) {
   const chain = [turn];
-  let current = turn;
-  for (;;) {
-    if (current.source !== 'resume') return chain;
-    const linked =
-      (await confirmedBy(client, current))?.turn_id ??
-      /^(?:credentials|credentials-retry|connection):([0-9a-f-]{36})(?::|$)/.exec(
-        current.source_id ?? '',
-      )?.[1];
-    if (!linked) return chain;
-    const next = await turnRow(client, linked);
+  for (let current = turn; current.parent_turn_id;) {
+    const next = await turnRow(client, current.parent_turn_id);
     if (!next || next.thread_id !== turn.thread_id || chain.some((item) => item.id === next.id))
       return undefined;
     chain.push(next);
     current = next;
   }
+  return chain;
 }
 
 async function scheduleAuthority(client: PoolClient, turnId: string) {
@@ -130,19 +110,19 @@ export async function createApprovals(
     context: ApprovalExecutionContext,
   ) => Promise<unknown>,
   preflight?: (action: string, args: Record<string, unknown>) => Promise<void>,
-  decide?: (turn: TurnRef, action: string, args: Record<string, unknown>) => Promise<boolean>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
 ) {
   await pool.query(`CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
     turn_id uuid REFERENCES turns(id), execution_turn_id uuid REFERENCES turns(id),
     action text NOT NULL, args jsonb NOT NULL, status text NOT NULL DEFAULT 'pending',
-    expires_at timestamptz NOT NULL DEFAULT now()+interval '30 minutes',
+    created_at timestamptz NOT NULL DEFAULT now(),
     source_message_id uuid REFERENCES messages(id) ON DELETE SET NULL,
     confirmation_message_id uuid REFERENCES messages(id) ON DELETE SET NULL,
-    confirmation_reply_id uuid REFERENCES messages(id) ON DELETE SET NULL,
     result jsonb
   );
+    ALTER TABLE approvals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+      DROP COLUMN IF EXISTS expires_at, DROP COLUMN IF EXISTS confirmation_reply_id;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
@@ -151,22 +131,10 @@ export async function createApprovals(
 
   async function run(approval: Record<string, any>) {
     try {
-      let sourceTurnId: string | undefined;
-      if (isReversiblePlanAction(approval.action) && approval.source_message_id) {
-        const source = (
-          await pool.query<{ turn_id: string }>(
-            "SELECT turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
-            [approval.source_message_id, ownerId, approval.thread_id],
-          )
-        ).rows[0];
-        if (!source?.turn_id) throw new Error('The schedule instruction is unavailable.');
-        sourceTurnId = source.turn_id;
-      }
       const result = await execute(approval.action, approval.args, {
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
         sourceMessageId: approval.source_message_id,
-        ...(sourceTurnId ? { sourceTurnId } : {}),
       });
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(
@@ -192,15 +160,11 @@ export async function createApprovals(
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { confirm?: boolean; question?: string; sourceMessageId?: string | null } = {},
+    options: { allowed?: boolean; question?: string; sourceMessageId?: string | null } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded) throw new Error('The action has no arguments to save.');
     const snapshot = JSON.parse(encoded) as Record<string, unknown>;
-    const allowed =
-      !options.confirm && !options.question && decide
-        ? await decide(turn, action, snapshot).catch(() => false)
-        : false;
     const proposal = await withTurnLock(turn.turnId, async (client) => {
       const current = await turnRow(client, turn.turnId);
       if (!current || current.thread_id !== turn.threadId)
@@ -290,7 +254,7 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      const direct = allowed;
+      const direct = options.allowed === true;
       const id = randomUUID();
       let targetTitle: string | undefined;
       if (!direct && typeof snapshot.id === 'string') {
@@ -384,13 +348,11 @@ export async function createApprovals(
     const answer = input.answer;
     const approved = answer && answer.approvalId === approval.id ? answer.approved : undefined;
     if (approved === undefined) {
-      if (approval.status === 'pending') {
+      if (approval.status === 'pending')
         await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
           approval.id,
           ownerId,
         ]);
-        return { supersededApprovalId: approval.id };
-      }
       return undefined;
     }
     if (approval.status !== 'pending' || !['running', 'waiting'].includes(approval.turn_status))
@@ -409,6 +371,7 @@ export async function createApprovals(
         channel: input.channel,
         background,
         sessionId: approval.turn_session_id,
+        parentTurnId: approval.turn_id,
         client,
       },
     );
@@ -422,10 +385,11 @@ export async function createApprovals(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6)",
       [messageId, ownerId, input.text, input.threadId, turnId, input.replyToMessageId ?? null],
     );
-    await client.query(
-      'UPDATE approvals SET status=$2,confirmation_reply_id=$3,execution_turn_id=$4 WHERE id=$1',
-      [approval.id, approved ? 'confirmed' : 'declined', messageId, turnId],
-    );
+    await client.query('UPDATE approvals SET status=$2,execution_turn_id=$3 WHERE id=$1', [
+      approval.id,
+      approved ? 'confirmed' : 'declined',
+      turnId,
+    ]);
     return { threadId: input.threadId, turnId, messageId };
   }
 

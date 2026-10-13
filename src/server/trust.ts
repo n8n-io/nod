@@ -65,11 +65,11 @@ export function createTrust(options: {
     if (!origin) throw new Error('This turn is no longer running.');
     const instruction = origin.scheduleInstruction?.trim();
     const words =
-      origin.source === 'event'
-        ? undefined
+      origin.source === 'user'
+        ? await conversation(turn.threadId)
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction }
-          : await conversation(turn.threadId);
+          : undefined;
     const answer = await options
       .review(checkInstructions, {
         ...words,

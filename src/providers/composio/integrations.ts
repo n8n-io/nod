@@ -659,7 +659,7 @@ export function createComposioProvider(options: {
           throw new Error(`The app tool schemas could not be loaded: ${errorText(error)}`);
         }
       },
-      async execute(action, args, accountId, signal, options) {
+      async execute(action, args, accountId, signal) {
         signal?.throwIfAborted();
         actionToolkit(action);
         const result = await value.execute(
@@ -678,7 +678,7 @@ export function createComposioProvider(options: {
             result.data.successful === false)
         )
           throw new Error(providerFailure(action, result as Record<string, unknown>));
-        return files(result, signal ?? new AbortController().signal, options?.files !== false);
+        return files(result, signal ?? new AbortController().signal);
       },
       async upload(action, file, signal) {
         const operation = signal

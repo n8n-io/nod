@@ -367,13 +367,9 @@ test(
       await application.channels!.drain();
       assert.equal((await send(10, 'sure, go ahead')).statusCode, 200);
       await application.channels!.drain();
-      const confirmed = (
-        await pool.query('SELECT status,confirmation_reply_id FROM approvals WHERE id=$1', [
-          approvalId,
-        ])
-      ).rows[0];
+      const confirmed = (await pool.query('SELECT status FROM approvals WHERE id=$1', [approvalId]))
+        .rows[0];
       assert.ok(['confirmed', 'executing', 'completed'].includes(confirmed.status));
-      assert.ok(confirmed.confirmation_reply_id);
       assert.deepEqual(replies, [{ reply: 'sure, go ahead' }]);
       assert.equal((await send(11, 'sure, go ahead')).statusCode, 200);
       await application.channels!.drain();

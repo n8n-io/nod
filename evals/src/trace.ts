@@ -54,7 +54,7 @@ export interface Run {
     kind: string;
     runAt: number | null;
   }>;
-  scheduleRuns: Array<{ title: string; observation: any; turnId: string | null }>;
+  scheduleRuns: Array<{ title: string; turnId: string | null }>;
   memory: string;
   modelErrors: string[];
   approvals: Array<{ action: string; status: string; args: unknown }>;
@@ -294,14 +294,8 @@ export async function collect(options: {
     runAt: row.run_at ? new Date(row.run_at).getTime() : null,
   }));
   const scheduleRuns = (
-    await stack.pool.query(
-      'SELECT title,observation,turn_id FROM schedule_runs ORDER BY created_at',
-    )
-  ).rows.map((row) => ({
-    title: row.title as string,
-    observation: row.observation,
-    turnId: row.turn_id as string | null,
-  }));
+    await stack.pool.query('SELECT title,turn_id FROM schedule_runs ORDER BY created_at')
+  ).rows.map((row) => ({ title: row.title as string, turnId: row.turn_id as string | null }));
   const view = (await (await stack.request('/api/memory')).json()) as {
     notes?: Array<{ path: string; text: string; status: string }>;
     archive?: Array<{ path: string; text: string; reason: string }>;
@@ -311,7 +305,7 @@ export async function collect(options: {
     archive: (view.archive ?? []).map(({ path, text, reason }) => ({ path, text, reason })),
   });
   const approvals = (
-    await stack.pool.query('SELECT action,status,args FROM approvals ORDER BY expires_at')
+    await stack.pool.query('SELECT action,status,args FROM approvals ORDER BY created_at')
   ).rows.map((row) => ({
     action: row.action as string,
     status: row.status as string,

@@ -115,7 +115,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
         await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
         assert.equal(writes.length, 1);
         assert.deepEqual(writes[0], { title: task.title, prompt: 'Read only overdue invoices in the synthetic EUR account. Keep results in Otto.', kind: 'recurring', cron: '35 7 * * 3', timeZone: selectedZone });
-        saved = { ...writes[0], id: crypto.randomUUID(), runAt: null, enabled: true, revision: 1, nextRun: '2035-10-31T01:50:00Z', lastRun: null, baselineObservation: null };
+        saved = { ...writes[0], id: crypto.randomUUID(), runAt: null, enabled: true, revision: 1, nextRun: '2035-10-31T01:50:00Z', lastRun: null };
         await act(async () => save(Response.json(saved)));
         assert.equal(scheduled, 1);
         assert.equal(pageDataCache.getSnapshot('/api/schedules').data[0].prompt, writes[0].prompt);
@@ -295,7 +295,7 @@ test(
       };
     };
     const createRouted = (
-      provenance?: { turnId: string; sourceMessageId: string | null; sourceTurnId?: string },
+      provenance?: { turnId: string; sourceMessageId: string | null },
       timing: Record<string, unknown> = {},
     ) =>
       personal.manage(
@@ -832,7 +832,7 @@ test(
           const continuation = await thread.enqueueTurn('Synthetic continuation.', {
             source: 'resume',
           });
-          const provenance = { ...origin, turnId: continuation, sourceTurnId: origin.turnId };
+          const provenance = { ...origin, turnId: continuation };
           const schedule = await createRouted(provenance);
           const stored = (
             await db.pool.query(
@@ -846,11 +846,6 @@ test(
             authority_instruction: 'Remind me in a minute.',
             authority_source_message_id: origin.sourceMessageId,
           });
-          const unrelated = await receive('An unrelated source instruction.');
-          await assert.rejects(
-            createRouted({ ...provenance, sourceMessageId: unrelated.sourceMessageId }),
-            /unavailable/,
-          );
           for (const sourceOwner of [ownerId, 'foreign-source']) {
             const sourceThread = randomUUID();
             const sourceTurn = randomUUID();
@@ -868,11 +863,7 @@ test(
               "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'user','Unrelated source.')",
               [sourceMessage, sourceOwner, sourceThread, sourceTurn],
             );
-            const unownedSource = {
-              turnId: continuation,
-              sourceTurnId: sourceTurn,
-              sourceMessageId: sourceMessage,
-            };
+            const unownedSource = { turnId: continuation, sourceMessageId: sourceMessage };
             await assert.rejects(createRouted(unownedSource), /unavailable/);
             await assert.rejects(
               personal.manage(
