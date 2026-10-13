@@ -447,12 +447,11 @@ test('app groups separate catalog metadata from saved account state and keep ava
   const account: Connection = {
     slug: 'gmail',
     name: 'Gmail',
-    status: 'connected',
+    status: 'disconnected',
     connectionId: 'owned-gmail',
     accountId: 'provider-account',
     accountEmail: 'synthetic@example.test',
     description: 'Account authorization expired',
-    reconnectRequired: true,
     triggersEnabled: true,
   };
   const catalog: Connection[] = [

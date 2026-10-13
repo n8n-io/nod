@@ -1788,28 +1788,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
-  const icons = new Map<string, { expiresAt: number; icon: Promise<SiteIcon | null> }>();
   function siteIcon(origin: string) {
-    const fetchIcon = options.icon;
-    if (!fetchIcon || loopbackHost(new URL(origin).hostname)) return null;
-    const cached = icons.get(origin);
-    if (cached && cached.expiresAt > Date.now()) return cached.icon;
-    icons.delete(origin);
-    const entry = {
-      expiresAt: Date.now() + 86_400_000,
-      icon: fetchIcon(origin)
-        .catch(() => null)
-        .then((icon) => {
-          if (!icon || icon.bytes.byteLength > 128 * 1024) {
-            entry.expiresAt = Date.now() + 600_000;
-            return null;
-          }
-          return icon;
-        }),
-    };
-    icons.set(origin, entry);
-    while (icons.size > 128) icons.delete(icons.keys().next().value!);
-    return entry.icon;
+    if (!options.icon || loopbackHost(new URL(origin).hostname)) return null;
+    return options.icon(origin);
   }
 
   function registerRoutes(app: FastifyInstance) {

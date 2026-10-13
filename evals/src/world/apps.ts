@@ -1096,9 +1096,6 @@ export function createApps(
         },
       };
     },
-    async restoreSession() {
-      return world.provider.createSession('local-development', {});
-    },
     async inboxSnippets(accountId) {
       if (accounts.get(accountId)?.service !== 'gmail') return [];
       return (world.gmail?.mails ?? [])

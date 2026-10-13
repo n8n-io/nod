@@ -1,17 +1,17 @@
 ---
 title: MCP servers, APIs and CLIs
-description: Connect Notion and Linear directly, and let Otto set up other services through an MCP server, an HTTP API or a command-line tool.
+description: Connect Notion and Linear through their MCP servers, and let Otto set up other services through an MCP server, an HTTP API or a command-line tool.
 sidebar:
   order: 3
 ---
 
-Besides [Composio apps](/connect/apps/), Otto connects to Notion and Linear directly. For other services, it can set up an MCP server, an HTTP API or a command-line tool (CLI).
+Besides [Composio apps](/connect/apps/), Otto connects to Notion and Linear through their own MCP servers. For other services, it can set up an MCP server, an HTTP API or a command-line tool (CLI).
 
 ## Notion and Linear
 
-Notion and Linear connect through their own hosted MCP servers. You sign in with OAuth, and you don't need a Composio key. Open **Apps** and select **Connect**.
+Notion and Linear connect through their own hosted MCP servers, the same way as any [other MCP server](#connect-another-service). You sign in with OAuth, and you don't need a Composio key. Open **Apps** and select **Connect**.
 
-Otto can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. A Linear account connected before Otto had write access asks you to connect it again.
+Otto can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. Connect a Notion or Linear account again if you connected it with an earlier version of Otto.
 
 ## Connect another service
 

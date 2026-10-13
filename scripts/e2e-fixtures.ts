@@ -1435,11 +1435,6 @@ export function createIntegrationFixture(
       sessions.set(session.id, session);
       return session;
     },
-    async restoreSession(id) {
-      const session = sessions.get(id);
-      if (!session) throw new Error('Synthetic session expired.');
-      return session;
-    },
     async deleteSession(id) {
       sessions.delete(id);
     },

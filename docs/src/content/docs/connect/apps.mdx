@@ -9,7 +9,7 @@ import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 Otto connects to Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps through [Composio](https://composio.dev). You need your own Composio project and a project API key.
 
-Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. Notion and Linear don't use Composio. They connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
@@ -32,14 +32,14 @@ flowchart TD
 
 </Steps>
 
-| Permission area        | Access         | Otto uses it to                                                     |
-| ---------------------- | -------------- | ------------------------------------------------------------------- |
-| Connected accounts     | Read and write | Check connections and disconnect accounts                           |
-| Session management     | Read and write | Create, restore and delete sessions, and open sign-in links         |
-| Session tool execution | Write only     | Find app actions, load their details and run them                   |
-| Toolkits               | Read only      | List the apps you can connect                                       |
-| Auth configs           | Read only      | Pick your custom Google sign-in setup                               |
-| Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and fetch sign-in emails |
+| Permission area        | Access         | Otto uses it to                                                      |
+| ---------------------- | -------------- | -------------------------------------------------------------------- |
+| Connected accounts     | Read and write | Check connections and disconnect accounts                            |
+| Session management     | Read and write | Create and delete sessions, and open sign-in links                   |
+| Session tool execution | Write only     | Find app actions, load their details and run them                    |
+| Toolkits               | Read only      | List the apps you can connect                                        |
+| Auth configs           | Read only      | Pick your custom Google sign-in setup                                |
+| Proxy execute (Legacy) | Write only     | Read account identity, sign-in emails, recent subjects and sent mail |
 
 If you set `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**.
 
@@ -89,7 +89,7 @@ Two things decide what Otto can do in an app:
 
 To narrow an app's scopes, change them in its auth config, then reconnect the account. Changing the key doesn't change what you agreed to on the consent screen. See Composio's [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
 
-To choose an auth config, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in `.env`, where `<APP>` is `GMAIL`, `CALENDAR`, `DRIVE`, `SHEETS`, `DOCS`, `SLACK` or `NOTION`.
+To choose an auth config, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in `.env`, where `<APP>` is `GMAIL`, `CALENDAR`, `DRIVE`, `SHEETS`, `DOCS` or `SLACK`.
 
 <details>
 <summary>How Otto picks a Google auth config</summary>
