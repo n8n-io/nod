@@ -2446,7 +2446,9 @@ test(
     await send('112233445566');
     for (let attempt = 0; attempt < 100 && !f.wakes.length; attempt++) await delay(10);
     assert.equal(f.wakes.length, 1);
+    await send('112233445566');
     await send('223344556677');
+    for (let attempt = 0; attempt < 100 && f.wakes.length < 2; attempt++) await delay(10);
     await f.service.drain();
     const receipts = (await f.pool.query('SELECT * FROM integration_events ORDER BY created_at'))
       .rows;

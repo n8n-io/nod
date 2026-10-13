@@ -1613,7 +1613,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         await pool.query(
           'INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id,intent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING',
           [
-            `${providerId}:${event.id}`,
+            messageId
+              ? `${providerId}:gmail:${row.account_id}:${messageId}`
+              : `${providerId}:${event.id}`,
             configuredOwner,
             summary,
             slug.data,
