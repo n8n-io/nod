@@ -16,9 +16,11 @@ export const updatePreferences = preferencesStore.update;
 export function createTriage(options: {
   consumers?: WorkConsumers;
   connectedApps(): Promise<ConnectedApp[]>;
+  sweep?(): Promise<void>;
 }) {
   const notifying = async () => Boolean((await getPreferences()).notificationRule.trim());
   async function heartbeat() {
+    await options.sweep?.();
     if (!(await notifying())) return;
     for (const app of (await options.connectedApps()).filter(checkable))
       await queueActivityCheck(app.connectionId!);

@@ -555,11 +555,16 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return keyPromise;
   };
   const forgetExpiredHolds = () =>
-    pool.query(
-      `UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
+    pool
+      .query(
+        `UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
        WHERE owner_id=$1 AND login_label<>'' AND expires_at<=now()`,
-      [owner],
-    );
+        [owner],
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => logFailure('vault_hold_cleanup', error),
+      );
   await forgetExpiredHolds();
 
   async function list(ownerId = owner) {
@@ -1206,6 +1211,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function describe(token: string): Promise<CredentialRequest> {
+    await forgetExpiredHolds();
     const { rows } = await pool.query<RequestRow & { current_step: boolean; expired: boolean }>(
       `SELECT r.*,(SELECT v.status FROM vault_uses v WHERE v.id=r.id AND r.status='consumed') AS operation_status,r.expires_at<=now() AS expired,EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
         AND ${waitingTurnSql('u', 'credentials')}) AS current_step FROM credential_requests r WHERE token_hash=$1 AND owner_id=$2`,
@@ -1284,6 +1290,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     request?: RequestRow,
   ) {
     if (ownerId !== owner) throw new VaultError('This task belongs to another owner.', 409);
+    await forgetExpiredHolds();
     const { input } = await inspectRequest(browserOf(turn), raw);
     const root = request?.root_turn_id ?? (await rootTurn(pool, turn, ownerId));
     if (!root) throw new VaultError('This task can no longer use credentials.', 409);
@@ -1670,6 +1677,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function fillSelected(turn: TurnRef, ownerId: string, raw: CredentialInput) {
+    await forgetExpiredHolds();
     const root = await rootTurn(pool, turn, ownerId);
     const selected = root
       ? await selection(root, ownerId, credentialOrigin(raw.origin))
@@ -1694,6 +1702,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     )
       return false;
     try {
+      await forgetExpiredHolds();
       const origin = credentialOrigin(raw.origin);
       const started = await currentTurn(pool, turn, ownerId);
       const root = started ? await rootTurn(pool, turn, ownerId) : undefined;
@@ -1965,6 +1974,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     fillSelected,
     fillEmailCode,
     submitChatCode,
+    forgetExpiredHolds,
     paymentCards,
     paymentCard,
     setDoItForMe,
