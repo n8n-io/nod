@@ -5336,6 +5336,81 @@ test(
 );
 
 test(
+  'an older MCP sign-in cannot replace a connection after a newer one',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const ownerId = 'local-development';
+    const grantVault = await createAppGrantVault(f.pool, {
+      ownerId,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
+    });
+    const discovered = await createDiscoveredConnections(f.pool, {
+      ownerId,
+      baseUrl: 'http://127.0.0.1:4310',
+      grantVault,
+      transport: {
+        validateEndpoint: async (endpoint) => endpoint,
+        http: async () => ({ status: 200, body: null }),
+        listTools: async () => [{ name: 'search', inputSchema: {} }],
+        callTool: async () => ({}),
+      },
+      oauth: {
+        begin: async (_endpoint, redirectUri, state) => ({
+          url: `https://consent.example.test/authorize?state=${state}`,
+          saved: { redirectUri },
+        }),
+        finish: async (_endpoint, saved, code) => ({
+          ...saved,
+          tokens: { access_token: `token-${code}`, token_type: 'Bearer' },
+        }),
+        refresh: async () => assert.fail('No refresh is expected.'),
+      },
+    });
+    const app = Fastify();
+    t.after(() => app.close());
+    discovered.registerRoutes(app);
+    const connectionId = randomUUID();
+    await f.pool.query(
+      `INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths)
+       VALUES($1,$2,'fixture-app','Fixture app','Synthetic account','[]')`,
+      [connectionId, ownerId],
+    );
+    await grantVault.put(connectionId, JSON.stringify({ tokens: { access_token: 'token-old' } }));
+    const start = async () => {
+      const { url } = await discovered.propose({
+        service: 'fixture-app',
+        name: 'Fixture app',
+        connectionId,
+        paths: [{ kind: 'mcp', endpoint: 'https://fixture.example/mcp', auth: 'oauth' }],
+      });
+      const id = new URL(url, 'http://127.0.0.1:4310').searchParams.get('connect');
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/apps/discovery/${id}/authorize`,
+        payload: {},
+      });
+      return new URL(response.json().url).searchParams.get('state')!;
+    };
+    const finish = async (state: string, code: string) =>
+      (await discovered.completeOAuth({ state, code }))?.outcome;
+    const token = async () =>
+      JSON.parse((await grantVault.read(connectionId)).value).tokens.access_token;
+    const older = await start();
+    const newer = await start();
+    assert.equal(await finish(newer, 'newer'), 'connected');
+    assert.equal(await finish(older, 'older'), 'failed');
+    assert.equal(await token(), 'token-newer');
+    const open = await start();
+    const latest = await start();
+    assert.equal(await finish(open, 'open'), 'failed');
+    assert.equal(await token(), 'token-newer');
+    assert.equal(await finish(latest, 'latest'), 'connected');
+    assert.equal(await token(), 'token-latest');
+  },
+);
+
+test(
   'discovered OAuth sign-in saves the grant in the Vault on a database that still has the legacy ciphertext column',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
