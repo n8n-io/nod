@@ -28,7 +28,6 @@ import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
-import { untrustedBlock } from '../shared/untrusted.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -343,48 +342,6 @@ export async function threadBrowsers(turn: TurnRef, ownOnly: boolean) {
     [ownerId, turn.threadId, own.browserId],
   );
   return [own, ...rows];
-}
-
-async function finishTasks(sessionId: string) {
-  const parent = (
-    await pool.query<{
-      id: string;
-      session_id: string;
-      background: boolean;
-      channel: string;
-      channel_source_id: string | null;
-    }>(
-      `SELECT p.id,p.session_id,p.background,p.channel,p.channel_source_id FROM turns s
-       JOIN turns p ON p.id=substring(s.source_id from '^task:([0-9a-f-]{36}):')::uuid AND p.owner_id=s.owner_id
-       WHERE s.id=$1 AND s.owner_id=$2 AND s.source='resume'`,
-      [sessionId, ownerId],
-    )
-  ).rows[0];
-  if (!parent) return;
-  const started = `task:${parent.id}:%`;
-  const open = await pool.query(
-    `SELECT 1 FROM turns s JOIN LATERAL (SELECT u.status FROM turns u
-       WHERE u.session_id=s.id AND u.owner_id=s.owner_id ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
-     WHERE s.owner_id=$1 AND s.source_id LIKE $2 AND l.status IN ('queued','running','waiting') LIMIT 1`,
-    [ownerId, started],
-  );
-  if (open.rowCount) return;
-  const { rows } = await pool.query(
-    `SELECT t.title,t.state,t.result FROM turns s JOIN tasks t ON t.id=s.task_id AND t.owner_id=s.owner_id
-     WHERE s.owner_id=$1 AND s.source_id LIKE $2 ORDER BY s.created_at,s.id`,
-    [ownerId, started],
-  );
-  await enqueueTurn(
-    `The parallel tasks you started have finished. Use their results and messages to finish the user's request.\n${untrustedBlock('parallel task results', JSON.stringify(rows))}`,
-    {
-      source: 'resume',
-      sourceId: `tasks-done:${parent.id}`,
-      channel: parent.channel,
-      channelSourceId: parent.channel_source_id,
-      background: parent.background,
-      sessionId: parent.session_id,
-    },
-  );
 }
 
 async function askingSession(client: PoolClient, replyToMessageId?: string) {
@@ -1327,10 +1284,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     unwatch?.();
-    if ((outcome === 'succeeded' || outcome === 'failed') && turn.session_id !== threadId)
-      await finishTasks(turn.session_id).catch((error: unknown) =>
-        console.error(`Parallel tasks of ${turnId} could not report: ${describeFailure(error)}`),
-      );
     dependencies.analytics?.({
       event: 'otto_turn_completed',
       properties: {

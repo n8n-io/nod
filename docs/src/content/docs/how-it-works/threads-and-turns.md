@@ -108,7 +108,6 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 - **Authority.** A task's `resume` source ID names the turn that started it, so the trust check and Vault trace it to that turn. It carries the same owner words, schedule instruction or none, and a read-only start makes it read-only.
 - **Limits.** At most three tasks run at once, and a task can't start another task.
 - **Talking to you.** It reports with `send_message`, asks with `ask_user` and finishes its own card.
-- **Finishing together.** When the last task a turn started ends, that turn's session wakes once with a `resume` turn (`tasks-done:<turn>`). The tasks' card results arrive as untrusted data, and it finishes the request, such as comparing three shops' prices.
 
 ## Every session has its own browser
 
