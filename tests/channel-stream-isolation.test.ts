@@ -162,8 +162,20 @@ test(
         ids.set(mode.marker, id);
         await waitFor(() => contexts.has(id));
         const context = contexts.get(id)!;
-        if (mode.marker === 'web-reply')
+        if (mode.marker === 'web-reply') {
+          let refreshes = 0;
+          const count = (event: { type: string }) => {
+            if (event.type === 'refresh') refreshes++;
+          };
+          events.on('event', count);
+          for (let index = 0; index < 20; index++)
+            await context.emit(index % 2 ? 'tool_complete' : 'tool_start', 'web search');
+          const burst = refreshes;
+          assert.ok(burst <= 2, `A burst of 20 tool events sent ${burst} refreshes.`);
+          await waitFor(() => refreshes > burst);
+          events.off('event', count);
           for (const event of rejectedEvents) events.emit('event', event as never);
+        }
         context.delta(mode.marker, `stream-${mode.marker}`);
         await context.reply(mode.marker, `stream-${mode.marker}`);
         context.delta('', `stream-${mode.marker}`, true);
@@ -261,6 +273,22 @@ function unreadMessage(index: number, role: 'user' | 'assistant' = 'assistant') 
     text: 'Synthetic private message that must never enter read-state storage.',
     attachments: [],
     turnId: null,
+  };
+}
+
+function appState(threadId: string, messages = [unreadMessage(1)]): AppState {
+  return {
+    threadId,
+    messages,
+    turns: [],
+    configuration: {
+      provider: 'synthetic',
+      model: '',
+      llmReady: false,
+      integrationsReady: false,
+      localOnly: true,
+      conversationResetEnabled: false,
+    },
   };
 }
 
@@ -399,27 +427,14 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
     result = useChatUnread(owner, state);
     return null;
   }
-  const state = (threadId: string, messages = [unreadMessage(1)]): AppState => ({
-    threadId,
-    messages,
-    turns: [],
-    configuration: {
-      provider: 'synthetic',
-      model: '',
-      llmReady: false,
-      integrationsReady: false,
-      localOnly: true,
-      conversationResetEnabled: false,
-    },
-  });
   await act(async () =>
-    root.render(createElement(Probe, { owner: ownerA, state: state(threadA) })),
+    root.render(createElement(Probe, { owner: ownerA, state: appState(threadA) })),
   );
   await act(async () =>
     root.render(
       createElement(Probe, {
         owner: ownerA,
-        state: state(threadA, [unreadMessage(1), unreadMessage(2)]),
+        state: appState(threadA, [unreadMessage(1), unreadMessage(2)]),
       }),
     ),
   );
@@ -427,12 +442,12 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   assert.equal(result.count, 1);
   const retiredRead = result.markRead;
   await act(async () =>
-    root.render(createElement(Probe, { owner: ownerB, state: state(threadB) })),
+    root.render(createElement(Probe, { owner: ownerB, state: appState(threadB) })),
   );
   await act(async () => retiredRead(threadA));
   assert.equal(saved.length, 0);
   await act(async () =>
-    root.render(createElement(Probe, { owner: ownerA, state: state(threadB) })),
+    root.render(createElement(Probe, { owner: ownerA, state: appState(threadB) })),
   );
   await act(async () => loads[1].resolve(cursor));
   assert.equal(saved.length, 0);
@@ -445,7 +460,7 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
     root.render(
       createElement(Probe, {
         owner: ownerA,
-        state: state(threadB, [unreadMessage(1), unreadMessage(2)]),
+        state: appState(threadB, [unreadMessage(1), unreadMessage(2)]),
       }),
     ),
   );
@@ -462,7 +477,7 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
     root.render(
       createElement(Probe, {
         owner: ownerA,
-        state: state(threadC, [unreadMessage(1), unreadMessage(2)]),
+        state: appState(threadC, [unreadMessage(1), unreadMessage(2)]),
       }),
     ),
   );
@@ -488,4 +503,105 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   assert.equal(saved.at(-1)!.owner, ownerA);
   assert.equal(saved.at(-1)!.thread, threadC);
   assert.deepEqual(saved.at(-1)!.cursor, latestChatReadCursor([unreadMessage(2)]));
+});
+
+test('a burst of refresh events during a state request applies one newer state without aborting', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const dom = new JSDOM('<div id="root"></div>', { url: 'https://otto.fixture.test' });
+  const requests: Array<{ signal?: AbortSignal | null; resolve(state: AppState): void }> = [];
+  const sources: SyntheticEventSource[] = [];
+  class SyntheticEventSource {
+    static CLOSED = 2;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    constructor() {
+      sources.push(this);
+    }
+    close() {
+      this.readyState = 2;
+    }
+  }
+  const fixtures = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    Event: dom.window.Event,
+    EventSource: SyntheticEventSource,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async (path: string, init: RequestInit) => {
+      if (path === '/api/session')
+        return Response.json({
+          auth: { mode: 'local', googleAvailable: false },
+          user: { id: 'synthetic-owner', name: 'Fixture', email: null, avatarUrl: null },
+          settings: { theme: 'system', onboardingCompleted: true, usageData: false },
+          capabilities: { developer: false },
+        });
+      assert.equal(path, '/api/state');
+      return new Promise<Response>((resolve) =>
+        requests.push({ signal: init.signal, resolve: (state) => resolve(Response.json(state)) }),
+      );
+    },
+  };
+  const descriptors = Object.keys(fixtures).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  Object.defineProperties(
+    globalThis,
+    Object.fromEntries(
+      Object.entries(fixtures).map(([key, value]) => [key, { configurable: true, value }]),
+    ),
+  );
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of descriptors)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  const until = async (condition: () => boolean) => {
+    for (let attempt = 0; attempt < 200 && !condition(); attempt++) await delay(5);
+    assert.ok(condition());
+  };
+  const { sessionStore } = await import('../src/web/lib/session.ts');
+  const { useAppState } = await import('../src/web/hooks/use-app-state.ts');
+  await sessionStore.refresh();
+  let result!: ReturnType<typeof useAppState>;
+  function Probe() {
+    result = useAppState('synthetic-owner');
+    return null;
+  }
+  await act(async () => root.render(createElement(Probe)));
+  const threadId = randomUUID();
+  const source = sources.at(-1)!;
+  await act(async () => {
+    source.onopen!();
+    for (let index = 0; index < 20; index++)
+      source.onmessage!({ data: JSON.stringify({ type: 'refresh' }) });
+  });
+  let refreshed = false;
+  const awaited = result.refresh().then(() => {
+    refreshed = true;
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].signal?.aborted ?? false, false);
+  await act(async () => {
+    requests[0].resolve(appState(threadId));
+    await until(() => requests.length === 2);
+  });
+  assert.equal(result.state?.messages.length, 1);
+  assert.equal(refreshed, false);
+  await act(async () => {
+    requests[1].resolve(appState(threadId, [unreadMessage(1), unreadMessage(2)]));
+    await awaited;
+  });
+  assert.equal(requests.length, 2);
+  assert.deepEqual(
+    result.state?.messages.map((message) => message.id),
+    [unreadMessage(1).id, unreadMessage(2).id],
+  );
 });

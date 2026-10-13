@@ -124,6 +124,15 @@ A session opens its browser on its first browser call, so a session that never b
 - A session that pauses on a question, approval or sign-in keeps an open page for 30 minutes, even when that turn didn't browse.
 - The limit is four for every computer provider. Measure memory on an E2B sandbox with 2 CPUs and 3 GB before you raise it in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts).
 
+## How Otto web follows the work
+
+Otto web reads the thread from `/api/state` and listens to `/api/events`. A `refresh` event says something changed, and a `delta` event streams a chat reply while Otto writes it.
+
+- Otto web keeps one `/api/state` request open at a time. A refresh that arrives during a request marks the state stale, and Otto web fetches once more when the request ends.
+- Tool starts and finishes send at most one refresh per session each second, so parallel sessions don't flood the client. That refresh comes at the end of the second, so the latest step still shows.
+
+The client side lives in [`src/web/hooks/use-app-state.ts`](https://github.com/n8n-io/otto/blob/main/src/web/hooks/use-app-state.ts).
+
 ## Stop and failures
 
 **Stop** aborts running turns and cancels queued and waiting turns in every session. It can't undo an external action that already started. Ordinary turns have no time limit.

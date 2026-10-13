@@ -15,8 +15,8 @@ export function useAppState(accountId?: string) {
   const retiredThreads = useRef(new Set<string>());
   const resetRequest = useRef<Promise<string> | null>(null);
   const active = useRef(false);
-  const stateRequest = useRef<AbortController | null>(null);
-  const refreshAfterRequest = useRef(false);
+  const stateRequest = useRef<Promise<void> | null>(null);
+  const nextStateRequest = useRef<Promise<void> | null>(null);
   const advanceThread = useCallback((next: string) => {
     if (next === threadId.current) return;
     if (threadId.current) {
@@ -38,17 +38,11 @@ export function useAppState(accountId?: string) {
         : current,
     );
   }, []);
-  const refresh = useCallback(async () => {
-    if (!active.current) return;
-    const version = ++requestVersion.current;
-    refreshAfterRequest.current = false;
-    stateRequest.current?.abort();
-    const controller = new AbortController();
-    stateRequest.current = controller;
+  const load = useCallback(async () => {
+    const version = requestVersion.current;
     try {
-      const next = await api<AppState>('/api/state', { signal: controller.signal });
-      if (!active.current || controller.signal.aborted || version !== requestVersion.current)
-        return;
+      const next = await api<AppState>('/api/state');
+      if (!active.current || version !== requestVersion.current) return;
       if (retiredThreads.current.has(next.threadId)) return;
       advanceThread(next.threadId);
       dispatchStream({
@@ -62,15 +56,23 @@ export function useAppState(accountId?: string) {
       setState(next);
       setError('');
     } catch (cause) {
-      if (active.current && !controller.signal.aborted && version === requestVersion.current)
-        setError(errorMessage(cause));
-    } finally {
-      if (stateRequest.current === controller) {
-        stateRequest.current = null;
-        if (refreshAfterRequest.current) void refresh();
-      }
+      if (active.current && version === requestVersion.current) setError(errorMessage(cause));
     }
   }, [advanceThread]);
+  const refresh = useCallback((): Promise<void> => {
+    if (!active.current) return Promise.resolve();
+    if (!stateRequest.current) {
+      const request = load().finally(() => {
+        stateRequest.current = null;
+      });
+      stateRequest.current = request;
+      return request;
+    }
+    return (nextStateRequest.current ??= stateRequest.current.then(() => {
+      nextStateRequest.current = null;
+      return refresh();
+    }));
+  }, [load]);
 
   const resetConversation = useCallback(
     (expectedThreadId: string) => {
@@ -106,8 +108,7 @@ export function useAppState(accountId?: string) {
       open() {
         if (!subscribed) return;
         setConnected(true);
-        if (stateRequest.current) refreshAfterRequest.current = true;
-        else void refresh();
+        void refresh();
       },
       error() {
         if (!subscribed || !active.current) return;
@@ -156,7 +157,6 @@ export function useAppState(accountId?: string) {
       active.current = false;
       subscribed = false;
       requestVersion.current++;
-      stateRequest.current?.abort();
       closeEvents();
     };
   }, [refresh, advanceThread, accountId]);

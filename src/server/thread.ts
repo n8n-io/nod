@@ -38,6 +38,7 @@ export const boss = new PgBoss({
 });
 const running = new Map<string, AbortController>();
 const inflight = new Set<Promise<void>>();
+const toolRefreshes = new Set<string>();
 let stopping = false;
 
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume';
@@ -204,6 +205,15 @@ async function sendDrain(client: PoolClient | undefined, threadId: string) {
       expireInSeconds: 86400,
     },
   );
+}
+
+function refreshTools(sessionId: string) {
+  if (toolRefreshes.has(sessionId)) return;
+  toolRefreshes.add(sessionId);
+  setTimeout(() => {
+    toolRefreshes.delete(sessionId);
+    refresh();
+  }, 1000).unref();
 }
 
 async function insertEvent(client: PoolClient, turnId: string, type: string, summary: string) {
@@ -1071,7 +1081,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const emit = async (type: string, summary: string) => {
       await current((client) => insertEvent(client, turnId, type, summary));
-      refresh();
+      if (type === 'tool_start' || type === 'tool_complete') refreshTools(turn.session_id);
+      else refresh();
     };
     const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
