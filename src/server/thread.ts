@@ -19,7 +19,7 @@ import type {
 } from '../ports/agent.ts';
 import { appConfirmation } from '../ports/agent.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
-import { defaultPreferences } from './preferences.ts';
+import { defaultPreferences, isQuietTime } from './preferences.ts';
 import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
@@ -838,7 +838,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ),
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
       pool.query(
-        'SELECT time_zone,locale,hour_cycle,notification_rule FROM preferences WHERE owner_id=$1',
+        'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
         [ownerId],
       ),
       dependencies.accountProfile?.().catch(() => undefined),
@@ -871,6 +871,13 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       locale: preference?.locale || formattingLocale(timeZone ? timeZoneRegion(timeZone) : null),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
       notificationRule: preference?.notification_rule ?? defaultPreferences.notificationRule,
+      quietHours: isQuietTime({
+        ...defaultPreferences,
+        timeZone: timeZone ?? null,
+        quietHoursEnabled: preference?.quiet_hours_enabled ?? defaultPreferences.quietHoursEnabled,
+        quietStart: preference?.quiet_start ?? defaultPreferences.quietStart,
+        quietEnd: preference?.quiet_end ?? defaultPreferences.quietEnd,
+      }),
       ...(account ? { account } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),

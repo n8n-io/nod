@@ -62,7 +62,7 @@ Work Otto starts on its own only reads and drafts. Sending, deleting or anything
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Preferences → Quiet hours**.
 
-During quiet hours, Otto saves new mail and app activity for later instead of acting on it, and pauses its activity checks. Schedules you created still run on time.
+During quiet hours, Otto keeps working on new mail and app activity, but messages you only for something that can't wait until they end. Schedules you created still run and deliver on time.
 
 ## Keep Otto running
 

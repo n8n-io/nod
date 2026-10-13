@@ -23,7 +23,7 @@ import type {
   RelevancePolicy,
 } from '../ports/relevance.ts';
 
-import { createPreferencesStore, defaultPreferences, type Preferences } from './preferences.ts';
+import { createPreferencesStore, defaultPreferences } from './preferences.ts';
 
 const preferencesStore = createPreferencesStore(pool, ownerId);
 export const getPreferences = preferencesStore.get;
@@ -41,22 +41,6 @@ const relevancePolicy: RelevancePolicy = {
   },
   minWakeConfidence: 0.8,
 };
-export function isQuietTime(preferences: Preferences, now = new Date()) {
-  if (!preferences.quietHoursEnabled) return false;
-  const current = new Intl.DateTimeFormat('en-GB', {
-    timeZone: preferences.timeZone ?? 'UTC',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(now);
-  const { quietStart, quietEnd } = preferences;
-  return (
-    quietStart !== quietEnd &&
-    (quietStart < quietEnd
-      ? current >= quietStart && current < quietEnd
-      : current >= quietStart || current < quietEnd)
-  );
-}
 async function savedUpdates(client: Pick<PoolClient, 'query'> = pool, lock = false) {
   return (
     await client.query(
@@ -102,7 +86,7 @@ export function createTriage(options: {
   }
   async function queueActivityCheck() {
     const preferences = await getPreferences();
-    if (!preferences.notificationRule.trim() || isQuietTime(preferences)) return;
+    if (!preferences.notificationRule.trim()) return;
     const accounts = (await options.connectedApps()).filter(checkable);
     if (!accounts.length) return;
     await transaction(async (client) => {
@@ -157,7 +141,6 @@ export function createTriage(options: {
     const [preferences, apps] = await Promise.all([getPreferences(), options.connectedApps()]);
     if (
       !preferences.notificationRule.trim() ||
-      isQuietTime(preferences) ||
       !apps.some((app) => app.connectionId === row.connection_id && checkable(app))
     )
       throw new Error('This activity check is no longer available.');
@@ -342,7 +325,7 @@ export function createTriage(options: {
             preferences,
             profile: { location: profile.location, preferences: profile.preferences },
             connectedApps: await options.connectedApps(),
-            savedUpdates: saved.map((item) => ({ ...item, summary: item.summary.slice(0, 5000) })),
+            savedUpdates: saved,
             recentReviews: recentReviews.rows,
             recentConversation: recent.rows,
             engagement: {
@@ -350,7 +333,7 @@ export function createTriage(options: {
               interpretation:
                 'Weak evidence only: these notifications produced an assistant message with no later user message. We do not know whether they were read. Avoid repeating updates, but silence does not make useful background work unwanted.',
             },
-            event: summary.slice(0, 5000),
+            event: summary,
           },
           relevancePolicy,
         );
@@ -358,10 +341,6 @@ export function createTriage(options: {
       } catch {
         reason = 'Saved quietly because the relevance check was unavailable.';
       }
-    }
-    if (decision === 'wake' && isQuietTime(preferences)) {
-      decision = 'digest';
-      reason = 'Saved for quiet hours.';
     }
     await transaction(async (client) => {
       if (current && !(await current(client))) return;
@@ -391,21 +370,18 @@ export function createTriage(options: {
   ) {
     if (notification.decision !== 'wake' || notification.turn_id) return;
     const current = await client.query(
-      'SELECT notification_rule AS "notificationRule",time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd" FROM preferences WHERE owner_id=$1',
+      'SELECT notification_rule AS "notificationRule" FROM preferences WHERE owner_id=$1',
       [ownerId],
     );
-    const preferences: Preferences = current.rows[0] || defaultPreferences;
-    if (!preferences.notificationRule.trim() || isQuietTime(preferences)) {
+    const rule: string = current.rows[0]?.notificationRule ?? defaultPreferences.notificationRule;
+    if (!rule.trim()) {
       await client.query(
         "UPDATE notifications SET decision='digest',reason='Saved quietly under the current notification preferences.' WHERE id=$1 AND owner_id=$2",
         [notification.id, ownerId],
       );
       return;
     }
-    const saved =
-      notification.kind === 'review' && preferences.notificationRule.trim()
-        ? await savedUpdates(client, true)
-        : [];
+    const saved = notification.kind === 'review' ? await savedUpdates(client, true) : [];
     if (
       notification.kind === 'review' &&
       (!saved.length ||

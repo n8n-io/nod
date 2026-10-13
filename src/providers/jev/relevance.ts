@@ -15,7 +15,7 @@ export function createJevRelevanceClassifier(options: {
       if (!options.apiKey) throw new Error('Relevance check is not configured.');
       const response = await request('https://api.typesafe.ai/v1/systemone', {
         method: 'POST',
-        signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]),
+        signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
         headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: options.model || 'jev-latest',

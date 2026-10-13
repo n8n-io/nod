@@ -80,6 +80,7 @@ export interface RuntimeContext {
   locale?: string;
   hourCycle?: 'auto' | 'h12' | 'h23';
   notificationRule?: string;
+  quietHours?: boolean;
   account?: RuntimeAccount;
   connectedApps?: ConnectedApp[];
   currentMessageId?: string;

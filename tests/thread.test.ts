@@ -2659,6 +2659,13 @@ test(
             });
             const quietId = randomUUID();
             await triage.triageEvent('Synthetic inbox quiet hours', quietId, 'inspect_message');
+            const quiet = await db.pool.query(
+              'SELECT decision,turn_id FROM notifications WHERE event_id=$1 AND owner_id=$2',
+              [quietId, ownerId],
+            );
+            assert.equal(quiet.rows[0].decision, 'wake');
+            await waitFor(settled(quiet.rows[0].turn_id));
+            assert.equal(quietInstructions.get(quiet.rows[0].turn_id)?.quietHours, true);
             const callsBeforeOptOut = classified;
             await preferences.update({ notificationRule: '', quietHoursEnabled: false });
             const disabledId = randomUUID();
@@ -2667,14 +2674,11 @@ test(
             assert.deepEqual(
               (
                 await db.pool.query(
-                  'SELECT decision,turn_id FROM notifications WHERE event_id=ANY($1::text[]) AND owner_id=$2',
-                  [[quietId, disabledId], ownerId],
+                  'SELECT decision,turn_id FROM notifications WHERE event_id=$1 AND owner_id=$2',
+                  [disabledId, ownerId],
                 )
               ).rows,
-              [
-                { decision: 'digest', turn_id: null },
-                { decision: 'digest', turn_id: null },
-              ],
+              [{ decision: 'digest', turn_id: null }],
             );
             await preferences.update({ ...original, quietHoursEnabled: false });
             currentApps = [
@@ -2713,8 +2717,8 @@ test(
             assert.deepEqual(
               (
                 await db.pool.query(
-                  'SELECT DISTINCT turn_id FROM notifications WHERE event_id=ANY($1::text[]) AND owner_id=$2',
-                  [[quietId, disabledId], ownerId],
+                  'SELECT DISTINCT turn_id FROM notifications WHERE event_id=$1 AND owner_id=$2',
+                  [disabledId, ownerId],
                 )
               ).rows,
               review,
