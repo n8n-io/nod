@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import type { IntegrationProvider } from '../../src/ports/integrations.ts';
 import type { RuntimeObservation } from '../../src/ports/agent.ts';
 import { runProcess } from '../../src/providers/process.ts';
@@ -339,14 +340,15 @@ export async function startStack(options: {
         },
       },
       keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-      ...(await load<{
-        createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
-      }>('src/providers/openai/relevance.ts').then(
-        (module) => ({
-          relevance: module.createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
-        }),
-        () => ({}),
-      )),
+      ...(existsSync(join(appSource, 'src/providers/openai/relevance.ts'))
+        ? {
+            relevance: (
+              await load<{
+                createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
+              }>('src/providers/openai/relevance.ts')
+            ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+          }
+        : {}),
       memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
       onboardingCurator: createPiMemoryCurator({
         provider: model.provider,

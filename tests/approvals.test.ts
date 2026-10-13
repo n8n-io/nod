@@ -1575,6 +1575,12 @@ test(
             );
             assert.equal(await proposal(origin.turnId), undefined);
           }
+          const legacy = await begin('Update my preferences.', { source: 'event' });
+          await db.pool.query("UPDATE turns SET source_id='onboarding:'||id::text WHERE id=$1", [
+            legacy.turnId,
+          ]);
+          await db.initializeDatabase();
+          await assert.rejects(approvals.request(legacy, 'OTTO_profile_update', args), /read-only/);
           for (const mutation of [
             'UPDATE turns SET read_only=true WHERE id=$1',
             "UPDATE turns SET owner_id='foreign' WHERE id=$1",

@@ -221,7 +221,16 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         result text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz
       );
-      ALTER TABLE tasks DROP COLUMN IF EXISTS auto;
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+          AND table_name='tasks' AND column_name='auto') THEN
+          UPDATE turns SET task_id=NULL WHERE task_id IN (SELECT t.id FROM tasks t WHERE t.auto AND t.state<>'open'
+            AND NOT EXISTS (SELECT 1 FROM turns x WHERE x.task_id=t.id AND x.source='user'));
+          DELETE FROM tasks t WHERE t.auto AND t.state<>'open'
+            AND NOT EXISTS (SELECT 1 FROM turns x WHERE x.task_id=t.id AND x.source='user');
+          ALTER TABLE tasks DROP COLUMN auto;
+        END IF;
+      END $$;
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id);
       CREATE INDEX IF NOT EXISTS turns_task ON turns(task_id) WHERE task_id IS NOT NULL;

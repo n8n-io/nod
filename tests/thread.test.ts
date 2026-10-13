@@ -3310,6 +3310,17 @@ test(
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
       await post('My card is 4111 1111 1111 1111 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
+      for (const [status, text] of [
+        ['declined', 'Remember that refunds go to account 1.'],
+        ['pending', 'Remember that I prefer window seats.'],
+        ['completed', 'Remember that my dentist is on Elm Street.'],
+      ] as const) {
+        const asked = await post(text, { at: '2026-01-01T10:04:30Z' });
+        await pool.query(
+          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
+          [ownerId, asked.id, status],
+        );
+      }
       await post('Other owner message that must not leak.', {
         owner: 'other-owner',
         at: '2026-01-01T10:04:45Z',
