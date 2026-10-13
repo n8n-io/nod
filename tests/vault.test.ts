@@ -45,7 +45,7 @@ async function seedTurns(pool: pg.Pool) {
     'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
   );
   await pool.query(
-    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
   );
   const threads = new Map<string, string>();
   const turn = async (owner = 'local-development') => {
@@ -379,7 +379,7 @@ test(
     const { turn, wait } = await seedTurns(pool);
     const otpTask = await turn();
     let calls = 0;
-    let resumeAttempts = 0;
+    const resumed: string[] = [];
     const vault = await createVault(pool, {
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       retry: async () => {},
@@ -387,9 +387,8 @@ test(
         calls++;
         if (calls === 1) throw new Error(`Provider leaked ${input.code}`);
       },
-      resume: async () => {
-        resumeAttempts++;
-        if (resumeAttempts === 1) throw new Error('Queue temporarily unavailable');
+      resume: async (turnId) => {
+        resumed.push(turnId);
       },
     });
     vault.registerRoutes(app);
@@ -419,21 +418,12 @@ test(
       });
       url = fresh.url.replace('/vault/', '/api/credential-requests/');
       await wait(otpTask);
+      assert.deepEqual(resumed, []);
       assert.equal(
         (await app.inject({ method: 'POST', url, payload: { code: '789012' } })).statusCode,
         200,
       );
-      assert.equal(
-        (await pool.query('SELECT * FROM credential_requests WHERE resume_pending = true'))
-          .rowCount,
-        1,
-      );
-      await vault.resumePending();
-      assert.equal(
-        (await pool.query('SELECT * FROM credential_requests WHERE resume_pending = true'))
-          .rowCount,
-        0,
-      );
+      assert.deepEqual(resumed, [otpTask.turnId]);
       assert.equal(calls, 2);
       assert.equal((await pool.query('SELECT * FROM vault_entries')).rowCount, 0);
       assert.equal(
@@ -740,6 +730,130 @@ test(
   },
 );
 
+test(
+  'Vault starts on an existing database, drops its dead columns and keeps saved logins, cards and open forms',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_vault_existing_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const turns = await seedTurns(pool);
+    const key = randomBytes(32);
+    const options = {
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      page: async () => ({ origin: 'https://example.com', url: 'https://example.com/login' }),
+      inject: async () => {},
+      retry: async () => {},
+      resume: async (turnId: string, client: pg.PoolClient) => {
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source,source_id) SELECT gen_random_uuid(),owner_id,thread_id,'resume','credentials:'||id FROM turns WHERE id=$1",
+          [turnId],
+        );
+      },
+    };
+    const resumed = async () =>
+      (
+        await pool.query(
+          "SELECT substring(source_id from 13) AS id FROM turns WHERE source='resume'",
+        )
+      ).rows.map((row) => row.id as string);
+    const input = {
+      origin: 'https://example.com',
+      label: 'Example',
+      kind: 'password' as const,
+      passwordSelector: '#password',
+    };
+    let app = Fastify();
+    try {
+      let vault = await createVault(pool, options);
+      vault.registerRoutes(app);
+      const login = (
+        await app.inject({
+          method: 'POST',
+          url: '/api/vault',
+          payload: {
+            label: 'Example',
+            origin: 'https://example.com',
+            username: 'person',
+            password: 'existing-secret',
+          },
+        })
+      ).json<VaultLoginEntry>();
+      const card = (
+        await app.inject({
+          method: 'POST',
+          url: '/api/vault',
+          payload: {
+            kind: 'card',
+            label: 'Card',
+            cardholder: 'Synthetic Owner',
+            cardNumber: '4242424242424242',
+            expiryMonth: 8,
+            expiryYear: new Date().getUTCFullYear() + 3,
+          },
+        })
+      ).json<VaultCardEntry>();
+      const background = await turns.turn();
+      await pool.query('UPDATE turns SET background=true WHERE id=$1', [background.turnId]);
+      const open = await vault.request(
+        { ...background, browserId: randomUUID() },
+        'local-development',
+        input,
+      );
+      await turns.wait(background);
+      await app.close();
+      await pool.query(`
+        ALTER TABLE credential_requests ADD COLUMN resume_pending boolean NOT NULL DEFAULT true;
+        CREATE INDEX credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
+        ALTER TABLE vault_uses ADD COLUMN thread_id uuid NOT NULL DEFAULT gen_random_uuid(),
+          ADD COLUMN turn_id uuid NOT NULL DEFAULT gen_random_uuid(), ADD COLUMN finished_at timestamptz;
+        ALTER TABLE vault_uses ALTER COLUMN thread_id DROP DEFAULT, ALTER COLUMN turn_id DROP DEFAULT;
+      `);
+
+      app = Fastify();
+      vault = await createVault(pool, options);
+      vault.registerRoutes(app);
+      assert.deepEqual(
+        (
+          await pool.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema()
+             AND (table_name, column_name) IN (('credential_requests','resume_pending'),('vault_uses','thread_id'),('vault_uses','turn_id'),('vault_uses','finished_at'))
+             UNION ALL SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND indexname='credential_requests_root_turn'`,
+          )
+        ).rows,
+        [],
+      );
+      assert.deepEqual(await resumed(), []);
+      const url = open.url.replace('/vault/', '/api/credential-requests/');
+      assert.equal((await app.inject({ url })).json().status, 'pending');
+      const submitted = await app.inject({
+        method: 'POST',
+        url,
+        payload: { label: 'Example', username: 'person', password: 'existing-secret' },
+      });
+      assert.equal(submitted.statusCode, 200, submitted.body);
+      assert.deepEqual(await resumed(), [background.turnId]);
+      assert.equal(
+        await vault.fillSaved(await turns.turn(), 'local-development', login.id, {
+          ...input,
+          usernameSelector: '#username',
+        }),
+        true,
+      );
+      assert.equal((await vault.paymentCard(card.id)).cardNumber, '4242424242424242');
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
 async function vaultFixture(
   max = 10,
   onOwnerUse?: NonNullable<Parameters<typeof createVault>[1]['onOwnerUse']>,
@@ -755,7 +869,7 @@ async function vaultFixture(
   });
   const seeded = await seedTurns(pool);
   const app = Fastify();
-  const calls = { injected: 0, resumed: [] as string[], retried: [] as string[] };
+  const calls = { injected: 0, retried: [] as string[] };
   let hold = Promise.resolve();
   let entered = () => {};
   let used = async (_use: VaultUse, _client: pg.PoolClient) => {};
@@ -773,8 +887,11 @@ async function vaultFixture(
       entered();
       await hold;
     },
-    resume: async (turnId) => {
-      calls.resumed.push(turnId);
+    resume: async (turnId, client) => {
+      await client.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,source_id) SELECT gen_random_uuid(),owner_id,thread_id,'resume','credentials:'||id FROM turns WHERE id=$1",
+        [turnId],
+      );
     },
     retry: async (turnId) => {
       calls.retried.push(turnId);
@@ -787,7 +904,7 @@ async function vaultFixture(
     kind: 'password' as const,
     passwordSelector: '#password',
   };
-  const link = async (ref: { threadId: string; turnId: string }) =>
+  const link = async (ref: TurnRef) =>
     (await vault.request(ref, 'local-development', input)).url.replace(
       '/vault/',
       '/api/credential-requests/',
@@ -804,6 +921,14 @@ async function vaultFixture(
     app,
     vault,
     calls,
+    resumed: async () =>
+      (
+        await pool.query(
+          "SELECT substring(source_id from 13) AS id FROM turns WHERE source='resume'",
+        )
+      ).rows
+        .map((row) => row.id as string)
+        .sort(),
     link,
     submit,
     recordUse: (record: typeof used) => {
@@ -846,7 +971,7 @@ async function vaultFixture(
 }
 
 test(
-  'credential links work only while their turn waits for credentials and no later foreground turn started',
+  'credential links work only while their turn waits for credentials and no later turn in its session started',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const f = await vaultFixture();
@@ -868,17 +993,18 @@ test(
       assert.equal(await f.status(url), 'pending');
 
       const check = await f.turn();
-      await f.pool.query(
-        'UPDATE turns SET background=true,started_at=clock_timestamp() WHERE id=$1',
-        [check.turnId],
-      );
+      await f.pool.query('UPDATE turns SET background=true WHERE id=$1', [check.turnId]);
+      const checkUrl = await f.link({ ...check, browserId: randomUUID() });
+      await f.wait(check);
       assert.equal(await f.status(url), 'pending');
+      assert.equal(await f.status(checkUrl), 'pending');
 
       const later = await f.turn();
       await f.pool.query('UPDATE turns SET started_at=clock_timestamp() WHERE id=$1', [
         later.turnId,
       ]);
       assert.equal(await f.status(url), 'expired');
+      assert.equal(await f.status(checkUrl), 'pending');
       assert.equal((await f.submit(url)).statusCode, 409);
       assert.equal(
         (
@@ -890,17 +1016,14 @@ test(
         ).statusCode,
         409,
       );
+      assert.equal((await f.submit(checkUrl)).statusCode, 200);
+      assert.deepEqual(f.calls, { injected: 1, retried: [] });
+      assert.deepEqual(await f.resumed(), [check.turnId]);
       await f.pool.query(
-        "UPDATE credential_requests SET expires_at=now()-interval '1 second',resume_pending=true WHERE turn_id=$1",
+        "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
         [running.turnId],
       );
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
-      await f.vault.resumePending();
-      assert.deepEqual(f.calls, { injected: 0, resumed: [], retried: [] });
-      assert.equal(
-        (await f.pool.query('SELECT 1 FROM credential_requests WHERE resume_pending')).rowCount,
-        0,
-      );
 
       await f.pool.query('UPDATE turns SET started_at=NULL WHERE id=$1', [later.turnId]);
       await f.pool.query(
@@ -908,7 +1031,8 @@ test(
         [running.turnId],
       );
       assert.equal((await f.submit(url)).statusCode, 200);
-      assert.deepEqual(f.calls, { injected: 1, resumed: [running.turnId], retried: [] });
+      assert.deepEqual(f.calls, { injected: 2, retried: [] });
+      assert.deepEqual(await f.resumed(), [check.turnId, running.turnId].sort());
     } finally {
       await f.close();
     }
@@ -996,7 +1120,7 @@ test(
       );
       assert.equal((await f.submit(url)).statusCode, 409);
       assert.equal(f.calls.injected, 1);
-      assert.deepEqual(f.calls.resumed, []);
+      assert.deepEqual(await f.resumed(), []);
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 200);
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
       assert.equal(await f.status(url), 'expired');
@@ -1042,7 +1166,7 @@ test(
       assert.equal(await f.status(nextUrl), 'uncertain');
       assert.equal((await access.activity({})).entries.length, 1);
       assert.equal(f.calls.injected, 2);
-      assert.deepEqual(f.calls.resumed, [turn.turnId]);
+      assert.deepEqual(await f.resumed(), [turn.turnId]);
       const saved = await f.app.inject({
         method: 'POST',
         url: '/api/vault',
@@ -1227,7 +1351,7 @@ test(
       'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
     );
     await pool.query(
-      "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+      "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
     );
     const threads = new Map<string, string>();
     const tasks = new Map<string, TurnRef>();
@@ -1828,7 +1952,7 @@ test(
     };
     await pool.query(`
       CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
-      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
       CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
       CREATE TABLE vault_entries(id text PRIMARY KEY,owner_id text NOT NULL,label text NOT NULL,origin text NOT NULL,username_hint text NOT NULL,ciphertext text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),identifier_label text NOT NULL DEFAULT '');
     `);
@@ -2359,7 +2483,7 @@ test(
         'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
       );
       await pool.query(
-        "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+        "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
       );
       const threadId = randomUUID();
       await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'local-development')", [
@@ -2621,8 +2745,10 @@ test(
             );
             assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
             assert.equal(injections.length, count);
+            const later = await startTurn();
+            assert.equal(await vault.fillSelected(later, 'local-development', input), undefined);
+            const request = await vault.request(later, 'local-development', input);
             if (kind === 'password') {
-              await vault.resumePending();
               const expired = (
                 await pool.query(
                   'SELECT * FROM credential_account_selections WHERE root_turn_id=$1',
@@ -2632,9 +2758,6 @@ test(
               assert.equal(expired.ciphertext, '');
               assert.equal(expired.blocked, true);
             }
-            const later = await startTurn();
-            assert.equal(await vault.fillSelected(later, 'local-development', input), undefined);
-            const request = await vault.request(later, 'local-development', input);
             await wait(later);
             const response = await app.inject({
               url: request.url.replace('/vault/', '/api/credential-requests/'),
@@ -2836,7 +2959,7 @@ test(
     try {
       await pool.query(`
         CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
-        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
         CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
       `);
       const vault = await createVault(pool, {
@@ -3722,7 +3845,7 @@ async function seedCodeTurns(pool: pg.Pool) {
     'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
   );
   await pool.query(
-    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
   );
   let threadId = '';
   const tasks = new Map<string, TurnRef>();

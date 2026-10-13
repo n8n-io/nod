@@ -547,7 +547,6 @@ async function initializeApplication(
     icon,
   });
   vault = await createVault(pool, {
-    admission,
     refresh,
     keyStore: adapters.keyStore,
     resume: resumeAfterCredentials,

@@ -608,8 +608,6 @@ test(
             {
               id,
               ownerId: 'local-development',
-              threadId,
-              turnId: source,
               origin: 'https://shop.fixture.test',
               kind: 'card',
             },

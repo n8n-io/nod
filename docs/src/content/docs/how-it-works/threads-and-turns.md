@@ -72,7 +72,9 @@ A message with attachments, a reply target or another channel stops the take. It
 
 A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
 
-Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn.
+Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
+
+A secure form closes when a newer turn starts in its session, and a payment request when you send a newer message there. A chat message is in the chat session, so it never closes a background task's form or payment.
 
 ## Sessions
 

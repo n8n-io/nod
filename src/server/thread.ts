@@ -575,12 +575,13 @@ async function resumeTurn(
   return resumed;
 }
 
-export async function resumeAfterCredentials(turnId: string) {
+export async function resumeAfterCredentials(turnId: string, client?: PoolClient) {
   await resumeTurn(
     turnId,
     `credentials:${turnId}`,
     'The secure credential step has completed. Inspect the current browser and continue the request you were working on. Do not repeat completed external actions.',
     true,
+    client,
   );
 }
 
