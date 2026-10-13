@@ -436,7 +436,7 @@ test('skill reads cannot escape the trusted library or load workspace instructio
   }
 });
 
-test('a read-only turn can load a trusted skill without changing the workspace', async () => {
+test('a trusted skill loads without touching the workspace', async () => {
   let writes = 0;
   const output = await fixture(
     async (tools) => {
@@ -447,7 +447,7 @@ test('a read-only turn can load a trusted skill without changing the workspace',
       assert.equal(guide.name, 'shopping');
       assert.ok(guide.content.length > 0);
     },
-    { readOnly: true },
+    {},
     {
       workspace: fakeWorkspace({
         open: () => ({
@@ -885,129 +885,4 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   );
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
-});
-
-const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
-
-const refused: Array<[string, Record<string, unknown>]> = [
-  ['browser', { action: 'click', selector: '@send' }],
-  ['browser', { action: 'fill', selector: '@reply', text: 'Synthetic reply' }],
-  ['browser', { action: 'type', selector: '@reply', text: 'Synthetic reply' }],
-  ['browser', { action: 'accept_dialog' }],
-  ['browser', { action: 'share_screenshot' }],
-  [
-    'browser_session',
-    { action: 'use', url: 'https://mail.example.test/', connectionId: randomUUID() },
-  ],
-  ['bash', { command: 'curl https://example.test' }],
-  ['codemode', { code: 'return await tools.bash({ command: "curl https://example.test" })' }],
-  ['write', { path: 'notes.txt', content: 'Synthetic note' }],
-  ['share_file', { path: 'notes.txt' }],
-  ['manage_apps', { action: 'connect', service: 'gmail' }],
-  ['manage_personal_context', { action: 'schedule_create', args: { title: 'Synthetic' } }],
-  [
-    'sign_in',
-    {
-      origin: 'https://mail.example.test',
-      label: 'Sign in',
-      kind: 'password',
-      message: 'Sign in.',
-      action: 'Sign in',
-    },
-  ],
-  [
-    'pay',
-    {
-      amount: '1.00',
-      currency: 'EUR',
-      description: 'Synthetic',
-      fields: { number: '@e1', expiry: '@e2' },
-    },
-  ],
-  ['ask_user', { question: 'Which email should I answer?' }],
-];
-
-test('a read-only turn refuses every outside action with a fixed error and still posts its findings', async () => {
-  let sideEffects = 0;
-  const result = await fixture(
-    async (tools, _emit, options) => {
-      for (const [name, args] of refused)
-        await assert.rejects(
-          tools.has(name)
-            ? call(tools, name, args)
-            : options.runTool(name, args, async () => {
-                sideEffects++;
-                return { content: [] };
-              }),
-          (error: Error) => error.message === refusal,
-          name,
-        );
-      await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} });
-      await call(tools, 'manage_apps', { action: 'discover', query: 'calendar' });
-      await options.runTool(
-        'fetch_content',
-        { urls: ['https://example.test/source'] },
-        async () => ({
-          content: [{ type: 'text', text: 'Synthetic source' }],
-        }),
-      );
-      await call(tools, 'send_message', { text: 'You have two threads to answer.' });
-    },
-    {
-      readOnly: true,
-      background: true,
-      connections: async (action) => {
-        assert.equal(action, 'discover');
-        return { apps: [] };
-      },
-      requestCredential: async () => {
-        sideEffects++;
-        return { filled: true };
-      },
-      manage: async () => {
-        sideEffects++;
-        return {};
-      },
-      integration: async (action) => {
-        assert.equal(action, 'GMAIL_FETCH_EMAILS');
-        return {};
-      },
-    },
-    {
-      computer: fakeComputer({
-        act: async () => {
-          sideEffects++;
-          return { text: '', url: 'https://mail.example.test/' };
-        },
-      }),
-    },
-  );
-  assert.equal(sideEffects, 0);
-  assert.deepEqual(result.replies, ['You have two threads to answer.']);
-  assert.deepEqual(result.result, { status: 'succeeded' });
-});
-
-test('read-only turns can search memory but not change it', async () => {
-  const actions: string[] = [];
-  await fixture(
-    async (tools) => {
-      for (const action of ['memory_find', 'memory_read'])
-        await call(tools, 'manage_personal_context', { action, args: {} });
-      for (const action of ['memory_learn', 'memory_forget'])
-        await assert.rejects(
-          call(tools, 'manage_personal_context', { action, args: {} }),
-          (error: Error) => error.message === refusal,
-          action,
-        );
-    },
-    {
-      readOnly: true,
-      background: true,
-      manage: async (action) => {
-        actions.push(action);
-        return [];
-      },
-    },
-  );
-  assert.deepEqual(actions, ['memory_find', 'memory_read']);
 });

@@ -68,7 +68,7 @@ Add a test only when it would catch a real regression in one of these areas. Ext
 | -------------------------- | --------------------------------------------------------------------------------------------------- |
 | Core harness               | One thread and Pi session per owner, turns one at a time, stop, interruption, reset, session rebase |
 | Sandbox isolation          | Nothing on the host, no keys in the sandbox, contained paths                                        |
-| Safety                     | Approvals, uncertain actions, Vault and sign-in fencing, read-only turns, onboarding task cards     |
+| Safety                     | Approvals, uncertain actions, Vault and sign-in fencing, onboarding task cards                      |
 | Owner and tenant isolation | Gateway, signed envelopes, owner scoping, URL guards, redaction                                     |
 | Integration contracts      | Channel delivery, schedule firing, downloads, OAuth completion                                      |
 

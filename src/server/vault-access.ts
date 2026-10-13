@@ -30,10 +30,7 @@ type Row = {
 
 export type VaultAccessVerdict =
   | { ok: true; reason: VaultActivityReason }
-  | { ok: false; message: string }
   | { ok: false; question: string; args: Record<string, unknown> };
-
-const readOnlyMessage = 'This turn can only read. Do not sign in.';
 
 const cursor = z.object({ at: z.iso.datetime(), id: z.uuid() });
 
@@ -179,10 +176,6 @@ export async function createVaultAccess(
     if (!work) throw new Error('This turn is no longer running.');
     const chain = await root(turn);
     const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
-    if (work.readOnly) {
-      await log(turn, chain, { action: 'held', origin, reason: 'readonly', ...itemKind });
-      return { ok: false, message: readOnlyMessage };
-    }
     if (target.kind === 'form') return { ok: true, reason: 'entered' };
     const args = {
       origin,

@@ -54,39 +54,6 @@ const delimitedTools = new Set([
   'source_check',
   'codemode',
 ]);
-const readOnlyTools: Record<string, true | string[]> = {
-  skills: true,
-  read: true,
-  find: true,
-  ls: true,
-  send_message: true,
-  apps: true,
-  web_search: true,
-  fetch_content: true,
-  source_check: true,
-  get_search_content: true,
-  browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
-  manage_apps: ['list', 'discover'],
-  manage_personal_context: [
-    'notification_preferences_get',
-    'history_search',
-    'memory_find',
-    'memory_read',
-    'schedule_list',
-    'usage_get',
-  ],
-  task: ['list'],
-};
-const readOnlyRefusal =
-  'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
-
-class ReadOnlyTurnError extends Error {}
-
-function allowedReadOnly(name: string, params: unknown) {
-  const rule = readOnlyTools[name];
-  return rule === true || rule?.includes(String((params as { action?: unknown })?.action)) === true;
-}
-
 function textResult(value: unknown): AgentToolResult {
   return {
     content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }],
@@ -279,7 +246,6 @@ export function createAgentRuntime(dependencies: {
         let result: AgentToolResult;
         try {
           assertActive();
-          if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
           await pendingReplies;
           assertActive();
           await context.emit('tool_start', label);
@@ -300,11 +266,9 @@ export function createAgentRuntime(dependencies: {
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'
-            : error instanceof ReadOnlyTurnError
-              ? readOnlyRefusal
-              : (dependencies.redactError ?? String)(
-                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
-                );
+            : (dependencies.redactError ?? String)(
+                browserFailure ?? (error instanceof Error ? error.message : String(error)),
+              );
           end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
             !signal.aborted &&
@@ -363,11 +327,7 @@ export function createAgentRuntime(dependencies: {
           parameters,
           parallel: parallelTools.has(name),
           execute: async (params) => {
-            if (
-              (!context.readOnly || allowedReadOnly(name, params)) &&
-              (browserTools.has(name) || handsOverBrowser(name, params))
-            )
-              await take();
+            if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
             const admitted = orderedTools.has(name) ? admission() : undefined;
             const run = () =>
               guard(name, params, async () => {

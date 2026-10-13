@@ -5859,7 +5859,7 @@ test(
       await pool.query(`
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
-          read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
+          error text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);

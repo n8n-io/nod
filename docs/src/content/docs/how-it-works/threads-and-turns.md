@@ -66,7 +66,7 @@ stateDiagram-v2
 
 The composer never blocks. After each Pi step, a running chat turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close.
 
-A message with attachments, a reply target or another channel stops the take. It and every message after it stay queued and run as their own turns. Background and read-only turns never take queued messages.
+A message with attachments, a reply target or another channel stops the take. It and every message after it stay queued and run as their own turns. Background turns never take queued messages.
 
 ## Waiting and resuming
 
@@ -106,7 +106,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
-- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser. Read-only turns can't delegate.
+- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser.
 - **Browsers.** A subagent's browser is deleted when it finishes.
 
 ## Every session has its own browser
