@@ -2024,7 +2024,7 @@ function context(directory: string): RuntimeContext {
   };
 }
 
-test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
+test('delegated subagents run two at a time, each in its own browser, and answer as untrusted data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const opened = new Map<string, string>();
@@ -2053,13 +2053,17 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
             input.onEvent({ type: 'final', text: `${shop} sells the drill for 89 EUR` });
             return;
           }
-          const delegate = (shop: string) =>
-            tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` });
-          const pending = ['shop-a', 'shop-b', 'shop-c'].map(delegate);
-          while (started.length < 3) await setTimeout(5);
-          await assert.rejects(delegate('shop-d'), /Three subagents are already running/);
+          const pending = Promise.all(
+            ['shop-a', 'shop-b', 'shop-c'].map((shop) =>
+              tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` }),
+            ),
+          );
+          for (let wait = 0; started.length < 2 && wait < 200; wait++) await setTimeout(5);
+          await setTimeout(50);
+          const first = [...started].sort();
           release();
-          results = await Promise.all(pending);
+          results = await pending;
+          assert.deepEqual(first, ['shop-a', 'shop-b']);
         },
       }),
       dispose() {},
@@ -2079,7 +2083,8 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
     const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
     assert.equal(result.status, 'succeeded');
     assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
-    assert.equal(childTools.includes('delegate'), false);
+    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session'])
+      assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];
     assert.equal(new Set(browsers).size, 3);
     assert.ok(browsers.every((id) => id !== 'fixture'));

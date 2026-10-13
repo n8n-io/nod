@@ -73,7 +73,7 @@ export default scenario({
         (run) => ({ pass: /fix\s*it\s*depot/i.test(run.final) && /114[.,]50/.test(run.final) }),
         { failure: 'reasoning' },
       ),
-      check('states-the-difference', (run) => ({ pass: /14[.,]50/.test(run.final) }), {
+      check('states-the-difference', (run) => ({ pass: /\b14[.,]50\b/.test(run.final) }), {
         failure: 'reasoning',
       }),
       check(

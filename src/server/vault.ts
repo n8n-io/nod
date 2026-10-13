@@ -1241,8 +1241,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const root = await rootTurn(client, turn, ownerId);
       if (!root) throw new VaultError('This task can no longer request credentials.', 409);
       await client.query(
-        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending'",
-        [turn.threadId, ownerId],
+        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending' AND COALESCE(browser_id,thread_id::text)=$3",
+        [turn.threadId, ownerId, browserOf(turn)],
       );
       await client.query(
         `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection,browser_id)

@@ -26,7 +26,7 @@ test(
         'CREATE TABLE threads (id uuid PRIMARY KEY,owner_id text,status text,archived_at timestamptz)',
       );
       await pool.query(
-        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,session_id uuid GENERATED ALWAYS AS (thread_id) STORED)',
+        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)',
       );
       const first = { threadId: randomUUID(), turnId: randomUUID() };
       const second = { threadId: randomUUID(), turnId: randomUUID() };
@@ -138,6 +138,14 @@ test(
         [connectionId],
       );
       const checkedAt = (await service.list())[0].checkedAt;
+      assert.deepEqual(
+        await service.request(
+          { action: 'use', url: 'https://example.test/account', connectionId },
+          second,
+        ),
+        { status: 'rejected', code: 'browser_connection_unavailable' },
+      );
+      await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.turnId]);
       const priorBindings = bindings.length;
       cancelTurnId = second.turnId;
       await assert.rejects(

@@ -255,6 +255,15 @@ test(
       );
       const result = await vault.request(task1, 'local-development', input);
       await wait(task1);
+      await vault.request({ ...task2, browserId: randomUUID() }, 'local-development', input);
+      assert.equal(
+        (
+          await pool.query('SELECT status FROM credential_requests WHERE turn_id=$1', [
+            task1.turnId,
+          ])
+        ).rows[0].status,
+        'pending',
+      );
       const url = result.url.replace('/vault/', '/api/credential-requests/');
       const form = await app.inject({ url });
       assert.equal(form.statusCode, 200);

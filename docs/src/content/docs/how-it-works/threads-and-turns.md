@@ -87,14 +87,14 @@ sequenceDiagram
   Note over C: Next chat turn sees them
 ```
 
-|             | Chat                       | Schedule and event sessions                                                       |
-| ----------- | -------------------------- | --------------------------------------------------------------------------------- |
-| Key         | The thread ID              | The session's first turn                                                          |
-| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                         |
-| Pi session  | The thread's saved session | A new in-memory session per turn                                                  |
-| Context     | The full conversation      | Only chat turns that finished before the trigger, plus the session's own messages |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                     |
-| Browser     | The thread's browser       | Its own browser, deleted when the session ends                                    |
+|             | Chat                       | Schedule and event sessions                                                              |
+| ----------- | -------------------------- | ---------------------------------------------------------------------------------------- |
+| Key         | The thread ID              | The session's first turn                                                                 |
+| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                                |
+| Pi session  | The thread's saved session | A new in-memory session per turn                                                         |
+| Context     | The full conversation      | Turns from any session that finished before the trigger, plus the session's own messages |
+| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                            |
+| Browser     | The thread's browser       | Its own browser, deleted when the session ends                                           |
 
 When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
 
@@ -104,7 +104,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
-- **Limits.** At most three run at once, a subagent can't delegate, and read-only turns and activity checks can't delegate.
+- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser. Read-only turns and activity checks can't delegate.
 - **Browsers.** A subagent's browser is deleted when it finishes.
 
 ## Every session has its own browser
@@ -113,7 +113,7 @@ A session opens its browser on its first browser call, so a session that never b
 
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- At most four browsers run at once. An idle one closes and keeps its profile until it's used again. One waiting for you stays open for 30 minutes.
+- The browser container keeps at most two browsers live at once. An idle one closes and keeps its profile until it's used again. One waiting for you stays open for 30 minutes.
 
 ## Stop and failures
 

@@ -1492,11 +1492,12 @@ test(
           const question = await propose(asked, 'OTTO_schedule_cancel', { id: randomUUID() });
           await finish(asked.turnId);
           assert.ok(await confirm(question, false));
-          const [answered] = await resumeTurns(question);
+          const answered = await resumeTurns(question);
+          assert.equal(answered.length, 1);
           assert.deepEqual(
             (
               await db.pool.query('SELECT session_id,background FROM turns WHERE id=$1', [
-                answered.id,
+                answered[0]!.id,
               ])
             ).rows[0],
             { session_id: asked.turnId, background: true },

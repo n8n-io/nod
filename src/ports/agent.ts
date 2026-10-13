@@ -67,6 +67,7 @@ export interface RuntimeContext {
   threadId: string;
   turnId: string;
   browserId?: string;
+  resumed?: boolean;
   prompt: string;
   background?: boolean;
   readOnly?: boolean;

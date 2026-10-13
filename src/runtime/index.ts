@@ -27,6 +27,7 @@ import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
+const ownBrowserTools = new Set(['sign_in', 'pay', 'browser_session']);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -579,9 +580,33 @@ export function createAgentRuntime(dependencies: {
         pause,
         confirm,
       };
+      let running = 0;
+      const queued: Array<() => void> = [];
       const delegate = async (title: string, instruction: string) => {
-        if (children.size >= 3)
-          throw new Error('Three subagents are already running. Wait for one to finish.');
+        if (running < 2) running += 1;
+        else
+          await new Promise<void>((resolve, reject) => {
+            const start = () => {
+              signal.removeEventListener('abort', stop);
+              resolve();
+            };
+            const stop = () => {
+              queued.splice(queued.indexOf(start), 1);
+              reject(signal.reason);
+            };
+            queued.push(start);
+            signal.addEventListener('abort', stop, { once: true });
+          });
+        try {
+          return await subagent(title, instruction);
+        } finally {
+          const next = queued.shift();
+          if (next) next();
+          else running -= 1;
+        }
+      };
+      const subagent = async (title: string, instruction: string) => {
+        signal.throwIfAborted();
         const childBrowser = `${context.turnId}-${randomUUID().slice(0, 8)}`;
         let browsed = false;
         let answer = '';
@@ -592,7 +617,7 @@ export function createAgentRuntime(dependencies: {
           systemContext: systemContext(context),
           tools: bind({ ...shared, browserId: childBrowser }, async () => {
             browsed = true;
-          }),
+          }).filter((tool) => !ownBrowserTools.has(tool.name)),
           workspace,
           timeZone: context.timeZone,
           background: true,
@@ -766,7 +791,7 @@ export function createAgentRuntime(dependencies: {
         await Promise.allSettled([...activeToolCalls]);
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        if (browserId !== threadId && !waitingForUser && browsed)
+        if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard?.(browserId).catch(() => {});
         finished();
       }

@@ -99,7 +99,13 @@ export async function createBrowserConnections(
       updated_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE browser_connections ADD COLUMN IF NOT EXISTS browser_id uuid;
-    ALTER TABLE browser_connections DROP COLUMN IF EXISTS thread_id;
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+        AND table_name='browser_connections' AND column_name='thread_id') THEN
+        UPDATE browser_connections SET browser_id=COALESCE(browser_id,thread_id);
+        ALTER TABLE browser_connections DROP COLUMN thread_id;
+      END IF;
+    END $$;
     CREATE INDEX IF NOT EXISTS browser_connections_owner ON browser_connections(owner_id,origin);
   `);
   const browser = options.computer;
@@ -229,7 +235,11 @@ export async function createBrowserConnections(
         options.refresh?.();
         return { status: 'session_saved' as const, connectionId: row.id };
       }
-      if (!['saved', 'needs_sign_in', 'pending'].includes(row.state) || !browser.bindProfile)
+      if (
+        !['saved', 'needs_sign_in', 'pending'].includes(row.state) ||
+        !browser.bindProfile ||
+        (row.browser_id && row.browser_id !== browserOf(turn) && (await inUse(row.browser_id)))
+      )
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
       await browser.bindProfile(browserOf(turn), row.profile_id);
       const observation = await browser.act(
@@ -263,6 +273,16 @@ export async function createBrowserConnections(
     });
   }
 
+  async function inUse(browserId: string) {
+    const latest = await pool.query<{ status: string }>(
+      `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE u.session_id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL
+       ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
+      [browserId, options.ownerId],
+    );
+    return ['queued', 'running', 'waiting'].includes(latest.rows[0]?.status ?? '');
+  }
+
   async function list(): Promise<Connection[]> {
     const rows = (
       await pool.query<Row>(
@@ -289,15 +309,7 @@ export async function createBrowserConnections(
     const id = idSchema.parse(rawId);
     return exclusive(id, async () => {
       const row = await owned(id, true);
-      const active = row.browser_id
-        ? await pool.query(
-            `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-             WHERE u.session_id=$1 AND u.owner_id=$2 AND u.status IN ('queued','running','waiting')
-             AND th.archived_at IS NULL LIMIT 1`,
-            [row.browser_id, options.ownerId],
-          )
-        : null;
-      if (active?.rowCount)
+      if (row.browser_id && (await inUse(row.browser_id)))
         throw new BrowserConnectionError('Stop the active work before disconnecting this account.');
       if (!browser.deleteProfile)
         throw new BrowserConnectionError('The private browser is unavailable.', 503);

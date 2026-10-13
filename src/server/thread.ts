@@ -1060,6 +1060,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       threadId,
       turnId,
       browserId: turn.session_id,
+      resumed: turn.source === 'resume',
       prompt: turn.prompt,
       background: turn.background,
       readOnly: turn.read_only,

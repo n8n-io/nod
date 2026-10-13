@@ -1550,6 +1550,7 @@ test('every session drives its own browser, so background work never waits for t
   const turn = (
     sessionId: string | undefined,
     script: (tools: Map<string, AgentTool>) => Promise<unknown>,
+    resumed = false,
   ) => {
     const turnId = randomUUID();
     scripts.set(turnId, script);
@@ -1558,6 +1559,7 @@ test('every session drives its own browser, so background work never waits for t
       turnId,
       browserId: sessionId,
       background: sessionId !== undefined,
+      resumed,
       prompt: 'Use the browser.',
       history: [],
       attachments: [],
@@ -1610,6 +1612,8 @@ test('every session drives its own browser, so background work never waits for t
     );
     assert.deepEqual(discarded, [finished]);
     assert.deepEqual(held.sort(), [asking, threadId].sort());
+    assert.equal((await turn(asking, async () => {}, true)).status, 'succeeded');
+    assert.deepEqual(discarded, [finished, asking]);
   } finally {
     deadline.abort();
     busy.resolve();

@@ -197,7 +197,7 @@ export const toolDefinitions = {
   ),
   delegate: defineTool(
     'delegate',
-    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. At most three run at once, and a subagent cannot delegate.",
+    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Two run at once and further calls wait for a slot. A subagent cannot delegate, sign in, pay or open saved browser sessions; do those yourself.",
     Type.Object({
       title: Type.String({ minLength: 1, maxLength: 120 }),
       instruction: Type.String({ minLength: 1, maxLength: 4000 }),
