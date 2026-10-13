@@ -1560,11 +1560,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
              WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now()`,
             [configuredOwner, hashes],
           ),
-          options.discovered?.setupServices(connectionIds) ?? [],
+          options.discovered?.setupServices(connectionIds, hashes) ?? [],
         ]);
-        const discoveredLinks = discovered.map(({ id, ...service }) => ({
+        const discoveredLinks = discovered.map(({ id, link_hash, ...service }) => ({
           ...service,
-          hash: createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
+          hash:
+            link_hash && hashes.includes(link_hash)
+              ? link_hash
+              : createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
         }));
         const apps = [...pending.rows, ...discoveredLinks.filter((link) => !link.completed)]
           .filter(({ hash }) => hashes.includes(hash))
@@ -1879,7 +1882,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .map(({ connectionId, accountName }) => ({ connectionId, accountName }));
         if (accounts.length && connectionId === undefined && newAccount !== true)
           return { name: serviceInfo(slug).name, accounts };
-        return options.discovered.link(slug, turn, connectionId);
+        return options.discovered.signIn(slug, turn, connectionId);
       }
       if (connectionId !== undefined) {
         const result = await reconnect(

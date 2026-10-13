@@ -27,6 +27,7 @@ import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
+import { channelReply } from '../src/server/channels.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createIntegrationKeyService } from '../src/server/integration-key.ts';
@@ -1822,6 +1823,7 @@ test(
     for (let attempt = 0; attempt < 100 && f.removed.length < 2; attempt++) await delay(10);
     assert.deepEqual(f.removed, ['legacy-trigger', 'legacy-composio']);
     const begun: Array<{ endpoint: string; scope?: string }> = [];
+    const resumed: Array<{ turnId: string; service: string }> = [];
     const discovered = await createDiscoveredConnections(f.pool, {
       ownerId,
       baseUrl: 'http://127.0.0.1:4310',
@@ -1829,7 +1831,7 @@ test(
       transport: {
         validateEndpoint: async (endpoint) => endpoint,
         http: async () => ({ status: 200, body: null }),
-        listTools: async () => [],
+        listTools: async () => [{ name: 'list_issues', inputSchema: {} }],
         callTool: async () => ({}),
       },
       oauth: {
@@ -1840,8 +1842,15 @@ test(
             saved: { redirectUri },
           };
         },
-        finish: async () => assert.fail('No sign-in completes in this test.'),
+        finish: async (_endpoint, saved) => ({
+          ...saved,
+          tokens: { access_token: 'synthetic-private-token', token_type: 'Bearer' },
+        }),
         refresh: async () => assert.fail('No refresh is expected.'),
+      },
+      resumeConnection: async (turnId, service) => {
+        resumed.push({ turnId, service });
+        return true;
       },
     });
     const service = await createIntegrations(f.pool, {
@@ -1883,8 +1892,37 @@ test(
       { endpoint: 'https://mcp.notion.com/mcp', scope: undefined },
       { endpoint: 'https://mcp.linear.app/mcp', scope: 'read write' },
     ]);
-    const linked = await service.manageConnections('connect', 'linear');
-    assert.match('url' in linked ? String(linked.url) : '', /^\/apps\?connect=[a-f0-9-]{36}$/);
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    const linked = await service.manageConnections('connect', 'linear', turn);
+    const url = 'url' in linked ? String(linked.url) : '';
+    assert.match(url, /^https:\/\/consent\.example\.test\/authorize\?state=/);
+    assert.equal(
+      channelReply(`Connect Linear: ${url}`, false, false, [], 'https://otto.example'),
+      `Connect Linear: ${url}`,
+    );
+    const hash = createHash('sha256').update(url).digest('hex');
+    const status = async () =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/apps/setup-status',
+          payload: { hashes: [hash] },
+        })
+      ).json();
+    assert.deepEqual(await status(), {
+      completed: [],
+      apps: [{ hash, slug: 'linear', name: 'Linear' }],
+    });
+    const callback = await app.inject({
+      url: `/api/apps/callback?state=${new URL(url).searchParams.get('state')}&code=fixture-code`,
+    });
+    assert.equal(new URL(callback.headers.location!).searchParams.get('connection'), 'continued');
+    assert.deepEqual(resumed, [{ turnId: turn.turnId, service: 'Linear' }]);
+    assert.deepEqual(await status(), { completed: [hash], apps: [] });
+    assert.deepEqual(
+      (await discovered.list()).map(({ slug, status }) => ({ slug, status })),
+      [{ slug: 'linear', status: 'connected' }],
+    );
     f.session.search = async () => ({
       tools: { NOTION_SEARCH: {}, LINEAR_LIST_ISSUES: {}, GMAIL_LIST_LABELS: {} },
       suggestions: [],

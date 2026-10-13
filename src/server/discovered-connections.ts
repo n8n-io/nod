@@ -220,7 +220,7 @@ export async function createDiscoveredConnections(
     );
     ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
-      DROP COLUMN IF EXISTS thread_id;
+      ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id;
   `);
   await transaction(async (recovery) => {
     const interrupted = await recovery.query<{ id: string }>(
@@ -261,19 +261,21 @@ export async function createDiscoveredConnections(
       })),
     }));
   }
-  async function setupServices(ids: string[]) {
+  async function setupServices(ids: string[], hashes: string[] = []) {
     const requested = z.array(z.uuid()).max(100).parse(ids);
-    if (!requested.length) return [];
+    if (!requested.length && !hashes.length) return [];
     const result = await pool.query<{
       id: string;
       slug: string;
       name: string;
       completed: boolean;
+      link_hash: string | null;
     }>(
-      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed
-       FROM discovered_connection_proposals WHERE owner_id=$1 AND id=ANY($2::uuid[])
+      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,link_hash
+       FROM discovered_connection_proposals WHERE owner_id=$1
+       AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))
        AND (expires_at>now() OR oauth_status='connected')`,
-      [owner, requested],
+      [owner, requested, hashes],
     );
     return result.rows;
   }
@@ -360,11 +362,9 @@ export async function createDiscoveredConnections(
       ...(connectionId ? { connectionId } : {}),
     };
   }
-  async function link(service: string, turn?: TurnRef, connectionId?: string) {
-    return propose(official(service, connectionId), turn);
-  }
-  async function signIn(service: string) {
-    return beginOAuth((await create(official(service))).id, {});
+  async function signIn(service: string, turn?: TurnRef, connectionId?: string) {
+    const { id, name } = await create(official(service, connectionId), turn);
+    return { name, ...(await beginOAuth(id, {})) };
   }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
@@ -502,9 +502,15 @@ export async function createDiscoveredConnections(
       }
       const updated = await client.query(
         `UPDATE discovered_connection_proposals
-         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending'
+         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending',link_hash=$5
          WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
-        [pending.id, owner, pending.name, createHash('sha256').update(state).digest('hex')],
+        [
+          pending.id,
+          owner,
+          pending.name,
+          createHash('sha256').update(state).digest('hex'),
+          createHash('sha256').update(started.url).digest('hex'),
+        ],
       );
       if (!updated.rowCount) throw error('This connection request expired.', 409);
       await options.grantVault.put(
@@ -907,7 +913,6 @@ export async function createDiscoveredConnections(
     list,
     setupServices,
     propose,
-    link,
     signIn,
     completeOAuth,
     reconnect,
