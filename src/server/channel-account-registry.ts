@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import { z } from 'zod';
 import type { ChannelAccountIdentity, ChannelAccountRegistry } from '../ports/channel-settings.ts';
 import type { TenantLease } from './tenants.ts';

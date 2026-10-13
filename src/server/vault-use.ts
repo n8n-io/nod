@@ -1,4 +1,4 @@
-import { transaction as inTransaction } from './db.ts';
+import { transaction as inTransaction } from './transaction.ts';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { logFailure } from './failure-log.ts';

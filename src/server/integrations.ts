@@ -21,7 +21,7 @@ import {
   DiscoveredConnectionError,
   type createDiscoveredConnections,
 } from './discovered-connections.ts';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
 import type { TriageIntent } from './triage.ts';

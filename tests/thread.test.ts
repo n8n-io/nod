@@ -72,6 +72,7 @@ test(
     process.env.PGBOSS_SCHEMA = bossSchema;
     process.env.OTTO_DATA_ROOT = root;
     const db = await import('../src/server/db.ts');
+    const { transaction } = await import('../src/server/transaction.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { configuration, dataRoot, ownerId, port } = await import('../src/server/config.ts');
@@ -575,14 +576,14 @@ test(
         const jobsBefore = await drainJobs(threadId);
         let rolledBackTurn = '';
         await assert.rejects(
-          db.transaction(async (client) => {
+          transaction(async (client) => {
             rolledBackTurn = await thread.enqueueTurn('rollback-fixture', {
               source: 'schedule',
               sourceId: 'rollback-fixture',
               client,
             });
             throw new Error('Injected rollback');
-          }),
+          }, db.pool),
           /Injected rollback/,
         );
         assert.equal(
@@ -996,7 +997,7 @@ test(
             ]) {
               await preferences.update({ notificationRule: oldRule });
               const ids: string[] = [];
-              await db.transaction(async (client) => {
+              await transaction(async (client) => {
                 for (const [source, prompt] of [
                   ['event', eventPrompt],
                   ['schedule', schedulePrompt],
@@ -1005,7 +1006,7 @@ test(
                 if (rule === undefined)
                   await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
                 else await preferences.update({ notificationRule: rule });
-              });
+              }, db.pool);
               for (const [index, id] of ids.entries()) {
                 await waitFor(settled(id));
                 assert.equal(await turnStatus(id), 'succeeded');
@@ -2701,8 +2702,9 @@ test(
               if (change === 'revoked') currentApps = [];
               if (change === 'disabled') await preferences.update({ notificationRule: '' });
               if (change === 'replaced')
-                await db.transaction((client) =>
-                  triage.invalidateActivityCheck(connectionId, client),
+                await transaction(
+                  (client) => triage.invalidateActivityCheck(connectionId, client),
+                  db.pool,
                 );
               release(prompt);
               await waitFor(settled(queued.turn_id));

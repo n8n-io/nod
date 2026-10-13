@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
 import {
   maxObjectBytes,

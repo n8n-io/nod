@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { pool, transaction } from './db.ts';
+import { pool } from './db.ts';
+import { transaction } from './transaction.ts';
 import { ownerId } from './config.ts';
 import { boss, enqueueTurn, lockThread, withTurnLock, type TurnRef } from './thread.ts';
 import type { FastifyInstance } from 'fastify';
@@ -70,7 +71,7 @@ export function createTriage(options: {
          ON CONFLICT(owner_id,connection_id) DO UPDATE SET turn_id=EXCLUDED.turn_id,attempted_at=now(),recorded_at=NULL`,
         [ownerId, connectionId, turnId],
       );
-    });
+    }, pool);
   }
   async function activityCheck(turn: TurnRef): Promise<RuntimeContext['activityCheck']> {
     const result = await pool.query<{
@@ -237,7 +238,7 @@ export function createTriage(options: {
         [eventId, ownerId],
       );
       if (found.rows[0]) await dispatchNotification(client, found.rows[0]);
-    });
+    }, pool);
     refresh();
   }
   async function dispatchNotification(
@@ -285,7 +286,7 @@ export function createTriage(options: {
         [ownerId],
       );
       for (const notification of result.rows) await dispatchNotification(client, notification);
-    });
+    }, pool);
     refresh();
   }
   async function initializeHeartbeat() {

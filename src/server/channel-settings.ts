@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import {
   ChannelSetupFailure,

@@ -1,4 +1,4 @@
-import { transaction as inTransaction } from './db.ts';
+import { transaction as inTransaction } from './transaction.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';

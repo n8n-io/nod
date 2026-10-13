@@ -171,6 +171,7 @@ test(
     process.env.DATABASE_URL = databaseUrl.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
     const db = await import('../src/server/db.ts');
+    const { transaction } = await import('../src/server/transaction.ts');
     const thread = await import('../src/server/thread.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
     const { createTasks } = await import('../src/server/tasks.ts');
@@ -332,8 +333,9 @@ test(
         ...extra,
       };
       const answer = await approvals.chat.answer(input);
-      const result = await db.transaction((client) =>
-        approvals.chat.accept(client, { ...input, answer }),
+      const result = await transaction(
+        (client) => approvals.chat.accept(client, { ...input, answer }),
+        db.pool,
       );
       return result && 'supersededApprovalId' in result ? undefined : result;
     }
@@ -2190,20 +2192,24 @@ test(
           const long = `${'yes '.repeat(400)}but send it elsewhere`;
           assert.equal(await trust.answer(long), undefined);
           assert.deepEqual(replies.at(-1), { reply: long });
-          const forged = await db.transaction((client) =>
-            approvals.chat.accept(client, {
-              ...first.input,
-              answer: { approvalId: randomUUID(), approved: true },
-            }),
+          const forged = await transaction(
+            (client) =>
+              approvals.chat.accept(client, {
+                ...first.input,
+                answer: { approvalId: randomUUID(), approved: true },
+              }),
+            db.pool,
           );
           assert.ok(forged && 'supersededApprovalId' in forged);
           assert.equal((await stored(first.id)).status, 'expired');
           const second = await ask();
-          await db.transaction(async (client) =>
-            approvals.chat.accept(client, {
-              ...second.input,
-              answer: await approvals.chat.answer(second.input),
-            }),
+          await transaction(
+            async (client) =>
+              approvals.chat.accept(client, {
+                ...second.input,
+                answer: await approvals.chat.answer(second.input),
+              }),
+            db.pool,
           );
           assert.equal((await stored(second.id)).status, 'confirmed');
           delete replyAnswers[reply];

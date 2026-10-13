@@ -10,7 +10,7 @@ import type {
 } from '../ports/discovered.ts';
 import type { ConnectedCli } from '../ports/computer.ts';
 import type { Connection } from '../shared/contracts.ts';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 import type { TurnRef } from './thread.ts';
 import { isIntegrationFile } from './integration-files.ts';

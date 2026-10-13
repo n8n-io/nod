@@ -5,7 +5,7 @@ import type { MemoryService } from './memory.ts';
 import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { personalSecret } from './memory-tree.ts';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
 

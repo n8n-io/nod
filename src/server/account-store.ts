@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import type { AccountSettings, AccountUpdate } from '../shared/account.ts';
 
 export interface StoredAccount extends AccountSettings {

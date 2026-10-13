@@ -4,7 +4,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
-import { pool, transaction } from './db.ts';
+import { pool } from './db.ts';
+import { transaction } from './transaction.ts';
 import { dataRoot, databaseUrl, ownerId, runtimeMode } from './config.ts';
 import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
@@ -189,7 +190,7 @@ export async function withTurnLock<T>(
     );
     if (rows[0]?.status !== 'running') throw turnStopped();
     return operation(client);
-  });
+  }, pool);
 }
 
 async function sendDrain(client: PoolClient | undefined, threadId: string) {
@@ -302,7 +303,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
     await sendDrain(client, thread.id);
     return id;
   };
-  const turnId = options.client ? await create(options.client) : await transaction(create);
+  const turnId = options.client ? await create(options.client) : await transaction(create, pool);
   if (!options.client) refresh();
   return turnId;
 }
@@ -435,7 +436,7 @@ export async function submitUserMessage(
   };
   let result: SubmitUserMessageResult;
   try {
-    result = options.client ? await submit(options.client) : await transaction(submit);
+    result = options.client ? await submit(options.client) : await transaction(submit, pool);
   } catch (error) {
     const { code, constraint } = (error ?? {}) as { code?: string; constraint?: string };
     if (options.clientMessageId && code === '23505' && constraint === 'messages_pkey')
@@ -466,8 +467,9 @@ function abortTurns(ids: string[]) {
 }
 
 export async function stopThread() {
-  const cancelled = await transaction(async (client) =>
-    cancelTurns(client, (await lockThread(client)).id),
+  const cancelled = await transaction(
+    async (client) => cancelTurns(client, (await lockThread(client)).id),
+    pool,
   );
   abortTurns(cancelled.ids);
   refresh();
@@ -484,7 +486,7 @@ export async function resetThread(expectedThreadId: string) {
       thread.id,
     ]);
     return { cancelled, previousThreadId: thread.id, threadId: (await activeThread(client)).id };
-  });
+  }, pool);
   abortTurns(result.cancelled.ids);
   const { browsers } = result.cancelled;
   refresh();
@@ -535,7 +537,7 @@ export async function reactToAssistantMessage(
         },
       );
     return { ok: true, reaction };
-  });
+  }, pool);
   refresh();
   return result;
 }
@@ -568,7 +570,7 @@ async function resumeTurn(
     });
     return true;
   };
-  const resumed = client ? await create(client) : await transaction(create);
+  const resumed = client ? await create(client) : await transaction(create, pool);
   if (resumed && !client) refresh();
   return resumed;
 }
@@ -674,7 +676,7 @@ async function interruptTurn(turnId: string) {
         `failure:${turnId}`,
       );
     return true;
-  });
+  }, pool);
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -727,7 +729,7 @@ async function claimTurns(threadId: string) {
       [claimed.map((row) => row.id)],
     );
     return claimed;
-  });
+  }, pool);
 }
 
 async function takeQueuedMessages(turnId: string, sessionId: string, channel: string) {
@@ -762,7 +764,7 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
       [ids],
     );
     return taken.map((row) => ({ id: row.message_id as string, text: row.prompt as string }));
-  });
+  }, pool);
 }
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {

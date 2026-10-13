@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import type { AgentReactionResult, MessageReaction } from '../shared/contracts.ts';
-import { transaction } from './db.ts';
+import { transaction } from './transaction.ts';
 import { lockThread } from './thread.ts';
 
 export interface AgentReactionInput {

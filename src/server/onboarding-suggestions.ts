@@ -5,7 +5,8 @@ import { z } from 'zod';
 import type { InboxSnippet } from '../ports/integrations.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { SuggestedTask } from '../shared/onboarding.ts';
-import { pool, transaction } from './db.ts';
+import { pool } from './db.ts';
+import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
 import { verificationMail } from './integration-result.ts';
 import { lockThread } from './thread.ts';
@@ -197,7 +198,7 @@ export function createOnboardingSuggestions(options: {
           [prepared.intro, ...tasks.map((task) => `- ${task.title}`)].join('\n'),
           { intro: prepared.intro, tasks },
         );
-      });
+      }, pool);
     })()
       .catch((error) =>
         console.error(
@@ -230,7 +231,7 @@ export function createOnboardingSuggestions(options: {
       );
       if (claimed.rowCount) await insert(client, thread.id, welcomeGreeting(name));
       return true;
-    });
+    }, pool);
     if (!greeted) return;
     void deliver();
     refresh();
