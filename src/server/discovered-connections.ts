@@ -99,6 +99,7 @@ type AccountRow = {
   service: string;
   name: string;
   account_name: string;
+  account_id: string;
   paths: AccessPath[];
 };
 type ProposalRow = {
@@ -218,7 +219,8 @@ export async function createDiscoveredConnections(
       account_name text,oauth_state_hash text,
       expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
     );
-    ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext;
+    ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext,
+      ADD COLUMN IF NOT EXISTS account_id uuid NOT NULL DEFAULT gen_random_uuid();
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
       DROP COLUMN IF EXISTS thread_id;
   `);
@@ -250,6 +252,7 @@ export async function createDiscoveredConnections(
       name: row.name,
       status: 'connected',
       connectionId: row.id,
+      accountId: row.account_id,
       accountName: row.account_name,
       triggersEnabled: false,
       supportsTriggers: false,
@@ -395,7 +398,7 @@ export async function createDiscoveredConnections(
       if (!used.rowCount) throw error('This connection request expired.', 409);
       if (pending.connection_id) {
         const updated = await client.query(
-          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6
+          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,account_id=gen_random_uuid()
            WHERE id=$1 AND owner_id=$2 AND service=$3`,
           [
             idToSave,

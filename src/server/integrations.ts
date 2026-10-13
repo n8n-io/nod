@@ -576,10 +576,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     ];
   }
 
-  async function connectedApps(ownerId = configuredOwner): Promise<ConnectedApp[]> {
+  async function connectedApps(ownerId = configuredOwner, withAccount = false) {
     return (await list(ownerId, { refresh: false }))
       .filter((connection) => connection.status === 'connected' && !connection.savedLogin)
-      .map((connection): ConnectedApp => ({
+      .map((connection): ConnectedApp & { accountId?: string } => ({
         slug: connection.slug.slice(0, 100),
         name: connection.name.slice(0, 150),
         status: connection.status,
@@ -594,6 +594,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         triggerStatus: connection.triggerStatus,
         browserState: connection.browserState,
         checkedAt: connection.checkedAt,
+        ...(withAccount && connection.accountId ? { accountId: connection.accountId } : {}),
       }));
   }
 
