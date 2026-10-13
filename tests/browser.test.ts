@@ -1656,6 +1656,106 @@ test('every session drives its own browser, so background work never waits for t
   }
 });
 
+test('a task can work in the chat browser after it looks, and only in browsers it was offered', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-shared-'));
+  const threadId = randomUUID();
+  const acted: Array<[string, string]> = [];
+  const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async ({ turnId, tools }) => ({
+        resumed: false,
+        prompt: async () => {
+          await scripts.get(turnId)!(new Map(tools.map((tool) => [tool.name, tool])));
+        },
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer({
+      act: async (id, action) => {
+        acted.push([id, action.action]);
+        return { text: 'Fixture page', url: 'https://example.com' };
+      },
+    }),
+    workspace: fakeWorkspace(),
+  });
+  const task = randomUUID();
+  const turn = (
+    sessionId: string | undefined,
+    script: (tools: Map<string, AgentTool>) => Promise<unknown>,
+  ) => {
+    const turnId = randomUUID();
+    scripts.set(turnId, script);
+    return runtime.runTurn({
+      threadId,
+      turnId,
+      sessionId,
+      background: sessionId !== undefined,
+      prompt: 'Use the browser.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      emit: async () => {},
+      reply: async () => {},
+      delta() {},
+      publish: async () => {
+        throw new Error('unused');
+      },
+      requestCredential: async () => ({ filled: true }),
+      integration: async () => ({}),
+      manage: async () => ({}),
+      browsers: async () => [
+        { browserId: sessionId ?? threadId, task: 'yours' },
+        ...(sessionId ? [{ browserId: threadId, task: 'chat' }] : []),
+      ],
+    });
+  };
+  const browser = (tools: Map<string, AgentTool>, input: Record<string, unknown>) =>
+    tools.get('browser')!.execute(input);
+  try {
+    await turn(undefined, (tools) =>
+      browser(tools, { action: 'open', url: 'https://example.com/signed-in' }),
+    );
+    let listed: unknown;
+    const outcome = await turn(task, async (tools) => {
+      listed = await browser(tools, { action: 'list' });
+      await assert.rejects(
+        browser(tools, { action: 'click', selector: '@e1', browserId: threadId }),
+        /snapshot before acting/,
+      );
+      await browser(tools, { action: 'snapshot', browserId: threadId });
+      await browser(tools, { action: 'click', selector: '@e1', browserId: threadId });
+      await assert.rejects(
+        browser(tools, { action: 'open', url: 'https://example.com', browserId: randomUUID() }),
+        /not available to this task/,
+      );
+    });
+    assert.equal(outcome.status, 'succeeded');
+    assert.match(JSON.stringify(listed), new RegExp(threadId));
+    assert.deepEqual(acted, [
+      [threadId, 'open'],
+      [threadId, 'snapshot'],
+      [threadId, 'click'],
+    ]);
+    await turn(undefined, async (tools) => {
+      await assert.rejects(
+        browser(tools, { action: 'click', selector: '@e1' }),
+        /snapshot before acting/,
+      );
+      await assert.rejects(
+        browser(tools, { action: 'open', url: 'https://example.com', browserId: task }),
+        /not available to this task/,
+      );
+    });
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('a browser handoff needs an open page, so Pi reopens it instead of handing over nothing', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-page-'));
   const replies: string[] = [];

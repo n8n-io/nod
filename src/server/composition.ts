@@ -64,7 +64,7 @@ import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
-import { createApprovals } from './approvals.ts';
+import { createApprovals, turnOrigin } from './approvals.ts';
 import { appActionConfirmation } from './action-presentation.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
@@ -120,6 +120,7 @@ import {
   retryCredentials,
   startThreadWorkers,
   stopThreadWorkers,
+  threadBrowsers,
   withTurnLock,
   type ThreadDependencies,
   type TurnRef,
@@ -786,6 +787,10 @@ async function initializeApplication(
       watchTurn: tasks.watch,
       holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
+      browsers: async (turn) => {
+        const work = await turnOrigin(turn.turnId);
+        return threadBrowsers(turn, !work || work.source === 'event' || work.readOnly);
+      },
       prepareBrowser: (turn) =>
         vaultAccess.prepare(turn, async () => {
           await computer.signOut(browserOf(turn));

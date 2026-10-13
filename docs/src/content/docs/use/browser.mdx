@@ -58,6 +58,8 @@ flowchart LR
   b1 -- Open browser --> you([You]):::accent
 ```
 
+A task can also pick up another one, such as continuing a page the chat already signed in to. It looks at the page before acting, so it never clicks on something that changed under it.
+
 The chat's browser is the one Otto hands to you. A task's browser is deleted when the task ends. Up to four browsers run at once, and an idle one closes until it's needed again.
 
 ## Saved routines

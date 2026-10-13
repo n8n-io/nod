@@ -1089,6 +1089,24 @@ test(
             await waitFor(settled(plain.turnId));
             assert.equal(ran(plain.turnId)?.sessionId, parent.threadId);
           }
+          for (const turnId of [parent.turnId, child])
+            await db.pool.query(
+              "INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,'tool_start','browser')",
+              [randomUUID(), turnId],
+            );
+          const chat = { threadId: parent.threadId, turnId: parent.turnId };
+          const fromTask = { threadId: parent.threadId, turnId: child, sessionId: child };
+          assert.deepEqual(await thread.threadBrowsers(chat, false), [
+            { browserId: parent.threadId, task: 'yours' },
+            { browserId: child, task: 'Book a synthetic table' },
+          ]);
+          assert.deepEqual(await thread.threadBrowsers(fromTask, false), [
+            { browserId: child, task: 'yours' },
+            { browserId: parent.threadId, task: 'chat' },
+          ]);
+          assert.deepEqual(await thread.threadBrowsers(fromTask, true), [
+            { browserId: child, task: 'yours' },
+          ]);
           await db.pool.query("UPDATE tasks SET state='cancelled',closed_at=now() WHERE id=$1", [
             card,
           ]);
@@ -1096,6 +1114,9 @@ test(
             "UPDATE turns SET status='cancelled' WHERE session_id=$1 AND status='waiting'",
             [child],
           );
+          assert.deepEqual(await thread.threadBrowsers(chat, false), [
+            { browserId: parent.threadId, task: 'yours' },
+          ]);
         },
       );
 
