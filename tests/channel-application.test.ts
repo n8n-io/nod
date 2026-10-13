@@ -10,7 +10,7 @@ import { createChannelSettings } from '../src/server/channel-settings.ts';
 import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
-import { fakeComputer } from './runtime-fixtures.ts';
+import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { PostHog } from 'posthog-node';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -135,13 +135,12 @@ test(
       },
       computer: fakeComputer(),
       objectStore: createFilesystemObjectStore(objects),
-      workspace: {
+      workspace: fakeWorkspace({
         status: () => '',
         open: () => {
           throw new Error('No workspace in fixture');
         },
-        dispose: () => {},
-      },
+      }),
       speech: {
         id: 'fixture',
         configured: false,

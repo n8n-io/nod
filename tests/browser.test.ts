@@ -131,6 +131,7 @@ test(
         control: async (id, input) => {
           controls.push([id, input]);
         },
+        discard: async () => {},
         act: async (id, input) => {
           controls.push([id, input]);
           return { text: 'Synthetic page', url: 'https://example.test/' };
@@ -501,17 +502,12 @@ test('browser frame streaming preserves fragmented and coalesced frames and reje
 
 function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
   return {
-    act: async () => ({ text: 'Synthetic page', url: 'https://example.test/' }),
-    screenshot: async () => null,
-    injectCredentials: async () => ({ status: 'submitted' }),
-    currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
-    hold: async () => {},
-    close: async () => {},
-    fillCard: async () => {},
-    cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
-    checkoutImage: async () => new Uint8Array(),
-    dispose: async () => {},
-    status: () => 'Synthetic browser',
+    ...fakeComputer({
+      act: async () => ({ text: 'Synthetic page', url: 'https://example.test/' }),
+      injectCredentials: async () => ({ status: 'submitted' }),
+      currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
+      status: () => 'Synthetic browser',
+    }),
     canCheckpoint: () => true,
   };
 }
@@ -1764,6 +1760,7 @@ function workerComputer() {
     };
   };
   const computer: Computer = {
+    ...fakeComputer(),
     status: () => 'Synthetic workspace browser',
     screenStatus: () => ({ state: 'live', capturedAt: '2026-09-25T12:00:00.000Z' }),
     act: (id, input, signal) => {

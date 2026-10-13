@@ -640,7 +640,7 @@ export function createAgentRuntime(dependencies: {
           await Promise.resolve()
             .then(() => child.dispose())
             .catch(() => {});
-          if (browsed) await computer.discard?.(childBrowser).catch(() => {});
+          if (browsed) await computer.discard(childBrowser).catch(() => {});
         }
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
@@ -731,7 +731,7 @@ export function createAgentRuntime(dependencies: {
       for (const attachment of context.attachments) {
         if (!['image/png', 'image/jpeg', 'image/webp'].includes(attachment.mimeType)) continue;
         const path = resolve(attachment.path);
-        if (!path.startsWith(root + sep) || !dependencies.workspace.readArtifact) continue;
+        if (!path.startsWith(root + sep)) continue;
         try {
           const bytes = Buffer.from(
             await waitFor(
@@ -792,7 +792,7 @@ export function createAgentRuntime(dependencies: {
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
         if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
-          await computer.discard?.(browserId).catch(() => {});
+          await computer.discard(browserId).catch(() => {});
         finished();
       }
     }

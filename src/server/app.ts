@@ -260,7 +260,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
     const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
     for (const id of [previousThreadId, ...browsers])
-      void dependencies.computer?.discard?.(id).catch(() => {});
+      void dependencies.computer?.discard(id).catch(() => {});
     return reset;
   });
   app.post('/api/onboarding/start', async (request) => {
@@ -327,7 +327,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   app.post('/api/thread/stop', async () => {
     const { browsers } = await stopThread();
-    for (const id of browsers) void dependencies.computer?.discard?.(id).catch(() => {});
+    for (const id of browsers) void dependencies.computer?.discard(id).catch(() => {});
     return { ok: true };
   });
   app.get('/api/events', async (request, reply) => {
@@ -473,7 +473,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reply.code(409).send({ error: 'The browser session changed. Request a new view.' });
     if (await blocked()) return reply.code(423).send({ error: paused });
     if (!screen) return reply.code(404).send({ error: 'There is no browser screen yet.' });
-    const screenStatus = dependencies.computer?.screenStatus?.(thread.id);
+    const screenStatus = dependencies.computer?.screenStatus(thread.id);
     reply.header('X-Screen-State', screenStatus?.state ?? 'live');
     if (screenStatus?.capturedAt) reply.header('X-Screen-Captured-At', screenStatus.capturedAt);
     return reply.type('image/png').send(screen);

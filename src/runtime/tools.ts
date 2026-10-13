@@ -585,8 +585,7 @@ export function ottoTools(
         return context.publishScreenshot(bytes, name);
       }
       if (action === 'download') {
-        if (!computer.download || !context.publishBrowserFile)
-          throw new Error('Browser file delivery is unavailable.');
+        if (!context.publishBrowserFile) throw new Error('Browser file delivery is unavailable.');
         const file = await computer.download(
           browserId,
           { selector: rest.selector, url: rest.url, name },
@@ -598,8 +597,7 @@ export function ottoTools(
         return context.publishBrowserFile(file);
       }
       if (action === 'upload') {
-        if (!computer.upload || !context.readWorkspaceFile)
-          throw new Error('Browser file upload is unavailable.');
+        if (!context.readWorkspaceFile) throw new Error('Browser file upload is unavailable.');
         if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
         const bytes = await context.readWorkspaceFile(rest.path, browserUploadBytes);
         return pageText(

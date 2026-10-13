@@ -163,8 +163,6 @@ export async function createBrowserConnections(
     }
     await current(turn);
     if (parsed.data.action === 'connect') {
-      if (!browser.bindProfile)
-        throw new BrowserConnectionError('The private browser is unavailable.', 503);
       const id = randomUUID();
       const profileId = randomUUID();
       await pool.query(
@@ -198,7 +196,7 @@ export async function createBrowserConnections(
           options.ownerId,
         ]);
         if (bound) await browser.close(browserOf(turn)).catch(() => {});
-        await browser.deleteProfile?.(profileId).catch(() => {});
+        await browser.deleteProfile(profileId).catch(() => {});
         throw error;
       }
     }
@@ -237,7 +235,6 @@ export async function createBrowserConnections(
       }
       if (
         !['saved', 'needs_sign_in', 'pending'].includes(row.state) ||
-        !browser.bindProfile ||
         (row.browser_id && row.browser_id !== browserOf(turn) && (await inUse(row.browser_id)))
       )
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
@@ -311,8 +308,6 @@ export async function createBrowserConnections(
       const row = await owned(id, true);
       if (row.browser_id && (await inUse(row.browser_id)))
         throw new BrowserConnectionError('Stop the active work before disconnecting this account.');
-      if (!browser.deleteProfile)
-        throw new BrowserConnectionError('The private browser is unavailable.', 503);
       await pool.query(
         "UPDATE browser_connections SET state='disconnecting',updated_at=now() WHERE id=$1 AND owner_id=$2",
         [id, options.ownerId],

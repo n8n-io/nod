@@ -525,10 +525,8 @@ async function initializeApplication(
     admission,
     ownerId,
     provider: adapters.integrations,
-    readWorkspaceFile:
-      workspace.readArtifact &&
-      ((turn, path, maxBytes) =>
-        workspace.readArtifact!(turn.threadId, path, maxBytes, 'attachment')),
+    readWorkspaceFile: (turn, path, maxBytes) =>
+      workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
@@ -600,15 +598,13 @@ async function initializeApplication(
                     turnId: provenance.turnId,
                   });
                   await ledger.action(provenance.turnId, action, args);
-                  const write = workspace.writeArtifact?.bind(workspace);
-                  const save =
-                    write &&
-                    (async (file: { name: string; bytes: Uint8Array }) => {
+                  return (
+                    await saveIntegrationFiles(result, async (file) => {
                       const name = `${randomUUID()}-${basename(file.name)}`;
-                      await write(provenance.threadId, name, file.bytes);
+                      await workspace.writeArtifact(provenance.threadId, name, file.bytes);
                       return name;
-                    });
-                  return (await saveIntegrationFiles(result, save)).value;
+                    })
+                  ).value;
                 })(),
     async (action, args) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
@@ -717,8 +713,8 @@ async function initializeApplication(
       analytics: captureAnalytics,
       consumers,
       artifacts,
-      writeArtifact: workspace.writeArtifact?.bind(workspace),
-      readArtifact: workspace.readArtifact?.bind(workspace),
+      writeArtifact: workspace.writeArtifact.bind(workspace),
+      readArtifact: workspace.readArtifact.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),

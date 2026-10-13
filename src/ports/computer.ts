@@ -121,23 +121,23 @@ export interface CredentialSubmission {
   status: 'submitted';
 }
 export interface Computer {
-  bindProfile?(threadId: string, profileId: string): Promise<void>;
-  deleteProfile?(profileId: string): Promise<void>;
+  bindProfile(threadId: string, profileId: string): Promise<void>;
+  deleteProfile(profileId: string): Promise<void>;
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
-  download?(
+  download(
     threadId: string,
     input: BrowserDownloadInput,
     signal?: AbortSignal,
   ): Promise<BrowserDownload>;
-  upload?(
+  upload(
     threadId: string,
     input: BrowserUploadInput,
     signal?: AbortSignal,
   ): Promise<BrowserObservation>;
   screenshot(threadId: string, signal?: AbortSignal): Promise<Buffer | null>;
-  control?(threadId: string, input: BrowserHandoffInput, signal?: AbortSignal): Promise<void>;
-  view?(threadId: string, signal: AbortSignal): AsyncIterable<Buffer>;
-  screenStatus?(threadId: string): {
+  control(threadId: string, input: BrowserHandoffInput, signal?: AbortSignal): Promise<void>;
+  view(threadId: string, signal: AbortSignal): AsyncIterable<Buffer>;
+  screenStatus(threadId: string): {
     state: 'live' | 'last_known' | 'unavailable';
     capturedAt?: string;
   };
@@ -151,7 +151,7 @@ export interface Computer {
   currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
   close(threadId: string): Promise<void>;
-  discard?(threadId: string): Promise<void>;
+  discard(threadId: string): Promise<void>;
   dispose(): Promise<void>;
   status(): string;
 }
@@ -181,13 +181,13 @@ export interface WorkspaceSession {
 }
 export interface Workspace {
   connectedCliAvailable?: boolean;
-  writeArtifact?(
+  writeArtifact(
     threadId: string,
     path: string,
     bytes: Uint8Array,
     signal?: AbortSignal,
   ): Promise<void>;
-  readArtifact?(
+  readArtifact(
     threadId: string,
     path: string,
     maxBytes: number,

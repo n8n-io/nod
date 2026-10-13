@@ -2,7 +2,19 @@ import type { Computer, Workspace } from '../src/ports/computer.ts';
 
 export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
   return {
+    bindProfile: async () => {},
+    deleteProfile: async () => {},
     act: async () => ({ text: 'Fixture page', url: 'https://example.com' }),
+    download: async () => ({
+      bytes: Buffer.from('fixture'),
+      name: 'fixture.txt',
+      mimeType: 'text/plain',
+    }),
+    upload: async () => ({ text: 'Fixture page', url: 'https://example.com' }),
+    control: async () => {},
+    view: async function* () {},
+    screenStatus: () => ({ state: 'unavailable' }),
+    discard: async () => {},
     screenshot: async () => null,
     injectCredentials: async () => {},
     currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
@@ -24,6 +36,8 @@ export function fakeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
       instructions: 'Fixture workspace only.',
       exec: async () => ({ exitCode: 0 }),
     }),
+    writeArtifact: async () => {},
+    readArtifact: async () => new Uint8Array(),
     status: () => 'fixture workspace',
     dispose: () => {},
     ...overrides,

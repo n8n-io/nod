@@ -162,7 +162,7 @@ test('workspace artifact reads reject paths outside the container task', async (
       signal: new AbortController().signal,
     });
     await assert.rejects(
-      runner.readArtifact!('task-a', '../private.txt', 1024),
+      runner.readArtifact('task-a', '../private.txt', 1024),
       /^Error: Files must stay within the task workspace\.$/,
     );
     assert.equal(launched, 0);
@@ -704,25 +704,25 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
   try {
     const bytes = Buffer.alloc(1024 * 1024 + 13);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
-    await workspace.writeArtifact!('fixture', 'nested/file.bin', bytes);
+    await workspace.writeArtifact('fixture', 'nested/file.bin', bytes);
     assert.deepEqual(
-      Buffer.from(await workspace.readArtifact!('fixture', 'nested/file.bin', bytes.length)),
+      Buffer.from(await workspace.readArtifact('fixture', 'nested/file.bin', bytes.length)),
       bytes,
     );
     await symlink(outside, join(f.directory, 'escape'));
     await assert.rejects(
-      workspace.writeArtifact!('fixture', 'escape/private.bin', bytes),
+      workspace.writeArtifact('fixture', 'escape/private.bin', bytes),
       /workspace file operation failed/,
     );
     assert.equal(await exists(join(outside, 'private.bin')), false);
     const before = launches;
     await assert.rejects(
-      workspace.writeArtifact!('fixture', '../foreign/file', bytes),
+      workspace.writeArtifact('fixture', '../foreign/file', bytes),
       /stay within/,
     );
     assert.equal(launches, before);
     await assert.rejects(
-      workspace.writeArtifact!('fixture', 'too-large', Buffer.alloc(15 * 1024 * 1024 + 1)),
+      workspace.writeArtifact('fixture', 'too-large', Buffer.alloc(15 * 1024 * 1024 + 1)),
       /15 MB/,
     );
   } finally {

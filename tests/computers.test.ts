@@ -47,6 +47,7 @@ import {
 import { createE2BAdapters } from '../src/providers/e2b/index.ts';
 import { createCloudflareRuntimeTransport } from '../src/providers/runtime-host/cloudflare.ts';
 import { createComputerShutdownConfirmation } from '../src/providers/runtime-host/computer-shutdown.ts';
+import { fakeComputer } from './runtime-fixtures.ts';
 
 const { hostedEnvironment } = await import(
   new URL('../scripts/start-hosted.mjs', import.meta.url).href
@@ -393,6 +394,7 @@ async function e2bFixture() {
     socketPath,
     createComputer: () => {
       return {
+        ...fakeComputer(),
         status: () => 'Synthetic browser',
         act: async (_id, input, signal) => {
           calls.push({ method: 'act', input });
@@ -418,11 +420,6 @@ async function e2bFixture() {
           origin: 'https://example.test',
           url: 'https://example.test/login',
         }),
-        hold: async () => {},
-        close: async () => {},
-        fillCard: async () => {},
-        cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
-        checkoutImage: async () => new Uint8Array(),
         dispose: async () => {
           await browserDisposal?.();
         },
@@ -957,6 +954,7 @@ async function cloudflareFixture() {
     createComputer: (directory) => {
       const selected = basename(directory);
       return {
+        ...fakeComputer(),
         status: () => 'Synthetic browser',
         act: async (_threadId, input, signal) => {
           calls.push({ namespace: selected, method: 'act', input });
@@ -980,10 +978,6 @@ async function cloudflareFixture() {
         hold: async (threadId, until) => {
           calls.push({ namespace: selected, method: 'hold', input: { threadId, until } });
         },
-        close: async () => {},
-        fillCard: async () => {},
-        cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
-        checkoutImage: async () => new Uint8Array(),
         dispose: async () => {
           calls.push({ namespace: selected, method: 'dispose' });
           if (failedDisposals > 0) {
