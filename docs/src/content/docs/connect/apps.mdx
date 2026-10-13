@@ -32,14 +32,14 @@ flowchart TD
 
 </Steps>
 
-| Permission area        | Access         | Otto uses it to                                                      |
-| ---------------------- | -------------- | -------------------------------------------------------------------- |
-| Connected accounts     | Read and write | Check connections and disconnect accounts                            |
-| Session management     | Read and write | Create and delete sessions, and open sign-in links                   |
-| Session tool execution | Write only     | Find app actions, load their details and run them                    |
-| Toolkits               | Read only      | List the apps you can connect                                        |
-| Auth configs           | Read only      | Pick your custom Google sign-in setup                                |
-| Proxy execute (Legacy) | Write only     | Read account identity, sign-in emails, recent subjects and sent mail |
+| Permission area        | Access         | Otto uses it to                                                     |
+| ---------------------- | -------------- | ------------------------------------------------------------------- |
+| Connected accounts     | Read and write | Check connections and disconnect accounts                           |
+| Session management     | Read and write | Create and delete sessions, and open sign-in links                  |
+| Session tool execution | Write only     | Find app actions, load their details and run them                   |
+| Toolkits               | Read only      | List the apps you can connect                                       |
+| Auth configs           | Read only      | Pick your custom Google sign-in setup                               |
+| Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and fetch sign-in emails |
 
 If you set `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**.
 

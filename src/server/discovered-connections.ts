@@ -3,10 +3,11 @@ import { posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import type {
-  DiscoveredOAuth,
-  DiscoveredOAuthState,
-  DiscoveredTransport,
+import {
+  DiscoveredSignInRequired,
+  type DiscoveredOAuth,
+  type DiscoveredOAuthState,
+  type DiscoveredTransport,
 } from '../ports/discovered.ts';
 import type { ConnectedCli } from '../ports/computer.ts';
 import type { Connection } from '../shared/contracts.ts';
@@ -101,6 +102,7 @@ type AccountRow = {
   account_name: string;
   account_id: string;
   paths: AccessPath[];
+  reconnect_required: boolean;
 };
 type ProposalRow = {
   id: string;
@@ -220,9 +222,10 @@ export async function createDiscoveredConnections(
       expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
     );
     ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext,
-      ADD COLUMN IF NOT EXISTS account_id uuid NOT NULL DEFAULT gen_random_uuid();
+      ADD COLUMN IF NOT EXISTS account_id uuid NOT NULL DEFAULT gen_random_uuid(),
+      ADD COLUMN IF NOT EXISTS reconnect_required boolean NOT NULL DEFAULT false;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text,
-      DROP COLUMN IF EXISTS thread_id;
+      ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id;
   `);
   await transaction(async (recovery) => {
     const interrupted = await recovery.query<{ id: string }>(
@@ -250,7 +253,8 @@ export async function createDiscoveredConnections(
     return rows.map((row) => ({
       slug: row.service,
       name: row.name,
-      status: 'connected',
+      status: row.reconnect_required ? 'disconnected' : 'connected',
+      ...(row.reconnect_required ? { canReconnect: true } : {}),
       connectionId: row.id,
       accountId: row.account_id,
       accountName: row.account_name,
@@ -264,19 +268,21 @@ export async function createDiscoveredConnections(
       })),
     }));
   }
-  async function setupServices(ids: string[]) {
+  async function setupServices(ids: string[], hashes: string[] = []) {
     const requested = z.array(z.uuid()).max(100).parse(ids);
-    if (!requested.length) return [];
+    if (!requested.length && !hashes.length) return [];
     const result = await pool.query<{
       id: string;
       slug: string;
       name: string;
       completed: boolean;
+      link_hash: string | null;
     }>(
-      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed
-       FROM discovered_connection_proposals WHERE owner_id=$1 AND id=ANY($2::uuid[])
+      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed,link_hash
+       FROM discovered_connection_proposals WHERE owner_id=$1
+       AND (id=ANY($2::uuid[]) OR link_hash=ANY($3::text[]))
        AND (expires_at>now() OR oauth_status='connected')`,
-      [owner, requested],
+      [owner, requested, hashes],
     );
     return result.rows;
   }
@@ -363,11 +369,9 @@ export async function createDiscoveredConnections(
       ...(connectionId ? { connectionId } : {}),
     };
   }
-  async function link(service: string, turn?: TurnRef, connectionId?: string) {
-    return propose(official(service, connectionId), turn);
-  }
-  async function signIn(service: string) {
-    return beginOAuth((await create(official(service))).id, {});
+  async function signIn(service: string, turn?: TurnRef, connectionId?: string) {
+    const { id, name } = await create(official(service, connectionId), turn);
+    return { name, ...(await beginOAuth(id, {})) };
   }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
@@ -398,7 +402,7 @@ export async function createDiscoveredConnections(
       if (!used.rowCount) throw error('This connection request expired.', 409);
       if (pending.connection_id) {
         const updated = await client.query(
-          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,account_id=gen_random_uuid()
+          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,account_id=gen_random_uuid(),reconnect_required=false
            WHERE id=$1 AND owner_id=$2 AND service=$3`,
           [
             idToSave,
@@ -505,9 +509,15 @@ export async function createDiscoveredConnections(
       }
       const updated = await client.query(
         `UPDATE discovered_connection_proposals
-         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending'
+         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending',link_hash=$5
          WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
-        [pending.id, owner, pending.name, createHash('sha256').update(state).digest('hex')],
+        [
+          pending.id,
+          owner,
+          pending.name,
+          createHash('sha256').update(state).digest('hex'),
+          createHash('sha256').update(started.url).digest('hex'),
+        ],
       );
       if (!updated.rowCount) throw error('This connection request expired.', 409);
       await options.grantVault.put(
@@ -597,6 +607,13 @@ export async function createDiscoveredConnections(
       settled: boolean;
     }
   >();
+  async function signInRequired(id: string, required: boolean) {
+    const changed = await pool.query(
+      'UPDATE discovered_connections SET reconnect_required=$3 WHERE id=$1 AND owner_id=$2 AND reconnect_required<>$3',
+      [id, owner, required],
+    );
+    if (changed.rowCount) options.refresh?.();
+  }
   async function tokenFor(
     row: AccountRow,
     path: AccessPath,
@@ -608,28 +625,38 @@ export async function createDiscoveredConnections(
     const secret = grant.value;
     if (path.auth !== 'oauth') return secret;
     const saved = JSON.parse(secret) as DiscoveredOAuthState;
-    if (!saved.tokens?.access_token) throw error('Connect this account again.', 409);
+    if (!saved.tokens?.access_token) {
+      await signInRequired(row.id, true);
+      throw error('Connect this account again.', 409);
+    }
     if (!saved.expiresAt || saved.expiresAt > Date.now() + 60_000) return saved.tokens.access_token;
     let current = refreshes.get(row.id);
     if (!current || current.controller.signal.aborted) {
       const controller = new AbortController();
       const pending = (async () => {
-        const next = await options.oauth.refresh(path.endpoint, saved, controller.signal);
+        const next = await options.oauth
+          .refresh(path.endpoint, saved, controller.signal)
+          .catch(async (cause: unknown) => {
+            if (cause instanceof DiscoveredSignInRequired) await signInRequired(row.id, true);
+            throw cause;
+          });
         if (!next.tokens?.access_token) throw new Error();
         const changed = await options.grantVault.replace(
           row.id,
           grant.version,
           JSON.stringify(next),
         );
+        let token = next.tokens.access_token;
         if (!changed) {
           const latest = JSON.parse(
             (await options.grantVault.read(row.id)).value,
           ) as DiscoveredOAuthState;
           if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
             throw new Error();
-          return latest.tokens.access_token;
+          token = latest.tokens.access_token;
         }
-        return next.tokens.access_token;
+        await signInRequired(row.id, false);
+        return token;
       })();
       const created = { promise: pending, controller, waiters: 0, settled: false };
       refreshes.set(row.id, created);
@@ -684,6 +711,7 @@ export async function createDiscoveredConnections(
     return propose({
       service,
       name: row.name,
+      ...(row.reconnect_required ? { connectionId: row.id } : {}),
       paths: row.paths.map((path) => {
         if (path.kind === 'cli') {
           if (!path.source) throw error('Ask Otto to set up this CLI again.', 409);
@@ -910,7 +938,6 @@ export async function createDiscoveredConnections(
     list,
     setupServices,
     propose,
-    link,
     signIn,
     completeOAuth,
     reconnect,

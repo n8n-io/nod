@@ -53,7 +53,7 @@ Each run appears in **Tasks → Previous**.
 
 You don't need a schedule for Otto to keep an eye on things.
 
-- **Gmail.** With [app updates](/deploy/configuration/#apps-and-composio) set up, each new inbox message is an update like any other app's. Without them, Gmail gets the same check as other apps without updates.
+- **Gmail.** Otto checks for new inbox mail every five minutes, and each new message is an update like any other app's.
 - **Other connected apps.** When you've told Otto what's worth interrupting you for, it looks at each update in a quiet background run and decides whether there's useful work; otherwise it only saves the update. For an app without updates, it checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
 
 Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. Tell Otto what's worth interrupting you for, and it follows that.

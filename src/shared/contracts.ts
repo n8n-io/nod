@@ -177,6 +177,7 @@ export interface CredentialRequest {
 }
 export interface Connection {
   canReconnect?: boolean;
+  reconnectRequired?: boolean;
   slug: string;
   name: string;
   logoUrl?: string;

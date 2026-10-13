@@ -1,6 +1,11 @@
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { DiscoveredOAuth, DiscoveredOAuthState } from '../../ports/discovered.ts';
+import { OAuthError, ServerError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import {
+  DiscoveredSignInRequired,
+  type DiscoveredOAuth,
+  type DiscoveredOAuthState,
+} from '../../ports/discovered.ts';
 import { publicUrl } from '../agent-browser/network.ts';
 import { safeRemoteFetch } from './remote.ts';
 
@@ -88,10 +93,14 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
       return saved;
     },
     async refresh(endpoint, saved, signal) {
-      if (!saved.tokens?.refresh_token) throw new Error('Connect this account again.');
-      const result = await run(endpoint, saved, {}, signal);
+      if (!saved.tokens?.refresh_token) throw new DiscoveredSignInRequired();
+      const result = await run(endpoint, saved, {}, signal).catch((cause: unknown) => {
+        throw cause instanceof OAuthError && !(cause instanceof ServerError)
+          ? new DiscoveredSignInRequired()
+          : cause;
+      });
       if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
-        throw new Error('Connect this account again.');
+        throw new DiscoveredSignInRequired();
       return saved;
     },
   };
