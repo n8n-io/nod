@@ -746,7 +746,7 @@ async function initializeApplication(
         return result;
       },
       speech,
-      manage: async (turn, action, args, provenance) => {
+      manage: async (turn, action, args, { admit, ...provenance }) => {
         if (
           [
             'profile_update',
@@ -761,8 +761,9 @@ async function initializeApplication(
             const schedule = await personal.getSchedule(String(input.id));
             if (!schedule.enabled) return schedule;
           }
-          return approvals.request(turn, `OTTO_${action}`, input, provenance);
+          return approvals.request(turn, `OTTO_${action}`, input, { ...provenance, admit });
         }
+        await admit?.(false);
         if (action === 'memory_save') {
           const input = memory.validate(args);
           if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
@@ -872,6 +873,7 @@ async function initializeApplication(
           action === 'SEARCH_TOOLS'
             ? ({ confirm: false } as const)
             : await trust.check(turn, action, args);
+        await options.admit?.(verdict.confirm);
         if (hasWorkspaceFiles(args))
           args = await withTurnLock(turn.turnId, () =>
             integrations.prepare(ownerId, action, args, turn, options.signal),

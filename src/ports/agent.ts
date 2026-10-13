@@ -146,9 +146,14 @@ export interface RuntimeContext {
     action: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    admit?: (asks: boolean) => Promise<void>,
   ): Promise<unknown>;
 
-  manage(action: string, args: Record<string, unknown>): Promise<unknown>;
+  manage(
+    action: string,
+    args: Record<string, unknown>,
+    admit?: (asks: boolean) => Promise<void>,
+  ): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
 }

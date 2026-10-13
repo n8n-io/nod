@@ -113,7 +113,11 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { signal: AbortSignal; checkConnectionId?: string },
+    options: {
+      signal: AbortSignal;
+      checkConnectionId?: string;
+      admit?: (asks: boolean) => Promise<void>;
+    },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'discover' | 'connect' | 'propose',
@@ -137,7 +141,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    provenance: { sourceMessageId: string | null },
+    provenance: { sourceMessageId: string | null; admit?: (asks: boolean) => Promise<void> },
   ) => Promise<unknown>;
 }
 
@@ -1091,12 +1095,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             paymentSetting: fenced((input: unknown) => dependencies.paymentSetting!(ref, input)),
           }
         : {}),
-      integration: fenced(async (action, args, callSignal?: AbortSignal) => {
+      integration: fenced(async (action, args, callSignal?: AbortSignal, admit?) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();
         const result = await dependencies.integration(ref, action, args, {
           signal: operation,
           checkConnectionId: loaded.context.activityCheck?.connectionId,
+          admit,
         });
         operation.throwIfAborted();
         if (result && typeof result === 'object' && appConfirmation in result) return result;
@@ -1118,7 +1123,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ? { content: [{ type: 'text', text: JSON.stringify(value) }, ...saved.images] }
           : value;
       }),
-      manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
+      manage: fenced((action, args, admit) =>
+        dependencies.manage(ref, action, args, { sourceMessageId, admit }),
+      ),
       task: dependencies.task && fenced((input) => dependencies.task!(ref, input)),
       takeMessages:
         turn.background || turn.read_only

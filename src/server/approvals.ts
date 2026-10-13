@@ -192,7 +192,12 @@ export async function createApprovals(
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { confirm?: boolean; question?: string; sourceMessageId?: string | null } = {},
+    options: {
+      confirm?: boolean;
+      question?: string;
+      sourceMessageId?: string | null;
+      admit?: (asks: boolean) => Promise<void>;
+    } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded) throw new Error('The action has no arguments to save.');
@@ -201,6 +206,7 @@ export async function createApprovals(
       !options.confirm && !options.question && decide
         ? await decide(turn, action, snapshot).catch(() => false)
         : false;
+    await options.admit?.(!allowed);
     const proposal = await withTurnLock(turn.turnId, async (client) => {
       const current = await turnRow(client, turn.turnId);
       if (!current || current.thread_id !== turn.threadId)

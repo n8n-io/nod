@@ -55,6 +55,7 @@ test(
       { entered(turnId: string): void; wait: Promise<void>; messages: string[] } | undefined;
     const ids: string[] = [];
     const asked = new Set<string>();
+    const cleared = new Set<string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -151,10 +152,17 @@ test(
                 }
               : task === 'review'
                 ? {
-                    run: asked.has(
-                      (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
-                        ?.text ?? '',
-                    ),
+                    run:
+                      asked.has(
+                        (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                          ?.text ?? '',
+                      ) ||
+                      cleared.has(
+                        String(
+                          (input as { action?: { arguments?: { recipient_email?: unknown } } })
+                            .action?.arguments?.recipient_email,
+                        ),
+                      ),
                   }
                 : undefined,
         },
@@ -351,6 +359,43 @@ test(
           }
         },
       );
+
+      await t.test('an allowed send issued after one that asks never runs', async () => {
+        cleared.add('allowed@example.test');
+        const text = `Synthetic ordered sends ${randomUUID()}`;
+        batches.set(text, {
+          subagents: false,
+          calls: ['asked', 'allowed'].map((name) => ({
+            action: 'GMAIL_SEND_EMAIL',
+            args: {
+              recipient_email: `${name}@example.test`,
+              subject: 'Synthetic invoices',
+              body: 'Synthetic content.',
+            },
+          })),
+        });
+        const response = await request('POST', '/api/messages', { text });
+        assert.equal(response.statusCode, 200, response.body);
+        const turn = response.json().turnId as string;
+        await waitFor(turn, 'waiting');
+        const cards = await approvalsFor(turn);
+        assert.deepEqual(
+          cards.map((card) => [card.status, card.args.recipient_email]),
+          [['pending', 'asked@example.test']],
+        );
+        assert.equal(
+          integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length,
+          0,
+        );
+        const declined = await request('POST', '/api/messages', {
+          text: 'No',
+          replyToMessageId: cards[0].confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(declined.statusCode, 200, declined.body);
+        await waitFor(declined.json().turnId, 'succeeded');
+        cleared.clear();
+      });
 
       await t.test(
         'a schedule cancellation steered into a confirmed turn uses the fresh owner request',

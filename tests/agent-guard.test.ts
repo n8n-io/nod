@@ -466,27 +466,27 @@ test('a read-only turn can load a trusted skill without changing the workspace',
   assert.equal(writes, 0);
 });
 
-test('app reads in one batch run together', async () => {
+test('an app call issued after one that asks never runs, while reads still run together', async () => {
   const events: string[] = [];
-  await fixture(
-    async (tools) => {
-      const apps = tools.get('apps')!;
-      assert.equal(apps.parallel, true);
-      await Promise.all(
-        ['GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS'].map((action) =>
-          apps.execute({ action, args: {} }),
-        ),
-      );
-    },
-    {
-      integration: async (action) => {
-        events.push(`start ${action}`);
-        await setTimeout(20);
-        events.push(`end ${action}`);
-        return { ok: true };
-      },
-    },
-  );
+  const integration: RuntimeContext['integration'] = async (action, _args, _signal, admit) => {
+    const asks = action === 'GMAIL_SEND_EMAIL';
+    await setTimeout(asks ? 30 : 0);
+    await admit?.(asks);
+    if (asks) return { [appConfirmation]: 'Send this email?' };
+    events.push(`start ${action}`);
+    await setTimeout(20);
+    events.push(`end ${action}`);
+    return { ok: true };
+  };
+  const batch = (actions: string[]) => async (tools: Map<string, AgentTool>) => {
+    await Promise.allSettled(
+      actions.map((action) => tools.get('apps')!.execute({ action, args: {} })),
+    );
+  };
+  const asked = await fixture(batch(['GMAIL_SEND_EMAIL', 'SLACK_SEND_MESSAGE']), { integration });
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.equal(events.length, 0);
+  await fixture(batch(['GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS']), { integration });
   assert.ok(
     events.indexOf('start GOOGLECALENDAR_LIST_EVENTS') < events.indexOf('end GMAIL_FETCH_EMAILS'),
   );

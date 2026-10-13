@@ -64,7 +64,7 @@ Reply yes to go ahead, no to skip it, or tell me what to change.
 - The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale".
 - A yes with a change or condition, a question or anything else closes the question, and Otto treats your message as a new request. So does a reply to a question that was already answered or whose task has ended.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
-- Otto asks one question at a time. While one waits for your answer, any other action in the same task that needs a question is refused, and Otto can ask about it after you answer.
+- Otto asks one question at a time. While one waits for your answer, app actions Otto started after it don't run, and Otto can try them again after you answer.
 
 ```mermaid
 sequenceDiagram

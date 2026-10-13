@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
@@ -34,6 +35,8 @@ const parallelTools = new Set([
   'apps',
   'manage_personal_context',
 ]);
+const orderedTools = new Set(['apps', 'manage_personal_context']);
+const admissions = new AsyncLocalStorage<(asks: boolean) => Promise<void>>();
 const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -483,6 +486,23 @@ export function createAgentRuntime(dependencies: {
             actionSignal,
           ),
       };
+      let decided = Promise.resolve(false);
+      const admission = () => {
+        const earlier = decided;
+        let decide!: (asks: boolean) => void;
+        const own = new Promise<boolean>((resolve) => {
+          decide = resolve;
+        });
+        decided = Promise.all([earlier, own]).then(([before, asks]) => before || asks);
+        return {
+          decide,
+          admit: async (asks: boolean) => {
+            decide(asks);
+            if (await earlier)
+              throw new Error("This turn is waiting for the owner's answer. Ask again after it.");
+          },
+        };
+      };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
         ottoTools(
           turn,
@@ -499,20 +519,29 @@ export function createAgentRuntime(dependencies: {
               (browserTools.has(name) || handsOverBrowser(name, params))
             )
               await take();
-            return guard(name, params, async () => {
-              if (!Value.Check(parameters, params))
-                throw new Error('The tool arguments do not match its schema.');
-              if (handsOverBrowser(name, params))
-                await computer.currentPage(turn.browserId).catch(() => {
-                  throw new Error('Open the page in your browser before handing it to the user.');
-                });
-              return execute(params);
-            });
+            const gate = orderedTools.has(name) ? admission() : undefined;
+            const run = () =>
+              guard(name, params, async () => {
+                if (!Value.Check(parameters, params))
+                  throw new Error('The tool arguments do not match its schema.');
+                if (handsOverBrowser(name, params))
+                  await computer.currentPage(turn.browserId).catch(() => {
+                    throw new Error('Open the page in your browser before handing it to the user.');
+                  });
+                return execute(params);
+              });
+            return gate ? admissions.run(gate.admit, run).finally(() => gate.decide(false)) : run();
           },
         }));
       const system = systemPrompt(workspace, dependencies.skills);
       const shared = {
-        context,
+        context: {
+          ...context,
+          integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
+            context.integration(action, args, callSignal, admissions.getStore()),
+          manage: (action: string, args: Record<string, unknown>) =>
+            context.manage(action, args, admissions.getStore()),
+        },
         computer: browser,
         reply,
         invite: (text: string) => deliverReply(text),
