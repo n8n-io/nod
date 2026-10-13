@@ -22,6 +22,7 @@ import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
+import type { Preferences } from '../src/server/preferences.ts';
 test('the confirmation question omits internal identifiers', () => {
   const question = actionConfirmation(
     'OTTO_schedule_update',
@@ -876,15 +877,18 @@ test(
       });
 
       await t.test(
-        'a memory save the checker matches to the request runs directly once without a confirmation',
+        'a change the checker matches to the request runs directly once without a confirmation',
         async () => {
           aligned = true;
-          const turn = await begin('Remember that I prefer short reports.');
+          const turn = await begin('Only notify me about urgent reports.');
           const source = (await row(turn.turnId)).message_id;
-          const args = { kind: 'preference', text: 'Prefers short reports.' };
+          const args = { notificationRule: 'Only urgent reports.' };
           const before = calls.length;
-          const first = await approvals.request(turn, 'OTTO_memory_save', args);
-          assert.deepEqual(await approvals.request(turn, 'OTTO_memory_save', args), first);
+          const first = await approvals.request(turn, 'OTTO_notification_preferences_update', args);
+          assert.deepEqual(
+            await approvals.request(turn, 'OTTO_notification_preferences_update', args),
+            first,
+          );
           assert.equal(calls.length, before + 1);
           assert.equal(calls.at(-1)?.context.sourceMessageId, source);
           assert.equal(await assistantMessages(turn.turnId), 0);
@@ -894,14 +898,19 @@ test(
       );
 
       await t.test(
-        'a trusted confirmation request overrides explicit memory authority',
+        'a trusted confirmation request overrides explicit owner authority',
         async () => {
-          const turn = await begin('Remember that I prefer short reports.');
-          const args = { kind: 'preference', text: 'Prefers short reports.' };
+          const turn = await begin('Only notify me about urgent reports.');
+          const args = { notificationRule: 'Only urgent reports.' };
           const before = calls.length;
-          const result = await approvals.request(turn, 'OTTO_memory_save', args, {
-            allowed: false,
-          });
+          const result = await approvals.request(
+            turn,
+            'OTTO_notification_preferences_update',
+            args,
+            {
+              allowed: false,
+            },
+          );
           assert.equal(result.requiresConfirmation, true);
           const pending = await proposal(turn.turnId);
           assert.equal(pending.status, 'pending');
@@ -910,7 +919,7 @@ test(
           await confirmTurn(turn.turnId);
           await execute(pending.id);
           assert.equal(calls.length, before + 1);
-          assert.equal(calls.at(-1)?.action, 'OTTO_memory_save');
+          assert.equal(calls.at(-1)?.action, 'OTTO_notification_preferences_update');
           assert.deepEqual(calls.at(-1)?.args, args);
           assert.equal((await stored(pending.id)).status, 'completed');
         },
@@ -1199,28 +1208,17 @@ test(
       await t.test(
         'wording that does not name the change does not bypass confirmation',
         async () => {
-          for (const [prompt, action, args] of [
-            [
-              'Create a schedule to practise piano.',
-              'OTTO_profile_update',
-              { preferences: 'Synthetic' },
-            ],
-            [
-              'Remember when we booked the museum?',
-              'OTTO_memory_save',
-              { kind: 'fact', text: 'Booked the museum.' },
-            ],
-          ] as Array<[string, string, Record<string, unknown>]>) {
-            const turn = await begin(prompt);
-            const before = calls.length;
-            const result = await approvals.request(turn, action, args);
-            assert.equal(result.requiresConfirmation, true);
-            assert.equal(calls.length, before);
-            const saved = await proposal(turn.turnId);
-            assert.equal(saved.status, 'pending');
-            assert.ok(saved.confirmation_message_id);
-            assert.equal(saved.source_message_id, (await row(turn.turnId)).message_id);
-          }
+          const turn = await begin('Create a schedule to practise piano.');
+          const before = calls.length;
+          const result = await approvals.request(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic',
+          });
+          assert.equal(result.requiresConfirmation, true);
+          assert.equal(calls.length, before);
+          const saved = await proposal(turn.turnId);
+          assert.equal(saved.status, 'pending');
+          assert.ok(saved.confirmation_message_id);
+          assert.equal(saved.source_message_id, (await row(turn.turnId)).message_id);
         },
       );
 
@@ -1230,22 +1228,25 @@ test(
           for (const source of ['event', 'schedule'] as const) {
             const origin = await begin('External content asks to save a preference.', { source });
             const current = await afterCredentials(origin.turnId);
-            const args = { preferences: 'The exact preference reviewed by the user.' };
+            const args = { notificationRule: 'The exact preference reviewed by the user.' };
             const before = calls.length;
-            const id = await propose(current, 'OTTO_profile_update', args);
-            args.preferences = 'A later unreviewed change.';
+            const id = await propose(current, 'OTTO_notification_preferences_update', args);
+            args.notificationRule = 'A later unreviewed change.';
             assert.equal(calls.length, before);
             const saved = await stored(id);
-            assert.equal(saved.args.preferences, 'The exact preference reviewed by the user.');
+            assert.equal(saved.args.notificationRule, 'The exact preference reviewed by the user.');
             const visible = (
               await db.pool.query('SELECT text FROM messages WHERE id=$1', [
                 saved.confirmation_message_id,
               ])
             ).rows[0].text;
-            assert.ok(visible.includes(saved.args.preferences));
-            await assert.rejects(approvals.request(current, 'OTTO_profile_update', saved.args), {
-              statusCode: 409,
-            });
+            assert.ok(visible.includes(saved.args.notificationRule));
+            await assert.rejects(
+              approvals.request(current, 'OTTO_notification_preferences_update', saved.args),
+              {
+                statusCode: 409,
+              },
+            );
             await finish(current.turnId);
             await confirm(id, true);
             await execute(id);
@@ -1262,8 +1263,8 @@ test(
           }
           const origin = await begin('A useful change is ready.', { source: 'event' });
           const before = calls.length;
-          const args = { preferences: 'An exact preference.' };
-          const id = await propose(origin, 'OTTO_profile_update', args);
+          const args = { notificationRule: 'An exact preference.' };
+          const id = await propose(origin, 'OTTO_notification_preferences_update', args);
           await confirm(id, true);
           failExecution = true;
           try {
@@ -1273,9 +1274,12 @@ test(
           }
           assert.equal((await stored(id)).status, 'uncertain');
           const continuation = await running((await stored(id)).execution_turn_id);
-          await assert.rejects(approvals.request(continuation, 'OTTO_profile_update', args), {
-            statusCode: 409,
-          });
+          await assert.rejects(
+            approvals.request(continuation, 'OTTO_notification_preferences_update', args),
+            {
+              statusCode: 409,
+            },
+          );
           assert.equal(calls.length, before + 1);
           assert.deepEqual(calls.at(-1)?.args, args);
           await finish(continuation.turnId, 'failed');
@@ -1288,15 +1292,15 @@ test(
           for (const explicit of [false, true]) {
             const before = calls.length;
             const origin = await begin('A useful change is ready.', { source: 'event' });
-            const args = { preferences: 'Original preference.' };
-            const id = await propose(origin, 'OTTO_profile_update', args);
+            const args = { notificationRule: 'Original preference.' };
+            const id = await propose(origin, 'OTTO_notification_preferences_update', args);
             await finish(origin.turnId);
             let unrelated: string | undefined;
             if (explicit)
               unrelated = await propose(
                 await begin('Another useful decision.', { source: 'event' }),
-                'OTTO_profile_update',
-                { preferences: 'A separate proposal.' },
+                'OTTO_notification_preferences_update',
+                { notificationRule: 'A separate proposal.' },
               );
             const revised = await messages.submit('Update my preferences to be shorter.', [], {
               ...(explicit ? { replyToMessageId: (await stored(id)).confirmation_message_id } : {}),
@@ -1305,21 +1309,25 @@ test(
             assert.equal((await stored(id)).status, 'expired');
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             assert.equal(await confirm(id, true), undefined);
-            const next = await propose(await running(revised.turnId), 'OTTO_profile_update', {
-              preferences: 'Shorter preference.',
-            });
+            const next = await propose(
+              await running(revised.turnId),
+              'OTTO_notification_preferences_update',
+              {
+                notificationRule: 'Shorter preference.',
+              },
+            );
             assert.equal((await stored(next)).status, 'pending');
             assert.equal(calls.length, before);
             await confirm(next, true);
             await execute(next);
             await execute(next);
             assert.equal(calls.length, before + 1);
-            assert.equal(calls.at(-1)?.args.preferences, 'Shorter preference.');
+            assert.equal(calls.at(-1)?.args.notificationRule, 'Shorter preference.');
           }
           const before = calls.length;
           const origin = await begin('A useful change is ready.', { source: 'event' });
-          const id = await propose(origin, 'OTTO_profile_update', {
-            preferences: 'Original preference.',
+          const id = await propose(origin, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Original preference.',
           });
           const confirmationMessageId = (await stored(id)).confirmation_message_id;
           const result = await messages.submit(
@@ -1340,8 +1348,8 @@ test(
           assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
           const revised = await running(result.turnId);
-          const update = await propose(revised, 'OTTO_profile_update', {
-            preferences: 'The revised preference.',
+          const update = await propose(revised, 'OTTO_notification_preferences_update', {
+            notificationRule: 'The revised preference.',
           });
           await confirm(update, true);
           await execute(update);
@@ -1389,8 +1397,8 @@ test(
           aligned = false;
           const current = await begin('Inspect the synthetic dashboard.');
           const origin = await begin('Review a preference.', { source: 'event' });
-          const id = await propose(origin, 'OTTO_profile_update', {
-            preferences: 'Original preference.',
+          const id = await propose(origin, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Original preference.',
           });
           const revised = await messages.submit('Update my preferences to shorter reports.');
           await db.pool.query('UPDATE messages SET turn_id=$2 WHERE id=$1', [
@@ -1401,8 +1409,8 @@ test(
           const before = calls.length;
           const result = await approvals.request(
             current,
-            'OTTO_profile_update',
-            { preferences: 'Shorter reports.' },
+            'OTTO_notification_preferences_update',
+            { notificationRule: 'Shorter reports.' },
             { sourceMessageId: revised.messageId },
           );
           assert.equal(result.requiresConfirmation, true);
@@ -1523,8 +1531,8 @@ test(
         'a direct execution keeps its exact snapshot and never replays pending or uncertain work',
         async () => {
           aligned = true;
-          const origin = await begin('Remember that I prefer short reports.');
-          const args = { kind: 'preference', text: 'Original preference.' };
+          const origin = await begin('Only notify me about urgent reports.');
+          const args = { notificationRule: 'Original preference.' };
           const snapshot = structuredClone(args);
           const before = calls.length;
           let release!: () => void;
@@ -1532,17 +1540,20 @@ test(
             release = resolve;
           });
           failExecution = true;
-          const pending = assert.rejects(approvals.request(origin, 'OTTO_memory_save', args), {
-            statusCode: 502,
-          });
+          const pending = assert.rejects(
+            approvals.request(origin, 'OTTO_notification_preferences_update', args),
+            {
+              statusCode: 502,
+            },
+          );
           try {
             for (let attempt = 0; attempt < 100 && calls.length === before; attempt++)
               await delay(10);
             assert.equal(calls.length, before + 1);
-            args.text = 'Changed after the request.';
+            args.notificationRule = 'Changed after the request.';
             assert.deepEqual(calls.at(-1)?.args, snapshot);
             await assert.rejects(
-              approvals.request(origin, 'OTTO_memory_save', snapshot),
+              approvals.request(origin, 'OTTO_notification_preferences_update', snapshot),
               /pending or uncertain/,
             );
             release();
@@ -1550,7 +1561,7 @@ test(
             assert.equal((await proposal(origin.turnId)).status, 'uncertain');
             assert.equal((await proposal(origin.turnId)).result, null);
             await assert.rejects(
-              approvals.request(origin, 'OTTO_memory_save', snapshot),
+              approvals.request(origin, 'OTTO_notification_preferences_update', snapshot),
               /pending or uncertain/,
             );
             assert.equal(calls.length, before + 1);
@@ -1571,7 +1582,7 @@ test(
         'read-only, owner, turn and account preflight fences refuse every change',
         async () => {
           const before = calls.length;
-          const args = { preferences: 'Fixture preference.' };
+          const args = { notificationRule: 'Fixture preference.' };
           const allowed = { allowed: true };
           for (const mutation of [
             'UPDATE turns SET read_only=true WHERE id=$1',
@@ -1581,7 +1592,7 @@ test(
             const origin = await begin('Update my preferences.', { source: 'event' });
             await db.pool.query(mutation, [origin.turnId]);
             await assert.rejects(
-              approvals.request(origin, 'OTTO_profile_update', args, allowed),
+              approvals.request(origin, 'OTTO_notification_preferences_update', args, allowed),
               /read-only|no longer active/,
             );
             assert.equal(await proposal(origin.turnId), undefined);
@@ -1592,7 +1603,7 @@ test(
           ]);
           await db.initializeDatabase();
           await assert.rejects(
-            approvals.request(legacy, 'OTTO_profile_update', args, allowed),
+            approvals.request(legacy, 'OTTO_notification_preferences_update', args, allowed),
             /read-only/,
           );
           for (const mutation of [
@@ -1603,21 +1614,21 @@ test(
             const resumed = await afterCredentials(origin.turnId);
             await db.pool.query(mutation, [origin.turnId]);
             await assert.rejects(
-              approvals.request(resumed, 'OTTO_profile_update', args, allowed),
+              approvals.request(resumed, 'OTTO_notification_preferences_update', args, allowed),
               /read-only|direct request/,
             );
             assert.equal(await proposal(resumed.turnId), undefined);
           }
           const onboarding = await begin('Update my preferences.', { source: 'readOnly' });
           await assert.rejects(
-            approvals.request(onboarding, 'OTTO_profile_update', args, allowed),
+            approvals.request(onboarding, 'OTTO_notification_preferences_update', args, allowed),
             /read-only/,
           );
           const turn = await begin('Update my preferences.', { source: 'event' });
           await assert.rejects(
             approvals.request(
               { ...turn, threadId: randomUUID() },
-              'OTTO_profile_update',
+              'OTTO_notification_preferences_update',
               args,
               allowed,
             ),
@@ -1625,9 +1636,12 @@ test(
           );
           rejectPreflight = true;
           try {
-            await assert.rejects(approvals.request(turn, 'OTTO_profile_update', args, allowed), {
-              statusCode: 409,
-            });
+            await assert.rejects(
+              approvals.request(turn, 'OTTO_notification_preferences_update', args, allowed),
+              {
+                statusCode: 409,
+              },
+            );
             assert.equal(await proposal(turn.turnId), undefined);
           } finally {
             rejectPreflight = false;
@@ -1645,14 +1659,15 @@ test(
             [turn.turnId],
           );
           assert.equal(
-            (await approvals.request(turn, 'OTTO_profile_update', {})).requiresConfirmation,
+            (await approvals.request(turn, 'OTTO_notification_preferences_update', {}))
+              .requiresConfirmation,
             true,
           );
           const generic = await running(
             await thread.enqueueTurn('Synthetic unrelated continuation', { source: 'resume' }),
           );
           await assert.rejects(
-            approvals.request(generic, 'OTTO_profile_update', {}),
+            approvals.request(generic, 'OTTO_notification_preferences_update', {}),
             /direct request/,
           );
           assert.equal(await proposal(generic.turnId), undefined);
@@ -1671,10 +1686,10 @@ test(
         async () => {
           const channel = 'telegram:fixture';
           const turn = await begin('Synthetic channel fixture', { channel });
-          const args = { preferences: 'Synthetic original' };
-          await approvals.request(turn, 'OTTO_profile_update', args);
+          const args = { notificationRule: 'Synthetic original' };
+          await approvals.request(turn, 'OTTO_notification_preferences_update', args);
           const saved = await proposal(turn.turnId);
-          args.preferences = 'Substituted after proposal';
+          args.notificationRule = 'Substituted after proposal';
           await finish(turn.turnId);
           const clientMessageId = randomUUID();
           const reply = {
@@ -1703,7 +1718,7 @@ test(
             await approvals.executeConfirmed(accepted.turnId, new AbortController().signal),
           );
           assert.equal(calls.length, before + 1);
-          assert.equal(calls.at(-1)?.args.preferences, 'Synthetic original');
+          assert.equal(calls.at(-1)?.args.notificationRule, 'Synthetic original');
           assert.equal(
             await approvals.executeConfirmed(accepted.turnId, new AbortController().signal),
             undefined,
@@ -1756,7 +1771,8 @@ test(
           await digestApprovals.executeConfirmed(continuation.turnId, new AbortController().signal);
           assert.equal((await stored(pending.id)).status, 'completed');
           assert.equal(
-            (await personal.manage('notification_preferences_get', {})).notificationRule,
+            ((await personal.manage('notification_preferences_get', {})) as Preferences)
+              .notificationRule,
             preferences.notificationRule,
           );
           const args = {
@@ -1875,8 +1891,8 @@ test(
         async () => {
           const origin = await begin('Synthetic boundary fixture');
           const source = (await row(origin.turnId)).message_id;
-          await approvals.request(origin, 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          await approvals.request(origin, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           const accepted = await confirmTurn(origin.turnId);
           const turn = await running(accepted!.turnId);
@@ -1896,7 +1912,9 @@ test(
         async () => {
           for (const outcome of ['cancelled', 'uncertain'] as const) {
             const origin = await begin('Synthetic boundary fixture');
-            await approvals.request(origin, 'OTTO_profile_update', { preferences: outcome });
+            await approvals.request(origin, 'OTTO_notification_preferences_update', {
+              notificationRule: outcome,
+            });
             const accepted = await confirmTurn(origin.turnId);
             const turn = await running(accepted!.turnId);
             const controller = new AbortController();
@@ -1998,10 +2016,10 @@ test(
         async () => {
           const turn = await newTurn();
           const original = {
-            preferences: 'Confirmed snapshot',
+            notificationRule: 'Confirmed snapshot',
             nested: { text: 'original' },
           };
-          const id = await propose(turn, 'OTTO_profile_update', original);
+          const id = await propose(turn, 'OTTO_notification_preferences_update', original);
           original.nested.text = 'changed after request';
           assert.equal((await stored(id)).args.nested.text, 'original');
           assert.equal(
@@ -2009,7 +2027,7 @@ test(
               await request('POST', '/api/messages', {
                 text: 'Yes',
                 replyToMessageId: (await stored(id)).confirmation_message_id,
-                args: { preferences: 'Substituted by the client' },
+                args: { notificationRule: 'Substituted by the client' },
               })
             ).statusCode,
             400,
@@ -2033,9 +2051,9 @@ test(
           const results = await Promise.all(Array.from({ length: 4 }, () => execute(id)));
           assert.equal(calls.length, before + 1);
           assert.deepEqual(calls.at(-1), {
-            action: 'OTTO_profile_update',
+            action: 'OTTO_notification_preferences_update',
             args: {
-              preferences: 'Confirmed snapshot',
+              notificationRule: 'Confirmed snapshot',
               nested: { text: 'original' },
             },
             context: {
@@ -2056,18 +2074,20 @@ test(
           const first = await newTurn('running', 'Provenance fixture');
           const second = await newTurn('running', 'Provenance fixture');
           const [firstId, secondId] = await Promise.all([
-            propose(first, 'OTTO_profile_update', {
-              preferences: 'First turn fact',
+            propose(first, 'OTTO_notification_preferences_update', {
+              notificationRule: 'First turn fact',
               sourceMessageId: second.messageId,
             }),
-            propose(second, 'OTTO_profile_update', { preferences: 'Second turn fact' }),
+            propose(second, 'OTTO_notification_preferences_update', {
+              notificationRule: 'Second turn fact',
+            }),
           ]);
           const eventTurn = await thread.enqueueTurn('Provenance fixture', { source: 'event' });
           await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [eventTurn]);
           const background = await propose(
             { threadId: first.threadId, turnId: eventTurn },
-            'OTTO_profile_update',
-            { preferences: 'No owned source' },
+            'OTTO_notification_preferences_update',
+            { notificationRule: 'No owned source' },
           );
           assert.equal((await stored(background)).source_message_id, null);
           assert.equal((await stored(background)).status, 'pending');
@@ -2080,8 +2100,8 @@ test(
           await assert.rejects(
             approvals.request(
               { threadId: foreignThread.id, turnId: foreignTurn },
-              'OTTO_profile_update',
-              { preferences: 'Foreign fact' },
+              'OTTO_notification_preferences_update',
+              { notificationRule: 'Foreign fact' },
               { allowed: true },
             ),
             { statusCode: 409 },
@@ -2116,8 +2136,8 @@ test(
           rejectPreflight = true;
           try {
             await assert.rejects(
-              approvals.request(turn, 'OTTO_profile_update', {
-                preferences: 'Synthetic preference',
+              approvals.request(turn, 'OTTO_notification_preferences_update', {
+                notificationRule: 'Synthetic preference',
               }),
               {
                 statusCode: 409,
@@ -2131,8 +2151,8 @@ test(
           } finally {
             rejectPreflight = false;
           }
-          const id = await propose(turn, 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           rejectPreflight = true;
           try {
@@ -2158,23 +2178,27 @@ test(
         'cancelled, wrong-channel and foreign confirmations cannot execute',
         async () => {
           const before = calls.length;
-          const cancelled = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const cancelled = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           await thread.stopThread();
           assert.equal(await confirm(cancelled, true), undefined);
           assert.notEqual((await stored(cancelled)).status, 'confirmed');
-          const foreign = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const foreign = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [
             foreign,
             'another-owner',
           ]);
           assert.equal(await confirm(foreign, true), undefined);
-          const otherChannel = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
-          });
+          const otherChannel = await propose(
+            await newTurn(),
+            'OTTO_notification_preferences_update',
+            {
+              notificationRule: 'Synthetic preference',
+            },
+          );
           assert.equal(await confirm(otherChannel, true, { channel: 'telegram' }), undefined);
           assert.equal((await stored(otherChannel)).status, 'pending');
           assert.equal(calls.length, before);
@@ -2189,7 +2213,9 @@ test(
           replyAnswers[reply] = 'yes';
           const ask = async () => {
             const turn = await newTurn();
-            const id = await propose(turn, 'OTTO_profile_update', { preferences: 'Read reply' });
+            const id = await propose(turn, 'OTTO_notification_preferences_update', {
+              notificationRule: 'Read reply',
+            });
             await finish(turn.turnId);
             const record = await stored(id);
             return {
@@ -2245,7 +2271,9 @@ test(
         'a finished turn, changed consent and a stale thread cannot authorize a snapshot',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'OTTO_profile_update', { preferences: 'obsolete' });
+          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'obsolete',
+          });
           assert.equal(
             await confirm(id, true, { text: 'Yes, but send it to somebody else' }),
             undefined,
@@ -2268,7 +2296,9 @@ test(
           assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
           await assert.rejects(
-            approvals.request(turn, 'OTTO_profile_update', { preferences: 'Synthetic preference' }),
+            approvals.request(turn, 'OTTO_notification_preferences_update', {
+              notificationRule: 'Synthetic preference',
+            }),
             {
               statusCode: 409,
             },
@@ -2280,8 +2310,8 @@ test(
         'an unbound yes cannot consume an older question after another assistant message',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           const other = await newTurn('succeeded');
           await db.pool.query(
@@ -2352,8 +2382,8 @@ test(
       await t.test(
         'declining resumes once without executing and uncertain actions cannot replay',
         async () => {
-          const id = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const id = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           const before = calls.length;
           assert.ok(await confirm(id, false));
@@ -2364,8 +2394,8 @@ test(
           assert.equal((await stored(id)).status, 'declined');
           assert.equal(await confirm(id, true), undefined);
           assert.equal(await execute(id), undefined);
-          const failed = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const failed = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           await confirm(failed, true);
           failExecution = true;
@@ -2388,8 +2418,8 @@ test(
 
       await t.test('a failed decline enqueue rolls back both the decision and reply', async () => {
         const turn = await newTurn();
-        const id = await propose(turn, 'OTTO_profile_update', {
-          preferences: 'Synthetic preference',
+        const id = await propose(turn, 'OTTO_notification_preferences_update', {
+          notificationRule: 'Synthetic preference',
         });
         const countMessages = async () =>
           (await db.pool.query('SELECT id FROM messages WHERE thread_id=$1', [turn.threadId]))
@@ -2414,8 +2444,8 @@ test(
       await t.test(
         'stopping after chat acceptance prevents the worker from executing',
         async () => {
-          const id = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const id = await propose(await newTurn(), 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           await confirm(id, true);
           const before = calls.length;
@@ -2431,8 +2461,8 @@ test(
         'stopping during confirmed execution records its result and a restart never retries it',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
+          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Synthetic preference',
           });
           await confirm(id, true);
           let release = () => {};
@@ -2468,73 +2498,19 @@ test(
             executionGate = undefined;
             await completed;
           }
-          const interrupted = await propose(await newTurn(), 'OTTO_profile_update', {
-            preferences: 'Synthetic preference',
-          });
+          const interrupted = await propose(
+            await newTurn(),
+            'OTTO_notification_preferences_update',
+            {
+              notificationRule: 'Synthetic preference',
+            },
+          );
           await db.pool.query("UPDATE approvals SET status='executing' WHERE id=$1", [interrupted]);
           await createApprovals(async () => {
             throw new Error('Must not automatically retry');
           });
           assert.equal((await stored(interrupted)).status, 'uncertain');
           assert.equal(await confirm(interrupted, true), undefined);
-          await thread.stopThread();
-        },
-      );
-
-      await t.test(
-        'automatic profile learning requires the exact owned user statement',
-        async () => {
-          const source = await thread.submitUserMessage('I live in Porto');
-          const { threadId } = source;
-          const foreignThread = await thread.activeThread(db.pool, 'another-owner');
-          const foreign = randomUUID();
-          const assistant = randomUUID();
-          await db.pool.query(
-            "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,'another-owner','user','I live in Porto',$2)",
-            [foreign, foreignThread.id],
-          );
-          await db.pool.query(
-            "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant','I live in Porto',$3)",
-            [assistant, ownerId, threadId],
-          );
-          const learned = { field: 'location', value: 'Porto', quote: 'I live in Porto' };
-          assert.deepEqual(
-            await personal.manage('profile_learn', learned, {
-              sourceMessageId: source.messageId,
-              turnId: source.turnId,
-            }),
-            { ok: true },
-          );
-          assert.equal((await personal.getProfile()).location, 'Porto');
-          await assert.rejects(
-            personal.manage(
-              'profile_learn',
-              { field: 'location', value: 'Braga', quote: 'I live in Braga' },
-              { sourceMessageId: source.messageId },
-            ),
-          );
-          for (const sourceMessageId of [foreign, assistant, null])
-            await assert.rejects(personal.manage('profile_learn', learned, { sourceMessageId }));
-          await assert.rejects(
-            personal.manage('profile_learn', learned, {
-              sourceMessageId: source.messageId,
-              turnId: randomUUID(),
-            }),
-          );
-          for (const [field, value, quote] of [
-            ['location', 'Braga', 'I live near Porto.'],
-            ['name', 'sk-fixturefixture1234', 'My name is sk-fixturefixture1234'],
-          ]) {
-            const statement = await thread.submitUserMessage(quote!);
-            await assert.rejects(
-              personal.manage(
-                'profile_learn',
-                { field, value, quote },
-                { sourceMessageId: statement.messageId },
-              ),
-            );
-          }
-          assert.equal((await personal.getProfile()).location, 'Porto');
           await thread.stopThread();
         },
       );

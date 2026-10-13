@@ -788,18 +788,17 @@ type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, profile, preferences, account, memory, connectedApps] = await Promise.all(
-    [
-      sourceMessageId
-        ? pool.query(
-            `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
+  const [source, history, preferences, account, memory, connectedApps] = await Promise.all([
+    sourceMessageId
+      ? pool.query(
+          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
            FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
            WHERE s.id=$1 AND s.owner_id=$2`,
-            [sourceMessageId, ownerId],
-          )
-        : undefined,
-      pool.query(
-        `WITH seen AS (SELECT max(started_at) AS at FROM turns
+          [sourceMessageId, ownerId],
+        )
+      : undefined,
+    pool.query(
+      `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
@@ -812,18 +811,16 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
          (u.id IS NULL OR u.session_id=$6
           OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
-      ),
-      pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
-      pool.query(
-        'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
-        [ownerId],
-      ),
-      dependencies.accountProfile?.().catch(() => undefined),
-      dependencies.memoryContext?.().catch(() => ''),
-      turn.background ? dependencies.connectedApps?.() : undefined,
-    ],
-  );
+      [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
+    ),
+    pool.query(
+      'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
+      [ownerId],
+    ),
+    dependencies.accountProfile?.().catch(() => undefined),
+    dependencies.memoryContext?.().catch(() => ''),
+    turn.background ? dependencies.connectedApps?.() : undefined,
+  ]);
   const message = source?.rows[0];
   const replyTo = message?.id
     ? {
@@ -833,7 +830,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
         attachments: message.reply_attachments,
       }
     : undefined;
-  const stored = profile.rows[0]?.data ?? {};
   const preference = preferences.rows[0];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
@@ -859,14 +855,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ...(account ? { account } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
-      personalContext: {
-        profile: {
-          name: String(stored.name ?? ''),
-          location: String(stored.location ?? ''),
-          phone: String(stored.phone ?? ''),
-          preferences: String(stored.preferences ?? ''),
-        },
-      },
     },
   };
 }

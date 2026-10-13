@@ -80,9 +80,6 @@ export interface RuntimeContext {
     attachments?: MessageAttachment[];
     unseen?: boolean;
   }>;
-  personalContext?: {
-    profile: { name: string; location: string; phone: string; preferences: string };
-  };
   memory?: string;
   workspacePath: string;
   signal: AbortSignal;

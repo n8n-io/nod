@@ -340,6 +340,7 @@ try {
     { createDockerWorkspace },
     { createPublicLinkPreviewProvider },
     { events },
+    { profileNotes },
   ] = await Promise.all([
     import('../src/server/composition.ts'),
     import('../src/server/db.ts'),
@@ -348,6 +349,7 @@ try {
     import('../src/providers/docker/index.ts'),
     import('../src/providers/public-web/link-preview.ts'),
     import('../src/server/events.ts'),
+    import('../src/server/personal.ts'),
   ]);
   databasePool = pool;
   const vaultKey = randomBytes(32);
@@ -380,8 +382,7 @@ try {
   const { app } = application;
   if (fixtureData) {
     await application.triage.updatePreferences({ timeZone: 'Europe/Lisbon' });
-    if (fixtureData.profile)
-      await application.personal.manage('profile_update', fixtureData.profile);
+    for (const note of profileNotes(fixtureData.profile ?? {})) await application.memory.add(note);
     for (const schedule of fixtureData.schedules ?? [])
       await application.personal.manage('schedule_create', schedule);
   }

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { secretToken } from './redaction.ts';
 import { memoryAreas, type MemorySource, type MemoryView } from '../shared/memory.ts';
@@ -67,10 +66,6 @@ const archivedSchema = entryFields
     by: path.optional(),
   })
   .refine(evidenced);
-const overviewSchema = z.object({
-  text: line(1200),
-  digest: z.string().regex(/^[0-9a-f]{12}$/),
-});
 const watermark = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z\/[0-9a-f-]{36}$/;
 
 export type Area = z.infer<typeof area>;
@@ -83,8 +78,6 @@ export interface Tree {
   reflected: string | null;
   retries: number;
   entries: Entry[];
-  overviews: Partial<Record<Area, z.infer<typeof overviewSchema>>>;
-  consolidated: Partial<Record<Area, string>>;
   archive: Archived[];
 }
 
@@ -94,8 +87,6 @@ export const emptyTree = (): Tree => ({
   reflected: null,
   retries: 0,
   entries: [],
-  overviews: {},
-  consolidated: {},
   archive: [],
 });
 export const isEmpty = (tree: Tree) =>
@@ -120,20 +111,6 @@ export const same = (a: string, b: string) => {
   const left = tokens(a).join(' ');
   return !!left && left === tokens(b).join(' ');
 };
-
-const numbers = (set: Set<string>) =>
-  [...set]
-    .filter((word) => /\p{N}/u.test(word))
-    .sort()
-    .join(' ');
-
-export function similar(a: string, b: string, threshold: number) {
-  const left = new Set(words(a));
-  const right = new Set(words(b));
-  if (numbers(left) !== numbers(right)) return false;
-  const shared = [...left].filter((word) => right.has(word)).length;
-  return !!shared && shared / (left.size + right.size - shared) >= threshold;
-}
 
 export const abstractOf = (entry: Entry) =>
   entry.abstract ??
@@ -164,18 +141,6 @@ export const slugFor = (tree: Tree, target: Area, text: string) =>
       .slice(0, 44)
       .replace(/-+$/, '') || 'note',
   );
-
-export function digest(entries: Entry[]) {
-  return createHash('sha256')
-    .update(
-      entries
-        .toSorted(bySlug)
-        .map((entry) => `${entry.slug}\n${entry.text}\n${entry.abstract ?? ''}`)
-        .join('\n\n'),
-    )
-    .digest('hex')
-    .slice(0, 12);
-}
 
 export const areaEntries = (tree: Tree, target: Area) =>
   tree.entries.filter((entry) => entry.area === target);
@@ -235,12 +200,6 @@ export function parse(bytes?: Uint8Array): Tree {
     if (entry.success && !unsafe(entry.data.text, entry.data.abstract))
       tree.archive.push(entry.data);
   }
-  for (const target of areas) {
-    const overview = overviewSchema.safeParse((doc.overviews as Record<string, unknown>)?.[target]);
-    if (overview.success && !unsafe(overview.data.text)) tree.overviews[target] = overview.data;
-    const attempt = timestamp.safeParse((doc.consolidated as Record<string, unknown>)?.[target]);
-    if (attempt.success) tree.consolidated[target] = attempt.data;
-  }
   return tree;
 }
 
@@ -257,15 +216,6 @@ export function render(tree: Tree) {
           entries: tree.entries.toSorted(
             (a, b) => areas.indexOf(a.area) - areas.indexOf(b.area) || bySlug(a, b),
           ),
-          overviews: Object.fromEntries(
-            areas.flatMap((target) => {
-              const overview = tree.overviews[target];
-              return overview?.digest === digest(areaEntries(tree, target))
-                ? [[target, overview]]
-                : [];
-            }),
-          ),
-          consolidated: tree.consolidated,
           archive: archived,
         },
         null,
@@ -359,14 +309,11 @@ export function find(tree: Tree, query: string, within?: Area) {
 
 export function open(tree: Tree, target: string) {
   const owner = area.safeParse(target);
-  if (owner.success) {
-    const overview = tree.overviews[owner.data];
+  if (owner.success)
     return {
       path: owner.data,
-      ...(overview ? { overview: overview.text } : {}),
       entries: areaEntries(tree, owner.data).toSorted(bySlug).map(brief),
     };
-  }
   const entry = locate(tree, target);
   if (!entry) throw new Error('The memory entry was not found.');
   return {
@@ -379,10 +326,7 @@ export function open(tree: Tree, target: string) {
   };
 }
 
-export function view(
-  tree: Tree,
-  source: (id: string) => MemorySource,
-): Omit<MemoryView, 'profile'> {
+export function view(tree: Tree, source: (id: string) => MemorySource): MemoryView {
   const index = indexLayout(tree);
   return {
     saving: tree.enabled,

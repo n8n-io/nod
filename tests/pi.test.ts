@@ -2290,7 +2290,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     runtime,
   });
   const ask = () =>
-    curator.curate({ task: 'search', instructions: 'Return JSON.', input: { query: 'sibling' } });
+    curator.curate({ task: 'reflect', instructions: 'Return JSON.', input: { query: 'sibling' } });
   faux.setResponses([
     fauxAssistantMessage('Here you go:\n```json\n{"paths":["people/ana"]}\n```'),
     fauxAssistantMessage('{"ops":[]}'),
@@ -2308,7 +2308,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
   assert.equal(createPiMemoryCurator({ provider, runtime }).configured, false);
   await assert.rejects(
     createPiMemoryCurator({ provider, apiKey: 'fixture-key', runtime }).curate({
-      task: 'search',
+      task: 'reflect',
       instructions: 'Return JSON.',
       input: {},
     }),
@@ -2329,7 +2329,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
       apiKey: 'fixture-key',
       model: 'no-such-model',
       runtime: real,
-    }).curate({ task: 'search', instructions: 'Return JSON.', input: {} }),
+    }).curate({ task: 'reflect', instructions: 'Return JSON.', input: {} }),
     /catalog/,
   );
 });
