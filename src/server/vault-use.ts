@@ -1,3 +1,4 @@
+import { transaction as inTransaction } from './db.ts';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { logFailure } from './failure-log.ts';
@@ -28,20 +29,7 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
     [ownerId],
   );
 
-  async function transaction<T>(work: (client: PoolClient) => Promise<T>) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await work(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
+  const transaction = <T>(work: (client: PoolClient) => Promise<T>) => inTransaction(work, pool);
 
   async function run<T>(
     use: {

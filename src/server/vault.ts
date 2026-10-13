@@ -1,3 +1,4 @@
+import { transaction } from './db.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
@@ -660,18 +661,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
 
   async function save(ownerId: string, raw: unknown, database?: PoolClient): Promise<VaultEntry> {
     if (!database) {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        const result = await save(ownerId, raw, client);
-        await client.query('COMMIT');
-        return result;
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      return transaction((client) => save(ownerId, raw, client), pool);
     }
     await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
       `otto-vault-items:${ownerId}`,

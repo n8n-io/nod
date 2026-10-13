@@ -121,15 +121,18 @@ export async function initializeDatabase() {
   ]);
 }
 
-export async function transaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+export async function transaction<T>(
+  fn: (client: pg.PoolClient) => Promise<T>,
+  database: pg.Pool = pool,
+): Promise<T> {
+  const client = await database.connect();
   try {
     await client.query('BEGIN');
     const value = await fn(client);
     await client.query('COMMIT');
     return value;
   } catch (error) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {
     client.release();

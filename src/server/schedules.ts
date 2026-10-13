@@ -1,3 +1,4 @@
+import { transaction as inTransaction } from './db.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
@@ -154,20 +155,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   const now = dependencies.now ?? (() => new Date());
   let workerStarted = false;
 
-  async function transaction<T>(operation: (client: PoolClient) => Promise<T>) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await operation(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
+  const transaction = <T>(operation: (client: PoolClient) => Promise<T>) =>
+    inTransaction(operation, pool);
 
   function validateTiming(input: z.infer<typeof timingSchema>, enabled: boolean) {
     try {
