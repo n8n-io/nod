@@ -771,6 +771,7 @@ async function initializeApplication(
       activityCheck: triage.activityCheck,
       memoryContext: memory.context,
       startTask: tasksEnabled ? tasks.dispatch : undefined,
+      taskProgress: tasks.progress,
       connections: integrations.manageConnections,
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);

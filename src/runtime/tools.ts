@@ -426,6 +426,21 @@ export const toolDefinitions = {
       ),
     }),
   ),
+  task_progress: defineTool(
+    'task_progress',
+    "Update this task's preview. It changes only this task and sends the user nothing. steps replaces the planned steps with 2 to 8 short items. current is the number of the step in progress, starting at 1. now is one short line about what you are doing. stop ends this task as stopped and posts its one-line note to the user; use it only when the user asked to stop, then end without a final message.",
+    Type.Object(
+      {
+        steps: Type.Optional(
+          Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { minItems: 2, maxItems: 8 }),
+        ),
+        current: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
+        now: Type.Optional(Type.String({ maxLength: 200 })),
+        stop: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+      },
+      { additionalProperties: false },
+    ),
+  ),
   share_file: defineTool(
     'share_file',
     'Send a workspace file to the user as an attachment. Check the file first; a successful call already delivers it.',
@@ -499,11 +514,15 @@ export function ottoTools(
           ),
         ]
       : []),
-    bind(
-      toolDefinitions.send_message,
-      async (p) =>
-        (await turn.reply(p.text, undefined, p.replyToMessageId)) ?? 'Message delivered.',
-    ),
+    ...(context.task
+      ? []
+      : [
+          bind(
+            toolDefinitions.send_message,
+            async (p) =>
+              (await turn.reply(p.text, undefined, p.replyToMessageId)) ?? 'Message delivered.',
+          ),
+        ]),
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
       : []),
@@ -676,6 +695,15 @@ export function ottoTools(
       return context.manage(p.action, p.args);
     }),
     ...(context.startTask ? [bind(toolDefinitions.start_task, (p) => context.startTask!(p))] : []),
+    ...(context.task?.progress
+      ? [
+          bind(toolDefinitions.task_progress, async (p) => {
+            const result = await context.task!.progress!(p);
+            if (p.stop) turn.endTask();
+            return result;
+          }),
+        ]
+      : []),
     bind(toolDefinitions.share_file, (p) => context.publish(p.path, p.name)),
     bind(toolDefinitions.create_audio, async (p) => {
       if (!context.createAudio)

@@ -83,6 +83,8 @@ A resume turn acts with the authority of the work it continues. The trust check,
 
 A task is long work that runs in its own session while the chat stays free. It's in development behind `OTTO_TASKS`, which is off by default. When it's on, a chat turn can call `start_task {title, ack, instruction, steps?}`. Read-only and onboarding turns, background sessions and subagents don't get the tool.
 
+With the flag on, the chat's prompt tells Otto to start a task when the work takes more than about 30 seconds, uses the browser or waits for other people, and to answer anything quicker directly. After `start_task`, the chat turn writes nothing more about that task, because `ack` is its answer.
+
 The server starts the task in one transaction:
 
 1. It locks the thread, then checks that the chat turn is still running and isn't read-only. Stop takes the same locks in the same order, so a stop and a start never deadlock.
@@ -100,7 +102,15 @@ Every turn of a task acts on your message that started it. A turn that holds a m
 
 The Tasks page reads each task's status from its row and the latest turn of its session. An open task shows **Needs you** while that turn waits for you, and **Working** otherwise. A closed task shows **Done**, **Stopped** or **Failed** from its row. A turn in another session, such as a chat message, never changes it.
 
-Until the task mode is built, a task turn runs with the rules of a background session, except for its Pi session. A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
+A task turn runs in task mode, which replaces the rules of a background session:
+
+- **Prompt.** It names the task and carries your message that started it. The turn works only on that task, not on chat requests or other tasks.
+- **Replies.** Every message the turn posts replies to the task's "On it" message: questions, secure-form and payment links, audio and files. A file shared with `share_file` goes out with the turn's next message, usually the result. The trust check's confirmation questions are posted without a reply target.
+- **Result.** The turn's final text is the result, posted as a reply to "On it". The task row keeps the result's message ID, and the task closes as **Done** when the turn finishes.
+- **Progress.** `task_progress {steps?, current?, now?, stop?}` changes the task's steps, current step and status line, and sends nothing. The server finds the task from the turn's session, so a task can only change its own row. `stop` closes the task as **Stopped** and posts its note as a reply to "On it". The task's prompt allows it only when you ask that task to stop.
+- **Tools.** A task turn has no `send_message` or `start_task`. Its subagents also lose `task_progress` and can't hand their browser to you.
+
+A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
 
 ## Sessions
 
@@ -115,14 +125,14 @@ sequenceDiagram
   Note over C: Next chat turn sees them
 ```
 
-|             | Chat                       | Schedule and event sessions                                                  |
-| ----------- | -------------------------- | ---------------------------------------------------------------------------- |
-| Key         | The thread ID              | The session's first turn                                                     |
-| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                    |
-| Pi session  | The thread's saved session | A new in-memory session per turn                                             |
-| Context     | The full conversation      | Chat turns that finished before the trigger, plus the session's own messages |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                |
-| Browser     | The thread's browser       | Its own browser, deleted when the session ends                               |
+|             | Chat                       | Schedule and event sessions                                                  | Task sessions                                               |
+| ----------- | -------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Key         | The thread ID              | The session's first turn                                                     | The task ID                                                 |
+| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                    | One turn at a time each, in parallel with everything else   |
+| Pi session  | The thread's saved session | A new in-memory session per turn                                             | The task's saved session                                    |
+| Context     | The full conversation      | Chat turns that finished before the trigger, plus the session's own messages | The same as schedule and event sessions                     |
+| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                | Streams nothing. Its messages and result reply to "On it"   |
+| Browser     | The thread's browser       | Its own browser, deleted when the session ends                               | Its own browser, deleted when the turn ends without waiting |
 
 When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. A schedule or event session never sees another schedule or event session's messages. It still learns how many of Otto's messages from finished turns, in any session, you haven't answered since your last message, so it can stay quiet when you aren't replying. Messages from turns that are still running or waiting for you, such as an open question, don't count. All sessions share the workspace, so files one writes are there for the others.
 

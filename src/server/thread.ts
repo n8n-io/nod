@@ -106,6 +106,7 @@ export interface ThreadDependencies {
     input: unknown,
     provenance: { sourceMessageId: string | null },
   ) => Promise<unknown>;
+  taskProgress?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -743,7 +744,7 @@ async function claimTurns(threadId: string) {
       [threadId, ownerId],
     );
     const { rows } = await client.query(
-      `SELECT u.*,${taskSessionSql()} AS task_session FROM turns u
+      `SELECT u.* FROM turns u
        WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='queued'
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [threadId, ownerId],
@@ -861,8 +862,22 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       turn.background ? dependencies.connectedApps?.() : undefined,
       turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
     ]);
+  const task = turn.background
+    ? (
+        await pool.query<{
+          id: string;
+          title: string;
+          instruction: string;
+          on_it_message_id: string;
+        }>(
+          `SELECT id,title,COALESCE(instruction,'') AS instruction,on_it_message_id FROM tasks
+           WHERE id=$1 AND owner_id=$2 AND thread_id=$3`,
+          [turn.session_id, ownerId, threadId],
+        )
+      ).rows[0]
+    : undefined;
   const silence =
-    turn.background && !activityCheck
+    turn.background && !activityCheck && !task
       ? await pool.query(
           `WITH boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$3),
              last AS (SELECT max(m.created_at) AS at FROM messages m CROSS JOIN boundary
@@ -891,6 +906,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const unanswered = silence?.rows[0];
   return {
     sourceMessageId,
+    task,
     uploads: [
       ...((message?.attachments ?? []) as StoredAttachment[]),
       ...((replyTo?.attachments ?? []) as StoredAttachment[]),
@@ -962,17 +978,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await ensureCurrent();
       return result;
     };
-  const post = async (
-    text: string,
-    attachments: Artifact[] = [],
-    streamId?: string,
-    replyToMessageId?: string,
-  ) => {
-    await current((client) =>
-      insertAssistantMessage(client, ref, text, attachments, streamId, replyToMessageId),
-    );
-    refresh();
-  };
   try {
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
@@ -1013,6 +1018,32 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
     let sourceMessageId = loaded.sourceMessageId;
+    const { task } = loaded;
+    const shared: Artifact[] = [];
+    const insert = (
+      client: PoolClient,
+      text: string,
+      attachments: Artifact[] = [],
+      streamId?: string,
+      replyToMessageId?: string,
+    ) =>
+      insertAssistantMessage(
+        client,
+        ref,
+        text,
+        [...shared.splice(0), ...attachments],
+        streamId,
+        replyToMessageId ?? task?.on_it_message_id,
+      );
+    const post = async (
+      text: string,
+      attachments: Artifact[] = [],
+      streamId?: string,
+      replyToMessageId?: string,
+    ) => {
+      await current((client) => insert(client, text, attachments, streamId, replyToMessageId));
+      refresh();
+    };
     const ids = loaded.uploads.map((item) => String(item?.id ?? '')).filter(Boolean);
     const uploads = ids.length
       ? (
@@ -1062,7 +1093,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ...(await artifacts.storeArtifact(Buffer.from(bytes), name, mimeType, threadId, client)),
           ...(source ? { source } : {}),
         };
-        if (publish) await insertAssistantMessage(client, ref, text, [artifact]);
+        if (publish) await insert(client, text, [artifact]);
         return artifact;
       });
       refresh();
@@ -1100,7 +1131,23 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       resumed: turn.source === 'resume',
       prompt: turn.prompt,
       background: turn.background,
-      taskSession: turn.task_session,
+      task: task && {
+        title: task.title,
+        request: task.instruction,
+        result: async (text) => {
+          await current(async (client) => {
+            const id = await insert(client, text);
+            await client.query(
+              'UPDATE tasks SET result_message_id=$1,updated_at=now() WHERE id=$2 AND owner_id=$3',
+              [id, task.id, ownerId],
+            );
+          });
+          refresh();
+        },
+        progress:
+          dependencies.taskProgress &&
+          fenced((input: unknown) => dependencies.taskProgress!(ref, input)),
+      },
       readOnly: turn.read_only,
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
@@ -1209,7 +1256,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
         const artifact = await current(() => artifacts.publishArtifact(threadId, path, name, read));
-        await post('', [artifact]);
+        if (task) shared.push(artifact);
+        else await post('', [artifact]);
         return artifact;
       },
       readWorkspaceFile:
@@ -1226,16 +1274,22 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     });
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
-    await current((client) =>
-      result.status === 'succeeded'
-        ? finishTurn(client, turnId, 'succeeded')
-        : finishTurn(client, turnId, 'waiting', {
-            waitingReason:
-              result.status === 'waiting_credentials'
-                ? 'credentials'
-                : (result.waitingFor ?? 'question'),
-          }),
-    ).catch((error) => {
+    await current(async (client) => {
+      if (shared.length) await insert(client, '');
+      if (result.status !== 'succeeded')
+        return finishTurn(client, turnId, 'waiting', {
+          waitingReason:
+            result.status === 'waiting_credentials'
+              ? 'credentials'
+              : (result.waitingFor ?? 'question'),
+        });
+      await finishTurn(client, turnId, 'succeeded');
+      if (task)
+        await client.query(
+          "UPDATE tasks SET state='done',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'",
+          [task.id, ownerId],
+        );
+    }).catch((error) => {
       if (!signal.aborted) throw error;
     });
     outcome = signal.aborted ? 'cancelled' : result.status;

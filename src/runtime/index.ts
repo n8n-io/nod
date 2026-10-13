@@ -27,7 +27,7 @@ import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
-const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'start_task']);
+const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'start_task', 'task_progress']);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -239,6 +239,7 @@ export function createAgentRuntime(dependencies: {
     let inspectedApp = false;
     let checkRecording = false;
     let checkRecorded = false;
+    let taskEnded = false;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observations = createObservationQueue({
       observe: context.observe,
@@ -362,7 +363,13 @@ export function createAgentRuntime(dependencies: {
 
     const assertActive = (recording = false) => {
       signal.throwIfAborted();
-      if (stopped || status !== 'succeeded' || checkRecorded || (checkRecording && !recording))
+      if (
+        stopped ||
+        taskEnded ||
+        status !== 'succeeded' ||
+        checkRecorded ||
+        (checkRecording && !recording)
+      )
         throw new Error('This execution segment has stopped.');
     };
     const guard = (
@@ -562,16 +569,24 @@ export function createAgentRuntime(dependencies: {
               guard(name, params, async () => {
                 if (!Value.Check(parameters, params))
                   throw new Error('The tool arguments do not match its schema.');
-                if (handsOverBrowser(name, params))
+                if (handsOverBrowser(name, params)) {
+                  if (context.task && turn.browserId !== sessionId)
+                    throw new Error(
+                      'A subagent cannot hand its browser to the user. Say what blocked you in your answer.',
+                    );
                   await computer.currentPage(turn.browserId).catch(() => {
                     throw new Error('Open the page in your browser before handing it to the user.');
                   });
+                }
                 return execute(params);
               }),
             );
           },
         }));
-      const system = systemPrompt(workspace, dependencies.skills);
+      const system = systemPrompt(workspace, dependencies.skills, {
+        task: Boolean(context.task),
+        dispatch: Boolean(context.startTask),
+      });
       const shared = {
         context,
         computer: browser,
@@ -579,6 +594,9 @@ export function createAgentRuntime(dependencies: {
         invite: (text: string) => deliverReply(text),
         pause,
         confirm,
+        endTask: () => {
+          taskEnded = true;
+        },
       };
       let running = 0;
       const queued: Array<() => void> = [];
@@ -670,7 +688,7 @@ export function createAgentRuntime(dependencies: {
       const { takeMessages } = context;
       const opening = agent.open({
         sessionKey: sessionId,
-        saved: !context.background || Boolean(context.taskSession),
+        saved: !context.background || Boolean(context.task),
         turnId: context.turnId,
         systemPrompt: system,
         systemContext: systemContext(context),
@@ -678,7 +696,7 @@ export function createAgentRuntime(dependencies: {
         workspace,
         timeZone: context.timeZone,
         runTool: guard,
-        shouldStop: () => stopped || checkRecorded,
+        shouldStop: () => stopped || checkRecorded || taskEnded,
         nextMessages:
           takeMessages &&
           (async () =>
@@ -700,6 +718,12 @@ export function createAgentRuntime(dependencies: {
           }
           if (event.type === 'error') modelFailed = true;
           if (event.type === 'final') modelFailed = modelIncomplete = false;
+          if (event.type === 'final' && context.task && !stopped && !taskEnded) {
+            const { result } = context.task;
+            const text = event.text.trim();
+            if (text) pendingReplies = pendingReplies.then(() => result(text));
+            void pendingReplies.catch(() => {});
+          }
           if (stopped || context.background || context.activityCheck) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();

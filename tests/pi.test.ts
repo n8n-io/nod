@@ -2089,6 +2089,10 @@ test('computer observations normalize controls, protect credentials and return c
   }
 });
 
+function syntheticTask(): NonNullable<RuntimeContext['task']> {
+  return { title: 'Synthetic task', request: 'Run the synthetic task.', result: async () => {} };
+}
+
 function context(directory: string): RuntimeContext {
   return {
     threadId: 'fixture',
@@ -2227,7 +2231,7 @@ test('the runtime saves the Pi session of the chat and of a task, and of nothing
   try {
     for (const [fields, key, saved] of [
       [{}, threadId, true],
-      [{ sessionId: taskId, background: true, taskSession: true }, taskId, true],
+      [{ sessionId: taskId, background: true, task: syntheticTask() }, taskId, true],
       [{ sessionId: scheduleId, background: true }, scheduleId, false],
     ] as const) {
       opened.length = 0;
@@ -2239,6 +2243,109 @@ test('the runtime saves the Pi session of the chat and of a task, and of nothing
       assert.ok(opened[1][0].startsWith(`${turnId}-`));
       assert.equal(opened[1][1], false);
     }
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test('a task run delivers its final text as the result and edits only its own task', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-task-mode-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const tools = new Map<string, string[]>();
+  const refused: string[] = [];
+  let stopRequested = false;
+  let stoppedRun = false;
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async (text) => {
+          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
+          const refuse = (name: string, params: Record<string, unknown>) =>
+            tool(name)
+              .execute(params)
+              .then(
+                () => {},
+                () => refused.push(name),
+              );
+          if (!input.tools.some((item) => item.name === 'delegate')) {
+            tools.set('child', input.tools.map((item) => item.name).sort());
+            await refuse('ask_user', { question: 'Take over: [Open browser](/browser)' });
+            input.onEvent({ type: 'final', text: 'The child part is done.' });
+            return;
+          }
+          tools.set('parent', input.tools.map((item) => item.name).sort());
+          if (!/"mode":"task"/.test(text)) return;
+          if (stopRequested) {
+            await tool('task_progress').execute({ stop: 'Stopped as you asked.' });
+            stoppedRun = input.shouldStop();
+            await refuse('apps', { action: 'SYNTHETIC_READ', args: {} });
+            input.onEvent({ type: 'final', text: 'This must not be delivered.' });
+            return;
+          }
+          await refuse('task_progress', { taskId: randomUUID(), now: 'Another task' });
+          await tool('task_progress').execute({ steps: ['Find', 'Report'], current: 2 });
+          await tool('delegate').execute({ title: 'Part', instruction: 'Do one synthetic part.' });
+          input.onEvent({ type: 'final', text: '  The synthetic result.  ' });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const results: string[] = [];
+  const replies: string[] = [];
+  const progress: unknown[] = [];
+  const task = {
+    title: 'Synthetic task',
+    request: 'Compare two synthetic shops.',
+    result: async (text: string) => {
+      results.push(text);
+    },
+    progress: async (input: unknown) => {
+      progress.push(input);
+      return 'Progress saved.';
+    },
+  };
+  const run = (fields: Partial<RuntimeContext>) =>
+    runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      sessionId: randomUUID(),
+      background: true,
+      reply: async (text) => {
+        replies.push(text);
+      },
+      ...fields,
+    });
+  try {
+    assert.equal((await run({ task })).status, 'succeeded');
+    assert.deepEqual(results, ['The synthetic result.']);
+    assert.deepEqual(replies, []);
+    assert.deepEqual(progress, [{ steps: ['Find', 'Report'], current: 2 }]);
+    assert.deepEqual(refused, ['task_progress', 'ask_user']);
+    const parent = tools.get('parent')!;
+    assert.ok(parent.includes('task_progress') && parent.includes('delegate'));
+    for (const name of ['send_message', 'start_task'])
+      assert.equal(parent.includes(name), false, name);
+    for (const name of ['send_message', 'task_progress', 'start_task', 'sign_in'])
+      assert.equal(tools.get('child')!.includes(name), false, name);
+
+    stopRequested = true;
+    refused.length = 0;
+    assert.equal((await run({ task })).status, 'succeeded');
+    assert.equal(stoppedRun, true);
+    assert.deepEqual(refused, ['apps']);
+    assert.deepEqual(progress.at(-1), { stop: 'Stopped as you asked.' });
+    assert.deepEqual(results, ['The synthetic result.']);
+
+    stopRequested = false;
+    await run({ background: false, sessionId: undefined, startTask: async () => ({}) });
+    assert.ok(tools.get('parent')!.includes('send_message'));
+    assert.equal(tools.get('parent')!.includes('task_progress'), false);
   } finally {
     await runtime.dispose();
   }
@@ -4031,7 +4138,7 @@ test('the Pi transcript keeps model changes for the next turn and each saved ses
       assert.equal(result.status, 'succeeded');
       return requests.at(-1)!.history;
     };
-    const queuedTask = { sessionId: runtimeTask, background: true, taskSession: true };
+    const queuedTask = { sessionId: runtimeTask, background: true, task: syntheticTask() };
     const schedule = { sessionId: scheduleId, background: true };
     try {
       await turn('Start the queued task.', queuedTask);

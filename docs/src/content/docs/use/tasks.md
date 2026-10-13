@@ -9,6 +9,8 @@ The **Tasks** page shows what Otto is working on, what's scheduled and what's do
 
 A task is long work that Otto hands off from the chat, so the chat stays free while the task runs. Tasks are in development. They appear only when Otto runs with `OTTO_TASKS` turned on. See [Configuration](/deploy/configuration/#server-and-data).
 
+When Otto starts a task, it answers your message with a short "On it" message. The task's questions, sign-in and payment links, files and result reply to that message. A confirmation from the [trust check](/trust/approvals/) still appears as a plain message.
+
 ## Three views
 
 | View          | Shows                                                                          |

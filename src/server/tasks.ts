@@ -4,7 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
-import { enqueueTurn, insertAssistantMessage, lockThread, type TurnRef } from './thread.ts';
+import {
+  enqueueTurn,
+  insertAssistantMessage,
+  lockThread,
+  withTurnLock,
+  type TurnRef,
+} from './thread.ts';
 import { turnChain } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
@@ -18,6 +24,15 @@ const dispatchInput = z
     steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
   })
   .strict();
+const progressInput = z
+  .object({
+    steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
+    current: z.number().int().min(1).max(8).optional(),
+    now: z.string().trim().max(200).optional(),
+    stop: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, 'Give steps, current, now or stop.');
 
 type Row = {
   id: string;
@@ -180,6 +195,49 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     return started;
   }
 
+  async function progress(turn: TurnRef, raw: unknown) {
+    const input = progressInput.parse(raw);
+    const result = await withTurnLock(turn.turnId, async (client) => {
+      const task = (
+        await client.query<{ id: string; steps: string[]; step_index: number; on_it: string }>(
+          `SELECT t.id,t.steps,t.step_index,t.on_it_message_id AS on_it FROM turns u
+           JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
+           WHERE u.id=$1 AND u.owner_id=$2 AND t.state='open' FOR NO KEY UPDATE OF t`,
+          [turn.turnId, ownerId],
+        )
+      ).rows[0];
+      if (!task) throw failure('Only an open task can change its progress.', 409);
+      const steps = input.steps ?? task.steps;
+      if (input.current !== undefined && input.current > steps.length)
+        throw failure(
+          steps.length
+            ? `current must be a step number from 1 to ${steps.length}.`
+            : 'Set steps before current.',
+        );
+      await client.query(
+        `UPDATE tasks SET steps=$2,step_index=$3,now_text=COALESCE($4,now_text),
+           state=CASE WHEN $5 THEN 'stopped' ELSE state END,
+           closed_at=CASE WHEN $5 THEN now() ELSE closed_at END,updated_at=now()
+         WHERE id=$1 AND owner_id=$6`,
+        [
+          task.id,
+          JSON.stringify(steps),
+          input.current === undefined
+            ? Math.max(0, Math.min(task.step_index, steps.length - 1))
+            : input.current - 1,
+          input.now ?? null,
+          input.stop !== undefined,
+          ownerId,
+        ],
+      );
+      if (input.stop === undefined) return 'Progress saved.';
+      await insertAssistantMessage(client, turn, input.stop, [], undefined, task.on_it);
+      return 'The task is stopped. End now without a final message.';
+    });
+    refresh();
+    return result;
+  }
+
   async function initialize() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
@@ -271,5 +329,5 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     );
   }
 
-  return { initialize, dispatch, registerRoutes };
+  return { initialize, dispatch, progress, registerRoutes };
 }

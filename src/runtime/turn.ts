@@ -13,5 +13,6 @@ export interface Turn {
     options?: { post?: boolean },
   ): Promise<void>;
   confirm(result: unknown): Promise<unknown>;
+  endTask(): void;
   delegate?(title: string, instruction: string): Promise<string>;
 }

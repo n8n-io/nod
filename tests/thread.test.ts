@@ -234,6 +234,7 @@ test(
 
     const runs: RuntimeContext[] = [];
     const dispatched = new Map<string, { taskId: string; onItMessageId: string }>();
+    const taskRefusals: string[] = [];
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<string, Array<{ id: string; text: string }>>();
     const gates = new Map<string, () => void>();
@@ -296,6 +297,7 @@ test(
         throw new Error('Unused fixture');
       },
       startTask: tasks.dispatch,
+      taskProgress: tasks.progress,
       artifacts: {
         ...localArtifacts,
         storeArtifact: async (...input) => {
@@ -371,6 +373,31 @@ test(
           await context.reply('The synthetic research summary is ready.');
           await context.waitForUser!('Connect the synthetic source to finish the research.');
           return { status: 'waiting_user' };
+        }
+        if (context.prompt.startsWith('task-mode-')) {
+          if (context.prompt === 'task-mode-ask') {
+            await context.task!.progress!({ taskId: randomUUID(), now: 'Another task' }).then(
+              () => taskRefusals.push('accepted'),
+              () => taskRefusals.push('refused'),
+            );
+            await context.task!.progress!({
+              steps: ['Find shops', 'Compare', 'Report'],
+              current: 2,
+              now: 'Comparing two shops',
+            });
+            await context.reply(
+              'Enter the password in the [secure form](/vault/requests/fixture).',
+            );
+            await context.waitForUser!('Which synthetic shop should I use?');
+            return { status: 'waiting_user' };
+          }
+          if (context.prompt === 'task-mode-result') {
+            await context.publish('report.txt');
+            await context.task!.result('The synthetic result.');
+          }
+          if (context.prompt === 'task-mode-stop')
+            await context.task!.progress!({ stop: 'Stopped as you asked.' });
+          return { status: 'succeeded' };
         }
         if (context.activityCheck) {
           await activityRun?.(context);
@@ -909,8 +936,8 @@ test(
             assert.equal(await turnStatus(taskTurn), 'running');
             assert.equal(ran(taskTurn)?.sessionId, taskId);
             assert.equal(ran(taskTurn)?.background, true);
-            assert.equal(ran(taskTurn)?.taskSession, true);
-            assert.equal(ran(chat.turnId)?.taskSession, false);
+            assert.equal(ran(taskTurn)?.task?.title, 'Compare synthetic shops');
+            assert.equal(ran(chat.turnId)?.task, undefined);
             assert.equal(ran(taskTurn)?.startTask, undefined);
             const task = (await db.pool.query('SELECT * FROM tasks WHERE id=$1', [taskId])).rows[0];
             assert.deepEqual(
@@ -984,7 +1011,7 @@ test(
           ).rows[0].id;
           await waitFor(settled(taskResume));
           assert.equal(ran(taskResume)?.sessionId, ran(taskTurn)?.sessionId);
-          assert.equal(ran(taskResume)?.taskSession, true);
+          assert.equal(ran(taskResume)?.task?.request, 'dispatch-fixture');
           assert.ok(!ran(taskResume)?.prompt.includes('session-fixture-task'));
           await closeDispatched();
         },
@@ -1624,6 +1651,129 @@ test(
           await closeDispatched();
         },
       );
+
+      await t.test('a task replies to its On it message and changes only its own row', async () => {
+        await waitFor(settledThread);
+        const previousRead = dependencies.readArtifact;
+        const held = 'Hold a synthetic chat beside a task';
+        const start = async (instruction: string) => {
+          const chat = await thread.submitUserMessage(`dispatch-status:${instruction}`, [], {
+            channel: 'web',
+          });
+          await waitFor(() => dispatched.has(chat.turnId));
+          const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
+          const turnId = (await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId]))
+            .rows[0].id as string;
+          await waitFor(settled(turnId));
+          return { taskId, onItMessageId, turnId };
+        };
+        const row = async (id: string) =>
+          (
+            await db.pool.query(
+              'SELECT steps,step_index,now_text,state,closed_at,result_message_id FROM tasks WHERE id=$1',
+              [id],
+            )
+          ).rows[0];
+        const replies = async (sessionId: string) =>
+          (
+            await db.pool.query(
+              `SELECT m.id,m.text,m.reply_to_message_id,m.attachments FROM messages m
+                 JOIN turns u ON u.id=m.turn_id WHERE u.session_id=$1 AND m.role='assistant'
+                 ORDER BY m.created_at,m.id`,
+              [sessionId],
+            )
+          ).rows;
+        try {
+          dependencies.readArtifact = async () => Buffer.from('synthetic report');
+          const other = await start('task-mode-other');
+          const asking = await start('task-mode-ask');
+          assert.equal(await turnStatus(asking.turnId), 'waiting');
+          assert.deepEqual(taskRefusals, ['refused']);
+          const asked = await row(asking.taskId);
+          assert.deepEqual(
+            [asked.steps, asked.step_index, asked.now_text, asked.state],
+            [['Find shops', 'Compare', 'Report'], 1, 'Comparing two shops', 'open'],
+          );
+          const untouched = await row(other.taskId);
+          assert.deepEqual(
+            [untouched.steps, untouched.step_index, untouched.now_text, untouched.state],
+            [[], 0, '', 'done'],
+          );
+          assert.deepEqual(
+            (await replies(asking.taskId)).map((message) => [
+              message.text,
+              message.reply_to_message_id,
+            ]),
+            [
+              [
+                'Enter the password in the [secure form](/vault/requests/fixture).',
+                asking.onItMessageId,
+              ],
+              ['Which synthetic shop should I use?', asking.onItMessageId],
+            ],
+          );
+          const card = ((await request('GET', '/api/tasks')).json() as Task[]).find(
+            (task) => task.id === asking.taskId,
+          );
+          assert.equal(card?.status, 'needs_you');
+
+          block(held);
+          const chat = await thread.submitUserMessage(held, [], { channel: 'web' });
+          await waitFor(() => Boolean(ran(chat.turnId)));
+          assert.equal(ran(chat.turnId)?.task, undefined);
+          await assert.rejects(
+            tasks.progress(
+              { threadId: chat.threadId, turnId: chat.turnId },
+              { now: 'Hijacked progress' },
+            ),
+            { statusCode: 409 },
+          );
+          release(held);
+          await waitFor(settled(chat.turnId));
+
+          const answer = await thread.enqueueTurn('task-mode-result', {
+            source: 'resume',
+            sourceId: `task-mode:${randomUUID()}`,
+            background: true,
+            sessionId: asking.taskId,
+          });
+          await waitFor(settled(answer));
+          const done = await row(asking.taskId);
+          assert.equal(done.state, 'done');
+          assert.ok(done.closed_at);
+          const messages = await replies(asking.taskId);
+          assert.equal(messages.length, 3);
+          const result = messages[2];
+          assert.deepEqual(
+            [
+              result.id,
+              result.text,
+              result.reply_to_message_id,
+              result.attachments.map((file: { name: string }) => file.name),
+            ],
+            [done.result_message_id, 'The synthetic result.', asking.onItMessageId, ['report.txt']],
+          );
+
+          const stopping = await start('task-mode-stop');
+          const stopped = await row(stopping.taskId);
+          assert.equal(stopped.state, 'stopped');
+          assert.ok(stopped.closed_at);
+          assert.equal(stopped.result_message_id, null);
+          assert.equal(await turnStatus(stopping.turnId), 'succeeded');
+          assert.deepEqual(
+            (await replies(stopping.taskId)).map((message) => [
+              message.text,
+              message.reply_to_message_id,
+            ]),
+            [['Stopped as you asked.', stopping.onItMessageId]],
+          );
+        } finally {
+          dependencies.readArtifact = previousRead;
+          release(held);
+        }
+        await waitFor(settledThread);
+        await closeDispatched();
+      });
 
       await t.test(
         'a runtime failure ends the turn failed with one message and no retry',
@@ -3092,7 +3242,7 @@ test(
               ).rows[0];
               assert.equal(resumed.background, true);
               await waitFor(settled(resumed.id));
-              assert.equal(ran(resumed.id)!.taskSession, false);
+              assert.equal(ran(resumed.id)!.task, undefined);
               assert.ok(ran(resumed.id)!.prompt.includes('background-research-fixture'));
               const history = ran(resumed.id)!.history;
               assert.ok(
