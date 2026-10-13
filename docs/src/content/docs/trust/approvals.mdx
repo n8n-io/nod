@@ -80,8 +80,8 @@ sequenceDiagram
   App-->>Otto: Result, marked as data
 ```
 
-:::note[Otto still uses judgement]
-The trust check is a floor, not a replacement for Otto's own instructions. Otto also asks before a destructive action that your request doesn't clearly cover, even when the server would allow it.
+:::note[Asked once]
+Otto doesn't add its own confirmation on top of the trust check or payment approval. It asks only when the account, target or action is unclear.
 :::
 
 :::caution[What the trust check doesn't cover]
