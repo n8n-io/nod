@@ -57,6 +57,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `apps`                                                              | Runs an action on a connected account, after the trust check.                                    |
 | `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                          |
 | `manage_personal_context`                                           | Profile, schedules, notification preferences, memory, history and usage.                         |
+| `organization`                                                      | Reads and updates dossiers on the Organization chart. A note there is not an app write.          |
 | `task`                                                              | Keeps a progress card on the Tasks page. It schedules and grants nothing.                        |
 | `share_file`                                                        | Sends a workspace file to you.                                                                   |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                      |

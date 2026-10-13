@@ -11,6 +11,7 @@ import './pages/secondary-pages.css';
 import './pages/apps.css';
 import './pages/channels.css';
 import './pages/tasks.css';
+import './pages/organization.css';
 import './pages/memory.css';
 import './pages/trust.css';
 import './pages/plan-controls.css';

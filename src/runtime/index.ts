@@ -34,8 +34,9 @@ const parallelTools = new Set([
   'skills',
   'apps',
   'manage_personal_context',
+  'organization',
 ]);
-const mixedTools = new Set(['apps', 'manage_personal_context']);
+const mixedTools = new Set(['apps', 'manage_personal_context', 'organization']);
 const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -50,6 +51,7 @@ const delimitedTools = new Set([
   'get_search_content',
   'source_check',
   'codemode',
+  'organization',
 ]);
 const readOnlyTools: Record<string, true | string[]> = {
   skills: true,
@@ -76,6 +78,7 @@ const readOnlyTools: Record<string, true | string[]> = {
     'usage_get',
   ],
   task: ['list'],
+  organization: ['list', 'read'],
 };
 const readOnlyRefusal =
   'This turn can only read. Use app reads, and browser open, snapshot or scroll.';

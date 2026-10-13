@@ -151,6 +151,7 @@ export interface RuntimeContext {
   ): Promise<unknown>;
 
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
+  organization?(action: string, args: Record<string, unknown>): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
 }

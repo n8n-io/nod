@@ -6,6 +6,7 @@ import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
 import { Tasks } from './pages/tasks';
+import { Organization } from './pages/organization';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
@@ -157,6 +158,7 @@ function Workspace({
       '/api/apps',
       '/api/apps/catalog',
       '/api/memory',
+      '/api/organization',
     ]);
   }, []);
   useEffect(() => {
@@ -240,6 +242,7 @@ function Workspace({
               )}
               {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
               {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+              {currentPath === '/organization' && <Organization onAsk={askInChat} />}
               {!sidebarItems.some((item) => item.path === currentPath) && (
                 <div className="empty-state">
                   <h1>This page isn’t here.</h1>

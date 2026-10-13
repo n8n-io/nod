@@ -1111,6 +1111,38 @@ test('read-only turns can search memory but not change it', async () => {
   assert.deepEqual(actions, ['memory_find', 'memory_read']);
 });
 
+test('read-only turns can read an organization dossier but not write one', async () => {
+  const actions: string[] = [];
+  const id = randomUUID();
+  await fixture(
+    async (tools) => {
+      await call(tools, 'organization', { action: 'list' });
+      await call(tools, 'organization', { action: 'read', id });
+      for (const action of ['focus', 'note'])
+        await assert.rejects(
+          call(tools, 'organization', {
+            action,
+            id,
+            kind: 'note',
+            title: 'Synthetic',
+            body: 'Synthetic dossier note',
+          }),
+          (error: Error) => error.message === refusal,
+          action,
+        );
+    },
+    {
+      readOnly: true,
+      background: true,
+      organization: async (action) => {
+        actions.push(action);
+        return {};
+      },
+    },
+  );
+  assert.deepEqual(actions, ['list', 'read']);
+});
+
 test('activity checks scope reads to one account, deny other tools and record exactly once without chat', async () => {
   const connectionId = randomUUID();
   const otherConnectionId = randomUUID();

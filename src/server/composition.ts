@@ -101,6 +101,7 @@ import { usageDigest, usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
+import { createOrganization } from './organization.ts';
 import { createPersonalService } from './personal.ts';
 import { createOnboardingInterview } from './onboarding-interview.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
@@ -522,6 +523,8 @@ async function initializeApplication(
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({ pool, ownerId, curator, withTurnLock, refresh });
   await tasks.initialize();
+  const organization = createOrganization({ pool, ownerId });
+  await organization.initialize();
   const triage = createTriage({
     consumers,
     classifier: adapters.relevance,
@@ -800,6 +803,7 @@ async function initializeApplication(
         return result;
       },
       speech,
+      organization: (turn, action, args) => organization.act(turn, action, args),
       manage: async (turn, action, args, provenance) => {
         if (
           [
@@ -1072,6 +1076,7 @@ async function initializeApplication(
   createOnboardingInterview({ curator: onboardingCurator, memory }).registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
+  organization.registerRoutes(app);
   triage.registerRoutes(app);
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;

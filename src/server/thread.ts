@@ -162,6 +162,11 @@ export interface ThreadDependencies {
     args: Record<string, unknown>,
     provenance: { sourceMessageId: string | null },
   ) => Promise<unknown>;
+  organization?: (
+    turn: TurnRef & { source: TurnSource; readOnly: boolean },
+    action: string,
+    args: Record<string, unknown>,
+  ) => Promise<unknown>;
 }
 
 export function activeThreadSql(alias = 'm') {
@@ -1154,6 +1159,15 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           : value;
       }),
       manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
+      organization:
+        dependencies.organization &&
+        fenced((action, args) =>
+          dependencies.organization!(
+            { ...ref, source: turn.source, readOnly: Boolean(turn.read_only) },
+            action,
+            args,
+          ),
+        ),
       task: dependencies.task && fenced((input) => dependencies.task!(ref, input)),
       takeMessages:
         turn.background || turn.read_only
