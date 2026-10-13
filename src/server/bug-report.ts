@@ -85,7 +85,12 @@ function record(value: unknown): RecordValue | undefined {
 function savedToolTrace(entries: unknown[], now: number) {
   const calls = new Map<string, RecordValue>();
   let truncated = false;
-  const privateTools = new Set(['sign_in', 'get_credential', 'manage_personal_context']);
+  const privateTools = new Set([
+    'sign_in',
+    'get_credential',
+    'browser_flow',
+    'manage_personal_context',
+  ]);
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = record(entries[index]);
     const message = record(entry?.message);
