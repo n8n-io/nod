@@ -772,6 +772,7 @@ async function initializeApplication(
       memoryContext: memory.context,
       startTask: tasksEnabled ? tasks.dispatch : undefined,
       taskProgress: tasks.progress,
+      openTasks: tasksEnabled ? tasks.open : undefined,
       connections: integrations.manageConnections,
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);

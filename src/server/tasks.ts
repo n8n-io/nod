@@ -37,6 +37,7 @@ const progressInput = z
 type Row = {
   id: string;
   title: string;
+  on_it_message_id: string;
   now_text: string;
   result: string;
   state: 'queued' | 'open' | 'done' | 'stopped' | 'failed';
@@ -60,10 +61,10 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
 
-  async function read(): Promise<Task[]> {
-    const rows = (
+  async function rows(openThreadId: string | null) {
+    return (
       await pool.query<Row>(
-        `SELECT t.id,t.title,t.now_text,COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,
+        `SELECT t.id,t.title,t.on_it_message_id,t.now_text,COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,
            t.state,t.created_at,t.updated_at,t.closed_at,l.status AS turn_status,
            CASE WHEN l.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
              WHERE m.owner_id=t.owner_id AND m.turn_id=l.id AND m.role='assistant' AND m.text<>''
@@ -72,12 +73,23 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
          LEFT JOIN messages r ON r.id=t.result_message_id AND r.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT u.id,u.status FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
            ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
-         WHERE t.owner_id=$1
+         WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR (t.thread_id=$2 AND t.state IN ('queued','open')))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
-        [ownerId],
+        [ownerId, openThreadId],
       )
     ).rows;
-    return rows.map((row) => {
+  }
+
+  async function open(threadId: string) {
+    return (await rows(threadId)).map((row) => ({
+      title: row.title,
+      status: status(row),
+      onItMessageId: row.on_it_message_id,
+    }));
+  }
+
+  async function read(): Promise<Task[]> {
+    return (await rows(null)).map((row) => {
       const value = status(row);
       return {
         id: row.id,
@@ -329,5 +341,5 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     );
   }
 
-  return { initialize, dispatch, progress, registerRoutes };
+  return { initialize, dispatch, progress, open, registerRoutes };
 }

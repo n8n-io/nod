@@ -107,6 +107,7 @@ export interface ThreadDependencies {
     provenance: { sourceMessageId: string | null },
   ) => Promise<unknown>;
   taskProgress?: (turn: TurnRef, input: unknown) => Promise<unknown>;
+  openTasks?: (threadId: string) => Promise<NonNullable<RuntimeContext['openTasks']>>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -826,42 +827,6 @@ type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, profile, preferences, account, memory, connectedApps, activityCheck] =
-    await Promise.all([
-      sourceMessageId
-        ? pool.query(
-            `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
-           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
-           WHERE s.id=$1 AND s.owner_id=$2`,
-            [sourceMessageId, ownerId],
-          )
-        : undefined,
-      pool.query(
-        `WITH seen AS (SELECT max(started_at) AS at FROM turns
-         WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
-       boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
-       SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
-       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
-       COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
-       FROM messages m CROSS JOIN seen CROSS JOIN boundary
-       LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
-       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
-       AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
-         (u.id IS NULL OR u.session_id=$6 OR (u.session_id=$2
-          AND u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
-       ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
-      ),
-      pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
-      pool.query(
-        'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
-        [ownerId],
-      ),
-      dependencies.accountProfile?.().catch(() => undefined),
-      dependencies.memoryContext?.().catch(() => ''),
-      turn.background ? dependencies.connectedApps?.() : undefined,
-      turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
-    ]);
   const task = turn.background
     ? (
         await pool.query<{
@@ -869,13 +834,72 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           title: string;
           instruction: string;
           on_it_message_id: string;
+          source_message_id: string;
         }>(
-          `SELECT id,title,COALESCE(instruction,'') AS instruction,on_it_message_id FROM tasks
-           WHERE id=$1 AND owner_id=$2 AND thread_id=$3`,
+          `SELECT id,title,COALESCE(instruction,'') AS instruction,on_it_message_id,source_message_id
+           FROM tasks WHERE id=$1 AND owner_id=$2 AND thread_id=$3`,
           [turn.session_id, ownerId, threadId],
         )
       ).rows[0]
     : undefined;
+  const [
+    source,
+    history,
+    profile,
+    preferences,
+    account,
+    memory,
+    connectedApps,
+    activityCheck,
+    openTasks,
+  ] = await Promise.all([
+    sourceMessageId
+      ? pool.query(
+          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
+           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
+           WHERE s.id=$1 AND s.owner_id=$2`,
+          [sourceMessageId, ownerId],
+        )
+      : undefined,
+    pool.query(
+      `WITH seen AS (SELECT max(started_at) AS at FROM turns
+         WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
+       boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
+       SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
+       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
+       COALESCE(u.session_id<>$6 AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
+       FROM messages m CROSS JOIN seen CROSS JOIN boundary
+       LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
+       AND CASE
+         WHEN NOT $5::boolean THEN NOT EXISTS (SELECT 1 FROM tasks t
+           WHERE t.owner_id=$1 AND t.id=u.session_id AND t.result_message_id IS DISTINCT FROM m.id)
+         WHEN $7::uuid IS NOT NULL THEN m.created_at<=boundary.at AND (m.id=$7 OR u.session_id=$6)
+         ELSE m.created_at<=boundary.at AND (u.id IS NULL OR u.session_id=$6 OR (u.session_id=$2
+           AND u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))
+       END
+       ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
+      [
+        ownerId,
+        threadId,
+        sourceMessageId,
+        turn.id,
+        Boolean(turn.background),
+        turn.session_id,
+        task?.source_message_id ?? null,
+      ],
+    ),
+    pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
+    pool.query(
+      'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
+      [ownerId],
+    ),
+    dependencies.accountProfile?.().catch(() => undefined),
+    dependencies.memoryContext?.().catch(() => ''),
+    turn.background ? dependencies.connectedApps?.() : undefined,
+    turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
+    turn.background ? undefined : dependencies.openTasks?.(threadId),
+  ]);
   const silence =
     turn.background && !activityCheck && !task
       ? await pool.query(
@@ -929,6 +953,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
         quietEnd: preference?.quiet_end ?? defaultPreferences.quietEnd,
       }),
       ...(account ? { account } : {}),
+      ...(openTasks ? { openTasks } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
       ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 20, timeoutMs: 300_000 } } : {}),

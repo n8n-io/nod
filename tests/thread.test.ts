@@ -298,6 +298,7 @@ test(
       },
       startTask: tasks.dispatch,
       taskProgress: tasks.progress,
+      openTasks: tasks.open,
       artifacts: {
         ...localArtifacts,
         storeArtifact: async (...input) => {
@@ -1665,7 +1666,7 @@ test(
           const turnId = (await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId]))
             .rows[0].id as string;
           await waitFor(settled(turnId));
-          return { taskId, onItMessageId, turnId };
+          return { taskId, onItMessageId, turnId, chatTurnId: chat.turnId };
         };
         const row = async (id: string) =>
           (
@@ -1721,6 +1722,21 @@ test(
           const chat = await thread.submitUserMessage(held, [], { channel: 'web' });
           await waitFor(() => Boolean(ran(chat.turnId)));
           assert.equal(ran(chat.turnId)?.task, undefined);
+          assert.deepEqual(ran(chat.turnId)?.openTasks, [
+            {
+              title: 'Synthetic status task',
+              status: 'needs_you',
+              onItMessageId: asking.onItMessageId,
+            },
+          ]);
+          const chatHistory = ran(chat.turnId)!.history.map((message) => message.text);
+          assert.ok(chatHistory.includes('dispatch-status:task-mode-ask'));
+          assert.ok(chatHistory.includes('On it.'));
+          for (const text of [
+            'Enter the password in the [secure form](/vault/requests/fixture).',
+            'Which synthetic shop should I use?',
+          ])
+            assert.ok(!chatHistory.includes(text), text);
           await assert.rejects(
             tasks.progress(
               { threadId: chat.threadId, turnId: chat.turnId },
@@ -1738,6 +1754,16 @@ test(
             sessionId: asking.taskId,
           });
           await waitFor(settled(answer));
+          assert.deepEqual(
+            ran(answer)!.history.map((message) => [message.text, message.unseen]),
+            [
+              ['dispatch-status:task-mode-ask', false],
+              ['Enter the password in the [secure form](/vault/requests/fixture).', false],
+              ['Which synthetic shop should I use?', false],
+            ],
+          );
+          assert.equal(ran(answer)!.unanswered, undefined);
+          assert.equal(ran(answer)!.openTasks, undefined);
           const done = await row(asking.taskId);
           assert.equal(done.state, 'done');
           assert.ok(done.closed_at);
@@ -1766,6 +1792,35 @@ test(
               message.reply_to_message_id,
             ]),
             [['Stopped as you asked.', stopping.onItMessageId]],
+          );
+          const dispatcher = ran(stopping.chatTurnId)!;
+          assert.deepEqual(dispatcher.openTasks, []);
+          assert.equal(
+            dispatcher.history.find((message) => message.text === 'The synthetic result.')?.unseen,
+            true,
+          );
+          assert.ok(
+            !dispatcher.history.some(
+              (message) => message.text === 'Which synthetic shop should I use?',
+            ),
+          );
+          assert.deepEqual(
+            ran(stopping.turnId)!.history.map((message) => message.text),
+            ['dispatch-status:task-mode-stop'],
+          );
+          const reopened = await thread.enqueueTurn('task-mode-other', {
+            source: 'resume',
+            sourceId: `task-mode:${randomUUID()}`,
+            background: true,
+            sessionId: stopping.taskId,
+          });
+          await waitFor(settled(reopened));
+          assert.deepEqual(
+            ran(reopened)!.history.map((message) => [message.text, message.unseen]),
+            [
+              ['dispatch-status:task-mode-stop', false],
+              ['Stopped as you asked.', false],
+            ],
           );
         } finally {
           dependencies.readArtifact = previousRead;

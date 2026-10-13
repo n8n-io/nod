@@ -1,7 +1,12 @@
 import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ConnectedApp } from './integrations.ts';
 import type { CredentialKind, WorkspaceSession } from './computer.ts';
-import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
+import type {
+  AgentReactionResult,
+  Artifact,
+  MessageReaction,
+  TaskStatus,
+} from '../shared/contracts.ts';
 
 export interface ModelUsageObservation {
   type: 'model_usage';
@@ -102,6 +107,7 @@ export interface RuntimeContext {
     unseen?: boolean;
   }>;
   unanswered?: { messages: number; since: string | Date };
+  openTasks?: Array<{ title: string; status: TaskStatus; onItMessageId: string }>;
   personalContext?: {
     profile: { name: string; location: string; phone: string; preferences: string };
   };

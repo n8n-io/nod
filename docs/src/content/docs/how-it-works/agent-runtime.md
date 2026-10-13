@@ -112,7 +112,7 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 | Layer         | Contains                                                                                                                                                       | Sent                       |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
 | Static prompt | Otto's personality and rules, the rules for the turn's mode, the core guides, the skill catalog and Pi's tool guidelines                                       | Once per session           |
-| Owner context | Account details, date format, saved profile and the memory index                                                                                               | Again only when it changes |
+| Owner context | Account details, date format, saved profile, the memory index and, in the chat with `OTTO_TASKS` on, the open tasks with their status                          | Again only when it changes |
 | Turn message  | Mode, time, channel, message ID, reply target, the task's title and your words that started it, recent conversation, activity-check limits and the instruction | Every turn                 |
 
 The mode rules cover conversation, background and activity-check turns, or task turns in place of background ones. With `OTTO_TASKS` on, a chat turn that can start a task also gets the rule for when to call `start_task`. In task mode, the final text is delivered as the task's result. See [Tasks](/how-it-works/threads-and-turns/#tasks).
