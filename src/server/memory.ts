@@ -241,6 +241,8 @@ export function createMemoryService(options: {
        WHERE m.owner_id=$2 AND m.thread_id=s.thread_id AND m.role='user'
          AND m.attachments='[]'::jsonb AND length(m.text)<=6000
          AND (m.created_at,m.id)<=(s.created_at,s.id)
+         AND NOT EXISTS (SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+           WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND offer.suggestions IS NOT NULL AND task->>'title'=m.text)
        ORDER BY m.created_at DESC,m.id DESC LIMIT 8`,
       [provenance.sourceMessageId, options.ownerId, provenance.turnId],
     );

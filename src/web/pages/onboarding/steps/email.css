@@ -6,8 +6,25 @@
   border-radius: var(--dialog-radius);
   background: var(--surface);
 }
+.ob-email-choice {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.ob-email-retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: var(--text-control);
+}
+.ob-email-gmail {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
 .ob-email-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
 }
@@ -24,7 +41,7 @@
   display: block;
 }
 .ob-email-title {
-  flex: 1;
+  flex: 1 1 200px;
   min-width: 0;
 }
 .ob-email-name {
@@ -46,33 +63,14 @@
   font-weight: 500;
   animation: ob-step-in 260ms ease-out;
 }
-.ob-email-body {
+.ob-email-notes {
   display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-.ob-email-label {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  min-height: 28px;
-}
-.ob-email-label > p {
-  font-weight: 500;
+  gap: 4px;
+  font-size: var(--text-control);
 }
 .ob-email-error {
   color: var(--error);
   font-size: var(--text-control);
-}
-.ob-email-connect {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 16px;
-}
-.ob-email-connect > .ob-email-muted {
-  flex: 1 1 200px;
 }
 .ob-email-waiting {
   display: flex;
@@ -84,8 +82,13 @@
   color: var(--text-secondary);
 }
 .ob-email-waiting > p {
-  flex: 1;
+  flex: 1 1 200px;
 }
 .ob-email-done > strong {
   font-weight: 500;
+}
+@media (max-width: 640px) {
+  .ob-email-card {
+    padding: 16px;
+  }
 }

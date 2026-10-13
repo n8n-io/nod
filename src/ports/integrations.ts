@@ -109,6 +109,16 @@ export interface InboxSnippet {
   subject: string;
   snippet: string;
 }
+export interface InboxThread {
+  subject: string;
+  from: string;
+  received: string;
+  messages: number;
+  waitingOnYou: boolean;
+  flagged: boolean;
+  automated: boolean;
+  text: string;
+}
 export interface IntegrationProvider {
   id: string;
   configured: boolean;
@@ -157,6 +167,7 @@ export interface IntegrationProvider {
   ): Promise<VerificationEmail[] | undefined>;
   sentEmails?(accountId: string, signal: AbortSignal): Promise<SentEmail[]>;
   inboxSnippets?(accountId: string, signal: AbortSignal): Promise<InboxSnippet[]>;
+  inboxThreads?(accountId: string, signal: AbortSignal): Promise<InboxThread[]>;
   pollInbox?(
     accountId: string,
     cursor: string | null,

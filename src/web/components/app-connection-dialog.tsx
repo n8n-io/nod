@@ -1,6 +1,7 @@
 import { useRef, type ComponentProps } from 'react';
 import { ExternalLink } from 'lucide-react';
-import { OttoGlyph } from '../pages/onboarding/motion';
+import { OttoGlyph } from './motion';
+import { PairingCode } from './pairing-code';
 import { ServiceLogo } from './service-logo';
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Notice } from './ui';
 
@@ -69,20 +70,14 @@ export function AppConnectionDialog({
                   ? 'Sign-in could not continue.'
                   : !signIn.url
                     ? 'Your browser will open when sign-in is ready.'
-                    : signIn.code && !signIn.pairingConfirmed
-                      ? 'Match this code in your browser to continue.'
-                      : 'Sign in in your browser and review what Otto can access.'}
+                    : 'Sign in in your browser and review what Otto can access.'}
               </DialogDescription>
             </div>
             {error ? (
               <Notice kind="error">{error}</Notice>
             ) : (
               <>
-                {signIn.code && !signIn.pairingConfirmed && (
-                  <div className="app-connect-code" data-analytics-private>
-                    {signIn.code}
-                  </div>
-                )}
+                {signIn.code && !signIn.pairingConfirmed && <PairingCode code={signIn.code} />}
                 <p className="app-connect-waiting" role="status">
                   {signIn.pairingConfirmed
                     ? 'Waiting for you to finish signing in.'
@@ -100,11 +95,6 @@ export function AppConnectionDialog({
                       </a>
                     </Button>
                   </div>
-                )}
-                {signIn.code && !signIn.pairingConfirmed && (
-                  <p className="app-connect-hint">
-                    If the codes differ, close the browser window and start again.
-                  </p>
                 )}
               </>
             )}

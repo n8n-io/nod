@@ -1,6 +1,6 @@
 ---
 title: Apps with Composio
-description: Connect Gmail, Calendar, Slack and other apps, or use your own Composio project on a server.
+description: Connect Gmail, Calendar, Slack and other apps through Otto's connection or your own Composio project.
 sidebar:
   order: 2
 ---
@@ -9,9 +9,9 @@ import { Steps } from '@astrojs/starlight/components';
 
 Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Otto uses [Composio](https://composio.dev) for these connections.
 
-Desktop and source/server installs use managed connections by default. You don't need a Composio account or project key. You still sign in to each app and choose what Otto can access.
+By default, apps connect through Otto's connection, a hosted service run by n8n. You don't need a Composio account or key. You can [use your own Composio key](#use-your-own-composio-project) instead. Either way, you sign in to each app and choose what Otto can access.
 
-Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
@@ -19,8 +19,9 @@ flowchart TD
   trust -- allowed --> server[Otto server]
   trust -. held .-> you([You approve]):::accent
   you -. yes .-> server
-  server --> connection[Managed connection service]
+  server -- Otto's connection --> connection[n8n connection service]
   connection --> composio[Composio]
+  server -. your own key .-> composio
   composio --> apps[Gmail · Calendar<br/>Slack · more]
 ```
 
@@ -30,7 +31,7 @@ flowchart TD
 
 1. Open **Apps**, search for an app and select **Connect**.
 2. If Otto shows a code, match it with the code in the browser and confirm there. Otto then shows that it's waiting for sign-in.
-3. Sign in on the app's consent screen and choose what Otto can access.
+3. Sign in on the app's consent screen and choose what Otto can access. Google's sign-in screen usually shows Composio, the service that connects the app, rather than Otto. If your own Composio project uses a custom Google auth config, it shows that config's app name instead.
 4. Return to Otto when the app is connected.
 
 </Steps>
@@ -41,15 +42,17 @@ You can also ask Otto in chat. It searches the same catalog, then sends you a pr
 
 ## Automatic app updates
 
-Managed connections check Gmail for new mail while Otto is running. They don't receive app webhooks, so apps such as Calendar and Slack don't wake Otto automatically. You can still ask Otto to work with them.
+Otto checks Gmail for new mail while it's running. Otto's connection doesn't receive app webhooks, so apps such as Calendar and Slack don't wake Otto automatically. You can still ask Otto to work with them.
 
 Source/server installs using their own Composio project can configure webhooks with `COMPOSIO_WEBHOOK_SECRET`.
 
-## Use your own Composio project on a server
+## Use your own Composio project
 
-On a source/server install, set `COMPOSIO_API_KEY` in the server environment or `.env`, then restart Otto. This connects directly through your project and doesn't show the managed pairing code.
+Choose **Your own Composio** when you connect Gmail during setup, or later in **Apps**, and paste a project key from the steps below. Otto checks the key with Composio before saving it, stores it encrypted on your installation and only shows its last four characters. Apps then connect straight through your project, without a pairing code. On a source/server install, saving a key needs `OTTO_VAULT_KEY`. Without it, Otto only shows the choice when it has a saved key it can't read, so you can switch back to Otto's connection.
 
-The desktop app always uses managed connections. There is no Composio key form in onboarding or settings.
+Connected accounts belong to the project they were connected through, and Otto never moves them between projects. When you switch between Otto's connection and your own key, Otto disconnects the apps connected through the one you're leaving, then switches. Connect them again afterwards. A sign-in you started before switching won't connect, so start it again too. If Otto can't disconnect an app, it keeps your current connection so you can try again. Apps it already disconnected stay disconnected.
+
+On a source/server install you can instead set `COMPOSIO_API_KEY` in the server environment or `.env`, then restart Otto. This pins the server to that project, so the app doesn't offer the choice. The desktop app ignores `COMPOSIO_API_KEY`.
 
 ### Create a project key
 
@@ -80,7 +83,7 @@ If a permission is missing, create a new key. A valid key with missing permissio
 Keep using a key from the same project. Your connected accounts belong to that project, so a key from another project can't use them.
 
 :::danger[Keep the key private]
-The key grants access to the project's connected accounts outside Otto. Keep it in your trusted server environment and don't distribute it to other users.
+The key grants access to the project's connected accounts outside Otto. Don't share it, and keep a server key in a trusted environment.
 :::
 
 The catalog needs **Toolkits → Read**. An older project key without it keeps its existing connections and the featured apps.
@@ -89,19 +92,19 @@ The catalog needs **Toolkits → Read**. An older project key without it keeps i
 
 The app's consent screen decides what Otto can read or change in your account.
 
-If you run a server with your own Composio project, two things control access:
+If you use your own Composio project, two things control access:
 
 - **The key's permissions** decide what Otto can do in Composio.
 - **The app's consent screen** decides what Otto can read or change in your account. The Composio auth config sets which scopes it asks for.
 
 To narrow an app's scopes, change them in its auth config, then reconnect the account. Changing the key doesn't change what you agreed to on the consent screen. See Composio's [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
 
-To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change managed connections or the direct Notion and Linear MCP connections.
+To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change Otto's connection or the direct Notion and Linear MCP connections.
 
 <details>
 <summary>How Otto picks a Google auth config</summary>
 
-When your server uses its own Composio project, Otto reads its enabled custom OAuth2 auth configs for Gmail, Calendar, Drive, Sheets or Docs. Without an explicit setting, it uses the one that's also enabled for Tool Router.
+When Otto uses your own Composio project, it reads the project's enabled custom OAuth2 auth configs for Gmail, Calendar, Drive, Sheets or Docs. Without an explicit setting, it uses the one that's also enabled for Tool Router.
 
 If there are several, or none of them is enabled for Tool Router, sign-in stops with a configuration error. If the project has no enabled custom OAuth2 config, Composio's default applies. A setting in `.env` always wins.
 

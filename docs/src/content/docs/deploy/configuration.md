@@ -51,24 +51,24 @@ Keys set here become server-managed connections. They stay in server memory and 
 
 ## Apps and Composio
 
-Desktop and source/server installs use managed app connections by default, without a Composio key. Source/server installs can customize the settings below. The desktop app always uses Otto's managed service.
+Desktop and source/server installs use Otto's connection by default, without a Composio key. The owner can switch to their own Composio key in the app; see [Apps](/connect/apps/#use-your-own-composio-project). Setting `COMPOSIO_API_KEY` pins a source/server install to its own project instead, and the app no longer offers the choice. Source/server installs can customize the settings below. The desktop app ignores `COMPOSIO_API_KEY` and `OTTO_COMPOSIO_PROXY_URL`.
 
-| Variable                           | What it does                                                                                                           | Default                |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                | Empty                  |
-| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom managed connection service when `COMPOSIO_API_KEY` is absent. The desktop app ignores this setting.      | Otto's managed service |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key then also needs **Triggers → Read and write**. | Empty                  |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                    | Automatic              |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                          | Automatic              |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                             | Automatic              |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic              |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic              |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic              |
-| `COMPOSIO_NOTION_AUTH_CONFIG_ID`   | The same for Notion.                                                                                                   | Automatic              |
+| Variable                           | What it does                                                                                                           | Default           |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                | Empty             |
+| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom connection service in place of Otto's when `COMPOSIO_API_KEY` is absent.                                 | Otto's connection |
+| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key then also needs **Triggers → Read and write**. | Empty             |
+| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                    | Automatic         |
+| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                          | Automatic         |
+| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                             | Automatic         |
+| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic         |
+| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic         |
+| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic         |
+| `COMPOSIO_NOTION_AUTH_CONFIG_ID`   | The same for Notion.                                                                                                   | Automatic         |
 
 For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
 
-Webhook and auth-config settings apply only when you supply `COMPOSIO_API_KEY`. "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. These settings don't change the built-in Notion and Linear connections, which use their hosted MCP servers. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
+Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. These settings don't change the built-in Notion and Linear connections, which use their hosted MCP servers. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
 
 ## Vault
 

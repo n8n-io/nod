@@ -27,11 +27,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   width: 48px;
 }
 .app-connect-route > span {
-  width: 18px;
+  width: 16px;
   height: 2px;
   border-radius: var(--radius-full);
   background: var(--brand-pink);
@@ -82,16 +82,8 @@
   margin: 0;
   line-height: 1.6;
 }
-.app-connect-code {
+.app-connect-dialog .pairing-code {
   margin-top: 24px;
-  padding: 20px 12px;
-  border-radius: var(--control-radius);
-  background: var(--accent-soft);
-  color: var(--foreground);
-  font-family: var(--font-mono);
-  font-size: 32px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 5px;
 }
 .app-connect-waiting {
   margin: 24px 0 16px;
@@ -102,9 +94,22 @@
   display: flex;
   justify-content: center;
 }
-.app-connect-hint {
-  margin: 20px 0 0;
+.pairing-code {
+  display: grid;
+  gap: 8px;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
   line-height: 1.6;
+  text-align: center;
+}
+.pairing-code-value {
+  padding: 16px 24px;
+  border-radius: var(--card-radius);
+  background: var(--accent-soft);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 4px;
+  line-height: 1.2;
 }

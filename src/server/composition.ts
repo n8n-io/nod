@@ -51,6 +51,7 @@ import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
+import { createIntegrationKeyService } from './integration-key.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -140,6 +141,7 @@ export interface ApplicationAdapters {
   observe?: ThreadDependencies['observe'];
   inspectPrompt?: ThreadDependencies['inspectPrompt'];
   models?: ReturnType<typeof createModelService>;
+  integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
   confirmComputerShutdown?(): Promise<void>;
@@ -151,6 +153,7 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
+  standbyIntegrations?: IntegrationProvider[];
   directIntegrations?: (
     pool: pg.Pool,
     keyStore: CredentialKeyStore,
@@ -230,28 +233,36 @@ export function createDefaultAdapters(
     slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
     notion: env.COMPOSIO_NOTION_AUTH_CONFIG_ID,
   };
-  const integrationKey = env.COMPOSIO_API_KEY?.trim();
-  const integrationProxy =
-    desktopMode || !integrationKey
-      ? createComposioProxy({
-          dataRoot,
-          ownerId,
-          url: desktopMode ? undefined : env.OTTO_COMPOSIO_PROXY_URL,
-          ...(runtimeMode === 'tenant'
-            ? { identitySecret: parseCredentialKey(env.OTTO_VAULT_KEY || '') }
-            : {}),
-        })
-      : undefined;
-  const integrations = createComposioProvider(
-    integrationProxy
-      ? { proxy: integrationProxy }
-      : {
-          apiKey: integrationKey,
-          webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
-          webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
-          authConfigs,
-        },
-  );
+  const environmentKey = desktopMode ? undefined : env.COMPOSIO_API_KEY?.trim() || undefined;
+  const integrationProxy = environmentKey
+    ? undefined
+    : createComposioProxy({
+        dataRoot,
+        ownerId,
+        url: desktopMode ? undefined : env.OTTO_COMPOSIO_PROXY_URL,
+        ...(runtimeMode === 'tenant'
+          ? { identitySecret: parseCredentialKey(env.OTTO_VAULT_KEY || '') }
+          : {}),
+      });
+  const ownIntegrations = createComposioProvider({
+    apiKey: environmentKey,
+    webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
+    webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
+    authConfigs,
+  });
+  const integrationKey = createIntegrationKeyService({
+    ownerId,
+    keyStore,
+    provider: ownIntegrations,
+    fixed: environmentKey ? 'own' : runtimeMode === 'tenant' ? 'otto' : undefined,
+  });
+  const ottoIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
+  const integrations = ottoIntegrations
+    ? new Proxy(ownIntegrations, {
+        get: (_, key) =>
+          Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
+      })
+    : ownIntegrations;
   const computerProvider = env.COMPUTER_PROVIDER || 'docker';
   if (
     !['docker', 'e2b', 'cloudflare'].includes(computerProvider) ||
@@ -307,6 +318,7 @@ export function createDefaultAdapters(
     initialize: async () => {
       await models.initialize();
       await integrationProxy?.initialize();
+      await integrationKey.initialize();
       await allocations?.initialize();
       await databaseObjects?.initialize();
     },
@@ -361,6 +373,8 @@ export function createDefaultAdapters(
       voice: env.TTS_VOICE,
     }),
     integrations,
+    ...(ottoIntegrations ? { standbyIntegrations: [ownIntegrations, ottoIntegrations] } : {}),
+    integrationKey,
     ...(['local', 'tenant'].includes(runtimeMode)
       ? {
           directIntegrations: (
@@ -483,6 +497,7 @@ async function initializeApplication(
     } catch {}
   }
   adapters.models?.onSecrets((values) => secrets.push(...values));
+  adapters.integrationKey?.onSecrets((values) => secrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
   const ledger = createLedger({ pool, ownerId });
@@ -576,6 +591,8 @@ async function initializeApplication(
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
+    briefInbox: (read, stop) => onboardingSuggestions.briefInbox(read, stop),
+    standbyProviders: adapters.standbyIntegrations,
     ...(adapters.directIntegrations
       ? {
           additionalProviders: [
@@ -688,6 +705,10 @@ async function initializeApplication(
         ),
       ),
     tripwire: injectionFindings,
+    apps: async () =>
+      (await integrations.connectedApps())
+        .filter((app) => app.status === 'connected')
+        .map((app) => app.name),
   });
   analytics.setUsageData(
     ownerId,
@@ -810,6 +831,7 @@ async function initializeApplication(
         return result;
       },
       watchTurn: tasks.watch,
+      turnFinished: (turn, outcome) => void onboardingSuggestions.afterTurn(turn, outcome),
       markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
       flagInjection: trust.flag,
       holdBrowser: adapters.holdWaitingBrowser,
@@ -1044,6 +1066,7 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app);
+  adapters.integrationKey?.register(app, integrations);
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });

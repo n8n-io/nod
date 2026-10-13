@@ -8,6 +8,12 @@ export interface IntegrationServiceInfo {
   categories?: string[];
 }
 
+export type IntegrationKeyStatus = {
+  mode: 'otto' | 'own';
+  switchable: boolean;
+  suffix: string | null;
+};
+
 export const integrationServices: Record<
   IntegrationService,
   { name: string; description: string }

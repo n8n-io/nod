@@ -191,6 +191,7 @@ export interface Connection {
   status: 'not_configured' | 'disconnected' | 'connected';
   accountId?: string;
   connectionId?: string;
+  direct?: boolean;
   accountName?: string;
   accountEmail?: string;
   savedLogin?: boolean;

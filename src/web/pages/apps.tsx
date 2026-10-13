@@ -16,6 +16,7 @@ import type { AppSetupStatus, Configuration, Connection } from '../../shared/con
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
+import { ConnectionChoice, useConnectionChoice } from '../components/connection-choice';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -299,6 +300,7 @@ export function Apps({
     refreshing: catalogRefreshing,
     refresh: refreshCatalog,
   } = usePageData<Connection[]>('/api/apps/catalog');
+  const choice = useConnectionChoice('apps', refreshCatalog);
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
   const [query, setQuery] = useState('');
@@ -332,6 +334,7 @@ export function Apps({
   const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
   const discoveryRequest = useRef<AbortController | null>(null);
+  const locked = Boolean(busy) || choice.switching;
   const groups = connectionGroups(connections ?? [], catalog ?? []);
   const managed = groups.find((group) => group.key === manageService);
   const manageError = managed?.key === connectErrorService ? error : '';
@@ -654,7 +657,7 @@ export function Apps({
     }
   }
   async function connect(connection: Connection, addAccount = false) {
-    if (actionRequest.current || busy) return;
+    if (actionRequest.current || locked) return;
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
@@ -868,7 +871,7 @@ export function Apps({
                 data-connect-service={key}
                 aria-label={`Connect ${service.name}`}
                 aria-busy={busy === `connect:${service.slug}`}
-                disabled={service.status === 'not_configured' || Boolean(busy)}
+                disabled={service.status === 'not_configured' || locked}
                 onClick={() => void connect(service)}
               >
                 {busy === `connect:${service.slug}` ? 'Opening…' : 'Connect'}
@@ -898,6 +901,16 @@ export function Apps({
             </Button>
           )}
         </Notice>
+      )}
+      {choice.status?.switchable && (
+        <section className="apps-connection" aria-labelledby="apps-connection">
+          <h2 id="apps-connection">How Otto connects your apps</h2>
+          <ConnectionChoice
+            state={choice}
+            disabled={Boolean(busy || signIn)}
+            className="apps-connection-card"
+          />
+        </section>
       )}
       {!connections ? (
         loading ? (
@@ -1225,7 +1238,7 @@ export function Apps({
               <ConnectedAccount
                 key={account.connectionId}
                 account={account}
-                busy={Boolean(busy)}
+                busy={locked}
                 reconnecting={busy === `reconnect:${account.connectionId}`}
                 onDisconnect={(trigger) => {
                   dialogTrigger.current = trigger;
@@ -1242,7 +1255,7 @@ export function Apps({
               <Button
                 size="sm"
                 data-add-account
-                disabled={Boolean(busy) || addAccountConnection?.status === 'not_configured'}
+                disabled={locked || addAccountConnection?.status === 'not_configured'}
                 onClick={() => addAccountConnection && void connect(addAccountConnection, true)}
               >
                 {busy === `connect:${addAccountConnection?.slug}` ? (

@@ -11,7 +11,8 @@ export interface MemoryCurator {
         | 'progress'
         | 'interview'
         | 'style'
-        | 'plan';
+        | 'plan'
+        | 'brief';
       instructions: string;
       input: object;
     },

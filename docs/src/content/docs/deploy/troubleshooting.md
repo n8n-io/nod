@@ -77,9 +77,15 @@ ChatGPT sign-in receives its callback on port 1455. Another Otto app or another 
 
 ### Composio says "Invalid API key"
 
-If your source/server install uses `COMPOSIO_API_KEY`, a valid key without the right permissions can show this error. Create a new key with the permissions in [Apps](/connect/apps/), replace the environment value and restart Otto. Keep using the same Composio project, because connected accounts belong to it.
+If you use your own Composio key, a valid key without the right permissions can show this error. Create a new key with the permissions in [Apps](/connect/apps/), then save it in **Apps** in place of the old one. If your server sets `COMPOSIO_API_KEY`, replace the environment value and restart Otto. Keep using the same Composio project, because connected accounts belong to it.
 
-Desktop and other managed connections don't need a personal Composio key. If the error persists there, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+Otto's connection doesn't need a personal Composio key. If the error persists there, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+
+### Apps disconnected after switching connection
+
+Switching between Otto's connection and your own Composio key disconnects the apps connected through the one you left, because their accounts belong to that project. Connect them again in **Apps**.
+
+If Otto says it couldn't disconnect an app, it kept your current connection. Apps it disconnected before that stay disconnected, so connect them again if you don't switch. Check your network and try again.
 
 ## Channels
 

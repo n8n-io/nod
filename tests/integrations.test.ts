@@ -516,6 +516,7 @@ for (const [scenario, name, restart] of [
   ['later-managed-desktop-restart', 'later managed desktop restart preserves its account', true],
   ['direct-server-key-rotation', 'server key rotation retains same-project accounts', true],
   ['different-server-project', 'another server project cannot adopt saved accounts', true],
+  ['switchable-server', 'an owner key switch revokes apps connected the other way', true],
 ] as const) {
   test(
     `default Composio adapters: ${name}`,
@@ -529,9 +530,14 @@ for (const [scenario, name, restart] of [
       const databaseUrl = new URL(process.env.TEST_DATABASE_URL!);
       databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
       const desktop = scenario.includes('desktop');
-      const managed = desktop || scenario === 'keyless-server';
+      const keyless = scenario === 'keyless-server' || scenario === 'switchable-server';
       const connectionId = randomUUID();
       for (const phase of restart ? ['initial', 'restart'] : ['initial']) {
+        const managed =
+          desktop || (keyless && (phase === 'initial' || scenario === 'keyless-server'));
+        const rejected =
+          phase === 'restart' &&
+          (scenario === 'different-server-project' || scenario === 'switchable-server');
         const result = spawnSync(
           process.execPath,
           [
@@ -566,7 +572,7 @@ for (const [scenario, name, restart] of [
                     OTTO_DESKTOP_AUTH_TOKEN: Buffer.alloc(32, 12).toString('base64url'),
                   }
                 : {}),
-              ...(scenario !== 'keyless-server'
+              ...(!keyless
                 ? {
                     COMPOSIO_API_KEY:
                       phase === 'restart' && !desktop
@@ -582,15 +588,13 @@ for (const [scenario, name, restart] of [
         );
         assert.ifError(result.error);
         assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.doesNotMatch(result.stdout + result.stderr, /synthetic-(?:project|invalid)/);
         const report = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
         assert.equal(
           report.origin,
           managed ? 'https://composio.n8n.cloud' : 'https://backend.composio.dev',
         );
-        assert.equal(
-          report.connected,
-          scenario !== 'different-server-project' || phase !== 'restart',
-        );
+        assert.equal(report.connected, !rejected);
         assert.ok(
           report.calls.every(
             (call: { method: string; path: string }) =>
@@ -3099,6 +3103,7 @@ async function appsFixture(
       | 'wake'
       | 'readWorkspaceFile'
       | 'learnWritingStyle'
+      | 'briefInbox'
     >
   > = {},
 ) {
@@ -3226,6 +3231,47 @@ async function appsFixture(
     callbacks,
   };
 }
+
+test(
+  'an app connection switch waits for a completing sign-in, refuses new ones and revokes it',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const started = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+    assert.equal(started.statusCode, 200, started.body);
+    const callback = new URL(f.callbacks.at(-1)!);
+    const id = [...f.accounts.keys()].at(-1)!;
+    callback.searchParams.set('account', id);
+    const inspect = f.provider.inspectAccount;
+    const inspecting = deferred();
+    const release = deferred();
+    f.provider.inspectAccount = async (...args) => {
+      inspecting.resolve();
+      await release.promise;
+      return inspect(...args);
+    };
+    const completing = f.app.inject({ url: `${callback.pathname}${callback.search}` });
+    await inspecting.promise;
+    let swapped = false;
+    const switching = f.service.changeProvider(true, async () => {
+      swapped = true;
+    });
+    const refused = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+    assert.equal(refused.statusCode, 409);
+    assert.equal(swapped, false);
+    assert.equal(f.removed.includes(id), false);
+    f.provider.inspectAccount = inspect;
+    release.resolve();
+    assert.equal(
+      (await completing).headers.location,
+      'http://localhost:4310/apps?connection=connected',
+    );
+    await switching;
+    assert.equal(swapped, true);
+    assert.ok(f.removed.includes(id));
+    assert.deepEqual((await f.pool.query('SELECT account_id FROM app_connections')).rows, []);
+  },
+);
 
 test(
   'managed app discovery keeps consent and underscore tool routing bound to owned accounts',
@@ -3384,7 +3430,7 @@ test(
 );
 
 test(
-  'connecting Gmail starts style learning in the background on that account only',
+  'connecting Gmail starts style learning and the inbox brief in the background on that account only',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const reads: string[] = [];
@@ -3399,9 +3445,17 @@ test(
         await held;
         jobs.push(read(AbortSignal.timeout(1000)));
       },
+      briefInbox: async (read) => {
+        await held;
+        jobs.push(read(AbortSignal.timeout(1000)));
+      },
     });
     f.provider.sentEmails = async (accountId) => {
-      reads.push(accountId);
+      reads.push(`sent:${accountId}`);
+      return [];
+    };
+    f.provider.inboxThreads = async (accountId) => {
+      reads.push(`inbox:${accountId}`);
       return [];
     };
     await f.connect('slack');
@@ -3410,7 +3464,7 @@ test(
     release();
     await delay(20);
     await Promise.all(jobs);
-    assert.deepEqual(reads, [gmail.accountId]);
+    assert.deepEqual(reads.sort(), [`inbox:${gmail.accountId}`, `sent:${gmail.accountId}`]);
   },
 );
 
@@ -3481,6 +3535,88 @@ test('Composio first-task inbox snippets read at most fifteen subjects and snipp
       { in: 'query', name: 'metadataHeaders', value: 'Subject' },
       { in: 'query', name: 'fields', value: 'snippet,payload/headers' },
     ]);
+});
+
+test('Composio inbox threads read the latest message from someone else and skip threads only you wrote', async (t) => {
+  const requests: Array<{ path: string; parameters: unknown }> = [];
+  const message = (id: string, from: string, labels: string[], text: string, at: number) => ({
+    id,
+    internalDate: String(at),
+    labelIds: labels,
+    payload: {
+      mimeType: 'text/plain',
+      headers: [
+        { name: 'Subject', value: 'Synthetic venue contract' },
+        { name: 'From', value: from },
+      ],
+      body: { data: Buffer.from(text).toString('base64url') },
+    },
+  });
+  const threads: Record<string, unknown> = {
+    'threads/t0': {
+      messages: [
+        message(
+          'a',
+          'Riley Synthetic <riley@example.test>',
+          ['INBOX', 'STARRED'],
+          'Can you sign?',
+          1,
+        ),
+        message('b', 'Owner <owner@example.test>', ['SENT'], 'Signed.', 2),
+      ],
+    },
+    'threads/t1': {
+      messages: [
+        message('c', 'riley@example.test', ['INBOX'], 'Any update?', 3),
+        message('e', 'Owner <owner@example.test>', ['DRAFT'], 'Unsent synthetic draft', 5),
+      ],
+    },
+    'threads/t2': { messages: [message('d', 'Owner <owner@example.test>', ['SENT'], 'Note.', 4)] },
+  };
+  const read = inboxPollFixture(
+    t,
+    (input) => {
+      const path = input.endpoint.replace('https://gmail.googleapis.com/gmail/v1/users/me/', '');
+      requests.push({ path, parameters: input.parameters });
+      if (path === 'threads')
+        return { status: 200, data: { threads: [{ id: 't0' }, { id: 't1' }, { id: 't2' }] } };
+      return { status: 200, data: threads[path] };
+    },
+    'inboxThreads',
+  );
+  assert.deepEqual(await read('inbox-account', new AbortController().signal), [
+    {
+      subject: 'Synthetic venue contract',
+      from: 'Riley Synthetic',
+      received: new Date(2).toISOString(),
+      messages: 2,
+      waitingOnYou: false,
+      flagged: true,
+      automated: false,
+      text: 'Can you sign?',
+    },
+    {
+      subject: 'Synthetic venue contract',
+      from: '',
+      received: new Date(3).toISOString(),
+      messages: 1,
+      waitingOnYou: true,
+      flagged: false,
+      automated: false,
+      text: 'Any update?',
+    },
+  ]);
+  assert.deepEqual(requests[0].parameters, [
+    {
+      in: 'query',
+      name: 'q',
+      value: 'in:inbox newer_than:30d -category:promotions -category:social -category:forums',
+    },
+    { in: 'query', name: 'maxResults', value: 40 },
+    { in: 'query', name: 'fields', value: 'threads/id' },
+  ]);
+  for (const request of requests.slice(1))
+    assert.deepEqual(request.parameters, [{ in: 'query', name: 'format', value: 'full' }]);
 });
 
 test('OAuth completion pages preserve valid service identities and clear callback state before closing', async () => {
@@ -10016,7 +10152,7 @@ test('managed uploads retain the selected account across created and restored se
   );
 });
 
-function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' = 'pollInbox'>(
+function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' | 'inboxThreads' = 'pollInbox'>(
   t: TestContext,
   respond: (
     input: Parameters<Composio['tools']['proxyExecute']>[0],
@@ -12584,7 +12720,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     assert.deepEqual(opened, [links[1], links[0]]);
     assert.equal(dialog()!.querySelectorAll('a').length, 0);
     assert.match(
-      dialog()!.querySelector('[role="status"]')!.textContent!,
+      dialog()!.querySelector('.app-connect-waiting')!.textContent!,
       /closed.*new sign-in link/,
     );
     Object.defineProperty(dom.window.document, 'visibilityState', {

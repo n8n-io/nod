@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState, type ComponentType } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { MessageSquare } from 'lucide-react';
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
 import type { ModelsResponse } from '../../../shared/models';
 import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding';
+import { OttoGlyph } from '../../components/motion';
 import { Button, Notice } from '../../components/ui';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { api, errorMessage } from '../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
-import { OttoGlyph } from './motion';
 import { clearStored, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
 import { Brain } from './steps/brain';
@@ -21,6 +21,7 @@ export type StepProps = {
   onNext(): void;
   onBack(): void;
   busy?: boolean;
+  notice?: ReactNode;
   usage?: { enabled: boolean; onChange(enabled: boolean): Promise<void> };
 };
 
@@ -84,13 +85,12 @@ export function Onboarding({
   }, [step, user.id]);
 
   useEffect(() => {
-    if (onboardingSteps.indexOf(step) < 2) return;
+    if (index <= onboardingSteps.indexOf('brain')) return;
     let current = true;
     void api<ModelsResponse>('/api/models')
       .then((models) => {
         if (!current || models.connections.some((item) => item.status !== 'reconnect')) return;
-        clearStored();
-        setPosition({ step: 'welcome', arrived: 'forward' });
+        setPosition({ step: 'brain', arrived: 'forward' });
       })
       .catch(() => {});
     return () => {
@@ -178,7 +178,7 @@ export function Onboarding({
         <div
           className="ob-dots"
           role={welcome ? undefined : 'img'}
-          aria-label={welcome ? undefined : `Step ${index} of 5`}
+          aria-label={welcome ? undefined : `Step ${index} of ${onboardingSteps.length - 1}`}
         >
           {!welcome &&
             onboardingSteps
@@ -192,19 +192,17 @@ export function Onboarding({
         </div>
         <div className="ob-header-end" data-analytics-public>
           {!welcome && (
-            <span className="ob-feedback-wrap">
-              <Button
-                id="feedback-launcher"
-                variant="ghost"
-                size="sm"
-                className="ob-feedback"
-                onClick={onFeedback}
-                aria-label="Feedback"
-              >
-                <MessageSquare size={16} aria-hidden="true" />
-                <span className="ob-header-label">Feedback</span>
-              </Button>
-            </span>
+            <Button
+              id="feedback-launcher"
+              variant="ghost"
+              size="sm"
+              className="ob-feedback"
+              onClick={onFeedback}
+              aria-label="Feedback"
+            >
+              <MessageSquare size={16} aria-hidden="true" />
+              <span className="ob-header-label">Feedback</span>
+            </Button>
           )}
           {canLogout && (
             <Button variant="ghost" size="sm" onClick={onLogout}>
@@ -220,24 +218,25 @@ export function Onboarding({
           onNext={next}
           onBack={() => go(-1)}
           busy={step === 'open' && finishing}
+          notice={
+            step === 'open' &&
+            (preparation === 'failed' || !!error) && (
+              <Notice>
+                {error || 'Something went wrong while I was getting set up.'}{' '}
+                {preparation === 'failed' && (
+                  <Button variant="ghost" onClick={() => void prepare()}>
+                    Try again
+                  </Button>
+                )}
+              </Notice>
+            )
+          }
           usage={
             step === 'open' && onUsageData
               ? { enabled: usageData, onChange: onUsageData }
               : undefined
           }
         />
-        {step === 'open' && (preparation === 'failed' || error) && (
-          <div className="ob-notice">
-            <Notice>
-              {error || 'Something went wrong while I was getting set up.'}{' '}
-              {preparation === 'failed' && (
-                <Button variant="ghost" onClick={() => void prepare()}>
-                  Try again
-                </Button>
-              )}
-            </Notice>
-          </div>
-        )}
       </main>
     </div>
   );

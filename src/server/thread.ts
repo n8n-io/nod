@@ -114,6 +114,10 @@ export interface ThreadDependencies {
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   watchTurn?: (turn: TurnRef & { source: TurnSource }) => () => void;
+  turnFinished?: (
+    turn: TurnRef & { source: TurnSource; background: boolean },
+    outcome: string,
+  ) => void;
   markUntrustedContext?: (turn: TurnRef) => Promise<void>;
   flagInjection?: (turn: TurnRef, findings: string[]) => Promise<void>;
   holdBrowser?: (threadId: string, until: number | null) => Promise<void>;
@@ -1206,6 +1210,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       },
     });
     running.delete(turnId);
+    dependencies.turnFinished?.(
+      { ...ref, source: turn.source, background: Boolean(turn.background) },
+      outcome,
+    );
   }
 }
 

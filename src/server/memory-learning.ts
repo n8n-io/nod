@@ -63,6 +63,8 @@ export function createMemoryLearning(options: {
        WHERE m.owner_id=$1 AND m.role='user' AND m.attachments='[]'::jsonb AND length(m.text)<=1000
          AND m.created_at<=now()-interval '10 minutes' AND (m.created_at,m.id)>($2::timestamptz,$3::uuid)
          AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='OTTO_memory_save')
+         AND NOT EXISTS (SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+           WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND offer.suggestions IS NOT NULL AND task->>'title'=m.text)
        ORDER BY m.created_at,m.id LIMIT 40`,
       [options.ownerId, from, after],
     );
