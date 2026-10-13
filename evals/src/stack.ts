@@ -385,7 +385,27 @@ export async function startStack(options: {
         await computer.discard?.(previousThreadId).catch(() => {});
       },
       async event(summary) {
-        const turnId = await application!.triage.triageEvent(summary, `eval:${randomUUID()}`);
+        const eventId = `eval:${randomUUID()}`;
+        const legacy = (
+          await pool.query("SELECT to_regclass('notifications') IS NOT NULL AS found")
+        ).rows[0].found;
+        const queued = legacy
+          ? await (
+              application!.triage.triageEvent as unknown as (
+                summary: string,
+                eventId: string,
+                intent: string,
+              ) => Promise<unknown>
+            )(summary, eventId, 'inspect_message')
+          : await application!.triage.triageEvent(summary, eventId);
+        const turnId =
+          typeof queued === 'string'
+            ? queued
+            : legacy
+              ? ((
+                  await pool.query('SELECT turn_id FROM notifications WHERE event_id=$1', [eventId])
+                ).rows[0]?.turn_id as string | undefined)
+              : undefined;
         if (!turnId) throw new Error('The incoming event did not queue a background turn.');
         return turnId;
       },

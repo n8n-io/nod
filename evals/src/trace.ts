@@ -115,7 +115,6 @@ async function backgroundCapture(stack: Stack, background: Set<string>) {
   const models: Array<{ tokens: number; cost?: number }> = [];
   const legacy =
     !stack.observations.length &&
-    !stack.prompts.length &&
     (await stack.pool.query("SELECT to_regclass('inspector_records') IS NOT NULL AS found")).rows[0]
       .found;
   if (legacy) {
