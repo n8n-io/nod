@@ -23,7 +23,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
-import { appConfirmation, type AgentSession, type RuntimeContext } from '../src/ports/agent.ts';
+import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
@@ -2130,54 +2130,6 @@ test('a subagent that needs the owner pauses the whole turn', async (t) => {
     });
     assert.equal(result.status, 'waiting_user');
     assert.deepEqual(replies, ['Which date works for the table?']);
-  } finally {
-    await runtime.dispose();
-  }
-});
-
-test('parallel subagents whose app calls both need the owner ask only once', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-confirm-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const requested: string[] = [];
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (input) => ({
-        resumed: false,
-        abort() {},
-        dispose() {},
-        prompt: async (text) => {
-          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
-          if (!input.tools.some((item) => item.name === 'delegate')) {
-            const action = /[A-Z]+_[A-Z_]+/.exec(text)![0];
-            await tool('apps')
-              .execute({ action, args: {} })
-              .catch(() => {});
-            return;
-          }
-          await Promise.allSettled(
-            ['GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS'].map((action) =>
-              tool('delegate').execute({ title: action, instruction: `Run ${action}.` }),
-            ),
-          );
-        },
-      }),
-      dispose() {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    const result = await runtime.runTurn({
-      ...context(directory),
-      turnId: randomUUID(),
-      integration: async (action) => {
-        requested.push(action);
-        await setTimeout(20);
-        return { [appConfirmation]: `${action}?` };
-      },
-    });
-    assert.equal(result.status, 'waiting_user');
-    assert.equal(requested.length, 1);
   } finally {
     await runtime.dispose();
   }

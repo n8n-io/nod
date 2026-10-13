@@ -34,7 +34,6 @@ const parallelTools = new Set([
   'apps',
   'manage_personal_context',
 ]);
-const exclusiveTools = new Set(['apps', 'manage_personal_context']);
 const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
@@ -484,16 +483,6 @@ export function createAgentRuntime(dependencies: {
             actionSignal,
           ),
       };
-      let exclusive = Promise.resolve();
-      const inTurn = (name: string, run: () => Promise<AgentToolResult>) => {
-        if (!exclusiveTools.has(name)) return run();
-        const next = exclusive.then(run);
-        exclusive = next.then(
-          () => {},
-          () => {},
-        );
-        return next;
-      };
       const bind = (turn: Turn, take: () => Promise<unknown>) =>
         ottoTools(
           turn,
@@ -510,17 +499,15 @@ export function createAgentRuntime(dependencies: {
               (browserTools.has(name) || handsOverBrowser(name, params))
             )
               await take();
-            return inTurn(name, () =>
-              guard(name, params, async () => {
-                if (!Value.Check(parameters, params))
-                  throw new Error('The tool arguments do not match its schema.');
-                if (handsOverBrowser(name, params))
-                  await computer.currentPage(turn.browserId).catch(() => {
-                    throw new Error('Open the page in your browser before handing it to the user.');
-                  });
-                return execute(params);
-              }),
-            );
+            return guard(name, params, async () => {
+              if (!Value.Check(parameters, params))
+                throw new Error('The tool arguments do not match its schema.');
+              if (handsOverBrowser(name, params))
+                await computer.currentPage(turn.browserId).catch(() => {
+                  throw new Error('Open the page in your browser before handing it to the user.');
+                });
+              return execute(params);
+            });
           },
         }));
       const system = systemPrompt(workspace, dependencies.skills);

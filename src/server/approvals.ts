@@ -271,6 +271,16 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
+      if (
+        !allowed &&
+        (
+          await client.query(
+            "SELECT 1 FROM approvals WHERE turn_id=$1 AND owner_id=$2 AND status='pending'",
+            [turn.turnId, ownerId],
+          )
+        ).rowCount
+      )
+        throw conflict('This turn is already waiting for an answer. Ask again after it.');
       if (background) {
         const pending = (
           await client.query(

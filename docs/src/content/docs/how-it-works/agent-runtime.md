@@ -87,7 +87,7 @@ flowchart TD
 - **Observations:** the guard reports each call to an optional observer. Only the evals harness sets one, and it redacts typed text, flows and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
-App and memory calls run one at a time in call order, reads included, even when other calls and subagents run in parallel. A confirmation stops the calls waiting behind it, so a turn never asks two questions at once.
+App and memory calls run in parallel with each other and with subagents. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another in the same turn.
 
 ## Codemode
 

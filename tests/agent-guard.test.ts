@@ -466,20 +466,16 @@ test('a read-only turn can load a trusted skill without changing the workspace',
   assert.equal(writes, 0);
 });
 
-test('app calls in one batch run one at a time, so a confirmation stops the calls after it', async () => {
+test('app reads in one batch run together', async () => {
   const events: string[] = [];
-  const output = await fixture(
+  await fixture(
     async (tools) => {
       const apps = tools.get('apps')!;
       assert.equal(apps.parallel, true);
-      const results = await Promise.allSettled(
-        ['GMAIL_LIST_LABELS', 'GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS'].map((action) =>
+      await Promise.all(
+        ['GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS'].map((action) =>
           apps.execute({ action, args: {} }),
         ),
-      );
-      assert.deepEqual(
-        results.map((result) => result.status),
-        ['fulfilled', 'fulfilled', 'rejected'],
       );
     },
     {
@@ -487,17 +483,13 @@ test('app calls in one batch run one at a time, so a confirmation stops the call
         events.push(`start ${action}`);
         await setTimeout(20);
         events.push(`end ${action}`);
-        return action === 'GMAIL_LIST_LABELS' ? { ok: true } : { [appConfirmation]: `${action}?` };
+        return { ok: true };
       },
     },
   );
-  assert.deepEqual(events, [
-    'start GMAIL_LIST_LABELS',
-    'end GMAIL_LIST_LABELS',
-    'start GMAIL_FETCH_EMAILS',
-    'end GMAIL_FETCH_EMAILS',
-  ]);
-  assert.equal(output.result.status, 'waiting_user');
+  assert.ok(
+    events.indexOf('start GOOGLECALENDAR_LIST_EVENTS') < events.indexOf('end GMAIL_FETCH_EMAILS'),
+  );
 });
 
 test('saved memory reaches Pi in the owner context and through memory tools', async () => {
