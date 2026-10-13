@@ -1233,6 +1233,12 @@ test(
           await ran(active.turnId)!.reply('Checking the synthetic meeting time.');
           const queued = await thread.submitUserMessage('A separate queued calendar fixture');
           try {
+            await ran(active.turnId)!.reply('Still checking the synthetic meeting time.');
+            const asking = await thread.enqueueTurn('ask-question', {
+              source: 'event',
+              sourceId: `asking-event:${randomUUID()}`,
+            });
+            await waitFor(settled(asking));
             const other = await thread.enqueueTurn('Another synthetic background fixture', {
               source: 'event',
               sourceId: `other-event:${randomUUID()}`,

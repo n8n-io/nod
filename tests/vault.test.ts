@@ -2735,7 +2735,7 @@ const message: VerificationEmail = {
 };
 
 test('email verification binds authenticated messages to a recent exact recipient and one code', () => {
-  assert.equal(verificationCode([message], request), '381742');
+  assert.equal(verificationCode([message], request)?.code, '381742');
   for (const changed of [
     { receivedAt: request.after - 1 },
     { receivedAt: now + 1 },
@@ -2753,7 +2753,7 @@ test('email verification binds authenticated messages to a recent exact recipien
     verificationCode(
       [{ ...message, text: 'Verification code: 381742. Use verification code 381742.' }],
       request,
-    ),
+    )?.code,
     '381742',
   );
 });
@@ -2822,7 +2822,7 @@ test('site matching uses public suffix boundaries and separates hosted tenants',
         },
       ],
       tenant,
-    ),
+    )?.code,
     '381742',
   );
   assert.equal(
@@ -2858,7 +2858,7 @@ test(
     try {
       await pool.query(`
         CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
-        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),session_id uuid NOT NULL,source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
       `);
       const vault = await createVault(pool, {
@@ -2953,7 +2953,7 @@ test(
         turn.threadId,
         'local-development',
       ]);
-      await pool.query('INSERT INTO turns(id,owner_id,thread_id) VALUES($1,$2,$3)', [
+      await pool.query('INSERT INTO turns(id,owner_id,thread_id,session_id) VALUES($1,$2,$3,$3)', [
         turn.turnId,
         'local-development',
         turn.threadId,
@@ -2983,7 +2983,7 @@ test(
       assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
       const parallel = { threadId: turn.threadId, turnId: randomUUID() };
       await pool.query(
-        "INSERT INTO turns(id,owner_id,thread_id,background) VALUES($1,'local-development',$2,true)",
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,background) VALUES($1,'local-development',$2,$1,true)",
         [parallel.turnId, parallel.threadId],
       );
       await payments.request(parallel, order);
@@ -3398,12 +3398,10 @@ test(
       await payments.request(turn, { ...order, card: card.id });
       const obsoletePayment = (await latest()).id;
       const laterTurn = randomUUID();
-      await pool.query('INSERT INTO turns(id,owner_id,thread_id,status) VALUES($1,$2,$3,$4)', [
-        laterTurn,
-        'local-development',
-        turn.threadId,
-        'queued',
-      ]);
+      await pool.query(
+        'INSERT INTO turns(id,owner_id,thread_id,session_id,status) VALUES($1,$2,$3,$3,$4)',
+        [laterTurn, 'local-development', turn.threadId, 'queued'],
+      );
       assert.equal(
         (await app.inject({ url: `/api/payment-requests/${obsoletePayment}`, headers })).statusCode,
         409,
@@ -3437,7 +3435,7 @@ test(
         200,
       );
       await pool.query("UPDATE turns SET source='user' WHERE id=$1", [laterTurn]);
-      await pool.query('UPDATE turns SET background=true WHERE id=$1', [turn.turnId]);
+      await pool.query('UPDATE turns SET background=true,session_id=id WHERE id=$1', [turn.turnId]);
       await payments.request(turn, { ...order, card: card.id });
       const parallelPayment = (await latest()).id;
       assert.equal(
@@ -3451,8 +3449,30 @@ test(
         ).statusCode,
         200,
       );
-      await pool.query('DELETE FROM turns WHERE id=$1', [laterTurn]);
-      await pool.query('UPDATE turns SET background=false WHERE id=$1', [turn.turnId]);
+      await payments.request(turn, { ...order, card: card.id });
+      const sessionPayment = (await latest()).id;
+      const sessionTurn = randomUUID();
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,background) VALUES($1,'local-development',$2,$3,true)",
+        [sessionTurn, turn.threadId, turn.turnId],
+      );
+      const beforeSession = { fills: fills.length, resumes: resumed.length };
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/payment-requests/${sessionPayment}`,
+            headers,
+            payload: { code: '737' },
+          })
+        ).statusCode,
+        409,
+      );
+      assert.deepEqual({ fills: fills.length, resumes: resumed.length }, beforeSession);
+      await pool.query('DELETE FROM turns WHERE id IN ($1,$2)', [laterTurn, sessionTurn]);
+      await pool.query('UPDATE turns SET background=false,session_id=thread_id WHERE id=$1', [
+        turn.turnId,
+      ]);
       const beforeCancelled = { fills: fills.length, resumes: resumed.length };
       await payments.request(turn, { ...order, card: card.id });
       const stoppedPayment = (await latest()).id;
@@ -3573,7 +3593,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       },
       new AbortController().signal,
     );
-  assert.equal(verificationCode((await read())!, request), '381742');
+  assert.equal(verificationCode((await read())!, request)?.code, '381742');
   assert.equal(calls.length, 2);
   sender = 'Attacker <sender@unrelated.example.org>';
   auth = 'mx.google.com; dmarc=pass header.from=unrelated.example.org';
@@ -3623,7 +3643,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
     },
   ];
   const unquoted = (await read())![0];
-  assert.equal(verificationCode([unquoted], request), '381742');
+  assert.equal(verificationCode([unquoted], request)?.code, '381742');
   assert.doesNotMatch(unquoted.text, /999999|999998/);
   parts = undefined;
   mimeType = 'text/plain';
@@ -3668,7 +3688,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
   mimeType = 'text/html';
   body =
     '<p>Your verification code is <b>381742</b>.</p><script>security code 930184</script><blockquote>Your verification code is 999999.</blockquote><div class="gmail_quote">Your verification code is 999998.</div>';
-  assert.equal(verificationCode((await read())!, request), '381742');
+  assert.equal(verificationCode((await read())!, request)?.code, '381742');
   mimeType = 'multipart/mixed';
   for (const attachment of [
     {
@@ -3848,12 +3868,15 @@ test(
         read++;
         assert.equal(request.recipient, username);
         assert.equal(request.origin, origin);
-        assert.ok(request.after > Date.now() - 35_000);
+        assert.ok(request.after > Date.now() - 5 * 60_000 - 35_000);
         assert.ok(request.before <= Date.now());
         assert.equal(signal.aborted, false);
+        const receivedAt = Date.now();
         await lookup?.();
-        const found = emails ? verificationCode(emails, request) : resultCode;
-        return found ? { code: found, current: async () => available } : undefined;
+        const found = emails
+          ? verificationCode(emails, request)
+          : resultCode && { code: resultCode, receivedAt };
+        return found ? { ...found, current: async () => available } : undefined;
       },
     });
     const randomKey = randomBytes(32);
@@ -4074,32 +4097,54 @@ test(
       assert.equal(await fill(id), false, id);
       assert.equal(read, before, id);
     }
-    for (const [id, offset] of [
-      ['stale-direct-email', -6 * 60_000],
-      ['future-direct-email', 60_000],
+    const future = await begin('future-direct-email');
+    await pool.query('UPDATE turns SET started_at=$2 WHERE id=$1', [
+      future.turnId,
+      new Date(Date.now() + 60_000),
+    ]);
+    const beforeFuture: number = read;
+    assert.equal(await fill('future-direct-email'), false);
+    assert.equal(read, beforeFuture);
+    for (const [id, startedAgo, receivedAgo, filled] of [
+      ['long-turn-direct-email', 6, 1, true],
+      ['old-code-direct-email', 10, 6, false],
+      ['before-turn-direct-email', 3, 4, false],
     ] as const) {
       const turn = await begin(id);
       await pool.query('UPDATE turns SET started_at=$2 WHERE id=$1', [
         turn.turnId,
-        new Date(Date.now() + offset),
+        new Date(Date.now() - startedAgo * 60_000),
       ]);
-      const before: number = read;
-      assert.equal(await fill(id), false, id);
-      assert.equal(read, before, id);
+      emails = [
+        {
+          ...message,
+          id: `${id}-code`,
+          receivedAt: Date.now() - receivedAgo * 60_000,
+          text: `Your verification code is ${currentCode}.`,
+        },
+      ];
+      const before = injected.length;
+      assert.equal(await fill(id), filled, id);
+      assert.equal(injected.length, before + (filled ? 1 : 0), id);
     }
+    assert.equal(injected.at(-1)?.code, currentCode);
+    emails = undefined;
+    await begin('expired-direct-email');
+    lookup = async () => {
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 6 * 60_000 });
+    };
+    const beforeExpired = injected.length;
+    try {
+      assert.equal(await fill('expired-direct-email'), false);
+    } finally {
+      t.mock.timers.reset();
+    }
+    assert.equal(injected.length, beforeExpired);
     for (const [id, change] of [
       [
         'cancelled-direct-email',
         async (turn: TurnRef) => {
           await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
-        },
-      ],
-      [
-        'expired-direct-email',
-        async (turn: TurnRef) => {
-          await pool.query("UPDATE turns SET started_at=now()-interval '6 minutes' WHERE id=$1", [
-            turn.turnId,
-          ]);
         },
       ],
       [

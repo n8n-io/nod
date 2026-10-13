@@ -74,10 +74,10 @@ const input = z
   .strict();
 
 const currencies = new Set(Intl.supportedValuesOf('currency'));
-const currentTurnSql = `u.status IN ('running','waiting') AND (u.background OR NOT EXISTS(
+const currentTurnSql = `u.status IN ('running','waiting') AND NOT EXISTS(
   SELECT 1 FROM turns newer WHERE newer.owner_id=u.owner_id AND newer.thread_id=u.thread_id
-    AND newer.id<>u.id AND NOT newer.background AND newer.source='user'
-    AND newer.created_at>=u.created_at))`;
+    AND newer.id<>u.id AND newer.session_id=u.session_id AND newer.source='user'
+    AND newer.created_at>=u.created_at)`;
 
 function digits(currency: string) {
   if (!currencies.has(currency))

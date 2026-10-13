@@ -5,7 +5,7 @@ import { initialStreamState, streamReducer } from '../lib/streams';
 import { pageDataCache } from '../lib/page-data-cache';
 import { subscribeAppEvents } from '../lib/app-events';
 
-export function useAppState(accountId?: string) {
+export function useAppState(accountId?: string, stateTimeout = 30_000) {
   const [state, setState] = useState<AppState | null>(null);
   const [streamState, dispatchStream] = useReducer(streamReducer, initialStreamState);
   const [error, setError] = useState('');
@@ -16,7 +16,7 @@ export function useAppState(accountId?: string) {
   const resetRequest = useRef<Promise<string> | null>(null);
   const active = useRef(false);
   const stateRequest = useRef<Promise<void> | null>(null);
-  const nextStateRequest = useRef<Promise<void> | null>(null);
+  const queuedStateRequest = useRef<Promise<void> | null>(null);
   const advanceThread = useCallback((next: string) => {
     if (next === threadId.current) return;
     if (threadId.current) {
@@ -41,7 +41,9 @@ export function useAppState(accountId?: string) {
   const load = useCallback(async () => {
     const version = requestVersion.current;
     try {
-      const next = await api<AppState>('/api/state');
+      const next = await api<AppState>('/api/state', {
+        signal: AbortSignal.timeout(stateTimeout),
+      });
       if (!active.current || version !== requestVersion.current) return;
       if (retiredThreads.current.has(next.threadId)) return;
       advanceThread(next.threadId);
@@ -58,20 +60,24 @@ export function useAppState(accountId?: string) {
     } catch (cause) {
       if (active.current && version === requestVersion.current) setError(errorMessage(cause));
     }
-  }, [advanceThread]);
+  }, [advanceThread, stateTimeout]);
   const refresh = useCallback((): Promise<void> => {
     if (!active.current) return Promise.resolve();
-    if (!stateRequest.current) {
-      const request = load().finally(() => {
-        stateRequest.current = null;
-      });
-      stateRequest.current = request;
-      return request;
-    }
-    return (nextStateRequest.current ??= stateRequest.current.then(() => {
-      nextStateRequest.current = null;
-      return refresh();
-    }));
+    if (queuedStateRequest.current) return queuedStateRequest.current;
+    const previous = stateRequest.current;
+    const request: Promise<void> = (
+      previous
+        ? previous.then(() => {
+            queuedStateRequest.current = null;
+            return active.current ? load() : undefined;
+          })
+        : load()
+    ).finally(() => {
+      if (stateRequest.current === request) stateRequest.current = null;
+    });
+    stateRequest.current = request;
+    if (previous) queuedStateRequest.current = request;
+    return request;
   }, [load]);
 
   const resetConversation = useCallback(

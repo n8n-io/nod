@@ -1076,6 +1076,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return rows.length === 1 ? rows[0] : undefined;
   }
 
+  function emailCodeSince(selected: SelectionRow | undefined, turnStarted?: Date | null) {
+    const now = Date.now();
+    const start = (selected ? selected.credential_entered_at : turnStarted)?.getTime();
+    if (!start || start > now) return;
+    if (!selected) return Math.max(start, now - 5 * 60_000);
+    if (now - start <= 5 * 60_000 && selected.expires_at.getTime() > now) return start;
+  }
+
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
     return (await turnChain(database, ownerId, turn)).origin?.id;
   }
@@ -1420,12 +1428,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             : undefined;
         if (source.kind === 'email') {
           if (
-            Date.now() - source.enteredAt > 5 * 60_000 ||
             (source.selected
               ? selected?.id !== source.selected.id ||
-                selected.expires_at.getTime() <= Date.now() ||
                 selected.credential_entered_at?.getTime() !== source.enteredAt
-              : selected !== undefined || active?.started_at?.getTime() !== source.enteredAt) ||
+              : selected !== undefined) ||
+            source.code.receivedAt <
+              (emailCodeSince(selected, active?.started_at) ?? Infinity) - 30_000 ||
             !(await source.code.current(client))
           )
             throw new VaultError('This verification step changed.', 409);
@@ -1777,16 +1785,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const root = started ? await rootTurn(pool, turn, ownerId) : undefined;
       if (!root) return false;
       const selected = await selection(root, ownerId, origin);
-      const enteredAt = (
-        selected ? selected.credential_entered_at : started?.started_at
-      )?.getTime();
-      if (
-        !enteredAt ||
-        Date.now() - enteredAt > 5 * 60_000 ||
-        enteredAt > Date.now() ||
-        (selected && selected.expires_at.getTime() <= Date.now())
-      )
-        return false;
+      const enteredAt = emailCodeSince(selected, started?.started_at);
+      if (!enteredAt) return false;
       if (await automaticUse(pool, root, origin, 'otp', null, enteredAt)) return false;
       const fresh = await inspectRequest(browserOf(turn), raw);
       const shown = fresh.input.emailRecipient?.toLowerCase();

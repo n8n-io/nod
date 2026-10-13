@@ -12,6 +12,7 @@ export interface EmailCodeRequest {
 
 export interface PrivateEmailCode {
   code: string;
+  receivedAt: number;
   current(database?: Pick<PoolClient, 'query'>): Promise<boolean>;
 }
 
@@ -58,7 +59,7 @@ export function verificationSenderDomain(origin: string) {
 export function verificationCode(messages: VerificationEmail[], input: EmailCodeRequest) {
   const domain = verificationSenderDomain(input.origin);
   if (!domain || messages.length > 5) return;
-  const matches: string[] = [];
+  const matches: Array<{ code: string; receivedAt: number }> = [];
   for (const message of messages) {
     const authenticatedDomain = verificationSenderDomain(`https://${message.authenticatedDomain}`);
     const senderDomain = verificationSenderDomain(`https://${message.sender.split('@')[1]}`);
@@ -87,7 +88,7 @@ export function verificationCode(messages: VerificationEmail[], input: EmailCode
       if (codes.size > 1) return;
       continue;
     }
-    matches.push([...codes][0]);
+    matches.push({ code: [...codes][0], receivedAt: message.receivedAt });
   }
   return matches.length === 1 ? matches[0] : undefined;
 }

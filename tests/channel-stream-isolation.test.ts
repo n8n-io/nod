@@ -505,7 +505,7 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   assert.deepEqual(saved.at(-1)!.cursor, latestChatReadCursor([unreadMessage(2)]));
 });
 
-test('a burst of refresh events during a state request applies one newer state without aborting', async (t) => {
+test('a burst of refresh events during a state request applies one newer state without aborting, and a stalled request times out', async (t) => {
   const { JSDOM } = await import('jsdom');
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
@@ -541,9 +541,10 @@ test('a burst of refresh events during a state request applies one newer state w
           capabilities: { developer: false },
         });
       assert.equal(path, '/api/state');
-      return new Promise<Response>((resolve) =>
-        requests.push({ signal: init.signal, resolve: (state) => resolve(Response.json(state)) }),
-      );
+      return new Promise<Response>((resolve, reject) => {
+        requests.push({ signal: init.signal, resolve: (state) => resolve(Response.json(state)) });
+        init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+      });
     },
   };
   const descriptors = Object.keys(fixtures).map(
@@ -571,11 +572,11 @@ test('a burst of refresh events during a state request applies one newer state w
   const { useAppState } = await import('../src/web/hooks/use-app-state.ts');
   await sessionStore.refresh();
   let result!: ReturnType<typeof useAppState>;
-  function Probe() {
-    result = useAppState('synthetic-owner');
+  function Probe({ timeout }: { timeout?: number }) {
+    result = useAppState('synthetic-owner', timeout);
     return null;
   }
-  await act(async () => root.render(createElement(Probe)));
+  await act(async () => root.render(createElement(Probe, {})));
   const threadId = randomUUID();
   const source = sources.at(-1)!;
   await act(async () => {
@@ -604,4 +605,21 @@ test('a burst of refresh events during a state request applies one newer state w
     result.state?.messages.map((message) => message.id),
     [unreadMessage(1).id, unreadMessage(2).id],
   );
+  await act(async () => root.render(createElement(Probe, { timeout: 300 })));
+  assert.equal(requests.length, 3);
+  await act(async () => sources.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'refresh' }) }));
+  const followed = result.refresh();
+  assert.equal(requests.length, 3);
+  await act(async () => until(() => requests.length === 4));
+  assert.equal(requests[2].signal?.aborted, true);
+  await act(async () => {
+    requests[3].resolve(appState(threadId, [unreadMessage(3)]));
+    await followed;
+  });
+  assert.equal(requests.length, 4);
+  assert.deepEqual(
+    result.state?.messages.map((message) => message.id),
+    [unreadMessage(3).id],
+  );
+  assert.equal(result.error, '');
 });

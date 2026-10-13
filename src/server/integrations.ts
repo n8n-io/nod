@@ -1583,7 +1583,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const code = verificationCode(messages, { ...input, recipient });
       return code
         ? {
-            code,
+            ...code,
             current: async (database?: Pick<PoolClient, 'query'>) =>
               !signal.aborted && (await current(database)),
           }
