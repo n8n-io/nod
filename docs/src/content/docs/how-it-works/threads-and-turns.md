@@ -91,16 +91,16 @@ sequenceDiagram
   Note over C: Next chat turn sees them
 ```
 
-|             | Chat                       | Schedule and event sessions                                                              |
-| ----------- | -------------------------- | ---------------------------------------------------------------------------------------- |
-| Key         | The thread ID              | The session's first turn                                                                 |
-| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                                |
-| Pi session  | The thread's saved session | A new in-memory session per turn                                                         |
-| Context     | The full conversation      | Turns from any session that finished before the trigger, plus the session's own messages |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                            |
-| Browser     | The thread's browser       | Its own browser, deleted when the session ends                                           |
+|             | Chat                       | Schedule and event sessions                                                  |
+| ----------- | -------------------------- | ---------------------------------------------------------------------------- |
+| Key         | The thread ID              | The session's first turn                                                     |
+| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                    |
+| Pi session  | The thread's saved session | A new in-memory session per turn                                             |
+| Context     | The full conversation      | Chat turns that finished before the trigger, plus the session's own messages |
+| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message` calls.                |
+| Browser     | The thread's browser       | Its own browser, deleted when the session ends                               |
 
-When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
+When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. A schedule or event session never sees another schedule or event session's messages. It still learns how many of Otto's messages, from any session, you haven't answered since your last message, so it can stay quiet when you aren't replying. All sessions share the workspace, so files one writes are there for the others.
 
 ## Subagents
 

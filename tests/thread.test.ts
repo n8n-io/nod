@@ -1233,6 +1233,11 @@ test(
           await ran(active.turnId)!.reply('Checking the synthetic meeting time.');
           const queued = await thread.submitUserMessage('A separate queued calendar fixture');
           try {
+            const other = await thread.enqueueTurn('Another synthetic background fixture', {
+              source: 'event',
+              sourceId: `other-event:${randomUUID()}`,
+            });
+            await waitFor(settled(other));
             const event = await thread.enqueueTurn('Inspect a synthetic calendar event', {
               source: 'event',
               sourceId: `calendar-event:${randomUUID()}`,
@@ -1249,12 +1254,19 @@ test(
               'A separate queued calendar fixture',
               'ask-question',
               'Which account should I use?',
+              'done: Another synthetic background fixture',
             ])
               assert.ok(!recent.includes(text), text);
+            assert.equal(ran(event)!.unanswered?.messages, 1);
             release(pending);
             await waitFor(settled(queued.turnId));
             const later = await thread.submitUserMessage('A newer completed calendar fixture');
             await waitFor(settled(later.turnId));
+            assert.ok(
+              ran(later.turnId)!.history.some(
+                (message) => message.text === 'done: Another synthetic background fixture',
+              ),
+            );
             const client = await db.pool.connect();
             let delayed: string;
             try {
@@ -3146,6 +3158,10 @@ test(
             assert.equal(artifact.text, '');
             const unrelated = await thread.enqueueTurn('ask-question', { source: 'event' });
             await waitFor(settled(unrelated));
+            const finished = await thread.enqueueTurn('Unrelated finished background fixture', {
+              source: 'event',
+            });
+            await waitFor(settled(finished));
             block(pending);
             active = await thread.submitUserMessage(pending);
             await waitFor(() => Boolean(ran(active!.turnId)));
@@ -3178,6 +3194,7 @@ test(
                 pending,
                 'Unrelated foreground progress.',
                 'Which account should I use?',
+                'done: Unrelated finished background fixture',
               ])
                 assert.ok(!history.some((message) => message.text === text), text);
               assert.equal(

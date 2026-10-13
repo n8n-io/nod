@@ -95,6 +95,7 @@ export interface RuntimeContext {
     attachments?: MessageAttachment[];
     unseen?: boolean;
   }>;
+  unanswered?: { messages: number; since: string | Date };
   personalContext?: {
     profile: { name: string; location: string; phone: string; preferences: string };
   };
