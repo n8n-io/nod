@@ -337,7 +337,7 @@ test(
         (client) => approvals.chat.accept(client, { ...input, answer }),
         db.pool,
       );
-      return result && 'supersededApprovalId' in result ? undefined : result;
+      return result;
     }
     async function execute(id: string, signal = new AbortController().signal) {
       const record = await stored(id);
@@ -350,7 +350,7 @@ test(
       await db.initializeDatabase();
       await thread.initializeThreads();
       await personal.initialize({ workers: false });
-      approvals = await createApprovals(
+      const approved = await createApprovals(
         async (action, args, context) => {
           calls.push({ action, args, context });
           if (executionGate) await executionGate;
@@ -362,9 +362,19 @@ test(
           if (rejectPreflight)
             throw Object.assign(new Error('Fixture account disconnected.'), { statusCode: 409 });
         },
-        async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
         (reply) => trust.answer(reply),
       );
+      const checked = (base: typeof approved): typeof approved => ({
+        ...base,
+        request: async (turn, action, args, options = {}) =>
+          base.request(turn, action, args, {
+            ...options,
+            allowed:
+              options.allowed ??
+              (!options.question && !(await trust.check(turn, action, args)).confirm),
+          }),
+      });
+      approvals = checked(approved);
       messages = thread.createUserMessageService({ confirmAction: approvals.chat });
       personal.registerRoutes(app);
       const tasks = createTasks({ pool: db.pool, ownerId });
@@ -418,7 +428,6 @@ test(
           'GMAIL_SEND_EMAIL',
           { ...args },
           {
-            confirm: true,
             question: appActionConfirmation(
               'GMAIL_SEND_EMAIL',
               { ...args },
@@ -590,7 +599,6 @@ test(
           );
           await assert.rejects(
             approvals.request(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test'), {
-              confirm: true,
               question: 'Send?',
             }),
             /read-only/,
@@ -819,13 +827,11 @@ test(
 
           const asked = await begin('Email the synthetic notes to the team.');
           await approvals.request(asked, 'GMAIL_SEND_EMAIL', email('team@example.test'), {
-            confirm: true,
             question: 'Send the notes?',
           });
           const seen = await proposal(asked.turnId);
           const background = await begin('Synthetic background event', { source: 'event' });
           await approvals.request(background, 'GMAIL_SEND_EMAIL', email('outsider@example.test'), {
-            confirm: true,
             question: 'Send this?',
           });
           const unseen = await proposal(background.turnId);
@@ -894,7 +900,7 @@ test(
           const args = { kind: 'preference', text: 'Prefers short reports.' };
           const before = calls.length;
           const result = await approvals.request(turn, 'OTTO_memory_save', args, {
-            confirm: true,
+            allowed: false,
           });
           assert.equal(result.requiresConfirmation, true);
           const pending = await proposal(turn.turnId);
@@ -976,7 +982,6 @@ test(
           );
           assert.equal(calls.length, before + 1);
           assert.equal(calls.at(-1)?.context.sourceMessageId, sourceMessageId);
-          assert.equal(calls.at(-1)?.context.sourceTurnId, turn.turnId);
           assert.equal((await proposal(turn.turnId)).source_message_id, sourceMessageId);
           assert.equal(await assistantMessages(turn.turnId), 0);
         }
@@ -1021,7 +1026,7 @@ test(
             if (source === 'readOnly') {
               await assert.rejects(
                 approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
-                /read-only/,
+                /read-only|only read/,
               );
               assert.equal(await proposal(turn.turnId), undefined);
             } else {
@@ -1090,7 +1095,7 @@ test(
           if (source === 'readOnly') {
             await assert.rejects(
               approvals.request(turn, 'OTTO_schedule_create', sourceArgs),
-              /read-only/,
+              /read-only|only read/,
             );
             assert.equal(await proposal(turn.turnId), undefined);
           } else {
@@ -1116,7 +1121,7 @@ test(
             ...(mutation.includes('$1') ? [turn.turnId] : []),
           ]);
           await assert.rejects(
-            approvals.request(turn, 'OTTO_schedule_create', args),
+            approvals.request(turn, 'OTTO_schedule_create', args, { allowed: true }),
             /direct request|no longer active/,
           );
           assert.equal(await proposal(turn.turnId), undefined);
@@ -1137,7 +1142,7 @@ test(
             if (source === 'readOnly') {
               await assert.rejects(
                 approvals.request(turn, 'OTTO_schedule_create', args),
-                /read-only/,
+                /read-only|only read/,
               );
               assert.equal(await proposal(turn.turnId), undefined);
             } else {
@@ -1166,7 +1171,12 @@ test(
             const turn = await begin('Please pause my schedule.');
             await db.pool.query(mutation, [turn.turnId]);
             await assert.rejects(
-              approvals.request(turn, 'OTTO_schedule_update', { id: randomUUID(), enabled: false }),
+              approvals.request(
+                turn,
+                'OTTO_schedule_update',
+                { id: randomUUID(), enabled: false },
+                { allowed: true },
+              ),
               /direct request|no longer active/,
             );
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1293,7 +1303,6 @@ test(
             });
             assert.equal((await row(revised.turnId)).source, 'user');
             assert.equal((await stored(id)).status, 'expired');
-            assert.equal((await stored(id)).confirmation_reply_id, revised.messageId);
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(await running(revised.turnId), 'OTTO_profile_update', {
@@ -1328,7 +1337,6 @@ test(
           );
           assert.equal((await row(result.turnId)).source, 'user');
           assert.equal((await stored(id)).status, 'expired');
-          assert.equal((await stored(id)).confirmation_reply_id, result.messageId);
           assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
           const revised = await running(result.turnId);
@@ -1564,6 +1572,7 @@ test(
         async () => {
           const before = calls.length;
           const args = { preferences: 'Fixture preference.' };
+          const allowed = { allowed: true };
           for (const mutation of [
             'UPDATE turns SET read_only=true WHERE id=$1',
             "UPDATE turns SET owner_id='foreign' WHERE id=$1",
@@ -1572,7 +1581,7 @@ test(
             const origin = await begin('Update my preferences.', { source: 'event' });
             await db.pool.query(mutation, [origin.turnId]);
             await assert.rejects(
-              approvals.request(origin, 'OTTO_profile_update', args),
+              approvals.request(origin, 'OTTO_profile_update', args, allowed),
               /read-only|no longer active/,
             );
             assert.equal(await proposal(origin.turnId), undefined);
@@ -1582,7 +1591,10 @@ test(
             legacy.turnId,
           ]);
           await db.initializeDatabase();
-          await assert.rejects(approvals.request(legacy, 'OTTO_profile_update', args), /read-only/);
+          await assert.rejects(
+            approvals.request(legacy, 'OTTO_profile_update', args, allowed),
+            /read-only/,
+          );
           for (const mutation of [
             'UPDATE turns SET read_only=true WHERE id=$1',
             "UPDATE turns SET owner_id='foreign' WHERE id=$1",
@@ -1591,24 +1603,29 @@ test(
             const resumed = await afterCredentials(origin.turnId);
             await db.pool.query(mutation, [origin.turnId]);
             await assert.rejects(
-              approvals.request(resumed, 'OTTO_profile_update', args),
+              approvals.request(resumed, 'OTTO_profile_update', args, allowed),
               /read-only|direct request/,
             );
             assert.equal(await proposal(resumed.turnId), undefined);
           }
           const onboarding = await begin('Update my preferences.', { source: 'readOnly' });
           await assert.rejects(
-            approvals.request(onboarding, 'OTTO_profile_update', args),
+            approvals.request(onboarding, 'OTTO_profile_update', args, allowed),
             /read-only/,
           );
           const turn = await begin('Update my preferences.', { source: 'event' });
           await assert.rejects(
-            approvals.request({ ...turn, threadId: randomUUID() }, 'OTTO_profile_update', args),
+            approvals.request(
+              { ...turn, threadId: randomUUID() },
+              'OTTO_profile_update',
+              args,
+              allowed,
+            ),
             /no longer running/,
           );
           rejectPreflight = true;
           try {
-            await assert.rejects(approvals.request(turn, 'OTTO_profile_update', args), {
+            await assert.rejects(approvals.request(turn, 'OTTO_profile_update', args, allowed), {
               statusCode: 409,
             });
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1639,6 +1656,10 @@ test(
             /direct request/,
           );
           assert.equal(await proposal(generic.turnId), undefined);
+          aligned = true;
+          await trust.check(generic, 'GMAIL_SEND_EMAIL', email('owner@example.test'));
+          assert.equal(reviews.at(-1)?.userMessages, undefined);
+          aligned = false;
           await db.pool.query(
             "UPDATE turns SET status='succeeded',finished_at=now() WHERE status IN ('queued','running')",
           );
@@ -1695,13 +1716,15 @@ test(
       await t.test(
         'a confirmed notification preference continues the requested daily digest into a real schedule',
         async () => {
-          const digestApprovals = await createApprovals(
-            (action, args, context) => personal.manage(action.replace(/^OTTO_/, ''), args, context),
-            async (action, args) => {
-              await personal.validateReview(action.replace(/^OTTO_/, ''), args);
-            },
-            async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
-            (reply) => trust.answer(reply),
+          const digestApprovals = checked(
+            await createApprovals(
+              (action, args, context) =>
+                personal.manage(action.replace(/^OTTO_/, ''), args, context),
+              async (action, args) => {
+                await personal.validateReview(action.replace(/^OTTO_/, ''), args);
+              },
+              (reply) => trust.answer(reply),
+            ),
           );
           const digestMessages = thread.createUserMessageService({
             confirmAction: digestApprovals.chat,
@@ -2059,6 +2082,7 @@ test(
               { threadId: foreignThread.id, turnId: foreignTurn },
               'OTTO_profile_update',
               { preferences: 'Foreign fact' },
+              { allowed: true },
             ),
             { statusCode: 409 },
           );
@@ -2200,7 +2224,7 @@ test(
               }),
             db.pool,
           );
-          assert.ok(forged && 'supersededApprovalId' in forged);
+          assert.equal(forged, undefined);
           assert.equal((await stored(first.id)).status, 'expired');
           const second = await ask();
           await transaction(

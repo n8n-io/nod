@@ -54,15 +54,6 @@ export interface RuntimeAccount {
   email: string | null;
 }
 
-export type ActivityCheckResult =
-  | {
-      status: 'verified';
-      value: string;
-      summary: string;
-      finding?: { id: string; version?: string; url?: string; summary: string };
-    }
-  | { status: 'unavailable'; summary: string };
-
 export interface RuntimeContext {
   threadId: string;
   turnId: string;
@@ -71,12 +62,6 @@ export interface RuntimeContext {
   prompt: string;
   background?: boolean;
   readOnly?: boolean;
-  limits?: { maxToolCalls: number; timeoutMs: number };
-  activityCheck?: {
-    connectionId: string;
-    previous?: { checkedAt: string; value: string; summary: string };
-    record(result: ActivityCheckResult, signal?: AbortSignal): Promise<void>;
-  };
   channel?: string;
   timeZone?: string;
   locale?: string;

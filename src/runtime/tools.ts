@@ -27,7 +27,6 @@ export const personalActions = [
   'schedule_create',
   'schedule_update',
   'schedule_cancel',
-  'schedule_record_observation',
   'usage_get',
 ] as const;
 
@@ -101,27 +100,6 @@ function defineTool<const N extends string, P extends TSchema>(
   return { name, description, parameters: rootObject(parameters), strict: parameters };
 }
 
-export const scheduleObservation = Type.Union([
-  Type.Object(
-    {
-      status: Type.Literal('verified'),
-      sourceUrl: Type.String(),
-      value: Type.String({ maxLength: 300 }),
-      summary: Type.String({ maxLength: 500 }),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      status: Type.Literal('unavailable'),
-      sourceUrl: Type.String(),
-      value: Type.Null(),
-      summary: Type.String({ maxLength: 500 }),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
 const taskNow = Type.String({ minLength: 1, maxLength: 200 });
 const taskWaits = Type.Array(
   Type.Object(
@@ -137,39 +115,6 @@ const taskNextCheck = Type.String({
   pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$',
   description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
 });
-
-const activityCheckTool = defineTool(
-  'record_activity_check',
-  'Record this read-only activity check once. verified requires a successful read from the selected account; include at most one useful finding with its stable source ID. Use unavailable when the source could not be inspected. This does not notify the user or prepare work.',
-  Type.Union([
-    Type.Object(
-      {
-        status: Type.Literal('verified'),
-        value: Type.String({ minLength: 1, maxLength: 300 }),
-        summary: Type.String({ minLength: 1, maxLength: 500 }),
-        finding: Type.Optional(
-          Type.Object(
-            {
-              id: Type.String({ minLength: 1, maxLength: 300 }),
-              version: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
-              url: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
-              summary: Type.String({ minLength: 1, maxLength: 500 }),
-            },
-            { additionalProperties: false },
-          ),
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        status: Type.Literal('unavailable'),
-        summary: Type.String({ minLength: 1, maxLength: 500 }),
-      },
-      { additionalProperties: false },
-    ),
-  ]),
-);
 
 export const toolDefinitions = {
   skills: defineTool(
@@ -424,7 +369,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, schedules, notification preferences, memory and earlier conversation. profile_get reads the profile; profile_update is for explicit requests to edit profile fields, not learning ordinary preferences. Store communication, language and writing-style preferences with memory_save in the preferences area. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves a concise non-sensitive personal fact, preference or routine supported by the owner’s messages without asking; unsupported or unverifiable notes return skipped without saving; continue the task without requesting confirmation; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. Do not announce saves or show memory notices. Answer explicit questions and requests about memory honestly. An existing slug adds evidence only for the same text. Save an additional fact or exception with a distinct new slug. Use replace:true only for a correction that preserves details still valid; do not replace a whole routine with only its exception. After a skipped synthesis, memory_learn may retain a qualifying complete current statement verbatim under the same source and sensitive-topic restrictions. For both memory_learn and memory_save, save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when sensitiveTopics is allowed in memory or the user explicitly asks to remember that information. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; profile_learn {field, value, quote}; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (things done, people reached, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
+    "The user's profile, schedules, notification preferences, memory and earlier conversation. profile_get reads the profile; profile_update is for explicit requests to edit profile fields, not learning ordinary preferences. Store communication, language and writing-style preferences with memory_save in the preferences area. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves a concise non-sensitive personal fact, preference or routine supported by the owner’s messages without asking; unsupported or unverifiable notes return skipped without saving; continue the task without requesting confirmation; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. Do not announce saves or show memory notices. Answer explicit questions and requests about memory honestly. An existing slug adds evidence only for the same text. Save an additional fact or exception with a distinct new slug. Use replace:true only for a correction that preserves details still valid; do not replace a whole routine with only its exception. After a skipped synthesis, memory_learn may retain a qualifying complete current statement verbatim under the same source and sensitive-topic restrictions. For both memory_learn and memory_save, save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when sensitiveTopics is allowed in memory or the user explicitly asks to remember that information. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; profile_learn {field, value, quote}; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (things done, people reached, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -532,7 +477,7 @@ export function ottoTools(
     await pause('question', text(url));
     return 'Waiting for the user to sign in.';
   };
-  const tools = [
+  return [
     ...(skills
       ? [
           bind(toolDefinitions.skills, async (p) =>
@@ -711,13 +656,9 @@ export function ottoTools(
           `I need access to your ${name} account for this task. [Connect ${name}](${url}) and I will continue here.`,
       );
     }),
-    bind(toolDefinitions.manage_personal_context, async (p) => {
-      if (p.action !== 'schedule_record_observation')
-        return confirm(await context.manage(p.action, p.args));
-      if (!Value.Check(scheduleObservation, p.args))
-        return 'schedule_record_observation needs {status, sourceUrl, value, summary}; value is null when unavailable.';
-      return context.manage(p.action, p.args);
-    }),
+    bind(toolDefinitions.manage_personal_context, async (p) =>
+      confirm(await context.manage(p.action, p.args)),
+    ),
     bind(toolDefinitions.task, async (p) => {
       if (!context.task) throw new Error('Tasks are unavailable.');
       return context.task(p);
@@ -729,18 +670,6 @@ export function ottoTools(
       return context.createAudio(p.text);
     }),
   ];
-  if (context.activityCheck) {
-    const check = context.activityCheck;
-    return [
-      ...tools.filter((tool) => tool.name === 'apps'),
-      bind(activityCheckTool, async (result) => {
-        signal.throwIfAborted();
-        await check.record(result, signal);
-        return 'Activity check recorded.';
-      }),
-    ];
-  }
-  return tools;
 }
 
 export function inspectToolCatalog(): AgentToolMetadata[] {

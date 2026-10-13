@@ -57,7 +57,7 @@ The `skills` tool has two actions:
 
 The system prompt tells the model to pick a guide by the task's purpose, the user's constraints and the required result. A compound task can load more than one guide. After compaction, the model can read a guide again.
 
-Read-only turns can load guides. Activity checks can't, because they're limited to app reads.
+Read-only turns can load guides.
 
 ## Add or change a guide
 

@@ -141,7 +141,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function manage(
     action: string,
     args: Record<string, unknown>,
-    provenance?: { sourceMessageId: string | null; turnId?: string; sourceTurnId?: string },
+    provenance?: { sourceMessageId: string | null; turnId?: string },
   ) {
     if (action === 'profile_learn') return learnProfileFact(args, provenance);
     if (action === 'notification_preferences_get') return preferences.get();
@@ -153,8 +153,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     if (action === 'profile_get') return getProfile();
     if (action === 'profile_update') return setProfile({ ...(await getProfile()), ...args });
     if (action === 'schedule_list') return schedules.list();
-    if (action === 'schedule_record_observation')
-      return schedules.recordObservation(provenance?.turnId ?? '', args);
     if (action === 'schedule_create') return schedules.create(args, provenance);
     if (action === 'schedule_update') {
       const { id, ...input } = args;

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { Agent } from '../ports/agent.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import { actionEffect } from '../shared/action-effect.ts';
-import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import type { TrustEntry, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
@@ -31,9 +31,9 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
       source: 'resume',
       title: id.startsWith('confirmation:') ? 'Ran an action you approved' : 'Continued a task',
     };
-  const source: TrustSource = row.read_only ? 'check' : 'event';
-  if (id.startsWith('activity-check:')) return { source, title: 'Checked a connected app' };
-  return { source, title: 'Woke for an email or app event' };
+  if (id.startsWith('activity-check:'))
+    return { source: 'check', title: 'Checked a connected app' };
+  return { source: 'event', title: 'Woke for an email or app event' };
 }
 
 export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
@@ -195,7 +195,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
 
   async function entries(before?: { at: string; id: string }) {
     const { rows } = await pool.query(
-      `SELECT u.id,u.source,u.source_id,u.read_only,u.channel,u.status,u.error,u.created_at,
+      `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
          left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.unpriced,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
          (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions

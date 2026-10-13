@@ -24,7 +24,6 @@ import {
 import { transaction } from './transaction.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
-import type { TriageIntent } from './triage.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { privateEmailResult } from './integration-result.ts';
@@ -108,9 +107,8 @@ type IntegrationOptions = {
   wake(
     prompt: string,
     eventId: string,
-    intent?: TriageIntent,
     current?: (client: PoolClient) => Promise<boolean>,
-  ): Promise<void>;
+  ): Promise<unknown>;
   provider: IntegrationProvider;
   additionalProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
@@ -118,7 +116,6 @@ type IntegrationOptions = {
     read: (signal: AbortSignal) => Promise<SentEmail[]>,
     stop: AbortSignal,
   ): Promise<void>;
-  validateActivityCheck?(turn: TurnRef, connectionId: string): Promise<void>;
   readWorkspaceFile?(turn: TurnRef, path: string, maxBytes: number): Promise<Uint8Array>;
   baseUrl: string;
   callbackReturnTo?: 'window';
@@ -268,7 +265,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
     ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,
-      ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'classify' CHECK(intent IN ('classify','inspect_message'));
+      DROP COLUMN IF EXISTS intent;
   `);
   const sessions = new Map<string, Promise<IntegrationSession>>();
   let sessionState: Promise<unknown> = Promise.resolve();
@@ -1191,7 +1188,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     args: Record<string, unknown>,
     turn?: TurnRef,
     signal?: AbortSignal,
-    checkConnectionId?: string,
   ) {
     if (
       action === 'CONNECTED_HTTP' ||
@@ -1206,23 +1202,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const row = await selectedConnection(ownerId, action, args);
     try {
       const { connectionId: _connectionId, ...providerArgs } = args;
-      const result = await withAccountSession(
-        ownerId,
-        providerForRow(row),
-        checkConnectionId ? row : undefined,
-        signal,
-        async (session) => {
-          if (checkConnectionId) await options.validateActivityCheck!(turn!, checkConnectionId);
-          const current = await selectedConnection(ownerId, action, args);
-          if (current.account_id !== row.account_id)
-            throw new Error('The selected account changed.');
-          signal?.throwIfAborted();
-          return session.execute(action, providerArgs, row.account_id!, signal, {
-            files: !checkConnectionId,
-          });
-        },
-      );
-      return result;
+      const session = await getSession(ownerId, providerForRow(row));
+      const current = await selectedConnection(ownerId, action, args);
+      if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
+      signal?.throwIfAborted();
+      return await session.execute(action, providerArgs, row.account_id!, signal);
     } catch (error) {
       throw new IntegrationError(failure('The app request failed', error), 502);
     }
@@ -1234,22 +1218,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     args: Record<string, unknown>,
     turn?: TurnRef,
     signal?: AbortSignal,
-    checkConnectionId?: string,
   ) {
     assertOwner(ownerId);
     signal?.throwIfAborted();
-    if (checkConnectionId) {
-      if (!turn || !options.validateActivityCheck)
-        throw new IntegrationError('This activity check is unavailable.');
-      await options.validateActivityCheck(turn, checkConnectionId);
-      signal?.throwIfAborted();
-      if (
-        action === 'CONNECTED_CLI' ||
-        (args.connectionId !== undefined && args.connectionId !== checkConnectionId)
-      )
-        throw new IntegrationError('This activity check can only read its selected account.');
-      args = { ...args, connectionId: checkConnectionId };
-    }
     if (
       action === 'CONNECTED_HTTP' ||
       action === 'CONNECTED_MCP_CALL' ||
@@ -1302,8 +1273,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               connectionId ? rows.find((row) => row.provider_id === item.id) : undefined,
               signal,
               async (session) => {
-                if (checkConnectionId)
-                  await options.validateActivityCheck!(turn!, checkConnectionId);
                 signal?.throwIfAborted();
                 return session.search(query, signal);
               },
@@ -1446,7 +1415,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       await prepare(ownerId, action, args, turn, signal),
       turn,
       signal,
-      checkConnectionId,
     );
   }
 
@@ -1641,8 +1609,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                   },
                 )}`;
                 await client.query(
-                  `INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id,intent)
-                 VALUES ($1,$2,$3,'gmail',$4,$5,$6,'inspect_message') ON CONFLICT(id) DO UPDATE SET poll_connection_id=EXCLUDED.poll_connection_id,intent=EXCLUDED.intent,
+                  `INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
+                 VALUES ($1,$2,$3,'gmail',$4,$5,$6) ON CONFLICT(id) DO UPDATE SET poll_connection_id=EXCLUDED.poll_connection_id,
                  state=CASE WHEN integration_events.state='discarded' THEN 'queued' ELSE integration_events.state END
                  WHERE integration_events.owner_id=EXCLUDED.owner_id AND integration_events.provider_id=EXCLUDED.provider_id
                  AND integration_events.account_id=EXCLUDED.account_id AND integration_events.state<>'delivered'`,
@@ -1709,14 +1677,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const { rows } = await pool.query<{
           id: string;
           summary: string;
-          intent: TriageIntent;
           claim: string;
         }>(
           `WITH next AS (SELECT e.id FROM integration_events e WHERE e.provider_id=$1 AND e.owner_id=$2 AND (e.state = 'queued' OR
            (e.state = 'processing' AND e.claimed_at < now() - interval '5 minutes')) AND EXISTS (${currentConnection})
            ORDER BY e.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
            UPDATE integration_events e SET state = 'processing', claimed_at = now() FROM next WHERE e.id = next.id
-           RETURNING e.id,e.summary,e.intent,e.claimed_at::text AS claim`,
+           RETURNING e.id,e.summary,e.claimed_at::text AS claim`,
           [providerId, configuredOwner],
         );
         const event = rows[0];
@@ -1734,7 +1701,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           );
         try {
           if (!(await current())) continue;
-          await options.wake(event.summary, event.id, event.intent, current);
+          await options.wake(event.summary, event.id, current);
           await pool.query(
             `UPDATE integration_events e SET state='delivered' WHERE e.id=$1 AND e.owner_id=$2
              AND e.state='processing' AND e.claimed_at=$3::timestamptz AND EXISTS (${currentConnection})`,
@@ -2001,7 +1968,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const messageId = slug.data === 'gmail' && messageIdentity(event.data, 'message');
         const summary = `Source connectionId: ${row.id}.\n${eventOverview(slug.data, event.trigger, event.data)}`;
         await pool.query(
-          'INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id,intent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING',
+          'INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING',
           [
             messageId
               ? inboxEventId(providerId, configuredOwner, row.account_id!, messageId)
@@ -2012,7 +1979,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             row.account_id,
             row.trigger_id,
             providerId,
-            messageId ? 'inspect_message' : 'classify',
           ],
         );
         void background(drain)?.catch(() => {});

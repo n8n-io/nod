@@ -385,12 +385,7 @@ export async function startStack(options: {
         await computer.discard?.(previousThreadId).catch(() => {});
       },
       async event(summary) {
-        const eventId = `eval:${randomUUID()}`;
-        await application!.triage.triageEvent(summary, eventId, 'inspect_message');
-        const result = await pool.query('SELECT turn_id FROM notifications WHERE event_id=$1', [
-          eventId,
-        ]);
-        const turnId = result.rows[0]?.turn_id as string | undefined;
+        const turnId = await application!.triage.triageEvent(summary, `eval:${randomUUID()}`);
         if (!turnId) throw new Error('The incoming event did not queue a background turn.');
         return turnId;
       },

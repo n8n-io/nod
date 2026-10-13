@@ -23,7 +23,7 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | ---------- | ------------------------------------------------------------------------------------------ | ---------------------- |
 | `user`     | A message from you                                                                         | The chat               |
 | `schedule` | A schedule firing                                                                          | A new session          |
-| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session          |
+| `event`    | A connected-app event, a check of an app without events, or a reaction to an Otto message  | A new session          |
 | `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
@@ -72,7 +72,7 @@ A message with attachments, a reply target or another channel stops the take. It
 
 A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
 
-Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn.
+Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it.
 
 ## Sessions
 
@@ -104,7 +104,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
-- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser. Read-only turns and activity checks can't delegate.
+- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser. Read-only turns can't delegate.
 - **Browsers.** A subagent's browser is deleted when it finishes.
 
 ## Every session has its own browser

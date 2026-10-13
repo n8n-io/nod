@@ -498,7 +498,6 @@ async function initializeApplication(
     baseUrl: publicOrigin,
     grantVault,
     transport: createDiscoveredTransport(),
-    accountReplaced: triage.invalidateActivityCheck,
     oauth: createDiscoveredOAuth(),
     runCli: workspace.connectedCliAvailable
       ? async (threadId, cli, args, envName, token, timeoutSeconds, signal) => {
@@ -527,7 +526,6 @@ async function initializeApplication(
     provider: adapters.integrations,
     readWorkspaceFile: (turn, path, maxBytes) =>
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
-    validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
     ...(adapters.directIntegrations
@@ -613,7 +611,6 @@ async function initializeApplication(
         await personal.validateReview(action.slice('OTTO_'.length), args);
       else await integrations.prepare(ownerId, action, args);
     },
-    async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
     (reply) => trust.answer(reply),
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
@@ -669,7 +666,6 @@ async function initializeApplication(
     if (access.ok) return { reason: access.reason };
     if ('message' in access) throw new Error(access.message);
     const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
-      confirm: true,
       question: access.question,
     });
     if (result && typeof result === 'object' && 'requiresConfirmation' in result)
@@ -723,7 +719,6 @@ async function initializeApplication(
       inspectPrompt: adapters.inspectPrompt,
       accountProfile,
       connectedApps: integrations.connectedApps,
-      activityCheck: triage.activityCheck,
       memoryContext: memory.context,
       task: async (turn, input) => {
         const result = await withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input));
@@ -764,7 +759,11 @@ async function initializeApplication(
             const schedule = await personal.getSchedule(String(input.id));
             if (!schedule.enabled) return schedule;
           }
-          return approvals.request(turn, `OTTO_${action}`, input, provenance);
+          const verdict = await trust.check(turn, `OTTO_${action}`, input);
+          return approvals.request(turn, `OTTO_${action}`, input, {
+            ...provenance,
+            allowed: !verdict.confirm,
+          });
         }
         if (action === 'memory_save') {
           const input = memory.validate(args);
@@ -790,10 +789,7 @@ async function initializeApplication(
       paymentSetting: async (turn, input) => {
         const { args, question } = await payments.requestSetting(turn, input);
         if (!args.doItForMe) return payments.setting(turn, args, true);
-        const result = await approvals.request(turn, 'OTTO_payment_setting', args, {
-          confirm: true,
-          question,
-        });
+        const result = await approvals.request(turn, 'OTTO_payment_setting', args, { question });
         if (result && typeof result === 'object' && 'requiresConfirmation' in result)
           return { [appConfirmation]: String(result.question) };
         return String(result);
@@ -806,7 +802,7 @@ async function initializeApplication(
           turn,
           'OTTO_payment_approve',
           { paymentId: result.paymentId },
-          { confirm: true, question: result.question },
+          { question: result.question },
         );
         if (
           confirmation &&
@@ -886,7 +882,6 @@ async function initializeApplication(
           );
           const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
           const result = await approvals.request(turn, action, prepared, {
-            confirm: true,
             question: appActionConfirmation(
               action,
               prepared,
@@ -905,14 +900,7 @@ async function initializeApplication(
             ? { [appConfirmation]: result.question }
             : result;
         }
-        const result = await integrations.execute(
-          ownerId,
-          action,
-          args,
-          turn,
-          options?.signal,
-          options?.checkConnectionId,
-        );
+        const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
         await ledger.action(turn.turnId, action, args);
         return result;
       },

@@ -36,7 +36,6 @@ export interface IntegrationSession {
     args: Record<string, unknown>,
     accountId?: string,
     signal?: AbortSignal,
-    options?: { files?: boolean },
   ): Promise<unknown>;
   upload?(
     action: string,

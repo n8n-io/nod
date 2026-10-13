@@ -5,7 +5,6 @@ import { z } from 'zod';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import type { TurnRef } from './thread.ts';
-import { parentTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 
@@ -200,7 +199,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
   async function inherit(turn: TurnRef) {
     const parent = (
       await pool.query<{ id: string }>(
-        `SELECT t.id FROM turns u JOIN turns p ON p.id=${parentTurnSql('u')} AND p.owner_id=u.owner_id
+        `SELECT t.id FROM turns u JOIN turns p ON p.id=u.parent_turn_id AND p.owner_id=u.owner_id
          JOIN tasks t ON t.id=p.task_id AND t.owner_id=p.owner_id AND t.state='open'
          WHERE u.id=$1 AND u.owner_id=$2 AND u.task_id IS NULL`,
         [turn.turnId, ownerId],
