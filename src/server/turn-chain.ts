@@ -1,18 +1,53 @@
+import type { PoolClient } from 'pg';
 import type { TurnRef } from './thread.ts';
 
 export const browserOf = (turn: TurnRef) => turn.browserId ?? turn.threadId;
 
+type ChainTurn = {
+  id: string;
+  thread_id: string;
+  source: string;
+  source_id: string | null;
+  message_id: string | null;
+  prompt: string;
+  read_only: boolean;
+  background: boolean;
+  channel: string;
+};
+
 export function parentTurnSql(alias = 'u') {
-  return `COALESCE(CASE WHEN ${alias}.source='resume' THEN substring(${alias}.source_id from '^(?:credentials|credentials-retry|connection|control):([0-9a-f-]{36})(?::|$)')::uuid END,
-      (SELECT a.turn_id FROM approvals a WHERE a.execution_turn_id=${alias}.id AND a.owner_id=${alias}.owner_id AND a.turn_id<>${alias}.id LIMIT 1))`;
+  return `CASE WHEN ${alias}.source='resume' THEN COALESCE(
+      substring(${alias}.source_id from '^(?:credentials|credentials-retry|connection):([0-9a-f-]{36})(?::|$)')::uuid,
+      (SELECT a.turn_id FROM approvals a WHERE a.execution_turn_id=${alias}.id AND a.owner_id=${alias}.owner_id AND a.turn_id<>${alias}.id LIMIT 1)) END`;
 }
 
-export function turnChainSql() {
+export async function turnChain(
+  database: Pick<PoolClient, 'query'>,
+  ownerId: string,
+  turn: Pick<TurnRef, 'turnId' | 'threadId'>,
+) {
   const link = parentTurnSql('u');
-  return `WITH RECURSIVE chain(id,next,thread_id) AS (
-    SELECT u.id,${link},u.thread_id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
-    UNION
-    SELECT u.id,${link},u.thread_id FROM chain c
-    JOIN turns u ON u.id=c.next AND u.owner_id=$2 AND u.thread_id=c.thread_id
-  )`;
+  const { rows } = await database.query<ChainTurn & { next: string | null }>(
+    `WITH RECURSIVE chain(id,next) AS (
+       SELECT u.id,${link} FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
+       UNION
+       SELECT u.id,${link} FROM chain c JOIN turns u ON u.id=c.next AND u.owner_id=$2 AND u.thread_id=$3
+     )
+     SELECT c.next,u.* FROM chain c JOIN turns u ON u.id=c.id`,
+    [turn.turnId, ownerId, turn.threadId],
+  );
+  const turns = new Map(rows.map((row) => [row.id, row]));
+  const chain: ChainTurn[] = [];
+  let id: string | null = turn.turnId;
+  while (id) {
+    const current = turns.get(id);
+    if (!current || chain.includes(current)) break;
+    chain.push(current);
+    id = current.next;
+  }
+  return {
+    chain,
+    origin: id ? undefined : chain.at(-1),
+    readOnly: chain.some((item) => item.read_only || item.source_id?.startsWith('onboarding:')),
+  };
 }

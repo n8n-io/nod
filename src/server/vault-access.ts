@@ -9,8 +9,7 @@ import type {
 } from '../shared/contracts.ts';
 import type { TrustReason } from './trust.ts';
 import type { TurnRef } from './thread.ts';
-import { turnOrigin } from './approvals.ts';
-import { turnChainSql } from './turn-chain.ts';
+import { turnChain } from './turn-chain.ts';
 import { credentialOrigin, VaultError } from './vault.ts';
 
 type Kind = 'sign_in' | 'session' | 'form';
@@ -41,7 +40,7 @@ function host(origin: string) {
   return new URL(origin).host;
 }
 
-type Chain = { id: string; ids: string[]; task: string };
+type Chain = { id: string; ids: string[]; task: string; source: string; readOnly: boolean };
 
 export async function createVaultAccess(
   pool: Pool,
@@ -68,19 +67,13 @@ export async function createVaultAccess(
     UPDATE vault_activity SET action='card' WHERE action='paid';
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
     DROP TABLE IF EXISTS vault_grants, vault_browser, vault_browser_holder;
-    DELETE FROM vault_activity WHERE at<now()-interval '90 days';
+    DELETE FROM vault_activity WHERE at<now()-interval '90 days' OR reason='injection';
   `);
 
   async function root(turn: TurnRef, database: Pool | PoolClient = pool): Promise<Chain> {
-    const { rows } = await database.query<{ id: string; prompt: string; ids: string[] }>(
-      `${turnChainSql()}
-       SELECT u.id,u.prompt,(SELECT array_agg(id) FROM chain) AS ids FROM chain c JOIN turns u ON u.id=c.id AND u.owner_id=$2
-       WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
-      [turn.turnId, ownerId, turn.threadId],
-    );
-    const row = rows[0];
-    if (!row) throw new Error('This turn is no longer running.');
-    const task = row.prompt
+    const { chain, origin, readOnly } = await turnChain(database, ownerId, turn);
+    if (!origin) throw new Error('This turn is no longer running.');
+    const task = origin.prompt
       .split('\n')[0]!
       .replace(/^Scheduled task:\s*/, '')
       .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -88,9 +81,11 @@ export async function createVaultAccess(
       .replace(/\s+/g, ' ')
       .trim();
     return {
-      id: row.id,
-      ids: row.ids,
+      id: origin.id,
+      ids: chain.map((item) => item.id),
       task: task.length > 120 ? `${task.slice(0, 119)}…` : task,
+      source: origin.source,
+      readOnly,
     };
   }
 
@@ -175,11 +170,9 @@ export async function createVaultAccess(
     },
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
-    const work = await turnOrigin(turn.turnId);
-    if (!work) throw new Error('This turn is no longer running.');
     const chain = await root(turn);
     const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
-    if (work.readOnly) {
+    if (chain.readOnly) {
       await log(turn, chain, { action: 'held', origin, reason: 'readonly', ...itemKind });
       return { ok: false, message: readOnlyMessage };
     }
@@ -199,7 +192,7 @@ export async function createVaultAccess(
       },
     );
     if (!verdict.confirm)
-      return { ok: true, reason: work.source === 'schedule' ? 'schedule' : 'asked' };
+      return { ok: true, reason: chain.source === 'schedule' ? 'schedule' : 'asked' };
     await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
     const site = host(origin);
     return {

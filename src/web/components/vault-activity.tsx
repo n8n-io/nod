@@ -22,7 +22,6 @@ const reasons: Record<VaultActivityReason, string> = {
   mailbox: 'From your email',
   readonly: 'Read-only work',
   background: 'Background work',
-  injection: 'A page had instructions',
   unrequested: 'You didn’t mention it',
   payment: 'You approved',
   code_typed: 'You approved',

@@ -61,7 +61,7 @@ export function createTrust(options: {
     action: string,
     args: Record<string, unknown>,
   ): Promise<{ confirm: false } | { confirm: true; reason: TrustReason }> {
-    const origin = await turnOrigin(turn.turnId);
+    const origin = await turnOrigin(turn);
     if (!origin) throw new Error('This turn is no longer running.');
     const instruction = origin.scheduleInstruction?.trim();
     const words =
@@ -92,7 +92,7 @@ export function createTrust(options: {
   }
 
   async function payment(turn: TurnRef): Promise<PaymentPolicy> {
-    const origin = await turnOrigin(turn.turnId);
+    const origin = await turnOrigin(turn);
     if (!origin) throw new Error('This turn is no longer running.');
     if (origin.readOnly) return { allowed: false, reason: 'readonly' };
     return { allowed: true, inOtto: origin.channel === 'web' };

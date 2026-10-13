@@ -7,6 +7,7 @@ import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef }
 import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
+import { turnChain } from './turn-chain.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -30,58 +31,8 @@ export interface ChatConfirmationInput {
 export type ChatConfirmationResult =
   SubmitUserMessageResult | { supersededApprovalId: string } | undefined;
 
-type TurnRow = {
-  id: string;
-  thread_id: string;
-  source: string;
-  source_id: string | null;
-  message_id: string | null;
-  prompt: string;
-  read_only: boolean;
-  background: boolean;
-  channel: string;
-};
-
 function conflict(message = 'This confirmation is expired, already handled, or its turn changed.') {
   return Object.assign(new Error(message), { statusCode: 409 });
-}
-
-async function turnRow(client: PoolClient, turnId: string) {
-  return (
-    await client.query<TurnRow>(
-      'SELECT id,thread_id,source,source_id,message_id,prompt,read_only,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
-      [turnId, ownerId],
-    )
-  ).rows[0];
-}
-
-async function confirmedBy(client: PoolClient, turn: TurnRow) {
-  if (turn.source !== 'resume') return undefined;
-  return (
-    await client.query<{ turn_id: string; status: string }>(
-      'SELECT turn_id,status FROM approvals WHERE execution_turn_id=$1 AND owner_id=$2 AND turn_id IS DISTINCT FROM execution_turn_id LIMIT 1',
-      [turn.id, ownerId],
-    )
-  ).rows[0];
-}
-
-async function turnChain(client: PoolClient, turn: TurnRow) {
-  const chain = [turn];
-  let current = turn;
-  for (;;) {
-    if (current.source !== 'resume') return chain;
-    const linked =
-      (await confirmedBy(client, current))?.turn_id ??
-      /^(?:credentials|credentials-retry|connection):([0-9a-f-]{36})(?::|$)/.exec(
-        current.source_id ?? '',
-      )?.[1];
-    if (!linked) return chain;
-    const next = await turnRow(client, linked);
-    if (!next || next.thread_id !== turn.thread_id || chain.some((item) => item.id === next.id))
-      return undefined;
-    chain.push(next);
-    current = next;
-  }
 }
 
 async function scheduleAuthority(client: PoolClient, turnId: string) {
@@ -100,20 +51,15 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
   ).rows[0];
 }
 
-const readOnlyChain = (chain: TurnRow[]) =>
-  chain.some((item) => item.read_only || item.source_id?.startsWith('onboarding:'));
-
-export async function turnOrigin(turnId: string) {
+export async function turnOrigin(turn: TurnRef) {
   const client = await pool.connect();
   try {
-    const current = await turnRow(client, turnId);
-    const chain = current && (await turnChain(client, current));
-    const origin = chain?.at(-1);
-    if (!chain || !origin) return undefined;
+    const { chain, origin, readOnly } = await turnChain(client, ownerId, turn);
+    if (!origin) return undefined;
     return {
       source: origin.source,
-      channel: current.channel,
-      readOnly: readOnlyChain(chain),
+      channel: chain[0].channel,
+      readOnly,
       scheduleInstruction:
         origin.source === 'schedule'
           ? ((await scheduleAuthority(client, origin.id))?.authority_instruction ?? undefined)
@@ -203,13 +149,11 @@ export async function createApprovals(
         ? await decide(turn, action, snapshot).catch(() => false)
         : false;
     const proposal = await withTurnLock(turn.turnId, async (client) => {
-      const current = await turnRow(client, turn.turnId);
-      if (!current || current.thread_id !== turn.threadId)
-        throw conflict('This turn is no longer running.');
-      const chain = await turnChain(client, current);
-      const origin = chain?.at(-1);
-      if (!chain || !origin) throw new Error('This action needs a direct request from the user.');
-      if (readOnlyChain(chain))
+      const { chain, origin, readOnly } = await turnChain(client, ownerId, turn);
+      const current = chain[0];
+      if (!current) throw conflict('This turn is no longer running.');
+      if (!origin) throw new Error('This action needs a direct request from the user.');
+      if (readOnly)
         throw new Error(
           'This action needs a direct request from the user; this turn is read-only.',
         );

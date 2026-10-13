@@ -742,6 +742,90 @@ test(
         },
       );
 
+      await t.test(
+        'trust, approvals and vault-access resolve a credentials-retry and approval chain alike',
+        async () => {
+          const { createVaultAccess } = await import('../src/server/vault-access.ts');
+          const access = await createVaultAccess(db.pool, { ownerId, check: trust.check });
+          const instruction = 'Every Monday, refresh my synthetic preferences.';
+          const site = { origin: 'https://chain.example.test', kind: 'sign_in' as const };
+          const args = { preferences: 'Synthetic chain preference.' };
+          const chain = async () => {
+            const origin = await begin('Synthetic scheduled work', { source: 'schedule' });
+            await db.pool.query(
+              `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+               VALUES($1,$2,$3,1,$4,'Synthetic chain',$5,now(),'UTC',$6)`,
+              [randomUUID(), ownerId, randomUUID(), randomUUID(), origin.turnId, instruction],
+            );
+            const id = await propose(origin, 'OTTO_profile_update', {
+              preferences: `Synthetic ${randomUUID()}`,
+            });
+            await finish(origin.turnId);
+            await confirm(id, true);
+            const confirmed = await running((await stored(id)).execution_turn_id);
+            await finish(confirmed.turnId);
+            await thread.retryCredentials(confirmed.turnId);
+            const retry = await resumed(`credentials-retry:${confirmed.turnId}`);
+            return { origin, confirmed, retry, approval: await stored(id) };
+          };
+
+          const linked = await chain();
+          aligned = (input) => input.scheduledTaskInstruction === instruction;
+          assert.deepEqual(await trust.check(linked.retry, 'GMAIL_FETCH_EMAILS', {}), {
+            confirm: false,
+          });
+          assert.deepEqual(await access.authorize(linked.retry, site), {
+            ok: true,
+            reason: 'schedule',
+          });
+          await assert.rejects(
+            approvals.request(linked.retry, 'OTTO_profile_update', linked.approval.args),
+            /pending or uncertain/,
+          );
+          const before = calls.length;
+          await approvals.request(linked.retry, 'OTTO_profile_update', args);
+          assert.equal(calls.length, before + 1);
+
+          aligned = false;
+          const readOnly = await chain();
+          await db.pool.query('UPDATE turns SET read_only=true WHERE id=$1', [
+            readOnly.origin.turnId,
+          ]);
+          await assert.rejects(trust.check(readOnly.retry, 'GMAIL_FETCH_EMAILS', {}), /only read/);
+          await assert.rejects(
+            approvals.request(readOnly.retry, 'OTTO_profile_update', args),
+            /read-only/,
+          );
+          assert.ok('message' in (await access.authorize(readOnly.retry, site)));
+
+          const cycle = await chain();
+          await db.pool.query('UPDATE turns SET source_id=$2 WHERE id=$1', [
+            cycle.confirmed.turnId,
+            `credentials:${cycle.retry.turnId}`,
+          ]);
+          const moved = await chain();
+          const archived = randomUUID();
+          await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+            archived,
+            ownerId,
+          ]);
+          await db.pool.query('UPDATE turns SET thread_id=$2 WHERE id=$1', [
+            moved.origin.turnId,
+            archived,
+          ]);
+          aligned = true;
+          for (const { retry } of [cycle, moved]) {
+            await assert.rejects(trust.check(retry, 'GMAIL_FETCH_EMAILS', {}), /no longer running/);
+            await assert.rejects(
+              approvals.request(retry, 'OTTO_profile_update', args),
+              /direct request/,
+            );
+            await assert.rejects(access.authorize(retry, site), /no longer running/);
+          }
+          assert.equal(calls.length, before + 1);
+        },
+      );
+
       await t.test('payments never run from read-only work', async () => {
         assert.deepEqual(await trust.payment(await begin('Buy hinges at shop.example.test.')), {
           allowed: true,

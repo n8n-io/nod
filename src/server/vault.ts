@@ -30,7 +30,7 @@ import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf, turnChainSql } from './turn-chain.ts';
+import { browserOf, turnChain } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 const passwordInput = z
   .object({
@@ -1077,11 +1077,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
-    const { rows } = await database.query<{ id: string }>(
-      `${turnChainSql()} SELECT c.id FROM chain c WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
-      [turn.turnId, ownerId, turn.threadId],
-    );
-    return rows[0]?.id;
+    return (await turnChain(database, ownerId, turn)).origin?.id;
   }
 
   async function selection(

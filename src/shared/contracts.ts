@@ -108,7 +108,6 @@ export type VaultActivityReason =
   | 'mailbox'
   | 'readonly'
   | 'background'
-  | 'injection'
   | 'unrequested'
   | 'payment'
   | 'code_typed'
