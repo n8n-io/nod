@@ -73,7 +73,7 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
         ...(scope ? { scope } : {}),
         ...(clientId ? { clientInformation: { client_id: clientId } } : {}),
       };
-      const result = await run(endpoint, saved, { state });
+      const result = await run(endpoint, saved, { state }, AbortSignal.timeout(30_000));
       if (result.result !== 'REDIRECT' || !result.url)
         throw new Error('The service did not provide a sign-in link.');
       const destination = await publicUrl(result.url);
@@ -82,7 +82,7 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
       return { url: destination.url.href, saved };
     },
     async finish(endpoint, saved, code) {
-      const result = await run(endpoint, saved, { code });
+      const result = await run(endpoint, saved, { code }, AbortSignal.timeout(30_000));
       if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
         throw new Error('The service did not complete sign-in.');
       return saved;

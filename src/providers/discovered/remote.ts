@@ -81,17 +81,24 @@ export async function safeRemoteFetch(
             reject(new Error('The connection redirected too many times or without a location.'));
             return;
           }
-          const next = new URL(location, url);
+          const next = URL.parse(location, url);
+          if (!next) {
+            reject(new Error('The connection redirected to an invalid address.'));
+            return;
+          }
           const headers = new Headers(prepared.headers);
           if (next.origin !== url.origin)
             for (const name of [...headers.keys()])
               if (!['accept', 'content-type', 'user-agent'].includes(name)) headers.delete(name);
-          const keep = incoming.statusCode === 307 || incoming.statusCode === 308;
+          const keep = !(
+            (incoming.statusCode === 303 && !['GET', 'HEAD'].includes(prepared.method)) ||
+            ([301, 302].includes(incoming.statusCode) && prepared.method === 'POST')
+          );
           resolve(
             safeRemoteFetch(
               next,
               {
-                method: keep || prepared.method === 'HEAD' ? prepared.method : 'GET',
+                method: keep ? prepared.method : 'GET',
                 headers,
                 ...(keep && body.byteLength ? { body } : {}),
                 signal,

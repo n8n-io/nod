@@ -287,6 +287,12 @@ test('notification summaries exclude message bodies, tokens, and unbounded provi
   for (const excluded of ['123456', 'private body', 'provider-secret', 'another-secret'])
     assert.equal(summary.includes(excluded), false);
   assert.ok(summary.length < 1500);
+  const webhook = eventOverview('slack', 'SLACK_RECEIVE_MESSAGE', {
+    text: 'Lunch at noon?',
+    headers: [{ name: 'Authorization', value: 'header-secret' }],
+  });
+  assert.match(webhook, /Lunch at noon/);
+  assert.equal(webhook.includes('header-secret'), false);
 });
 
 test(
@@ -8209,7 +8215,12 @@ test('connected tool search loads missing schemas in batches of twenty', async (
     batches.map((batch) => batch.length),
     [20, 5],
   );
-  assert.equal(Object.keys(found.tools as object).length, 25);
+  const tools = Object.values(found.tools as Record<string, Record<string, unknown>>);
+  assert.equal(tools.length, 25);
+  for (const tool of tools) {
+    assert.equal(tool.hasFullSchema, true);
+    assert.deepEqual(tool.inputSchema, { type: 'object', properties: {} });
+  }
 });
 
 test('connected provider cancellation reaches session creation, search, schemas, and execution', async (t) => {
@@ -8381,12 +8392,20 @@ test('discovered requests follow redirects only to checked public addresses and 
       status: 307,
       location: 'https://internal.fixture.example/',
     },
+    'https://api.fixture.example/item': {
+      status: 301,
+      location: 'https://api.fixture.example/items/1',
+    },
+    'https://api.fixture.example/items/1': { status: 200 },
+    'https://api.fixture.example/broken': { status: 302, location: 'https://[' },
   };
+  const methods: string[] = [];
   const request = ((
     url: URL,
-    options: { headers: Record<string, string> },
+    options: { method: string; headers: Record<string, string> },
     callback: (incoming: unknown) => void,
   ) => {
+    methods.push(options.method);
     sent.push({ url: url.href, authorization: options.headers.authorization });
     const route = routes[url.href]!;
     const incoming = Object.assign(new PassThrough(), {
@@ -8422,6 +8441,17 @@ test('discovered requests follow redirects only to checked public addresses and 
       { validate, request },
     ),
     /Private network/,
+  );
+  methods.length = 0;
+  await safeRemoteFetch(
+    'https://api.fixture.example/item',
+    { method: 'DELETE' },
+    { validate, request },
+  );
+  assert.deepEqual(methods, ['DELETE', 'DELETE']);
+  await assert.rejects(
+    safeRemoteFetch('https://api.fixture.example/broken', {}, { validate, request }),
+    /invalid address/,
   );
 });
 

@@ -260,7 +260,7 @@ test(
         const result = results.get(turn);
         assert.ok(result);
         const text = result.content.map((part) => ('text' in part ? part.text : '')).join('');
-        assert.doesNotMatch(text, /outside the connected apps|confirm/i);
+        assert.match(text, /GMAIL_FETCH_EMAILS/);
         assert.equal((await approvalsFor(turn)).length, 0);
       });
 

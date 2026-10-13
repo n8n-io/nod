@@ -75,8 +75,8 @@ export function createPiMemoryCurator(options: {
         throw error;
       });
       const { runtime, model, effort, subscription } = await loaded;
-      const complete = () =>
-        runtime.completeSimple(
+      const complete = async () => {
+        const reply = await runtime.completeSimple(
           model,
           {
             systemPrompt: instructions,
@@ -88,6 +88,13 @@ export function createPiMemoryCurator(options: {
             reasoning: effort === 'off' ? undefined : effort,
           },
         );
+        if (reply.usage?.totalTokens)
+          report?.({
+            model: model.id,
+            costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
+          });
+        return reply;
+      };
       let reply = await complete();
       for (
         let attempt = 0;
@@ -95,11 +102,6 @@ export function createPiMemoryCurator(options: {
         attempt++
       )
         reply = await complete();
-      if (reply.usage?.totalTokens)
-        report?.({
-          model: model.id,
-          costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
-        });
       if (
         reply.stopReason === 'error' ||
         reply.stopReason === 'aborted' ||

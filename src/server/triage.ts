@@ -342,7 +342,7 @@ export function createTriage(options: {
             preferences,
             profile: { location: profile.location, preferences: profile.preferences },
             connectedApps: await options.connectedApps(),
-            savedUpdates: saved,
+            savedUpdates: saved.map((item) => ({ ...item, summary: item.summary.slice(0, 5000) })),
             recentReviews: recentReviews.rows,
             recentConversation: recent.rows,
             engagement: {

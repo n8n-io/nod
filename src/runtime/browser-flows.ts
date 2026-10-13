@@ -305,7 +305,9 @@ export function createBrowserFlows(
       const expectedUrl = step.expectUrl && replaceInputs(step.expectUrl, inputs, true);
       if (
         (expectedText && !observation.text.includes(expectedText)) ||
-        (expectedUrl && !observation.url.startsWith(expectedUrl))
+        (expectedUrl &&
+          (!observation.url.startsWith(expectedUrl) ||
+            URL.parse(observation.url)?.origin !== new URL(expectedUrl).origin))
       )
         return {
           status: 'needs_repair',
