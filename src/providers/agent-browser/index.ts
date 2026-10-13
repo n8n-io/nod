@@ -197,6 +197,7 @@ export function createAgentBrowserComputer(options: {
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   const discarded = new Set<string>();
+  const pinned = new Set<string>();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
     resolve(runtimeRoot, 'profiles', state.saved.profileId ?? state.id);
@@ -330,39 +331,47 @@ export function createAgentBrowserComputer(options: {
     return pending;
   }
 
-  async function reserveBrowser(state: BrowserState): Promise<void> {
-    const pending = allocate(async () => {
-      if (state.started || state.saved.navigationFailed) return;
-      const occupied = () =>
-        [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
-      const attempted = new Set<string>();
-      while (occupied().length >= maxLiveSessions) {
-        const candidate = occupied()
-          .filter(
-            (entry) =>
-              entry !== state &&
-              !attempted.has(entry.id) &&
-              !entry.busy &&
-              !entry.closed &&
-              !entry.closing &&
-              !entry.injecting &&
-              entry.heldUntil <= Date.now(),
-          )
-          .sort((a, b) => a.lastUsed - b.lastUsed)[0];
-        if (!candidate)
-          throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-        attempted.add(candidate.id);
-        try {
-          await closeBrowser(candidate.id, candidate.lastUsed);
-        } catch {
-          throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
+  async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
+    const reserve = () =>
+      allocate(async () => {
+        if (state.started || state.saved.navigationFailed) return true;
+        const occupied = () =>
+          [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
+        const attempted = new Set<string>();
+        while (occupied().length >= maxLiveSessions) {
+          const candidate = occupied()
+            .filter(
+              (entry) =>
+                entry !== state &&
+                !pinned.has(entry.id) &&
+                !attempted.has(entry.id) &&
+                !entry.busy &&
+                !entry.closed &&
+                !entry.closing &&
+                !entry.injecting &&
+                entry.heldUntil <= Date.now(),
+            )
+            .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+          if (!candidate) return false;
+          attempted.add(candidate.id);
+          try {
+            await closeBrowser(candidate.id, candidate.lastUsed);
+          } catch {
+            throw new Error(
+              'The browser sessions are busy. Finish an open browser task and retry.',
+            );
+          }
         }
-      }
+        if (disposed || state.closed || state.closing)
+          throw new Error('The browser session has expired. Open the URL again.');
+        state.started = true;
+        return true;
+      });
+    while (!(await reserve())) {
       if (disposed || state.closed || state.closing)
         throw new Error('The browser session has expired. Open the URL again.');
-      state.started = true;
-    });
-    await pending;
+      await delay(500, undefined, { signal });
+    }
   }
 
   function selector(value: string | undefined): string {
@@ -796,7 +805,7 @@ export function createAgentBrowserComputer(options: {
         if (redactBrowserText(resumeUrl.pathname, state.secrets) !== resumeUrl.pathname)
           resumeUrl.pathname = '/';
         state.saved.resumeUrl = resumeUrl.href;
-        await reserveBrowser(state);
+        await reserveBrowser(state, signal);
         if (!state.socket) {
           state.saved.timeZone = browserTimeZone(input.timeZone);
           state.saved.locale = browserLocale(input.locale);
@@ -1745,6 +1754,7 @@ export function createAgentBrowserComputer(options: {
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
+    pinned.delete(id);
     await closeBrowser(id);
     await Promise.all([
       rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
@@ -1802,6 +1812,10 @@ export function createAgentBrowserComputer(options: {
     checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
+    pin: async (id, value) => {
+      if (value) pinned.add(threadIdentity(id));
+      else pinned.delete(threadIdentity(id));
+    },
     close: tracked(closeBrowser),
     discard: tracked(discard),
     status: browserStatus,

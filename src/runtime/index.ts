@@ -605,6 +605,7 @@ export function createAgentRuntime(dependencies: {
           systemPrompt: system,
           systemContext: systemContext(context),
           tools: bind({ ...shared, browserId: childBrowser }, async () => {
+            if (!browsed) await computer.pin(childBrowser, true).catch(() => {});
             browsed = true;
           }).filter((tool) => !ownBrowserTools.has(tool.name)),
           workspace,
@@ -635,6 +636,7 @@ export function createAgentRuntime(dependencies: {
         return answer || 'The subagent finished without an answer.';
       };
       const tools = bind({ ...shared, browserId, delegate }, async () => {
+        if (!browsed) await computer.pin(browserId, true).catch(() => {});
         browsed = true;
       });
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
@@ -782,6 +784,7 @@ export function createAgentRuntime(dependencies: {
         activeTurns.delete(context.turnId);
         if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard(browserId).catch(() => {});
+        else if (browsed) await computer.pin(browserId, false).catch(() => {});
         finished();
       }
     }

@@ -83,16 +83,18 @@ export function createCloudflareAdapters(options: {
         }),
     });
   }
+  const live = async () =>
+    browserUsed &&
+    !browserDisposed &&
+    (await cloudflareBrowserLive({ generation, fetch: requestFetch }));
   return {
     computer: {
       ...computer,
       async hold(threadId, until) {
-        if (
-          browserUsed &&
-          !browserDisposed &&
-          (await cloudflareBrowserLive({ generation, fetch: requestFetch }))
-        )
-          await computer.hold(threadId, until);
+        if (await live()) await computer.hold(threadId, until);
+      },
+      async pin(threadId, pinned) {
+        if (pinned || (await live())) await computer.pin(threadId, pinned);
       },
       status: () => (browserDisposed ? 'Workspace browser is stopped.' : computer.status()),
       async dispose() {
