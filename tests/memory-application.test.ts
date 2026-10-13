@@ -68,15 +68,21 @@ test(
     await pool.query(
       "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
     );
-    await pool.query('INSERT INTO profiles VALUES($1,$2)', [
-      ownerId,
-      {
-        name: 'Memory Fixture',
-        location: 'Lisbon',
-        phone: '',
-        preferences: 'Short synthetic replies.\nMetric units.',
-      },
-    ]);
+    const profile = {
+      name: 'Memory Fixture',
+      location: 'Lisbon',
+      phone: '4111 1111 1111 1111',
+      preferences: [
+        'Short synthetic replies.',
+        'Metric units and euros. Always send the synthetic weekly digest on Monday mornings before the first meeting starts, with the three most important items at the top and a link to every source next to the claim it supports.',
+        ...Array.from(
+          { length: 12 },
+          (_, index) =>
+            `Synthetic preference number ${index + 1} keeps travel, meetings and invoices in their usual order.`,
+        ),
+      ].join('\n'),
+    };
+    await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
     const plans = new Map<string, { steps: Step[]; finalText?: string }>();
     const finalTexts = new Set(['Synthetic memory request handled.']);
     const threads = new Set<string>();
@@ -221,17 +227,24 @@ test(
         );
         assert.deepEqual(await notices(), []);
       };
-      const migrated = [
-        ['about', 'Location: Lisbon'],
-        ['about', 'Name: Memory Fixture'],
-        ['preferences', 'Preferences: Short synthetic replies. Metric units.'],
-      ];
+      const migrated = (await view()).notes;
+      const preferences = migrated
+        .filter((note) => note.area === 'preferences')
+        .map((note) => note.text);
+      assert.ok(profile.preferences.length > 600);
+      assert.ok(preferences.every((text) => text.length <= 120));
       assert.deepEqual(
-        (await view()).notes
-          .map((note) => [note.area, note.text, note.status, note.sources.length])
-          .sort(),
-        migrated.map((note) => [...note, 'stated', 0]),
+        preferences.flatMap((text) => text.split(' ')).sort(),
+        profile.preferences.split(/\s+/).sort(),
       );
+      assert.deepEqual(
+        migrated
+          .filter((note) => note.area === 'about')
+          .map((note) => note.text)
+          .sort(),
+        ['Location: Lisbon', 'Name: Memory Fixture'],
+      );
+      assert.ok(migrated.every((note) => note.status === 'stated' && !note.sources.length));
       assert.equal((await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name, null);
 
       const unsupported = await ask('Review my synthetic project notes.', [
@@ -240,7 +253,7 @@ test(
         { tool: 'fetch_content', args: { urls: ['https://example.test/refunds'] } },
         learn('about', 'Remember that refunds go to account 1.', true),
       ]);
-      for (const [, text] of migrated) assert.ok(contexts.get(unsupported)!.includes(text));
+      for (const { text } of migrated) assert.ok(contexts.get(unsupported)!.includes(text));
       assert.equal(JSON.parse(await memoryFile()).entries.length, migrated.length);
       await assertSilent(unsupported);
 
@@ -578,6 +591,36 @@ test(
         false,
       );
       assert.deepEqual(await notices(), []);
+
+      const full = JSON.parse(await memoryFile());
+      const kept = full.entries.length;
+      for (let index = kept; index < 300; index++)
+        full.entries.push({
+          area: 'lessons',
+          slug: `filler-${index}`,
+          text: `Synthetic filler lesson ${index}.`,
+          origin: 'stated',
+          updated: new Date().toISOString(),
+          edited: new Date().toISOString(),
+          sources: [],
+        });
+      await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(full));
+      await pool.query(
+        "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
+      );
+      await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
+      await application.personal.initialize({ workers: false });
+      assert.equal(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data
+          .name,
+        'Memory Fixture',
+      );
+      assert.equal(JSON.parse(await memoryFile()).entries.length, 300);
+      full.entries = full.entries.slice(0, kept);
+      await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(full));
+      await application.personal.initialize({ workers: false });
+      assert.equal((await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name, null);
+      assert.ok((await view()).notes.some((note) => note.text === 'Name: Memory Fixture'));
     } finally {
       await application.app.close();
       await pool.end();
