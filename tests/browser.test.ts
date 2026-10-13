@@ -1520,6 +1520,7 @@ test('every session drives its own browser, so background work never waits for t
   const opened = new Map<string, string>();
   const discarded: string[] = [];
   const held: string[] = [];
+  const pinned = new Set<string>();
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
     agent: {
@@ -1543,6 +1544,12 @@ test('every session drives its own browser, so background work never waits for t
       },
       hold: async (id) => {
         held.push(id);
+      },
+      pin: async (id) => {
+        pinned.add(id);
+      },
+      unpin: async (id) => {
+        pinned.delete(id);
       },
     }),
     workspace: fakeWorkspace(),
@@ -1600,8 +1607,10 @@ test('every session drives its own browser, so background work never waits for t
     ]);
     assert.equal(done.status, 'succeeded');
     assert.equal((await waiting).status, 'waiting_user');
+    assert.deepEqual([...pinned], [threadId]);
     busy.resolve();
     assert.equal((await conversation).status, 'waiting_user');
+    assert.equal(pinned.size, 0);
     assert.deepEqual(
       Object.fromEntries(opened),
       Object.fromEntries([
@@ -1612,12 +1621,108 @@ test('every session drives its own browser, so background work never waits for t
     );
     assert.deepEqual(discarded, [finished]);
     assert.deepEqual(held.sort(), [asking, threadId].sort());
+    held.length = 0;
+    const asksAgain = await turn(
+      asking,
+      (tools) => tools.get('ask_user')!.execute({ question: 'Which time works?' }),
+      true,
+    );
+    assert.equal(asksAgain.status, 'waiting_user');
+    assert.deepEqual(held, [asking]);
     assert.equal((await turn(asking, async () => {}, true)).status, 'succeeded');
     assert.deepEqual(discarded, [finished, asking]);
   } finally {
     deadline.abort();
     busy.resolve();
     await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('at the browser cap a pinned session keeps its page and a new browser waits in line for a slot, for a bounded time', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    maxLiveSessions: 2,
+    slotWaitMs: 500,
+  });
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
+  const settled = new Set<string>();
+  const queued = (id: string, signal?: AbortSignal) =>
+    open(id, signal).finally(() => settled.add(id));
+  try {
+    await open('pinned');
+    await open('idle');
+    const [pinnedPage, idlePage] = ['pinned', 'idle'].map((id) => fixture.pages.get(id)!);
+    await computer.pin!('pinned');
+    await open('running');
+    assert.equal(pinnedPage.closed, false);
+    assert.equal(idlePage.closed, true);
+    for (const id of ['running', 'first', 'second']) await computer.pin!(id);
+    const first = queued('first');
+    const controller = new AbortController();
+    const second = queued('second', controller.signal);
+    await delay(50);
+    assert.deepEqual([...settled], []);
+    controller.abort();
+    await assert.rejects(second, { name: 'AbortError' });
+    assert.deepEqual([...settled], ['second']);
+    await computer.unpin!('pinned');
+    await first;
+    assert.equal(pinnedPage.closed, true);
+    assert.equal(fixture.pages.get('running')?.closed, false);
+    assert.equal(fixture.pages.get('second'), undefined);
+    await assert.rejects(open('subagent'), /browser sessions are busy/);
+    assert.equal(fixture.pages.get('subagent'), undefined);
+    assert.equal(fixture.pages.get('first')?.closed, false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a browser closed to free a slot still hides its known secret values when its session reopens', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-evicted-secret-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    maxLiveSessions: 1,
+  });
+  const open = (id: string) => computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' });
+  const origin = 'https://1.1.1.1';
+  try {
+    await open('login');
+    await computer.injectCredentials({
+      threadId: 'login',
+      origin,
+      kind: 'identifier',
+      username: 'synthetic-account@example.test',
+      usernameSelector: '#account',
+      submitSelector: 'button',
+    });
+    await computer.injectCredentials({
+      threadId: 'login',
+      origin,
+      kind: 'password',
+      password: 'synthetic-evicted-password',
+      passwordSelector: '#account',
+      submitSelector: 'button',
+    });
+    const signedIn = fixture.pages.get('login')!;
+    await open('other');
+    assert.equal(signedIn.closed, true);
+    await open('login');
+    fixture.pages.get('login')!.dom.window.document.querySelector('h1')!.textContent =
+      'Welcome back synthetic-evicted-password';
+    const observation = await computer.act('login', { action: 'snapshot' });
+    assert.match(observation.text, /Welcome back \[redacted\]/);
+    assert.equal(observation.text.includes('synthetic-evicted-password'), false);
+  } finally {
+    await computer.dispose();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1783,6 +1888,12 @@ function workerComputer() {
       calls.push({ method: 'bindProfile', input: profileId });
     },
     hold: async () => {},
+    pin: async (id) => {
+      calls.push({ method: 'pin', input: id });
+    },
+    unpin: async (id) => {
+      calls.push({ method: 'unpin', input: id });
+    },
     close: async () => {
       calls.push({ method: 'close' });
     },
@@ -2051,14 +2162,27 @@ test('malformed methods and namespaces never reach a computer or filesystem path
   }
 });
 
-test('discard reaches the namespace computer of the same thread only', async () => {
+test('pins and discard reach the namespace computer of the same thread only, and only once the bridge is live', async () => {
   const fixture = await harness();
   try {
     const computer = fixture.client('/synthetic/discard');
+    await computer.pin!('quiet');
+    await computer.unpin!('quiet');
+    assert.equal(fixture.launches.length, 0);
+    await computer.pin!('task');
     await computer.act('task', { action: 'snapshot' });
+    await computer.act('task', { action: 'snapshot' });
+    await computer.pin!('chat');
+    await computer.unpin!('chat');
+    await computer.unpin!('task');
     await computer.discard!('task');
     assert.deepEqual(fixture.instance('/synthetic/discard').calls, [
+      { method: 'pin', input: 'task' },
       { method: 'act', input: { action: 'snapshot' } },
+      { method: 'act', input: { action: 'snapshot' } },
+      { method: 'pin', input: 'chat' },
+      { method: 'unpin', input: 'chat' },
+      { method: 'unpin', input: 'task' },
       { method: 'discard', input: 'task' },
     ]);
     await assert.rejects(computer.discard!('../task'));

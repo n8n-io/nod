@@ -194,6 +194,7 @@ export function createAgentRuntime(dependencies: {
 }) {
   const { agent, computer } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
+  const browsing = new Set<string>();
   let disposed = false;
   let disposal: Promise<void> | undefined;
   const completedDisposals = new Set<string>();
@@ -313,7 +314,8 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (browsed) await computer.hold(sessionId, Date.now() + holdMs).catch(() => {});
+      if (browsing.has(sessionId))
+        await computer.hold(sessionId, Date.now() + holdMs).catch(() => {});
       stopped = true;
       if (post && text) {
         if (context.waitForUser) await context.waitForUser(text);
@@ -521,6 +523,7 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
+      await computer.pin?.(sessionId).catch(() => {});
       await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
       const workspace = dependencies.workspace.open(context);
       const browser: Computer = {
@@ -647,6 +650,7 @@ export function createAgentRuntime(dependencies: {
       };
       const tools = bind({ ...shared, browserId: sessionId, delegate }, async () => {
         browsed = true;
+        browsing.add(sessionId);
       });
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
       const instruct = (
@@ -791,8 +795,11 @@ export function createAgentRuntime(dependencies: {
         await Promise.allSettled([...activeToolCalls]);
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
+        await computer.unpin?.(sessionId).catch(() => {});
+        if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed)) {
+          browsing.delete(sessionId);
           await computer.discard?.(sessionId).catch(() => {});
+        }
         finished();
       }
     }

@@ -48,10 +48,36 @@ export function createBridgeComputer(options: {
   const pending = new Set<Promise<unknown>>();
   const cancellations = new Set<() => void>();
   const views = new Map<string, Set<(input: unknown) => void>>();
+  const pins = new Map<string, Promise<boolean> | undefined>();
+  let live = false;
   let disposing: Promise<void> | undefined;
   let recovering: Promise<void> | undefined;
   const reopenNotice =
     'Explicitly reopen the website or saved browser session to start a new page. The previous action may have completed; do not repeat it.';
+
+  function forgetPins() {
+    live = false;
+    for (const id of pins.keys()) pins.set(id, undefined);
+  }
+
+  function sendPin(threadId: string) {
+    const sent: Promise<boolean> = call({ method: 'pin', threadId }).then(
+      () => true,
+      () => {
+        if (pins.get(threadId) === sent) pins.set(threadId, undefined);
+        return false;
+      },
+    );
+    pins.set(threadId, sent);
+    return sent;
+  }
+
+  async function pinned(id: string) {
+    const threadId = threadIdentity(id);
+    if (pins.has(threadId) && !pins.get(threadId)) sendPin(threadId);
+    await pins.get(threadId);
+    return threadId;
+  }
 
   function recover() {
     recovering ??= (async () => {
@@ -61,6 +87,7 @@ export function createBridgeComputer(options: {
       if (disposed) return;
       uncertain = false;
       screens.clear();
+      forgetPins();
     })().finally(() => {
       recovering = undefined;
     });
@@ -114,6 +141,7 @@ export function createBridgeComputer(options: {
       let child: CommandProcess;
       try {
         child = options.launch(input);
+        if (input.method !== 'dispose' && input.method !== 'quiesce') live = true;
       } catch {
         uncertain = true;
         return reject(
@@ -275,7 +303,10 @@ export function createBridgeComputer(options: {
       const result = await call({ method: 'quiesce' });
       if (typeof result !== 'boolean')
         throw new Error('The workspace browser could not pause safely.');
-      if (result) screens.clear();
+      if (result) {
+        screens.clear();
+        forgetPins();
+      }
       return result;
     },
     bindProfile: async (id, profileId) => {
@@ -289,7 +320,7 @@ export function createBridgeComputer(options: {
     status: () => (uncertain && !disposed ? reopenNotice : status),
     act: async (id, input, signal) =>
       observationSchema.parse(
-        await call({ method: 'act', threadId: threadIdentity(id), input }, signal),
+        await call({ method: 'act', threadId: await pinned(id), input }, signal),
       ),
     screenshot: image,
     control: async (id, input) => {
@@ -305,7 +336,7 @@ export function createBridgeComputer(options: {
         await call(
           {
             method: 'upload',
-            threadId: threadIdentity(id),
+            threadId: await pinned(id),
             input: {
               selector: input.selector,
               name: input.name,
@@ -334,7 +365,7 @@ export function createBridgeComputer(options: {
             .regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/),
         })
         .strict()
-        .parse(await call({ method: 'download', threadId: threadIdentity(id), input }, signal));
+        .parse(await call({ method: 'download', threadId: await pinned(id), input }, signal));
       if (result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data))
         throw new Error('The browser file is unavailable.');
       const bytes = Buffer.from(result.data, 'base64');
@@ -399,6 +430,18 @@ export function createBridgeComputer(options: {
     hold: async (id, until) => {
       await call({ method: 'hold', threadId: threadIdentity(id), until });
     },
+    pin: async (id) => {
+      const threadId = threadIdentity(id);
+      if (pins.has(threadId)) return;
+      pins.set(threadId, undefined);
+      if (live) await sendPin(threadId);
+    },
+    unpin: async (id) => {
+      const threadId = threadIdentity(id);
+      const sent = pins.get(threadId);
+      pins.delete(threadId);
+      if (await sent) await call({ method: 'unpin', threadId });
+    },
     close: async (id) => {
       await call({ method: 'close', threadId: threadIdentity(id) });
     },
@@ -413,6 +456,7 @@ export function createBridgeComputer(options: {
         await Promise.allSettled([...pending]);
         await call({ method: 'dispose' });
         screens.clear();
+        pins.clear();
         status = 'Workspace browser is stopped.';
       })().catch((error) => {
         disposing = undefined;

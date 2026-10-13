@@ -113,11 +113,16 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 ## Every session has its own browser
 
-A session opens its browser on its first browser call, so a session that never browses never starts one. Nothing waits for another session's browser.
+A session opens its browser on its first browser call, so a session that never browses never starts one. No session waits for another session's browser.
 
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most two browsers live at once. An idle one closes and keeps its profile until it's used again. One waiting for you stays open for 30 minutes.
+- The browser container keeps at most four browsers live at once: enough for the chat and three other sessions. Subagent browsers count toward the four.
+- To make room, the container closes the browser used least recently. It never closes the browser of a session whose turn is running, or a browser held for you. A subagent's idle browser can close.
+- When no browser can close, a new one waits in line for a free slot. After two minutes the wait fails, so Otto can tell you or try again. **Stop** cancels the wait.
+- A closed browser keeps its profile until it's used again. Otto still hides the secret values it entered there when the session opens it again.
+- A session that pauses on a question, approval or sign-in keeps an open page for 30 minutes, even when that turn didn't browse.
+- The limit is four for every computer provider. Measure memory on an E2B sandbox with 2 CPUs and 3 GB before you raise it in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts).
 
 ## Stop and failures
 

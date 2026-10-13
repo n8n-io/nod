@@ -150,6 +150,8 @@ export interface Computer {
   checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
+  pin?(threadId: string): Promise<void>;
+  unpin?(threadId: string): Promise<void>;
   close(threadId: string): Promise<void>;
   discard?(threadId: string): Promise<void>;
   dispose(): Promise<void>;

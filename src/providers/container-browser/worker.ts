@@ -118,6 +118,10 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     }
     case 'hold':
       return computer.hold(request.threadId, request.until);
+    case 'pin':
+      return computer.pin?.(request.threadId);
+    case 'unpin':
+      return computer.unpin?.(request.threadId);
     case 'close':
       return computer.close(request.threadId);
     case 'discard':

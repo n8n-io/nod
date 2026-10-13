@@ -48,7 +48,7 @@ Solving a challenge is up to the model. Some challenges block automated browsers
 
 ## A browser for each job
 
-The chat, every scheduled or background run and every subagent have their own browser, so nothing waits in line. Each opens one only when it needs it.
+The chat, every scheduled or background run and every subagent have their own browser, so none of them waits for another's browser. Each opens one only when it needs it.
 
 ```mermaid
 flowchart LR
@@ -60,7 +60,7 @@ flowchart LR
 
 When you ask for several independent things, such as prices from three shops, Otto can split the work between subagents that browse at the same time, then combine what they found.
 
-The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to two browsers run at once, and an idle one closes until it's needed again.
+The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to four browsers run at once. An idle one closes to make room and opens again when it's needed. When every open browser is working or waiting for you, a new one waits up to two minutes for a slot to free.
 
 ## Saved routines
 

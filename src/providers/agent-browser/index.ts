@@ -87,6 +87,16 @@ export function browserSessionId(id: string): string {
   return `sk-${createHash('sha256').update(threadIdentity(id)).digest('hex').slice(0, 24)}`;
 }
 
+function gate() {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+const busyMessage = 'The browser sessions are busy. Finish an open browser task and retry.';
+
 const shortNumber = /^\d{1,11}$/;
 
 function holdsSecret(text: string, secrets: Iterable<string>) {
@@ -301,6 +311,7 @@ export function createAgentBrowserComputer(options: {
   headless?: boolean;
   idleTimeoutMs?: number;
   maxLiveSessions?: number;
+  slotWaitMs?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
   daemonCommand?: typeof existingDaemonCommand;
@@ -309,6 +320,10 @@ export function createAgentBrowserComputer(options: {
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   const discarded = new Set<string>();
+  const pinned = new Set<string>();
+  const keptSecrets = new Map<string, Set<string>>();
+  const slotQueue: object[] = [];
+  let slotFreed = gate();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
     resolve(runtimeRoot, 'profiles', state.saved.profileId ?? state.id);
@@ -337,6 +352,7 @@ export function createAgentBrowserComputer(options: {
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
+  const slotWaitMs = options.slotWaitMs ?? 120_000;
   let disposed = false;
   let activeCalls = 0;
   let allocationQueue: Promise<void> = Promise.resolve();
@@ -379,6 +395,12 @@ export function createAgentBrowserComputer(options: {
     );
     return pending;
   }
+  function freeSlot() {
+    if (!slotQueue.length) return;
+    const freed = slotFreed;
+    slotFreed = gate();
+    freed.open();
+  }
   function tracked<Args extends unknown[], Result>(operation: (...args: Args) => Promise<Result>) {
     return async (...args: Args): Promise<Result> => {
       activeCalls += 1;
@@ -399,11 +421,13 @@ export function createAgentBrowserComputer(options: {
     assertNotDiscarded(id);
     let state = browsers.get(id);
     if (!state) {
+      const secrets = keptSecrets.get(id) ?? new Set<string>();
+      keptSecrets.delete(id);
       state = {
         id,
         queue: Promise.resolve(),
         injecting: false,
-        secrets: new Set(),
+        secrets,
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
         uploads: new Set(),
@@ -434,6 +458,7 @@ export function createAgentBrowserComputer(options: {
       } finally {
         state.busy -= 1;
         state.lastUsed = Date.now();
+        freeSlot();
       }
     };
     const pending = state.queue.then(execute, execute);
@@ -444,39 +469,73 @@ export function createAgentBrowserComputer(options: {
     return pending;
   }
 
-  async function reserveBrowser(state: BrowserState): Promise<void> {
-    const pending = allocate(async () => {
-      if (state.started || state.saved.navigationFailed) return;
-      const occupied = () =>
-        [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
-      const attempted = new Set<string>();
-      while (occupied().length >= maxLiveSessions) {
-        const candidate = occupied()
-          .filter(
-            (entry) =>
-              entry !== state &&
-              !attempted.has(entry.id) &&
-              !entry.busy &&
-              !entry.closed &&
-              !entry.closing &&
-              !entry.injecting &&
-              entry.heldUntil <= Date.now(),
-          )
-          .sort((a, b) => a.lastUsed - b.lastUsed)[0];
-        if (!candidate)
-          throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-        attempted.add(candidate.id);
-        try {
-          await closeBrowser(candidate.id, candidate.lastUsed);
-        } catch {
-          throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-        }
+  async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
+    if (state.started || state.saved.navigationFailed) return;
+    const ticket = {};
+    const deadline = Date.now() + slotWaitMs;
+    slotQueue.push(ticket);
+    try {
+      for (;;) {
+        const freed = slotFreed.promise;
+        if (await allocate(() => claimSlot(state, ticket))) return;
+        await new Promise<void>((resolve, reject) => {
+          const settle = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+          };
+          const fail = (error: unknown) => {
+            settle();
+            reject(error);
+          };
+          const abort = () => fail(signal!.reason);
+          const timer = setTimeout(() => fail(new Error(busyMessage)), deadline - Date.now());
+          signal?.addEventListener('abort', abort, { once: true });
+          void freed.then(() => {
+            settle();
+            resolve();
+          });
+          if (signal?.aborted) abort();
+        });
       }
-      if (disposed || state.closed || state.closing)
-        throw new Error('The browser session has expired. Open the URL again.');
-      state.started = true;
-    });
-    await pending;
+    } finally {
+      slotQueue.splice(slotQueue.indexOf(ticket), 1);
+      freeSlot();
+    }
+  }
+
+  async function claimSlot(state: BrowserState, ticket: object): Promise<boolean> {
+    const expired = () => disposed || state.closed || state.closing;
+    if (expired()) throw new Error('The browser session has expired. Open the URL again.');
+    if (state.started || state.saved.navigationFailed) return true;
+    if (slotQueue[0] !== ticket) return false;
+    const occupied = () =>
+      [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
+    const attempted = new Set<string>();
+    while (occupied().length >= maxLiveSessions) {
+      const candidate = occupied()
+        .filter(
+          (entry) =>
+            entry !== state &&
+            !attempted.has(entry.id) &&
+            !pinned.has(entry.id) &&
+            !entry.busy &&
+            !entry.closed &&
+            !entry.closing &&
+            !entry.injecting &&
+            entry.heldUntil <= Date.now(),
+        )
+        .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+      if (!candidate) return false;
+      attempted.add(candidate.id);
+      try {
+        await closeBrowser(candidate.id, candidate.lastUsed);
+      } catch {
+        throw new Error(busyMessage);
+      }
+    }
+    if (expired()) throw new Error('The browser session has expired. Open the URL again.');
+    state.started = true;
+    return true;
   }
 
   function selector(value: string | undefined): string {
@@ -907,7 +966,7 @@ export function createAgentBrowserComputer(options: {
         if (redactBrowserText(resumeUrl.pathname, state.secrets) !== resumeUrl.pathname)
           resumeUrl.pathname = '/';
         state.saved.resumeUrl = resumeUrl.href;
-        await reserveBrowser(state);
+        await reserveBrowser(state, signal);
         if (!state.socket) {
           state.saved.timeZone = browserTimeZone(input.timeZone);
           state.saved.locale = browserLocale(input.locale);
@@ -1292,6 +1351,7 @@ export function createAgentBrowserComputer(options: {
       });
     } finally {
       state.injecting = false;
+      freeSlot();
     }
   }
 
@@ -1733,12 +1793,19 @@ export function createAgentBrowserComputer(options: {
   async function closeBrowser(id: string, idleAt?: number): Promise<void> {
     const state = browsers.get(threadIdentity(id)) ?? (await recoverBrowser(id, true));
     if (!state) return;
-    if (idleAt === undefined) state.closing = true;
+    if (idleAt === undefined) {
+      state.closing = true;
+      freeSlot();
+    }
     const close = async () => {
       if (browsers.get(id) !== state) return;
       if (
         idleAt !== undefined &&
-        (state.lastUsed !== idleAt || state.busy || state.injecting || state.heldUntil > Date.now())
+        (state.lastUsed !== idleAt ||
+          state.busy ||
+          state.injecting ||
+          state.heldUntil > Date.now() ||
+          pinned.has(id))
       )
         return;
       state.closing = true;
@@ -1749,6 +1816,7 @@ export function createAgentBrowserComputer(options: {
       state.started = false;
       await state.proxy?.dispose();
       await saveState(state);
+      if (state.secrets.size) keptSecrets.set(id, new Set(state.secrets));
       state.secrets.clear();
       state.secretsByOrigin.clear();
       state.protectedSelectors.clear();
@@ -1756,6 +1824,7 @@ export function createAgentBrowserComputer(options: {
       state.uploads.clear();
       await rm(cachePath(state), { recursive: true, force: true });
       if (browsers.get(id) === state) browsers.delete(id);
+      freeSlot();
       screenStatuses.set(
         id,
         state.saved.capturedAt
@@ -1837,6 +1906,7 @@ export function createAgentBrowserComputer(options: {
     const id = threadIdentity(rawId);
     discarded.add(id);
     await closeBrowser(id);
+    keptSecrets.delete(id);
     await Promise.all([
       rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
       rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
@@ -1863,6 +1933,7 @@ export function createAgentBrowserComputer(options: {
         )
           void closeBrowser(state.id, state.lastUsed).catch(() => {});
       }
+      freeSlot();
     },
     Math.min(60_000, Math.max(10, idleTimeoutMs)),
   );
@@ -1893,11 +1964,19 @@ export function createAgentBrowserComputer(options: {
     checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
+    pin: async (id) => {
+      pinned.add(threadIdentity(id));
+    },
+    unpin: async (id) => {
+      pinned.delete(threadIdentity(id));
+      freeSlot();
+    },
     close: tracked(closeBrowser),
     discard: tracked(discard),
     status: browserStatus,
     dispose: async () => {
       disposed = true;
+      freeSlot();
       clearInterval(cleanup);
       const results = await Promise.allSettled([...browsers.keys()].map((id) => closeBrowser(id)));
       if (results.some((result) => result.status === 'rejected'))
