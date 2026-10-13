@@ -346,7 +346,7 @@ test(
       await t.test('completed tasks produce isolated, reviewable schedule drafts', async (t) => {
         const seed = async (
           messages: string[],
-          options: { owner?: string; state?: string; attachments?: boolean } = {},
+          options: { owner?: string; state?: string; attachments?: boolean; legacy?: boolean } = {},
         ) => {
           const owner = options.owner ?? ownerId;
           const current = await thread.activeThread(db.pool, owner);
@@ -397,11 +397,22 @@ test(
             { source: 'user' },
             { attachments: options.attachments },
           );
+          const onItMessageId = options.legacy
+            ? null
+            : await write('On it.', 0, { source: 'user' }, { role: 'assistant' });
           await db.pool.query(
             `INSERT INTO tasks(id,owner_id,thread_id,title,now_text,result,instruction,source_message_id,
-               state,closed_at)
-             VALUES($1,$2,$3,'Synthetic account report','Finished','Assistant summary',$4,$5,$6,now())`,
-            [taskId, owner, current.id, instruction, sourceMessageId, options.state ?? 'done'],
+               on_it_message_id,state,closed_at)
+             VALUES($1,$2,$3,'Synthetic account report','Finished','Assistant summary',$4,$5,$6,$7,now())`,
+            [
+              taskId,
+              owner,
+              current.id,
+              instruction,
+              sourceMessageId,
+              onItMessageId,
+              options.state ?? 'done',
+            ],
           );
           const session = { source: 'user', sessionId: taskId };
           for (const [index, text] of replies.entries()) await write(text, index + 1, session);
@@ -438,6 +449,7 @@ test(
         const foreign = await seed(['Foreign task content.'], { owner: 'draft-foreign-owner' });
         const cancelled = await seed(['Cancelled task content.'], { state: 'stopped' });
         const unfinished = await seed(['Unfinished task content.'], { state: 'open' });
+        const legacy = await seed(['Old card content.'], { legacy: true });
         const longPrompt = `Keep every qualification: ${'synthetic qualification '.repeat(300)}`;
         const long = await seed([longPrompt]);
         const reusable = [
@@ -502,11 +514,14 @@ test(
             assert.deepEqual(await unchanged(), before);
           },
         );
-        await t.test('unowned and incomplete tasks cannot supply a schedule draft', async () => {
-          for (const id of [foreign, cancelled, unfinished, randomUUID()])
-            assert.equal((await draft(id)).statusCode, 404);
-          assert.deepEqual(await unchanged(), before);
-        });
+        await t.test(
+          'unowned, incomplete and old tasks cannot supply a schedule draft',
+          async () => {
+            for (const id of [foreign, cancelled, unfinished, legacy, randomUUID()])
+              assert.equal((await draft(id)).statusCode, 404);
+            assert.deepEqual(await unchanged(), before);
+          },
+        );
         await t.test(
           'only an explicit create schedules the reviewed instructions without rerunning the task',
           async () => {

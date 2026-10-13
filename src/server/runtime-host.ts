@@ -18,6 +18,7 @@ import { loopbackHost } from '../shared/loopback.ts';
 const forwardedEnvironment = [
   'OTTO_PUBLIC_URL',
   'OTTO_RELEASE',
+  'OTTO_TASKS',
   'COMPUTER_PROVIDER',
   'OTTO_COMPUTER_CONTROL_URL',
   'E2B_API_KEY',

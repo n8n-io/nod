@@ -85,26 +85,33 @@ A resume turn acts with the authority of the work it continues. The trust check,
 
 ## Tasks
 
-A task is long work that runs in its own session while the chat stays free. It's in development behind `OTTO_TASKS`, which is off by default. When it's on, a chat turn can call `start_task {title, ack, instruction, steps?}`. Read-only and onboarding turns, background sessions and subagents don't get the tool.
+A task is long work that runs in its own session while the chat stays free. It's in development behind `OTTO_TASKS`, which is off by default. When it's on, a chat turn can call `start_task {title, ack, brief, steps?}`. `brief` is Otto's working brief for the task, not your words. Read-only and onboarding turns, background sessions and subagents don't get the tool.
 
 With the flag on, the chat's prompt tells Otto to start a task when the work takes more than about 30 seconds, uses the browser or waits for other people, and to answer anything quicker directly. After `start_task`, the chat turn writes nothing more about that task, because `ack` is its answer.
 
 The server starts the task in one transaction:
 
 1. It locks the thread, then checks that the chat turn is still running and isn't read-only. Stop takes the same locks in the same order, so a stop and a start never deadlock.
-2. It saves the task row in `tasks`. The row keeps a frozen copy of your message that started the task, including a message you sent while the turn was running, and the channel to reply on. After you answer a confirmation, that's the message that started the work, not your answer.
+2. It saves the task row in `tasks`. The row keeps a frozen copy of your message that started the task, including a message you sent while the turn was running, the Otto message yours answered and the channel to reply on. After you answer a confirmation, that's the message that started the work, not your answer.
 3. It posts `ack`, or "On it.", as a reply to your message.
-4. It queues the task's first turn. The task ID is its session ID, so all of the task's turns run one at a time in that session, in parallel with the chat.
+4. It queues the task's first turn, with `brief` as its prompt. The task ID is its session ID, so all of the task's turns run one at a time in that session, in parallel with the chat.
 
 Every turn of a task acts on your message that started it. A turn that holds a message of yours in the task's session, such as a reply routed to the task, acts on that message instead. The trust check never treats a task as background work, and a task started from read-only work stays read-only. The trust check, approvals and the Vault find the task from the turn's session:
 
-- The trust check reads only the task's own words: your message that started it and your messages in its session. A chat message never counts for a task, and a task's messages never count for the chat. See [what the checker sees](/trust/approvals/#what-the-checker-sees).
+- The trust check reads only the task's own words: your message that started it, the Otto message that one answered and your messages in its session. So a task you start with "yes, do that" keeps the proposal you agreed to. A chat message never counts for a task, and a task's messages never count for the chat. See [what the checker sees](/trust/approvals/#what-the-checker-sees).
 - An approval's author is that message, so a schedule a task creates keeps your words as its instruction.
 - The same action and arguments in two tasks get two separate approvals.
 - A Vault yes in a task covers every later turn of that task, but not the chat or another task.
 - A task can remember a profile detail only from that message, quoted in full, and can forget a note only when the trust check finds that your words ask for it.
 
-The Tasks page reads each task's status from its row and the latest turn of its session. A new task shows **Queued** until its first turn starts, which waits while three other tasks run. An open task then shows **Needs you** while its latest turn waits for you, and **Working** otherwise. A closed task shows **Done**, **Stopped** or **Failed** from its row. A turn in another session, such as a chat message, never changes it.
+The Tasks page reads each task's status from its row and the turns of its session. A closed task shows **Done**, **Stopped** or **Failed** from its row. An open task shows:
+
+- **Working** while one of its turns runs.
+- **Queued** while its latest turn waits for a free place, as a new task does while three other tasks run. A resume after your answer waits the same way.
+- **Needs you** while its latest turn waits for you.
+- **Failed** when its latest turn failed, and **Stopped** when it was cancelled, for example by **Stop all**.
+
+A failed or stopped task isn't on the chat's list of open tasks. A turn in another session, such as a chat message, never changes a task's status.
 
 Tasks don't hold back other background work. Otto skips the read-only check of a connected app while a schedule or event session is queued or running, and tries again at the next review five minutes later. A queued or running task doesn't make it skip.
 
@@ -119,7 +126,7 @@ A task turn runs in task mode, which replaces the rules of a background session:
 
 A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
 
-The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its title, status and the ID of its "On it" message, so Otto knows what's running.
+The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its title, status and the ID of its "On it" message, so Otto knows what's running. The list is in the turn message, not the system prompt, so a status change doesn't change the chat's prompt.
 
 ## Sessions
 

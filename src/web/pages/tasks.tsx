@@ -72,7 +72,9 @@ export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): vo
         </span>
       </p>
       <p className="task-now">{headline(task)}</p>
-      {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
+      {task.status === 'done' && task.onItMessageId !== null && (
+        <ScheduleTask taskId={task.id} onCreated={onScheduled} />
+      )}
     </article>
   );
 }

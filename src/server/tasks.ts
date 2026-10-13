@@ -14,13 +14,14 @@ import {
 import { turnChain } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
+import { answered } from './trust.ts';
 
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const dispatchInput = z
   .object({
     title: z.string().trim().min(1).max(120),
     ack: z.string().trim().max(200),
-    instruction: z.string().trim().min(1).max(4000),
+    brief: z.string().trim().min(1).max(4000),
     steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
   })
   .strict();
@@ -37,15 +38,24 @@ const progressInput = z
 type Row = {
   id: string;
   title: string;
-  on_it_message_id: string;
+  on_it_message_id: string | null;
   now_text: string;
   result: string;
   state: 'queued' | 'open' | 'done' | 'stopped' | 'failed';
+  running: boolean;
   turn_status: string | null;
+  turn_finished_at: Date | null;
   question: string | null;
   created_at: Date;
   updated_at: Date;
   closed_at: Date | null;
+};
+
+const latest: Record<string, TaskStatus> = {
+  queued: 'queued',
+  waiting: 'needs_you',
+  failed: 'failed',
+  cancelled: 'stopped',
 };
 
 function failure(message: string, statusCode = 400) {
@@ -53,9 +63,12 @@ function failure(message: string, statusCode = 400) {
 }
 
 function status(row: Row): TaskStatus {
-  if (row.state !== 'open') return row.state;
-  return row.turn_status === 'waiting' ? 'needs_you' : 'working';
+  if (row.state !== 'queued' && row.state !== 'open') return row.state;
+  if (row.running) return 'working';
+  return latest[row.turn_status ?? ''] ?? (row.state === 'queued' ? 'queued' : 'working');
 }
+
+const ended = (value: TaskStatus) => value === 'failed' || value === 'stopped';
 
 export function createTasks(options: { pool: Pool; ownerId: string; refresh?: () => void }) {
   const { pool, ownerId } = options;
@@ -66,12 +79,14 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
       await pool.query<Row>(
         `SELECT t.id,t.title,t.on_it_message_id,t.now_text,COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,
            t.state,t.created_at,t.updated_at,t.closed_at,l.status AS turn_status,
+           l.finished_at AS turn_finished_at,EXISTS (SELECT 1 FROM turns w WHERE w.owner_id=t.owner_id
+             AND w.session_id=t.id AND w.status='running') AS running,
            CASE WHEN l.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
              WHERE m.owner_id=t.owner_id AND m.turn_id=l.id AND m.role='assistant' AND m.text<>''
              ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS question
          FROM tasks t
          LEFT JOIN messages r ON r.id=t.result_message_id AND r.owner_id=t.owner_id
-         LEFT JOIN LATERAL (SELECT u.id,u.status FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
+         LEFT JOIN LATERAL (SELECT u.id,u.status,u.finished_at FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
            ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
            AND (NOT $3::boolean OR t.state IN ('queued','open'))
@@ -82,11 +97,12 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
   }
 
   async function open(threadId: string) {
-    return (await rows(threadId, true)).map((row) => ({
-      title: row.title,
-      status: status(row),
-      onItMessageId: row.on_it_message_id,
-    }));
+    return (await rows(threadId, true)).flatMap((row) => {
+      const value = status(row);
+      return ended(value) || !row.on_it_message_id
+        ? []
+        : [{ title: row.title, status: value, onItMessageId: row.on_it_message_id }];
+    });
   }
 
   async function read(threadId?: string): Promise<Task[]> {
@@ -102,7 +118,8 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         question: value === 'needs_you' ? row.question : null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
-        closedAt: row.closed_at?.toISOString() ?? null,
+        closedAt:
+          (row.closed_at ?? (ended(value) ? row.turn_finished_at : null))?.toISOString() ?? null,
       };
     });
   }
@@ -168,6 +185,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
             ).rows[0]?.source_id;
       if (channelSourceId === undefined)
         throw failure('The task delivery conversation is unavailable.');
+      const answeredText = await answered(client, ownerId, thread.id, thread.id, source.id);
       const id = randomUUID();
       const onItMessageId = await insertAssistantMessage(
         client,
@@ -178,15 +196,16 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         source.id,
       );
       await client.query(
-        `INSERT INTO tasks(id,owner_id,thread_id,title,instruction,source_message_id,on_it_message_id,
-           channel,channel_source_id,steps,state)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued')`,
+        `INSERT INTO tasks(id,owner_id,thread_id,title,instruction,answered_text,source_message_id,
+           on_it_message_id,channel,channel_source_id,steps,state)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued')`,
         [
           id,
           ownerId,
           thread.id,
           request.title,
           source.text,
+          answeredText ?? null,
           source.id,
           onItMessageId,
           current.channel,
@@ -194,7 +213,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
           JSON.stringify(request.steps ?? []),
         ],
       );
-      await enqueueTurn(request.instruction, {
+      await enqueueTurn(request.brief, {
         source: 'task',
         sourceId: `task:${id}`,
         background: true,
@@ -264,6 +283,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS thread_id uuid REFERENCES threads(id),
         ADD COLUMN IF NOT EXISTS source_message_id uuid REFERENCES messages(id),
         ADD COLUMN IF NOT EXISTS instruction text,
+        ADD COLUMN IF NOT EXISTS answered_text text,
         ADD COLUMN IF NOT EXISTS on_it_message_id uuid REFERENCES messages(id),
         ADD COLUMN IF NOT EXISTS channel text,
         ADD COLUMN IF NOT EXISTS channel_source_id text,
@@ -297,7 +317,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
       await pool.query<{ title: string; instruction: string | null; has_attachments: boolean }>(
         `SELECT t.title,t.instruction,COALESCE(jsonb_array_length(s.attachments)>0,false) AS has_attachments
          FROM tasks t LEFT JOIN messages s ON s.id=t.source_message_id AND s.owner_id=t.owner_id
-         WHERE t.id=$1 AND t.owner_id=$2 AND t.state='done'`,
+         WHERE t.id=$1 AND t.owner_id=$2 AND t.state='done' AND t.on_it_message_id IS NOT NULL`,
         [id, ownerId],
       )
     ).rows[0];

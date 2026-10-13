@@ -429,7 +429,7 @@ test(
       ) => {
         const { taskId } = await tasks.dispatch(
           chat,
-          { title: 'Synthetic task', ack: '', instruction: 'Do the synthetic work.' },
+          { title: 'Synthetic task', ack: '', brief: 'Do the synthetic work.' },
           { sourceMessageId },
         );
         const turnId = (
@@ -531,6 +531,9 @@ test(
               '\n',
             );
           aligned = (input) => words(input).includes('bo.named@example.test');
+          const offer = 'The synthetic invoice summary is drafted.';
+          await say(reply.turnId, offer);
+          await finish(reply.turnId, 'succeeded');
           const a = await startTask(
             'Send the synthetic invoice summary to ana.named@example.test.',
           );
@@ -550,6 +553,7 @@ test(
             { ...seen, userMessages: seen.userMessages.map((m: any) => m.text) },
             {
               taskInstruction: 'Send the synthetic invoice summary to ana.named@example.test.',
+              assistantMessageBeforeTaskInstruction: offer,
               userMessages: ['Use the March synthetic invoices.'],
               assistantMessageBeforeLatestUserMessage:
                 'Which synthetic month should the summary cover?',
@@ -598,6 +602,64 @@ test(
       );
 
       await t.test(
+        'a task keeps the Otto message its first words answered, and the chat reads schedule results but no task messages',
+        async () => {
+          const proposal = 'Shall I email the synthetic Q3 figures to di.named@example.test?';
+          const offer = await begin('Can you handle the synthetic Q3 figures?');
+          await say(offer.turnId, proposal);
+          await finish(offer.turnId, 'succeeded');
+          const a = await startTask('yes, do that');
+          const b = await startTask('Email the synthetic Q4 figures to ed.named@example.test.');
+          const otherQuestion = 'Should I attach the synthetic Q4 sheet?';
+          await say(b.turn.turnId, otherQuestion);
+          const otherReply = 'Also copy fi.named@example.test.';
+          await routed(b.taskId, otherReply);
+          const later = await begin('Send the synthetic Q3 figures to gi.named@example.test.');
+          await finish(later.turnId, 'succeeded');
+          aligned = (input) => input.assistantMessageBeforeTaskInstruction === proposal;
+          const send = email('di.named@example.test');
+          assert.deepEqual(await trust.check(a.turn, 'GMAIL_SEND_EMAIL', send), {
+            confirm: false,
+          });
+          assert.deepEqual(reviews.at(-1), {
+            taskInstruction: 'yes, do that',
+            assistantMessageBeforeTaskInstruction: proposal,
+            action: { name: 'GMAIL_SEND_EMAIL', arguments: send },
+          });
+
+          const schedule = await begin('Synthetic weekly report', { source: 'schedule' });
+          const report = 'The synthetic weekly report is ready. Send it to hi.named@example.test?';
+          await say(schedule.turnId, report);
+          await finish(schedule.turnId, 'succeeded');
+          const yes = await begin('yes');
+          aligned = (input) => input.assistantMessageBeforeLatestUserMessage === report;
+          assert.deepEqual(
+            await trust.check(yes, 'GMAIL_SEND_EMAIL', email('hi.named@example.test')),
+            { confirm: false },
+          );
+          await finish(yes.turnId, 'succeeded');
+
+          const checkIn = 'The synthetic Q3 sheet is open.';
+          const question = 'Which synthetic Q3 version should I send?';
+          await say(a.turn.turnId, checkIn);
+          await say(a.turn.turnId, question);
+          const reply = 'Send the final synthetic version to ji.named@example.test.';
+          await routed(a.taskId, reply);
+          const chat = await begin('yes');
+          aligned = false;
+          assert.deepEqual(
+            await trust.check(chat, 'GMAIL_SEND_EMAIL', email('ji.named@example.test')),
+            { confirm: true, reason: 'unrequested' },
+          );
+          assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, undefined);
+          const chatReview = JSON.stringify(reviews.at(-1));
+          for (const text of [checkIn, question, reply, otherQuestion, otherReply])
+            assert.equal(chatReview.includes(text), false, text);
+          await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
+        },
+      );
+
+      await t.test(
         'a first task the owner tapped is Otto wording and never counts as their request',
         async () => {
           const title = 'Reply about revision rounds';
@@ -641,7 +703,9 @@ test(
             confirm: true,
             reason: 'task',
           });
-          assert.equal(reviews.at(-1)?.taskInstruction, undefined);
+          assert.deepEqual(reviews.at(-1), {
+            action: { name: 'GMAIL_REPLY_TO_THREAD', arguments: reply },
+          });
           await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
           aligned = true;
         },

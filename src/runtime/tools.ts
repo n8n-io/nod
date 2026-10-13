@@ -416,11 +416,11 @@ export const toolDefinitions = {
   ),
   start_task: defineTool(
     'start_task',
-    'Hand work to a task: a separate session that runs in parallel while the chat stays free. Use it when the work takes more than about 30 seconds, uses the browser or waits for other people; answer anything quicker directly. title names the task in a few words. ack is the one-line reply Otto posts now as your answer, such as "On it. I\'ll compare the three shops." instruction is the complete brief for the task, with every detail it needs from this conversation. steps lists 2 to 8 short planned steps when the work has clear stages. The task acts on the user\'s request and reports back itself, so after this call write nothing more about it.',
+    'Hand work to a task: a separate session that runs in parallel while the chat stays free. Use it when the work takes more than about 30 seconds, uses the browser or waits for other people; answer anything quicker directly. title names the task in a few words. ack is the one-line reply Otto posts now as your answer, such as "On it. I\'ll compare the three shops." brief is the complete working brief for the task, with every detail it needs from this conversation. steps lists 2 to 8 short planned steps when the work has clear stages. The task acts on the user\'s request and reports back itself, so after this call write nothing more about it.',
     Type.Object({
       title: Type.String({ minLength: 1, maxLength: 120 }),
       ack: Type.String({ maxLength: 200 }),
-      instruction: Type.String({ minLength: 1, maxLength: 4000 }),
+      brief: Type.String({ minLength: 1, maxLength: 4000 }),
       steps: Type.Optional(
         Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { minItems: 2, maxItems: 8 }),
       ),

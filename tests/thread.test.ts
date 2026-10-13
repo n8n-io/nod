@@ -328,7 +328,7 @@ test(
             (await context.startTask!({
               title: 'Compare synthetic shops',
               ack: 'On it. Comparing the shops.',
-              instruction: 'session-fixture-task',
+              brief: 'session-fixture-task',
               steps: ['Read the shops', 'Compare prices'],
             })) as { taskId: string; onItMessageId: string },
           );
@@ -340,14 +340,14 @@ test(
             (await context.startTask!({
               title: 'Synthetic status task',
               ack: '',
-              instruction: context.prompt.slice('dispatch-status:'.length),
+              brief: context.prompt.slice('dispatch-status:'.length),
             })) as { taskId: string; onItMessageId: string },
           );
           return { status: 'succeeded' };
         }
         if (context.prompt === 'dispatch-cap') {
-          const start = (instruction: string) =>
-            context.startTask!({ title: 'Synthetic capped task', ack: '', instruction });
+          const start = (brief: string) =>
+            context.startTask!({ title: 'Synthetic capped task', ack: '', brief });
           await start(cappedInstructions[0]!);
           await Promise.all(cappedInstructions.slice(1).map(start));
           return { status: 'succeeded' };
@@ -1609,12 +1609,14 @@ test(
             });
             await waitFor(() => dispatched.has(chat.turnId));
             await waitFor(settled(chat.turnId));
-            const taskId = dispatched.get(chat.turnId)!.taskId;
+            const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
             const turnId = (
               await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId])
             ).rows[0].id as string;
-            return { taskId, turnId };
+            return { taskId, onItMessageId, turnId, threadId: chat.threadId };
           };
+          const listed = async (threadId: string) =>
+            new Map((await tasks.open(threadId)).map((task) => [task.onItMessageId, task.status]));
           const releaseWork = gate('session-fixture-status');
           const releaseAnswer = gate('session-fixture-status-answer');
           try {
@@ -1656,6 +1658,20 @@ test(
               [asking.taskId, ownerId],
             );
             assert.equal((await cards()).get(asking.taskId)?.status, 'failed');
+
+            const failing = await dispatch('limit race fixture');
+            await waitFor(settled(failing.turnId));
+            current = await cards();
+            assert.equal(current.get(failing.taskId)?.status, 'failed');
+            assert.ok(current.get(failing.taskId)?.closedAt);
+            let open = await listed(working.threadId);
+            assert.equal(open.get(working.onItMessageId), 'working');
+            assert.equal(open.has(failing.onItMessageId), false);
+            assert.equal(open.has(asking.onItMessageId), false);
+            await thread.stopThread();
+            assert.equal((await cards()).get(working.taskId)?.status, 'stopped');
+            open = await listed(working.threadId);
+            assert.equal(open.has(working.onItMessageId), false);
           } finally {
             releaseWork();
             releaseAnswer();
@@ -1880,6 +1896,7 @@ test(
               },
             ],
           });
+          let resume: string | undefined;
           try {
             const chat = await thread.submitUserMessage('dispatch-cap', [], { channel: 'web' });
             const sessions = async () =>
@@ -1932,6 +1949,22 @@ test(
             assert.equal(await turnStatus(check.turn_id), 'succeeded');
             assert.equal(count(await sessions(), 'queued'), 1);
 
+            const answered = rows.find((row) => row.status === 'waiting')!;
+            resume = await thread.enqueueTurn('session-fixture-cap-resume', {
+              source: 'resume',
+              sourceId: `cap-fixture:${randomUUID()}`,
+              background: true,
+              sessionId: answered.id,
+            });
+            await delay(300);
+            assert.equal(await turnStatus(resume), 'queued');
+            assert.equal(
+              ((await request('GET', '/api/tasks')).json() as Task[]).find(
+                (task) => task.id === answered.id,
+              )?.status,
+              'queued',
+            );
+
             const finishing = rows.find((row) => row.status === 'running')!;
             releases.get(finishing.prompt)!();
             await waitFor(
@@ -1946,7 +1979,8 @@ test(
             await db.pool.query(
               `WITH stopped AS (UPDATE tasks SET state='stopped',closed_at=now() WHERE state='queued' RETURNING id)
                UPDATE turns SET status='cancelled',finished_at=now()
-               WHERE status='queued' AND session_id IN (SELECT id FROM stopped)`,
+               WHERE status='queued' AND (session_id IN (SELECT id FROM stopped) OR id=$1)`,
+              [resume ?? null],
             );
             for (const release of releases.values()) release();
             activityLookup = undefined;
@@ -2288,7 +2322,7 @@ test(
           const start = {
             title: 'Refused synthetic task',
             ack: '',
-            instruction: 'refused-fixture',
+            brief: 'refused-fixture',
           };
           for (const fields of [{ readOnly: true }, { sourceId: `onboarding:${randomUUID()}` }]) {
             const [turn, provenance] = await chatTurn(fields);

@@ -24,7 +24,9 @@ The checker is your selected model at its fastest setting. It checks every app a
 
 Only your words carry authority. A web page or email can't argue for an action, because the checker never reads it.
 
-Each [task](/how-it-works/threads-and-turns/#tasks) has its own words. For an action in a task, the checker sees your message that started the task, however long ago you sent it. It also sees your last five messages to that task from the past day, and the task's Otto message your latest one answered. It never sees your chat messages or another task's messages, so a chat message you send later doesn't widen what a task can do. For an action in the chat, the checker sees only your chat messages, never your messages to a task. If the last Otto message before yours came from a task, a scheduled run or background work, the checker sees no Otto message. A short "yes" then can't approve an older chat question, so Otto asks you.
+Each [task](/how-it-works/threads-and-turns/#tasks) has its own words. For an action in a task, the checker sees your message that started the task, however long ago you sent it, and the Otto message it answered. So a task you start with "yes, do that" keeps the proposal you agreed to. It also sees your last five messages to that task from the past day, and the task's Otto message your latest one answered. It never sees your chat messages or another task's messages, so a chat message you send later doesn't widen what a task can do.
+
+For an action in the chat, the checker reads only messages outside tasks: those of the chat, scheduled runs and background work. So a "yes" in the chat to a scheduled run's result still has the message it answered. A task's messages, such as its check-ins, its questions and your replies to it, never reach it. If the last Otto message before yours came from a task, the checker sees no Otto message. A short "yes" then can't approve an older chat question, so Otto asks you.
 
 ## What runs directly
 
