@@ -216,6 +216,7 @@ export interface AppState {
   hasEarlierMessages?: boolean;
   verificationRequests?: VerificationRequest[];
   planningTasks?: boolean;
+  tasks?: Task[];
   messages: Message[];
   turns: Turn[];
   configuration: Configuration;
@@ -234,10 +235,12 @@ export type TaskStatus = 'queued' | 'working' | 'needs_you' | 'done' | 'stopped'
 export interface Task {
   id: string;
   title: string;
+  onItMessageId: string | null;
   now: string;
   result: string;
   status: TaskStatus;
   question: string | null;
+  costUsd?: number | null;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;

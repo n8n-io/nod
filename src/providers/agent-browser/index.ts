@@ -16,7 +16,11 @@ import type {
   CredentialSubmission,
   BrowserPage,
 } from '../../ports/computer.ts';
-import { BrowserActionError, browserUploadBytes } from '../../ports/computer.ts';
+import {
+  BrowserActionError,
+  browserUploadBytes,
+  subagentBrowserPrefix,
+} from '../../ports/computer.ts';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
@@ -302,6 +306,8 @@ export function redactBrowserUrl(value: string, secrets: Iterable<string>): stri
   return redactBrowserText(url.href, secrets);
 }
 
+type SlotTicket = { slot?: 'session' | 'subagent' };
+
 export function createAgentBrowserComputer(options: {
   dataRoot: string;
   executable?: string;
@@ -311,6 +317,7 @@ export function createAgentBrowserComputer(options: {
   headless?: boolean;
   idleTimeoutMs?: number;
   maxLiveSessions?: number;
+  maxSubagentSessions?: number;
   slotWaitMs?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
@@ -322,7 +329,8 @@ export function createAgentBrowserComputer(options: {
   const discarded = new Set<string>();
   const pinned = new Set<string>();
   const keptSecrets = new Map<string, Set<string>>();
-  const slotQueue: Array<{ slot: boolean }> = [];
+  const slotQueue: SlotTicket[] = [];
+  const slotOf = (id: string) => (id.startsWith(subagentBrowserPrefix) ? 'subagent' : 'session');
   let slotFreed = gate();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
@@ -352,6 +360,7 @@ export function createAgentBrowserComputer(options: {
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
   const maxLiveSessions = Math.max(1, options.maxLiveSessions ?? 4);
+  const maxSubagentSessions = Math.max(1, options.maxSubagentSessions ?? 2);
   const slotWaitMs = options.slotWaitMs ?? 120_000;
   let disposed = false;
   let activeCalls = 0;
@@ -471,12 +480,12 @@ export function createAgentBrowserComputer(options: {
 
   async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
     if (state.started || state.saved.navigationFailed) return;
-    const ticket = { slot: true };
+    const ticket: SlotTicket = { slot: slotOf(state.id) };
     await inLine(ticket, () => claimSlot(state, ticket), signal);
   }
 
   async function inLine(
-    ticket: { slot: boolean },
+    ticket: SlotTicket,
     claim: () => Promise<boolean>,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -511,15 +520,19 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  async function claimSlot(state: BrowserState, ticket: { slot: boolean }): Promise<boolean> {
+  async function claimSlot(state: BrowserState, ticket: SlotTicket): Promise<boolean> {
     const expired = () => disposed || state.closed || state.closing;
     if (expired()) throw new Error('The browser session has expired. Open the URL again.');
     if (state.started || state.saved.navigationFailed) return true;
-    if (slotQueue.find((entry) => entry.slot) !== ticket) return false;
+    if (slotQueue.find((entry) => entry.slot === ticket.slot) !== ticket) return false;
+    const limit = ticket.slot === 'subagent' ? maxSubagentSessions : maxLiveSessions;
     const occupied = () =>
-      [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
+      [...browsers.values()].filter(
+        (entry) =>
+          (entry.started || entry.saved.navigationFailed) && slotOf(entry.id) === ticket.slot,
+      );
     const attempted = new Set<string>();
-    while (occupied().length >= maxLiveSessions) {
+    while (occupied().length >= limit) {
       const candidate = occupied()
         .filter(
           (entry) =>
@@ -1855,7 +1868,7 @@ export function createAgentBrowserComputer(options: {
   ): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
     assertNotDiscarded(id);
-    await inLine({ slot: false }, () => bindFree(id, profileId), signal);
+    await inLine({}, () => bindFree(id, profileId), signal);
   }
 
   async function bindFree(id: string, profileId: string): Promise<boolean> {

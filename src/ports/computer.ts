@@ -60,6 +60,7 @@ export interface BrowserObservation {
   text: string;
   url: string;
 }
+export const subagentBrowserPrefix = 'subagent-';
 export const browserDownloadBytes = 12 * 1024 * 1024;
 export const browserUploadBytes = 12 * 1024 * 1024;
 export const browserRequestBytes = Math.ceil(browserUploadBytes / 3) * 4 + 8192;

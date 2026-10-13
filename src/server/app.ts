@@ -37,6 +37,7 @@ import type {
   Message,
   MessageHistoryPage,
   MessageReaction,
+  Task,
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -83,6 +84,8 @@ export interface AppDependencies {
   messageCosts?: (
     turnIds: string[],
   ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
+  tasks?: (threadId: string) => Promise<Task[]>;
+  sessionCosts?: (sessionIds: string[]) => Promise<Record<string, number | null>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -167,7 +170,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
-    const [messages, turns, verificationRequests] = await Promise.all([
+    const [messages, turns, verificationRequests, tasks] = await Promise.all([
       pool.query(
         `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
          LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
@@ -178,7 +181,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
         [ownerId, thread.id],
       ),
       dependencies.verification?.pending() ?? [],
+      dependencies.tasks?.(thread.id),
     ]);
+    const taskCosts = tasks?.length
+      ? await dependencies.sessionCosts?.(tasks.map((task) => task.id)).catch(() => undefined)
+      : undefined;
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
     const modelCosts = await dependencies
@@ -203,6 +210,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
       }),
       turns: [...turns.rows, ...olderTurns],
       verificationRequests,
+      ...(tasks
+        ? { tasks: tasks.map((task) => ({ ...task, costUsd: taskCosts?.[task.id] ?? null })) }
+        : {}),
       planningTasks: dependencies.planningTasks?.() ?? false,
       configuration: publicConfiguration(),
     };

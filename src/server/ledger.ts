@@ -195,6 +195,18 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
+  async function sessionCosts(sessionIds: string[]) {
+    if (!sessionIds.length) return {};
+    const { rows } = await pool.query<{ id: string; costUsd: number | null }>(
+      `SELECT s.id,(SELECT CASE WHEN count(c.cost_usd)=count(*) THEN COALESCE(sum(c.cost_usd),0) END
+         FROM turns u JOIN model_usage c ON c.turn_id=u.id AND c.owner_id=u.owner_id
+         WHERE u.owner_id=$1 AND u.session_id=s.id)::float8 AS "costUsd"
+       FROM unnest($2::uuid[]) AS s(id)`,
+      [ownerId, [...new Set(sessionIds)]],
+    );
+    return Object.fromEntries(rows.map(({ id, costUsd }) => [id, costUsd]));
+  }
+
   async function entries(before?: { at: string; id: string }) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.read_only,u.channel,u.status,u.error,u.created_at,
@@ -330,6 +342,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     action,
     limitReached,
     messageCosts,
+    sessionCosts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     read,
     report,

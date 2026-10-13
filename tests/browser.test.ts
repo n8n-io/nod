@@ -29,7 +29,12 @@ import type {
   RuntimeContext,
   RuntimeObservation,
 } from '../src/ports/agent.ts';
-import { BrowserActionError, type BrowserAction, type Computer } from '../src/ports/computer.ts';
+import {
+  BrowserActionError,
+  subagentBrowserPrefix,
+  type BrowserAction,
+  type Computer,
+} from '../src/ports/computer.ts';
 import {
   browserSessionId,
   createAgentBrowserComputer,
@@ -1679,6 +1684,55 @@ test('at the browser cap a pinned session keeps its page and a new browser waits
     assert.equal(fixture.pages.get('subagent'), undefined);
     assert.equal(fixture.pages.get('first')?.closed, false);
   } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('subagent browsers have their own two slots, so pinned sessions never block them and they never take a session slot', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-subagent-cap-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    slotWaitMs: 1000,
+  });
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
+  const sessions = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const [first, second, third, cancelled] = ['a', 'b', 'c', 'd'].map(
+    (key) => `${subagentBrowserPrefix}${sessions[1]}-${key}`,
+  );
+  const working = new AbortController();
+  try {
+    for (const id of sessions) {
+      await open(id);
+      await computer.pin!(id);
+    }
+    await open(first);
+    await open(second);
+    const busy = [first, second].map((id) =>
+      computer.act(id, { action: 'snapshot', waitMs: 60_000 }, working.signal).catch(() => {}),
+    );
+    let opened = false;
+    const waiting = open(third).then(() => {
+      opened = true;
+    });
+    const controller = new AbortController();
+    const dropped = open(cancelled, controller.signal);
+    await delay(100);
+    controller.abort();
+    await assert.rejects(dropped, { name: 'AbortError' });
+    assert.equal(opened, false);
+    working.abort();
+    await Promise.all(busy);
+    await waiting;
+    await assert.rejects(open(randomUUID()), /browser sessions are busy/);
+    assert.equal([first, second].filter((id) => fixture.pages.has(id)).length, 1);
+    for (const id of [...sessions, third]) assert.equal(fixture.pages.get(id)?.closed, false, id);
+    assert.equal(fixture.pages.has(cancelled), false);
+  } finally {
+    working.abort();
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
   }

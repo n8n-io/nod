@@ -991,6 +991,8 @@ async function initializeApplication(
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
+    tasks: tasks.read,
+    sessionCosts: ledger.sessionCosts,
     computer,
     runtime,
     configuration: () =>

@@ -11,6 +11,8 @@ A task is long work that Otto hands off from the chat, so the chat stays free wh
 
 When Otto starts a task, it answers your message with a short "On it" message. The task's questions, sign-in and payment links, files and result reply to that message. A confirmation from the [trust check](/trust/approvals/) still appears as a plain message.
 
+Up to three tasks work at the same time. When three are working, a new task waits as **Queued** until one of them finishes or stops to ask you something. A task that waits for your answer doesn't take a place, and the chat and your schedules never wait for tasks.
+
 ## Three views
 
 | View          | Shows                                                                          |
@@ -35,6 +37,7 @@ A done task has **Schedule task**, which turns the same work into a [schedule](/
 
 | Status        | Meaning                                  |
 | ------------- | ---------------------------------------- |
+| **Queued**    | Waiting for one of three places to free. |
 | **Working**   | Otto is on it right now.                 |
 | **Needs you** | Otto asked you something. Reply in chat. |
 | **Done**      | Finished, with the result on the card.   |
@@ -45,7 +48,8 @@ A done task has **Schedule task**, which turns the same work into a [schedule](/
 stateDiagram-v2
   direction LR
   state "Needs you" as needs
-  [*] --> Working
+  [*] --> Queued
+  Queued --> Working
   Working --> needs: question
   needs --> Working: you answer
   Working --> Done

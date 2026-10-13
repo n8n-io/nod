@@ -36,11 +36,15 @@ flowchart TD
   new[New turn row<br/>and drain job] --> worker[Worker takes<br/>up to 20 jobs]
   worker --> lock[Lock the thread once]
   lock --> each{{For each session:<br/>a turn running?}}
-  each -- no --> next[Start its oldest<br/>queued turn]:::go
+  each -- no --> task{{A task, with three<br/>other tasks running?}}
+  task -- no --> next[Start its oldest<br/>queued turn]:::go
+  task -- yes --> wait
   each -- yes --> wait[Leave it queued]:::muted
 ```
 
 The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns without waiting for them. When a turn finishes, it queues the next drain.
+
+At most three task sessions have a running turn at once. The worker counts them while it holds the thread lock, so two tasks started at the same moment can't both take the third place. A task that waits for you doesn't count, and neither do the chat, schedule fires or events, which the limit never holds back.
 
 ## Turn status
 
@@ -100,7 +104,9 @@ Every turn of a task acts on your message that started it. A turn that holds a m
 - A Vault yes in a task covers every later turn of that task, but not the chat or another task.
 - A task can remember a profile detail only from that message, quoted in full, and can forget a note only when the trust check finds that your words ask for it.
 
-The Tasks page reads each task's status from its row and the latest turn of its session. An open task shows **Needs you** while that turn waits for you, and **Working** otherwise. A closed task shows **Done**, **Stopped** or **Failed** from its row. A turn in another session, such as a chat message, never changes it.
+The Tasks page reads each task's status from its row and the latest turn of its session. A new task shows **Queued** until its first turn starts, which waits while three other tasks run. An open task then shows **Needs you** while its latest turn waits for you, and **Working** otherwise. A closed task shows **Done**, **Stopped** or **Failed** from its row. A turn in another session, such as a chat message, never changes it.
+
+Tasks don't hold back other background work. Otto skips the read-only check of a connected app while a schedule or event session is queued or running, and tries again at the next review five minutes later. A queued or running task doesn't make it skip.
 
 A task turn runs in task mode, which replaces the rules of a background session:
 
@@ -146,7 +152,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
 - **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser. Read-only turns and activity checks can't delegate.
-- **Browsers.** A subagent's browser is deleted when it finishes.
+- **Browsers.** A subagent's browser is deleted when it finishes. Subagent browsers have their own two live slots, so a turn whose own browser holds a slot never waits on itself.
 
 ## Every session has its own browser
 
@@ -154,14 +160,14 @@ A session opens its browser on its first browser call, so a session that never b
 
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most four browsers live at once: enough for the chat and three other sessions. Subagent browsers count toward the four.
-- To make room, the container closes the browser used least recently. It never closes the browser of a session whose turn is running, or a browser held for you. A subagent's idle browser can close.
-- When no browser can close, a new one waits in line for a free slot. After two minutes the wait fails, so Otto can tell you or try again. **Stop** cancels the wait.
+- The browser container keeps at most four session browsers live at once: enough for the chat and three other sessions. Subagent browsers don't count toward the four. They have two slots of their own, so up to six browsers can be live.
+- To make room, the container closes the browser used least recently in the same group: a session browser for a session, a subagent browser for a subagent. It never closes the browser of a session whose turn is running, or a browser held for you. A subagent's idle browser can close to make room for another subagent.
+- When no browser can close, a new one waits in line for a free slot. Sessions and subagents wait in separate lines. After two minutes the wait fails, so Otto can tell you or try again. **Stop** cancels the wait.
 - The container never closes a running turn's browser to free a saved browser session for another session either. That session waits in the same line.
 - A running turn pins its session's browser. When Otto starts, it clears the pins an earlier run left before it uses the browser, so a crash can't keep a browser pinned. After the browser container recovers, Otto pins the session again before it reopens the page.
 - A closed browser keeps its profile until it's used again. Otto still hides the secret values it entered there when the session opens it again.
 - A session that pauses on a question, approval or sign-in keeps its open page for 30 minutes, even when that turn didn't browse. Pausing never starts a browser for a session that has none.
-- One setting sets the limit for every computer provider: `maxLiveSessions` in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts). Measure memory on an E2B sandbox with 2 CPUs and 3 GB before you raise it.
+- Two settings set the limits for every computer provider: `maxLiveSessions` for sessions and `maxSubagentSessions` for subagents, in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts). Measure memory with six live browsers on an E2B sandbox with 2 CPUs and 3 GB before you raise either.
 
 ## How Otto web follows the work
 
@@ -170,6 +176,7 @@ Otto web reads the thread from `/api/state` and listens to `/api/events`. A `ref
 - Otto web keeps one `/api/state` request open at a time. A refresh that arrives during a request marks the state stale, and Otto web fetches once more when the request ends.
 - Otto web cancels a `/api/state` request after 30 seconds, so a request that never finishes can't stop later updates.
 - Tool starts and finishes send at most one refresh per session each second, so parallel sessions don't flood the client. That refresh comes at the end of the second, so the latest step still shows.
+- `/api/state` also lists the thread's tasks, open ones first, each with its status, the ID of its "On it" message and the model cost of all its turns, subagents included.
 
 The client side lives in [`src/web/hooks/use-app-state.ts`](https://github.com/n8n-io/otto/blob/main/src/web/hooks/use-app-state.ts).
 

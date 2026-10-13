@@ -26,7 +26,7 @@ import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/objec
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createPreferencesStore, defaultPreferences } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
-import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
+import type { AppState, SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
@@ -163,6 +163,7 @@ test(
       onboard: (_timeZone, threadId) => thread.restartOnboarding(threadId),
       startOnboarding: onboarding.complete,
       planningTasks: onboarding.planning,
+      tasks: (threadId) => tasks.read(threadId),
       messageCosts: async () => {
         if (pricingUnavailable) throw new Error('Synthetic pricing failure.');
         return {};
@@ -234,6 +235,10 @@ test(
 
     const runs: RuntimeContext[] = [];
     const dispatched = new Map<string, { taskId: string; onItMessageId: string }>();
+    const cappedInstructions = [
+      'ask-question',
+      ...[1, 2, 3, 4].map((index) => `session-fixture-cap-${index}`),
+    ];
     const taskRefusals: string[] = [];
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<string, Array<{ id: string; text: string }>>();
@@ -338,6 +343,13 @@ test(
               instruction: context.prompt.slice('dispatch-status:'.length),
             })) as { taskId: string; onItMessageId: string },
           );
+          return { status: 'succeeded' };
+        }
+        if (context.prompt === 'dispatch-cap') {
+          const start = (instruction: string) =>
+            context.startTask!({ title: 'Synthetic capped task', ack: '', instruction });
+          await start(cappedInstructions[0]!);
+          await Promise.all(cappedInstructions.slice(1).map(start));
           return { status: 'succeeded' };
         }
         if (context.prompt === 'background-research-fixture') {
@@ -1829,6 +1841,124 @@ test(
         await waitFor(settledThread);
         await closeDispatched();
       });
+
+      await t.test(
+        'at most three tasks run at once, and waiting tasks, other sessions and activity checks are not held back',
+        async () => {
+          await waitFor(settledThread);
+          const releases = new Map(
+            cappedInstructions.slice(1).map((prompt) => {
+              let open = () => {};
+              sessionGates.set(
+                prompt,
+                new Promise<void>((resolve) => {
+                  open = resolve;
+                }),
+              );
+              return [prompt, () => open()];
+            }),
+          );
+          const connectionId = randomUUID();
+          const triage = createTriage({
+            classifier: {
+              id: 'fixture',
+              configured: true,
+              async classify() {
+                assert.fail('An empty review must not call a model.');
+              },
+            },
+            getProfile: async () => ({ location: '', preferences: '' }),
+            connectedApps: async () => [
+              {
+                slug: 'notion',
+                name: 'Notion',
+                status: 'connected',
+                connectionId,
+                access: ['api'],
+                supportsTriggers: false,
+                triggersEnabled: false,
+              },
+            ],
+          });
+          try {
+            const chat = await thread.submitUserMessage('dispatch-cap', [], { channel: 'web' });
+            const sessions = async () =>
+              (
+                await db.pool.query<{ id: string; state: string; status: string; prompt: string }>(
+                  `SELECT t.id,t.state,u.status,u.prompt FROM tasks t JOIN turns u ON u.session_id=t.id
+                   WHERE t.source_message_id=$1`,
+                  [chat.messageId],
+                )
+              ).rows;
+            const count = (rows: Array<{ status: string }>, status: string) =>
+              rows.filter((row) => row.status === status).length;
+            await waitFor(async () => {
+              const rows = await sessions();
+              return (
+                rows.length === 5 && count(rows, 'waiting') === 1 && count(rows, 'running') === 3
+              );
+            });
+            await delay(300);
+            const rows = await sessions();
+            assert.deepEqual(
+              ['waiting', 'running', 'queued'].map((status) => count(rows, status)),
+              [1, 3, 1],
+            );
+            const queued = rows.find((row) => row.status === 'queued')!;
+            assert.deepEqual(
+              rows.map((row) => [row.id, row.state]),
+              rows.map((row) => [row.id, row === queued ? 'queued' : 'open']),
+            );
+            const state = (await request('GET', '/api/state')).json() as AppState;
+            assert.equal(state.tasks?.find((task) => task.id === queued.id)?.status, 'queued');
+
+            const event = await thread.enqueueTurn('session-fixture-cap-event', {
+              source: 'event',
+              sourceId: `cap-fixture:${randomUUID()}`,
+            });
+            await waitFor(settled(event));
+            assert.equal(await turnStatus(event), 'succeeded');
+            activityLookup = triage.activityCheck;
+            activityRun = async () => {};
+            await triage.reviewHeartbeat(randomUUID());
+            const check = (
+              await db.pool.query(
+                'SELECT turn_id FROM app_activity_checks WHERE owner_id=$1 AND connection_id=$2',
+                [ownerId, connectionId],
+              )
+            ).rows[0];
+            assert.ok(check?.turn_id);
+            await waitFor(settled(check.turn_id));
+            assert.equal(await turnStatus(check.turn_id), 'succeeded');
+            assert.equal(count(await sessions(), 'queued'), 1);
+
+            const finishing = rows.find((row) => row.status === 'running')!;
+            releases.get(finishing.prompt)!();
+            await waitFor(
+              async () =>
+                (await sessions()).find((row) => row.id === queued.id)?.status === 'running',
+            );
+            const after = await sessions();
+            assert.equal(after.find((row) => row.id === finishing.id)?.state, 'done');
+            assert.equal(after.find((row) => row.id === queued.id)?.state, 'open');
+            assert.equal(count(after, 'running'), 3);
+          } finally {
+            await db.pool.query(
+              `WITH stopped AS (UPDATE tasks SET state='stopped',closed_at=now() WHERE state='queued' RETURNING id)
+               UPDATE turns SET status='cancelled',finished_at=now()
+               WHERE status='queued' AND session_id IN (SELECT id FROM stopped)`,
+            );
+            for (const release of releases.values()) release();
+            activityLookup = undefined;
+            activityRun = undefined;
+            await waitFor(settledThread);
+            await db.pool.query('DELETE FROM app_activity_checks WHERE connection_id=$1', [
+              connectionId,
+            ]);
+            await closeDispatched();
+          }
+        },
+      );
 
       await t.test(
         'a runtime failure ends the turn failed with one message and no retry',

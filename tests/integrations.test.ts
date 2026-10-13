@@ -7475,23 +7475,25 @@ test(
     const chat = randomUUID(),
       scheduled = randomUUID(),
       foreign = randomUUID(),
-      schedule = randomUUID();
+      schedule = randomUUID(),
+      session = randomUUID();
     try {
       await pool.query(`
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
-          read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
+          read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now(),
+          session_id uuid);
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
         CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
       await pool.query(
-        `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES
-          ($1,'owner','user',NULL,'Tell Sam we take the quote',greatest(now()-interval '2 hours',date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),
-          ($2,'owner','schedule',$4,'Run the morning brief',greatest(now()-interval '1 hour',(date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 millisecond')),
-          ($3,'other','user',NULL,'Foreign request',now())`,
-        [chat, scheduled, foreign, `schedule:${schedule}:1:now`],
+        `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at,session_id) VALUES
+          ($1,'owner','user',NULL,'Tell Sam we take the quote',greatest(now()-interval '2 hours',date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),$5),
+          ($2,'owner','schedule',$4,'Run the morning brief',greatest(now()-interval '1 hour',(date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 millisecond'),$2),
+          ($3,'other','user',NULL,'Foreign request',now(),$5)`,
+        [chat, scheduled, foreign, `schedule:${schedule}:1:now`, session],
       );
       await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
       const chatAnswer = randomUUID();
@@ -7596,6 +7598,17 @@ test(
       assert.deepEqual(costs[chat], { messageId: chatAnswer, costUsd: 0.55 });
       assert.deepEqual(costs[scheduled], { messageId: scheduledAnswer, costUsd: null });
       assert.equal(Object.hasOwn(costs, foreign), false);
+      await pool.query(
+        "INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd) VALUES('foreign','other',$1,'fixture',9)",
+        [foreign],
+      );
+      const idle = randomUUID();
+      const sessions = await ledger.sessionCosts([session, scheduled, idle]);
+      assert.deepEqual(
+        { ...sessions, [session]: Math.round(sessions[session]! * 100) / 100 },
+        { [session]: 0.55, [scheduled]: null, [idle]: 0 },
+      );
+      await pool.query("DELETE FROM model_usage WHERE id='foreign'");
       assert.deepEqual((await pool.query('SELECT action,effect FROM app_actions')).rows, [
         { action: 'GMAIL_SEND_EMAIL', effect: 'outbound' },
       ]);

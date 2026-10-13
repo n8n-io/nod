@@ -31,6 +31,7 @@ import { spendingLimitReached } from './ledger.ts';
 import { taskSessionSql } from './turn-chain.ts';
 
 const queue = 'thread-drain';
+const maxRunningTasks = 3;
 export const boss = new PgBoss({
   connectionString: databaseUrl,
   schema: process.env.PGBOSS_SCHEMA || 'pgboss',
@@ -741,24 +742,32 @@ async function claimTurns(threadId: string) {
   return transaction(async (client) => {
     if ((await lockThread(client)).id !== threadId) return [];
     const busy = await client.query(
-      "SELECT DISTINCT session_id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='running'",
+      `SELECT DISTINCT u.session_id,${taskSessionSql()} AS task_session FROM turns u
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='running'`,
       [threadId, ownerId],
     );
     const { rows } = await client.query(
-      `SELECT u.* FROM turns u
+      `SELECT u.*,${taskSessionSql()} AS task_session FROM turns u
        WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='queued'
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [threadId, ownerId],
     );
     const sessions = new Set(busy.rows.map((row) => row.session_id as string));
+    let tasks = busy.rows.filter((row) => row.task_session).length;
     const claimed = rows.filter((row) => {
-      if (sessions.has(row.session_id)) return false;
+      if (sessions.has(row.session_id) || (row.task_session && tasks >= maxRunningTasks))
+        return false;
       sessions.add(row.session_id);
+      if (row.task_session) tasks++;
       return true;
     });
     await client.query(
       "UPDATE turns SET status='running',started_at=now() WHERE id=ANY($1::uuid[])",
       [claimed.map((row) => row.id)],
+    );
+    await client.query(
+      "UPDATE tasks SET state='open',updated_at=now() WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND state='queued'",
+      [ownerId, claimed.filter((row) => row.task_session).map((row) => row.session_id)],
     );
     return claimed;
   });

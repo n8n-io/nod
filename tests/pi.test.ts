@@ -24,7 +24,11 @@ import {
 } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
-import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
+import {
+  subagentBrowserPrefix,
+  type WorkspaceExecOptions,
+  type WorkspaceSession,
+} from '../src/ports/computer.ts';
 import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import {
@@ -2240,7 +2244,7 @@ test('the runtime saves the Pi session of the chat and of a task, and of nothing
       assert.equal(result.status, 'succeeded');
       assert.deepEqual(opened[0], [key, saved]);
       assert.equal(opened.length, 2);
-      assert.ok(opened[1][0].startsWith(`${turnId}-`));
+      assert.ok(opened[1][0].startsWith(`${subagentBrowserPrefix}${turnId}-`));
       assert.equal(opened[1][1], false);
     }
   } finally {

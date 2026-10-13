@@ -61,7 +61,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
 
-  async function rows(openThreadId: string | null) {
+  async function rows(threadId: string | null, openOnly = false) {
     return (
       await pool.query<Row>(
         `SELECT t.id,t.title,t.on_it_message_id,t.now_text,COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,
@@ -73,27 +73,29 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
          LEFT JOIN messages r ON r.id=t.result_message_id AND r.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT u.id,u.status FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
            ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
-         WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR (t.thread_id=$2 AND t.state IN ('queued','open')))
+         WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
+           AND (NOT $3::boolean OR t.state IN ('queued','open'))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
-        [ownerId, openThreadId],
+        [ownerId, threadId, openOnly],
       )
     ).rows;
   }
 
   async function open(threadId: string) {
-    return (await rows(threadId)).map((row) => ({
+    return (await rows(threadId, true)).map((row) => ({
       title: row.title,
       status: status(row),
       onItMessageId: row.on_it_message_id,
     }));
   }
 
-  async function read(): Promise<Task[]> {
-    return (await rows(null)).map((row) => {
+  async function read(threadId?: string): Promise<Task[]> {
+    return (await rows(threadId ?? null)).map((row) => {
       const value = status(row);
       return {
         id: row.id,
         title: row.title,
+        onItMessageId: row.on_it_message_id,
         now: row.now_text,
         result: row.result,
         status: value,
@@ -177,8 +179,8 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
       );
       await client.query(
         `INSERT INTO tasks(id,owner_id,thread_id,title,instruction,source_message_id,on_it_message_id,
-           channel,channel_source_id,steps)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+           channel,channel_source_id,steps,state)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued')`,
         [
           id,
           ownerId,
@@ -341,5 +343,5 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     );
   }
 
-  return { initialize, dispatch, progress, open, registerRoutes };
+  return { initialize, dispatch, progress, open, read, registerRoutes };
 }

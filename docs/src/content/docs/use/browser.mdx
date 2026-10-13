@@ -60,7 +60,7 @@ flowchart LR
 
 When you ask for several independent things, such as prices from three shops, Otto can split the work between subagents that browse at the same time, then combine what they found.
 
-The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to four browsers run at once. An idle one closes to make room and opens again when it's needed. When every open browser is working or waiting for you, a new one waits up to two minutes for a slot to free.
+The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to four browsers for the chat, tasks and scheduled runs work at once, plus two for subagents. A subagent never waits for the browser of the work that started it. An idle browser closes to make room and opens again when it's needed. When every open browser in its group is working or waiting for you, a new one waits up to two minutes for a slot to free.
 
 ## Saved routines
 

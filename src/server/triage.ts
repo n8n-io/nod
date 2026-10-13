@@ -17,6 +17,7 @@ import type { ConnectedApp } from '../ports/integrations.ts';
 import type { ActivityCheckResult, RuntimeContext } from '../ports/agent.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { refresh } from './events.ts';
+import { taskSessionSql } from './turn-chain.ts';
 import type {
   RelevanceClassifier,
   RelevanceDecision,
@@ -92,7 +93,8 @@ export function createTriage(options: {
     await transaction(async (client) => {
       await lockThread(client);
       const busy = await client.query(
-        "SELECT 1 FROM turns WHERE owner_id=$1 AND background AND status IN ('queued','running') LIMIT 1",
+        `SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.background
+         AND u.status IN ('queued','running') AND NOT ${taskSessionSql()} LIMIT 1`,
         [ownerId],
       );
       if (busy.rowCount) return;

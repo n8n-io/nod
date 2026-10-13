@@ -14,7 +14,7 @@ import type {
   SkillLibrary,
 } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
-import { BrowserActionError } from '../ports/computer.ts';
+import { BrowserActionError, subagentBrowserPrefix } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { actionEffect } from '../shared/action-effect.ts';
 import { createBrowserFlows } from './browser-flows.ts';
@@ -625,7 +625,7 @@ export function createAgentRuntime(dependencies: {
       };
       const subagent = async (title: string, instruction: string) => {
         signal.throwIfAborted();
-        const childBrowser = `${context.turnId}-${randomUUID().slice(0, 8)}`;
+        const childBrowser = `${subagentBrowserPrefix}${context.turnId}-${randomUUID().slice(0, 8)}`;
         let browsed = false;
         let answer = '';
         const child = await agent.open({
