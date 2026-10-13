@@ -72,7 +72,7 @@ async function turnChain(client: PoolClient, turn: TurnRow) {
     if (current.source !== 'resume') return chain;
     const linked =
       (await confirmedBy(client, current))?.turn_id ??
-      /^(?:credentials|credentials-retry|connection|task):([0-9a-f-]{36})(?::|$)/.exec(
+      /^(?:credentials|credentials-retry|connection|task|tasks-done):([0-9a-f-]{36})(?::|$)/.exec(
         current.source_id ?? '',
       )?.[1];
     if (!linked) return chain;

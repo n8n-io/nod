@@ -68,7 +68,7 @@ A failed or stopped task shows **Needs you** until you write again. When your ne
 
 ## Parallel tasks
 
-A parallel task works on its own and tells you in chat when there's something to know. When it asks you a question, reply to that message in Otto web to answer the task. Your yes or no to its confirmations goes back to it too.
+A parallel task works on its own and tells you in chat when there's something to know. When the tasks Otto started for one request are all done, Otto puts their results together in chat. When it asks you a question, reply to that message in Otto web to answer the task. Your yes or no to its confirmations goes back to it too.
 
 - Up to three run at once. **Stop** in chat stops them all.
 - A task has the same permission as the request that started it. Every action still goes through the [trust check](/trust/approvals/).

@@ -596,6 +596,17 @@ test(
     const settled = (turnId: string) => async () =>
       ['succeeded', 'waiting', 'failed', 'cancelled'].includes((await turnStatus(turnId)) ?? '');
     const ran = (turnId: string) => runs.find((context) => context.turnId === turnId);
+    const wakeOf = async (parentTurnId: string) =>
+      (
+        await db.pool.query(
+          'SELECT id,session_id,background,prompt FROM turns WHERE source_id=$1',
+          [`tasks-done:${parentTurnId}`],
+        )
+      ).rows[0];
+    const waitForWake = async (parentTurnId: string) => {
+      await waitFor(async () => Boolean(await wakeOf(parentTurnId)));
+      return wakeOf(parentTurnId);
+    };
     const settledThread = async () =>
       !(
         await db.pool.query(
@@ -1026,6 +1037,12 @@ test(
           );
           assert.equal((await turnOrigin(child.id))?.source, 'user');
           assert.equal(nested, 'A parallel task cannot start another task.');
+          const woke = await waitForWake(parent.turnId);
+          await waitFor(settled(woke.id));
+          assert.equal(woke.session_id, parent.threadId);
+          assert.equal(woke.background, false);
+          assert.match(woke.prompt, /untrusted_tool_result[\s\S]*Compare synthetic quotes/);
+          assert.equal((await turnOrigin(woke.id))?.source, 'user');
           await db.pool.query("UPDATE tasks SET state='cancelled',closed_at=now() WHERE id=$1", [
             card,
           ]);
@@ -1058,11 +1075,13 @@ test(
               "SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.role='assistant' AND u.session_id=u.thread_id ORDER BY m.created_at DESC LIMIT 1",
             )
           ).rows[0]?.id as string | undefined;
+          assert.equal(await wakeOf(parent.turnId), undefined);
           const answer = await thread.submitUserMessage('Friday at eight', [], {
             channel: 'web',
             replyToMessageId: question,
           });
           await waitFor(settled(answer.turnId));
+          await waitFor(settled((await waitForWake(parent.turnId)).id));
           assert.deepEqual(
             (
               await db.pool.query('SELECT session_id,background,task_id FROM turns WHERE id=$1', [
