@@ -198,7 +198,6 @@ export function createAgentBrowserComputer(options: {
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   const discarded = new Set<string>();
-  const pinned = new Set<string>();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
     resolve(runtimeRoot, 'profiles', state.saved.profileId ?? state.id);
@@ -346,7 +345,6 @@ export function createAgentBrowserComputer(options: {
             .filter(
               (entry) =>
                 entry !== state &&
-                !pinned.has(entry.id) &&
                 !attempted.has(entry.id) &&
                 !entry.busy &&
                 !entry.closed &&
@@ -1475,7 +1473,8 @@ export function createAgentBrowserComputer(options: {
     await serialize(state, async () => {
       if (until !== null && !Number.isFinite(until))
         throw new Error('A valid browser hold expiry is required.');
-      state.heldUntil = until === null ? 0 : Math.min(until, Date.now() + 30 * 60_000);
+      state.heldUntil =
+        until === null ? 0 : Math.max(state.heldUntil, Math.min(until, Date.now() + 30 * 60_000));
       if (state.heldUntil > Date.now()) await currentUrl(state);
       if (state.heldUntil > Date.now())
         await captureScreen(state).catch((error: unknown) => {
@@ -1759,7 +1758,6 @@ export function createAgentBrowserComputer(options: {
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
-    pinned.delete(id);
     await closeBrowser(id);
     await Promise.all([
       rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
@@ -1811,10 +1809,6 @@ export function createAgentBrowserComputer(options: {
     checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
-    pin: async (id, value) => {
-      if (value) pinned.add(threadIdentity(id));
-      else pinned.delete(threadIdentity(id));
-    },
     close: tracked(closeBrowser),
     discard: tracked(discard),
     dispose: async () => {

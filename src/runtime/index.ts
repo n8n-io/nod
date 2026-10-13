@@ -24,6 +24,7 @@ import type { Turn } from './turn.ts';
 import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
+const leaseMs = 60_000;
 const imageBytes = 5 * 1024 * 1024;
 const ownBrowserTools = new Set(['sign_in', 'pay', 'browser_session']);
 const parallelTools = new Set([
@@ -134,6 +135,21 @@ export function createAgentRuntime(dependencies: {
       finished = resolve;
     });
     let browsed = false;
+    const leases = new Set<string>();
+    let renewal: ReturnType<typeof setInterval> | undefined;
+    const lease = (id: string) => computer.hold(id, Date.now() + leaseMs).catch(() => {});
+    const keep = async (id: string) => {
+      if (stopped || leases.has(id)) return;
+      leases.add(id);
+      renewal ??= setInterval(() => {
+        for (const leased of leases) void lease(leased);
+      }, leaseMs / 3);
+      await lease(id);
+    };
+    const release = () => {
+      clearInterval(renewal);
+      leases.clear();
+    };
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingForUser = false;
@@ -186,6 +202,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
+      release();
       if (browsed) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
       stopped = true;
       if (post && text) {
@@ -326,12 +343,15 @@ export function createAgentRuntime(dependencies: {
       const workspace = dependencies.workspace.open(context);
       const browser: Computer = {
         ...computer,
-        act: (id, action, actionSignal) =>
-          computer.act(
+        act: async (id, action, actionSignal) => {
+          const page = await computer.act(
             id,
             { ...action, timeZone: context.timeZone, locale: context.locale },
             actionSignal,
-          ),
+          );
+          if (action.action === 'open' && leases.has(id)) void lease(id);
+          return page;
+        },
       };
       let decided = Promise.resolve(false);
       const admission = () => {
@@ -427,7 +447,7 @@ export function createAgentRuntime(dependencies: {
           systemPrompt: system,
           systemContext: systemContext(context),
           tools: bind({ ...shared, browserId: childBrowser }, async () => {
-            if (!browsed) await computer.pin(childBrowser, true).catch(() => {});
+            await keep(childBrowser);
             browsed = true;
           }).filter((tool) => !ownBrowserTools.has(tool.name)),
           workspace,
@@ -451,13 +471,14 @@ export function createAgentRuntime(dependencies: {
           await Promise.resolve()
             .then(() => child.dispose())
             .catch(() => {});
+          leases.delete(childBrowser);
           if (browsed) await computer.discard(childBrowser).catch(() => {});
         }
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
       };
       const tools = bind({ ...shared, browserId, delegate }, async () => {
-        if (!browsed) await computer.pin(browserId, true).catch(() => {});
+        await keep(browserId);
         browsed = true;
       });
       const instruct = (instruction: string) =>
@@ -545,6 +566,7 @@ export function createAgentRuntime(dependencies: {
       return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
     } finally {
       stopped = true;
+      release();
       completeStream();
       signal.removeEventListener('abort', abort);
       try {
@@ -558,7 +580,6 @@ export function createAgentRuntime(dependencies: {
         activeTurns.delete(context.turnId);
         if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard(browserId).catch(() => {});
-        else if (browsed) await computer.pin(browserId, false).catch(() => {});
         finished();
       }
     }
