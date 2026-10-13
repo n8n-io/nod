@@ -8,7 +8,6 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
     hold: async () => {},
     close: async () => {},
-    signOut: async () => {},
     fillCard: async () => {},
     cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
     checkoutImage: async () => new Uint8Array(),

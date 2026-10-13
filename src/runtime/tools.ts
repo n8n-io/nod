@@ -551,7 +551,7 @@ export function ottoTools(
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
-      await pause('question', text, { hold: true });
+      await pause('question', text);
       return 'Waiting for the user to reply.';
     }),
     bind(toolDefinitions.react_to_message, async (p) => {

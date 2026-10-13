@@ -952,36 +952,6 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   assert.ok(JSON.stringify(coded.replies).includes(question));
 });
 
-test('a turn prepares the shared browser before its first browser action and again after a failed preparation', async () => {
-  const events: string[] = [];
-  await fixture(
-    async (tools) => {
-      await call(tools, 'send_message', { text: 'Opening the site.' });
-      await assert.rejects(
-        call(tools, 'browser', { action: 'open', url: 'https://example.test/' }),
-        /sign-out failed/,
-      );
-      await call(tools, 'browser', { action: 'open', url: 'https://example.test/' });
-      await call(tools, 'browser', { action: 'snapshot' });
-    },
-    {
-      prepareBrowser: async () => {
-        events.push('prepare');
-        if (events.length === 1) throw new Error('Synthetic sign-out failed.');
-      },
-    },
-    {
-      computer: fakeComputer({
-        act: async (_threadId, action) => {
-          events.push(String(action.action));
-          return { text: '', url: 'https://example.test/' };
-        },
-      }),
-    },
-  );
-  assert.deepEqual(events, ['prepare', 'prepare', 'open', 'snapshot']);
-});
-
 const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
 
 const refused: Array<[string, Record<string, unknown>]> = [
@@ -1052,9 +1022,6 @@ test('a read-only turn refuses every outside action with a fixed error and still
     {
       readOnly: true,
       background: true,
-      prepareBrowser: async () => {
-        sideEffects++;
-      },
       connections: async (action) => {
         assert.equal(action, 'discover');
         return { apps: [] };

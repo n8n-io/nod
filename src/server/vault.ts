@@ -1649,7 +1649,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
     try {
       await enterLogin(
-        { threadId: row.thread_id, turnId: row.turn_id, sessionId: row.browser_id ?? undefined },
+        { threadId: row.thread_id, turnId: row.turn_id, browserId: row.browser_id ?? undefined },
         row.owner_id,
         row.selectors,
         source,

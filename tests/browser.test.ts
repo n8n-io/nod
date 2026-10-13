@@ -105,7 +105,6 @@ test(
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
     const capturedAt = '2026-09-25T12:00:00.000Z';
-    let currentId: string | undefined;
     let locked = false;
     let fail = false;
     let pageShown = true;
@@ -120,8 +119,6 @@ test(
       },
       computer: {
         status: () => 'Ready',
-        currentSession: () =>
-          currentId ? { threadId: currentId, lastActivityAt: capturedAt } : undefined,
         screenStatus: () => ({ state: 'live', capturedAt }),
         screenshot: async (id) => {
           captures.push(id!);
@@ -164,7 +161,10 @@ test(
       const foreignThread = await activeThread(db.pool, 'other');
       const turnId = await insertTurn(thread.id, ownerId, 'Synthetic browser');
       const foreignTurnId = await insertTurn(foreignThread.id, 'other', 'Foreign browser');
-      currentId = thread.id;
+      await db.pool.query(
+        "INSERT INTO turn_events(id,turn_id,type,summary,created_at) VALUES($1,$2,'tool_start','browser',$3)",
+        [randomUUID(), turnId, capturedAt],
+      );
       const metadata = await request('/api/browser');
       assert.equal(metadata.statusCode, 200);
       assert.equal(metadata.headers['cache-control'], 'no-store');
@@ -233,7 +233,6 @@ test(
       assert.equal(failed.statusCode, 500);
       assert.equal(failed.body.includes('synthetic-private-provider-detail'), false);
       const nextTurnId = await insertTurn(next.id, ownerId, 'Next browser');
-      currentId = undefined;
       assert.deepEqual((await request('/api/browser')).json(), { currentBrowser: null });
       await db.pool.query(
         "INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,'tool_complete','browser')",
@@ -252,8 +251,6 @@ test(
       assert.equal(fallback.currentBrowser.threadId, next.id);
       assert.equal(fallback.currentBrowser.title, 'Next browser');
       assert.deepEqual(Object.keys(fallback), ['currentBrowser']);
-      currentId = thread.id;
-      assert.equal((await request('/api/browser')).json().currentBrowser.threadId, next.id);
 
       fail = false;
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
@@ -510,7 +507,6 @@ function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
     currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
     hold: async () => {},
     close: async () => {},
-    signOut: async () => {},
     fillCard: async () => {},
     cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
     checkoutImage: async () => new Uint8Array(),
@@ -1277,7 +1273,7 @@ test(
         /Script result/,
       );
       assert.ok(await computer.screenshot('real'));
-      await computer.signOut('real');
+      await computer.close('real');
       steal = true;
       received.length = 0;
       await computer.act('real', { action: 'open', url: `${shop}/` });
@@ -1300,45 +1296,6 @@ test(
     }
   },
 );
-
-test('signing out closes the thread browser, clears its own profile and keeps saved sessions', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-sign-out-'));
-  const fixture = stagedLoginBrowser();
-  const profiles: string[] = [];
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (executable, args, options) => {
-      profiles.push(basename(args[args.indexOf('--profile') + 1]));
-      return fixture.run(executable, args, options);
-    },
-  });
-  const runtime = join(directory, 'runtime');
-  const savedProfile = randomUUID();
-  try {
-    for (const profile of ['thread', savedProfile]) {
-      await mkdir(join(runtime, 'profiles', profile), { recursive: true });
-      await writeFile(join(runtime, 'profiles', profile, 'Cookies'), 'synthetic-cookie');
-    }
-    await mkdir(join(runtime, 'downloads', 'thread'), { recursive: true });
-    await writeFile(join(runtime, 'downloads', 'thread', 'statement.pdf'), 'synthetic-statement');
-    await computer.bindProfile!('thread', savedProfile);
-    await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
-    assert.equal(profiles.at(-1), savedProfile);
-    await computer.signOut('thread');
-    assert.deepEqual(await readdir(join(runtime, 'profiles')), [savedProfile]);
-    assert.deepEqual(await readdir(join(runtime, 'downloads')), []);
-    assert.equal(computer.screenStatus!('thread').state, 'unavailable');
-    await assert.rejects(
-      computer.act('thread', { action: 'snapshot' }),
-      (error: unknown) => error instanceof BrowserActionError && error.code === 'browser_not_open',
-    );
-    await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
-    assert.equal(profiles.at(-1), 'thread');
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 
 test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
@@ -1562,6 +1519,7 @@ test('every session drives its own browser, so background work never waits for t
   const threadId = randomUUID();
   const opened = new Map<string, string>();
   const discarded: string[] = [];
+  const held: string[] = [];
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
     agent: {
@@ -1583,6 +1541,9 @@ test('every session drives its own browser, so background work never waits for t
       discard: async (id) => {
         discarded.push(id);
       },
+      hold: async (id) => {
+        held.push(id);
+      },
     }),
     workspace: fakeWorkspace(),
   });
@@ -1595,7 +1556,7 @@ test('every session drives its own browser, so background work never waits for t
     return runtime.runTurn({
       threadId,
       turnId,
-      sessionId,
+      browserId: sessionId,
       background: sessionId !== undefined,
       prompt: 'Use the browser.',
       history: [],
@@ -1648,6 +1609,7 @@ test('every session drives its own browser, so background work never waits for t
       ]),
     );
     assert.deepEqual(discarded, [finished]);
+    assert.deepEqual(held.sort(), [asking, threadId].sort());
   } finally {
     deadline.abort();
     busy.resolve();
@@ -1791,16 +1753,13 @@ for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cance
 
 function workerComputer() {
   const calls: Array<{ method: string; input?: unknown }> = [];
-  let session: ReturnType<NonNullable<Computer['currentSession']>>;
-  let act: Computer['act'] = async (id, input) => {
-    session = { threadId: id, lastActivityAt: new Date().toISOString() };
+  let act: Computer['act'] = async (_id, input) => {
     return {
       text: input.text ?? 'Synthetic page',
       url: input.url ?? 'https://example.com/',
     };
   };
   const computer: Computer = {
-    currentSession: () => session,
     status: () => 'Synthetic workspace browser',
     screenStatus: () => ({ state: 'live', capturedAt: '2026-09-25T12:00:00.000Z' }),
     act: (id, input, signal) => {
@@ -1825,9 +1784,6 @@ function workerComputer() {
     },
     discard: async (id) => {
       calls.push({ method: 'discard', input: id });
-    },
-    signOut: async (id) => {
-      calls.push({ method: 'signOut', input: id });
     },
     fillCard: async (input) => {
       calls.push({ method: 'fillCard', input });
@@ -2091,19 +2047,16 @@ test('malformed methods and namespaces never reach a computer or filesystem path
   }
 });
 
-test('discard and sign-out reach the namespace computer of the same thread only', async () => {
+test('discard reaches the namespace computer of the same thread only', async () => {
   const fixture = await harness();
   try {
     const computer = fixture.client('/synthetic/discard');
     await computer.act('task', { action: 'snapshot' });
-    await computer.signOut('task');
     await computer.discard!('task');
     assert.deepEqual(fixture.instance('/synthetic/discard').calls, [
       { method: 'act', input: { action: 'snapshot' } },
-      { method: 'signOut', input: 'task' },
       { method: 'discard', input: 'task' },
     ]);
-    await assert.rejects(computer.signOut('../task'));
     await assert.rejects(computer.discard!('../task'));
   } finally {
     await fixture.close();

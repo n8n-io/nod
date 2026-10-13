@@ -38,29 +38,13 @@ export const boss = new PgBoss({
 });
 const running = new Map<string, AbortController>();
 const inflight = new Set<Promise<void>>();
-const heldBrowsers = new Set<string>();
-
-async function holdBrowser(
-  dependencies: ThreadDependencies,
-  threadId: string,
-  until: number | null,
-) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    dependencies.holdBrowser?.(threadId, until),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, 15_000);
-    }),
-  ]).catch(() => {});
-  clearTimeout(timer);
-}
 let stopping = false;
 
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume';
 export interface TurnRef {
   threadId: string;
   turnId: string;
-  sessionId?: string;
+  browserId?: string;
 }
 export interface EnqueueTurnOptions {
   source: Exclude<TurnSource, 'user'>;
@@ -117,7 +101,6 @@ export interface ThreadDependencies {
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   watchTurn?: (turn: TurnRef & { source: TurnSource }) => () => void;
-  holdBrowser?: (threadId: string, until: number | null) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -154,7 +137,6 @@ export interface ThreadDependencies {
     signal: AbortSignal,
     launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
-  prepareBrowser?: (turn: TurnRef) => Promise<void>;
   reactToMessage?: (
     input: AgentReactionInput,
   ) => ReturnType<NonNullable<RuntimeContext['reactToMessage']>>;
@@ -505,7 +487,6 @@ export async function resetThread(expectedThreadId: string) {
   });
   abortTurns(result.cancelled.ids);
   const { browsers } = result.cancelled;
-  for (const id of [result.previousThreadId, ...browsers]) heldBrowsers.delete(id);
   refresh();
   return {
     ok: true,
@@ -925,7 +906,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
-  const ref: TurnRef = { threadId, turnId, sessionId: turn.session_id };
+  const ref: TurnRef = { threadId, turnId, browserId: turn.session_id };
   const artifacts = dependencies.artifacts ?? localArtifacts;
   const controller = new AbortController();
   const { signal } = controller;
@@ -957,8 +938,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   };
   try {
     unwatch = dependencies.watchTurn?.({ ...ref, source: turn.source });
-    if (heldBrowsers.delete(turn.session_id))
-      await holdBrowser(dependencies, turn.session_id, null);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
     const stage = async (
@@ -1069,14 +1048,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) => insertEvent(client, turnId, type, summary));
       refresh();
     };
-    const {
-      reactToMessage,
-      connections,
-      browserConnection,
-      prepareBrowser,
-      observe,
-      inspectPrompt,
-    } = dependencies;
+    const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
@@ -1087,7 +1059,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const result = await dependencies.runTurn({
       threadId,
       turnId,
-      sessionId: turn.session_id,
+      browserId: turn.session_id,
       prompt: turn.prompt,
       background: turn.background,
       readOnly: turn.read_only,
@@ -1126,7 +1098,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             locale: loaded.context.locale,
           }),
         ),
-      prepareBrowser: prepareBrowser && fenced(() => prepareBrowser(ref)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
       ...(dependencies.requestPayment
         ? {
@@ -1222,10 +1193,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     ).catch((error) => {
       if (!signal.aborted) throw error;
     });
-    if (dependencies.holdBrowser && result.status !== 'succeeded' && !signal.aborted) {
-      heldBrowsers.add(turn.session_id);
-      await holdBrowser(dependencies, turn.session_id, Date.now() + 30 * 60_000);
-    }
     outcome = signal.aborted ? 'cancelled' : result.status;
   } catch (error) {
     if (stopping) {

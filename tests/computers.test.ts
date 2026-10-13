@@ -392,12 +392,9 @@ async function e2bFixture() {
   const worker = await startContainerBrowserWorker({
     socketPath,
     createComputer: () => {
-      let session: ReturnType<NonNullable<Computer['currentSession']>>;
       return {
-        currentSession: () => session,
         status: () => 'Synthetic browser',
-        act: async (id, input, signal) => {
-          session = { threadId: id, lastActivityAt: new Date().toISOString() };
+        act: async (_id, input, signal) => {
           calls.push({ method: 'act', input });
           await action?.();
           if (holdAction) {
@@ -423,7 +420,6 @@ async function e2bFixture() {
         }),
         hold: async () => {},
         close: async () => {},
-        signOut: async () => {},
         fillCard: async () => {},
         cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
         checkoutImage: async () => new Uint8Array(),
@@ -670,8 +666,6 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
       ),
       true,
     );
-    assert.equal(first.computer.currentSession!()?.threadId, 'task-one');
-    assert.equal(second.computer.currentSession!()?.threadId, 'task-two');
   } finally {
     await Promise.all([
       first.computer.dispose(),
@@ -987,7 +981,6 @@ async function cloudflareFixture() {
           calls.push({ namespace: selected, method: 'hold', input: { threadId, until } });
         },
         close: async () => {},
-        signOut: async () => {},
         fillCard: async () => {},
         cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
         checkoutImage: async () => new Uint8Array(),

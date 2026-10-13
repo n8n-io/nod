@@ -214,12 +214,6 @@ export async function createVaultAccess(
     };
   }
 
-  async function prepare(turn: TurnRef, signOut: () => Promise<void>) {
-    const work = await turnOrigin(turn.turnId);
-    if (!work) throw new Error('This turn is no longer running.');
-    if (work.source === 'event' || work.readOnly) await signOut();
-  }
-
   async function allow(raw: unknown) {
     const { origin } = z
       .object({
@@ -346,7 +340,6 @@ export async function createVaultAccess(
   return {
     ownerUse,
     authorize,
-    prepare,
     record,
     used,
     allow,

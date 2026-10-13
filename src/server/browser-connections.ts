@@ -394,12 +394,5 @@ export async function createBrowserConnections(
     });
   }
 
-  async function release(browserId: string) {
-    await pool.query(
-      'UPDATE browser_connections SET browser_id=NULL WHERE owner_id=$1 AND browser_id=$2',
-      [options.ownerId, browserId],
-    );
-  }
-
-  return { request, list, sessions, target, release, disconnect, registerRoutes };
+  return { request, list, sessions, target, disconnect, registerRoutes };
 }

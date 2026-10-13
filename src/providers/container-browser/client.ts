@@ -39,9 +39,7 @@ export function createBridgeComputer(options: {
   let disposed = false;
   let uncertain = false;
   let sequence = 0;
-  let activitySequence = 0;
   let statusSequence = 0;
-  let currentSession: ReturnType<NonNullable<Computer['currentSession']>>;
   let status = 'Workspace browser is ready.';
   const screens = new Map<
     string,
@@ -62,7 +60,6 @@ export function createBridgeComputer(options: {
       await call({ method: 'dispose' });
       if (disposed) return;
       uncertain = false;
-      currentSession = undefined;
       screens.clear();
     })().finally(() => {
       recovering = undefined;
@@ -71,18 +68,6 @@ export function createBridgeComputer(options: {
   }
 
   function updateMetadata(value: BrowserMetadata, order: number, input: BrowserCall) {
-    if (
-      (input.method === 'act' ||
-        input.method === 'download' ||
-        input.method === 'upload' ||
-        (input.method === 'close' && input.threadId === currentSession?.threadId)) &&
-      order >= activitySequence
-    ) {
-      activitySequence = order;
-      currentSession = value.currentSession ?? undefined;
-    } else if (!activitySequence && value.currentSession) {
-      currentSession = value.currentSession;
-    }
     if (order >= statusSequence) {
       statusSequence = order;
       status = value.status;
@@ -134,10 +119,6 @@ export function createBridgeComputer(options: {
         return reject(
           new Error(`The workspace browser is unavailable. Start its container. ${reopenNotice}`),
         );
-      }
-      if (input.method === 'act' || input.method === 'download' || input.method === 'upload') {
-        activitySequence = order;
-        currentSession = { threadId: input.threadId, lastActivityAt: new Date().toISOString() };
       }
       let output = '';
       let bytes = 0;
@@ -294,13 +275,9 @@ export function createBridgeComputer(options: {
       const result = await call({ method: 'quiesce' });
       if (typeof result !== 'boolean')
         throw new Error('The workspace browser could not pause safely.');
-      if (result) {
-        currentSession = undefined;
-        screens.clear();
-      }
+      if (result) screens.clear();
       return result;
     },
-    currentSession: () => currentSession,
     bindProfile: async (id, profileId) => {
       await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId });
       screens.delete(threadIdentity(id));
@@ -429,17 +406,12 @@ export function createBridgeComputer(options: {
       await call({ method: 'discard', threadId: threadIdentity(id) });
       screens.delete(threadIdentity(id));
     },
-    signOut: async (id) => {
-      await call({ method: 'signOut', threadId: threadIdentity(id) });
-      screens.delete(threadIdentity(id));
-    },
     dispose: () => {
       disposing ??= (async () => {
         disposed = true;
         for (const cancel of cancellations) cancel();
         await Promise.allSettled([...pending]);
         await call({ method: 'dispose' });
-        currentSession = undefined;
         screens.clear();
         status = 'Workspace browser is stopped.';
       })().catch((error) => {

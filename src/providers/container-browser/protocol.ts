@@ -203,7 +203,6 @@ export const browserRequest = z.discriminatedUnion('method', [
     .strict(),
   z.object({ ...identity, method: z.literal('close'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('discard'), threadId: thread }).strict(),
-  z.object({ ...identity, method: z.literal('signOut'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('dispose') }).strict(),
   z.object({ ...identity, method: z.literal('quiesce') }).strict(),
   z.object({ ...identity, method: z.literal('status') }).strict(),
@@ -233,10 +232,6 @@ export const viewBytes = 12 * 1024 * 1024;
 export const browserMetadata = z
   .object({
     status: z.string().max(256),
-    currentSession: z
-      .object({ threadId: thread, lastActivityAt: z.iso.datetime() })
-      .strict()
-      .nullable(),
     screen: z
       .object({
         threadId: thread,

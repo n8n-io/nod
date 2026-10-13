@@ -309,10 +309,6 @@ export function createAgentBrowserComputer(options: {
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   const discarded = new Set<string>();
-  let lastSession: { threadId: string; lastActivityAt: string } | undefined;
-  const markActivity = (id: string) => {
-    lastSession = { threadId: id, lastActivityAt: new Date().toISOString() };
-  };
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
     resolve(runtimeRoot, 'profiles', state.saved.profileId ?? state.id);
@@ -912,7 +908,6 @@ export function createAgentBrowserComputer(options: {
           resumeUrl.pathname = '/';
         state.saved.resumeUrl = resumeUrl.href;
         await reserveBrowser(state);
-        markActivity(id);
         if (!state.socket) {
           state.saved.timeZone = browserTimeZone(input.timeZone);
           state.saved.locale = browserLocale(input.locale);
@@ -959,14 +954,12 @@ export function createAgentBrowserComputer(options: {
         if (state.saved.navigationFailed) {
           if (input.action !== 'snapshot')
             throw new BrowserActionError('browser_navigation_failed');
-          markActivity(id);
           return {
             text: new BrowserActionError('browser_navigation_failed').message,
             url: state.saved.url,
           };
         }
         if (!state.started) throw new BrowserActionError('browser_not_open');
-        markActivity(id);
         if (input.action !== 'reload' && (await privateDocumentOpen(state, signal)))
           throw new BrowserActionError('browser_card_paused');
         if (input.action === 'tab_list') {
@@ -1150,7 +1143,6 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       if (await privateDocumentOpen(state, signal))
         throw new BrowserActionError('browser_card_paused');
-      markActivity(id);
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const file = resolve(directory, input.name);
@@ -1175,7 +1167,6 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
-      markActivity(id);
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
@@ -1310,7 +1301,6 @@ export function createAgentBrowserComputer(options: {
     if (browserUrl(input.origin).origin !== input.origin)
       throw new Error('An exact login origin is required.');
     const fields = credentialFields(input);
-    markActivity(input.threadId);
     return privateEntry(state, input.submitSelector, async (devtools, document) => {
       if (new URL(await currentUrl(state)).origin !== input.origin)
         throw new Error('The page is not on the website for this login.');
@@ -1504,7 +1494,6 @@ export function createAgentBrowserComputer(options: {
     for (const step of steps)
       if (!input.destinations[step.field])
         throw new Error('The approved card destinations are missing.');
-    markActivity(input.threadId);
     await privateEntry(
       state,
       input.submitSelector,
@@ -1610,7 +1599,6 @@ export function createAgentBrowserComputer(options: {
     const state = await recoverBrowser(id);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     if (state.injecting) throw new BrowserLockedError();
-    markActivity(id);
     await serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
@@ -1845,27 +1833,6 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function signOut(rawId: string): Promise<void> {
-    const id = threadIdentity(rawId);
-    assertNotDiscarded(id);
-    await allocate(async () => {
-      const state = browsers.get(id) ?? (await recoverBrowser(id, true));
-      if (state?.injecting) throw new BrowserLockedError();
-      if (state) await closeBrowser(id);
-      const fresh = stateFor(id);
-      await Promise.all([
-        rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
-        rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
-        rm(cachePath(fresh), { recursive: true, force: true }),
-      ]);
-      await screens.clearImage(id);
-      screenStatuses.delete(id);
-      fresh.saved = { version: 1, url: '', sensitive: false, active: false };
-      await saveState(fresh);
-      browsers.delete(id);
-    });
-  }
-
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
@@ -1911,7 +1878,6 @@ export function createAgentBrowserComputer(options: {
         )
       );
     },
-    currentSession: () => lastSession,
     bindProfile: tracked(bindProfile),
     deleteProfile: tracked(deleteProfile),
     act: tracked(browserAction),
@@ -1929,7 +1895,6 @@ export function createAgentBrowserComputer(options: {
     hold: tracked(hold),
     close: tracked(closeBrowser),
     discard: tracked(discard),
-    signOut: tracked(signOut),
     status: browserStatus,
     dispose: async () => {
       disposed = true;

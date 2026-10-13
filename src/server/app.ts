@@ -71,14 +71,7 @@ export interface AppDependencies {
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
     Computer,
-    | 'act'
-    | 'screenshot'
-    | 'control'
-    | 'view'
-    | 'status'
-    | 'screenStatus'
-    | 'currentSession'
-    | 'discard'
+    'act' | 'screenshot' | 'control' | 'view' | 'status' | 'screenStatus' | 'discard'
   >;
   runtime?: {
     status(): { browser: string; workspace: string; activeTurns?: number };
@@ -443,13 +436,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   async function readCurrentBrowser() {
     const thread = await activeThread(pool);
-    const current = dependencies.computer?.currentSession?.();
-    const activeBrowser = current?.threadId === thread.id ? current : undefined;
     const latest = await pool.query(
       `SELECT left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
        LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND summary='browser' ORDER BY created_at DESC LIMIT 1) e ON true
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 ${activeBrowser ? '' : 'AND e.created_at IS NOT NULL'}
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND e.created_at IS NOT NULL
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
       [ownerId, thread.id],
     );
@@ -459,7 +450,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       title: row.title,
       status: row.status,
-      lastActivityAt: activeBrowser?.lastActivityAt ?? row.lastActivityAt,
+      lastActivityAt: row.lastActivityAt,
     };
   }
   app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));

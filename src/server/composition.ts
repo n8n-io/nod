@@ -148,7 +148,6 @@ export interface ApplicationAdapters {
   channelAccounts?: ChannelAccountRegistry;
   agent: Agent;
   computer: Computer;
-  holdWaitingBrowser?: Computer['hold'];
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
@@ -343,7 +342,6 @@ export function createDefaultAdapters(
     computer:
       remote?.computer ??
       createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
-    ...(cloudflare && { holdWaitingBrowser: cloudflare.computer.hold }),
     workspace:
       remote?.workspace ??
       createDockerWorkspace({
@@ -777,13 +775,7 @@ async function initializeApplication(
         return result;
       },
       watchTurn: tasks.watch,
-      holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
-      prepareBrowser: (turn) =>
-        vaultAccess.prepare(turn, async () => {
-          await computer.signOut(browserOf(turn));
-          await browserConnections.release(browserOf(turn));
-        }),
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
         if (!target) return browserConnections.request(request, turn, signal, launch);

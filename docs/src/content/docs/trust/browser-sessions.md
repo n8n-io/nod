@@ -24,10 +24,10 @@ Opening a profile doesn't prove it's still signed in, so Otto checks the page. I
 
 ## When the browser stays signed in
 
-| Situation                          | What happens                                                                        |
-| ---------------------------------- | ----------------------------------------------------------------------------------- |
-| A conversation or a scheduled run  | The browser stays signed in. Each new sign-in or saved-session use is checked again |
-| Background work and read-only work | Always starts signed out. Background work asks you before it signs in again         |
+| Situation                                      | What happens                                                                                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| The chat                                       | Its browser stays signed in. Each new sign-in or saved-session use is checked again                                                            |
+| A scheduled run, background work or a subagent | Starts in its own fresh browser, signed out. It signs in again with a saved login or session, checked as usual; background work asks you first |
 
 ## Sign out
 

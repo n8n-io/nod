@@ -45,11 +45,10 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
     const screen = threadId ? computer?.screenStatus?.(threadId) : undefined;
     return browserMetadata.parse({
       status: computer?.status() ?? 'Workspace browser is unavailable.',
-      currentSession: computer?.currentSession?.() ?? null,
       ...(screen && { screen: { threadId, ...screen } }),
     });
   } catch {
-    return { status: 'Workspace browser is unavailable.', currentSession: null };
+    return { status: 'Workspace browser is unavailable.' };
   }
 }
 
@@ -124,8 +123,6 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     case 'discard':
       if (!computer.discard) throw new Error();
       return computer.discard(request.threadId);
-    case 'signOut':
-      return computer.signOut(request.threadId);
     case 'status':
       return null;
     case 'view':

@@ -707,19 +707,9 @@ test(
             await access.authorize(requested, { origin: site, kind: 'sign_in', itemId: first }),
             { ok: true, reason: 'asked' },
           );
-          let kept = true;
-          await access.prepare(requested, async () => {
-            kept = false;
-          });
-          assert.equal(kept, true);
           aligned = false;
           for (const source of ['event', 'onboarding'] as const) {
             const background = await begin('Synthetic background work', { source });
-            let signedOut = false;
-            await access.prepare(background, async () => {
-              signedOut = true;
-            });
-            assert.equal(signedOut, true);
             const before = reviews.length;
             const verdict = await access.authorize(background, {
               origin: site,

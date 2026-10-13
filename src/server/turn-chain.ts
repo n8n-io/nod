@@ -1,6 +1,6 @@
 import type { TurnRef } from './thread.ts';
 
-export const browserOf = (turn: TurnRef) => turn.sessionId ?? turn.threadId;
+export const browserOf = (turn: TurnRef) => turn.browserId ?? turn.threadId;
 
 export function parentTurnSql(alias = 'u') {
   return `COALESCE(CASE WHEN ${alias}.source='resume' THEN substring(${alias}.source_id from '^(?:credentials|credentials-retry|connection|control):([0-9a-f-]{36})(?::|$)')::uuid END,

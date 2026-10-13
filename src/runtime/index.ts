@@ -214,20 +214,12 @@ export function createAgentRuntime(dependencies: {
     const lifecycle = new AbortController();
     const context = { ...input, signal: AbortSignal.any([input.signal, lifecycle.signal]) };
     const { signal, threadId } = context;
-    const browserId = context.sessionId ?? context.threadId;
+    const browserId = context.browserId ?? context.threadId;
     let finished!: () => void;
     const done = new Promise<void>((resolve) => {
       finished = resolve;
     });
-    let browserReady: Promise<void> | undefined;
-    const takeBrowser = () =>
-      (browserReady ??= Promise.resolve()
-        .then(() => context.prepareBrowser?.())
-        .then(() => signal.throwIfAborted())
-        .catch((error: unknown) => {
-          browserReady = undefined;
-          throw error;
-        }));
+    let browsed = false;
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingForUser = false;
@@ -315,12 +307,12 @@ export function createAgentRuntime(dependencies: {
     const pause = async (
       reason: 'question' | 'approval' | 'credentials',
       text?: string,
-      { hold = false, post = true } = {},
+      { post = true } = {},
     ) => {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (hold) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
+      if (browsed) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
       stopped = true;
       if (post && text) {
         if (context.waitForUser) await context.waitForUser(text);
@@ -334,7 +326,7 @@ export function createAgentRuntime(dependencies: {
       if (!result.requiresConfirmation) return result;
       const text =
         'question' in result && typeof result.question === 'string' ? result.question : undefined;
-      await pause('approval', text, { hold: true, post: false });
+      await pause('approval', text, { post: false });
       return confirmationNotice;
     };
 
@@ -628,7 +620,9 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
       };
-      const tools = bind({ ...shared, browserId, delegate }, takeBrowser);
+      const tools = bind({ ...shared, browserId, delegate }, async () => {
+        browsed = true;
+      });
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
       const instruct = (
         instruction: string,
@@ -770,10 +764,9 @@ export function createAgentRuntime(dependencies: {
       } finally {
         clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
-        await browserReady?.catch(() => {});
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        if (context.background && !waitingForUser && browserReady)
+        if (browserId !== threadId && !waitingForUser && browsed)
           await computer.discard?.(browserId).catch(() => {});
         finished();
       }
