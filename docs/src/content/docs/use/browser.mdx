@@ -46,19 +46,21 @@ Solving a challenge is up to the model. Some challenges block automated browsers
 - **Passkeys.** Otto doesn't supply a passkey authenticator. Use another sign-in method, such as a password saved in Vault.
 - **Approval on your phone.** When a site asks you to approve on another device, Otto tells you what the page says. Then it checks the page every 15 seconds, up to eight times, and continues once the page confirms. It stops if the request is denied or expires, and asks you if the result stays unclear.
 
-## A browser for each task
+## A browser for each job
 
-The chat and every background task have their own browser, so nothing waits in line. A task opens one only when it needs it.
+The chat, every scheduled or background run and every subagent have their own browser, so nothing waits in line. Each opens one only when it needs it.
 
 ```mermaid
 flowchart LR
   chat[Chat]:::accent --> b1[Chat browser]
-  t1[Task] --> b2[Its own browser]
-  t2[Scheduled run] --> b3[Its own browser]
+  sub[Subagents] --> b2[A browser each]
+  run[Scheduled run] --> b3[Its own browser]
   b1 -- Open browser --> you([You]):::accent
 ```
 
-The chat's browser is the one Otto hands to you. A task's browser is deleted when the task ends. Up to four browsers run at once, and an idle one closes until it's needed again.
+When you ask for several independent things, such as prices from three shops, Otto can split the work between subagents that browse at the same time, then combine what they found.
+
+The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to four browsers run at once, and an idle one closes until it's needed again.
 
 ## Saved routines
 

@@ -521,14 +521,7 @@ async function initializeApplication(
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
   await personal.initialize({ workers: options.workers });
-  const tasks = createTasks({
-    pool,
-    ownerId,
-    curator,
-    withTurnLock,
-    refresh,
-    enqueue: enqueueTurn,
-  });
+  const tasks = createTasks({ pool, ownerId, curator, withTurnLock, refresh });
   await tasks.initialize();
   const triage = createTriage({
     consumers,

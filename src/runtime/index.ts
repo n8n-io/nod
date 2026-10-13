@@ -28,6 +28,7 @@ import { delimit } from './untrusted.ts';
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
 const parallelTools = new Set([
+  'delegate',
   'share_file',
   'create_audio',
   'skills',
@@ -42,6 +43,7 @@ const handsOverBrowser = (name: string, params: unknown) =>
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const delimitedTools = new Set([
   'apps',
+  'delegate',
   'browser',
   'browser_flow',
   'web_search',
@@ -257,10 +259,12 @@ export function createAgentRuntime(dependencies: {
       timeoutMs: dependencies.observationTimeoutMs,
     });
     const observe = observations.record;
+    const children = new Set<AgentSession>();
     const abortSession = () => {
-      void Promise.resolve()
-        .then(() => session?.abort())
-        .catch(() => {});
+      for (const child of [session, ...children])
+        void Promise.resolve()
+          .then(() => child?.abort())
+          .catch(() => {});
     };
     const abort = () => {
       stopped = true;
@@ -535,15 +539,6 @@ export function createAgentRuntime(dependencies: {
             actionSignal,
           ),
       };
-      const turn: Turn = {
-        context,
-        computer: browser,
-        browserId,
-        reply,
-        invite: (text) => deliverReply(text),
-        pause,
-        confirm,
-      };
       let exclusive = Promise.resolve();
       const inTurn = (name: string, params: unknown, run: () => Promise<AgentToolResult>) => {
         if (!mixedTools.has(name) || readCall(name, params)) return run();
@@ -554,35 +549,86 @@ export function createAgentRuntime(dependencies: {
         );
         return next;
       };
-      const tools = ottoTools(
-        turn,
-        createBrowserFlows(workspace, browser, browserId, signal),
-        dependencies.skills,
-      ).map(({ name, description, parameters, execute }): AgentTool => ({
-        name,
-        description,
-        parameters,
-        parallel: parallelTools.has(name),
-        execute: async (params) => {
-          if (
-            (!context.readOnly || allowedReadOnly(name, params)) &&
-            (browserTools.has(name) || handsOverBrowser(name, params))
-          )
-            await takeBrowser();
-          return inTurn(name, params, () =>
-            guard(name, params, async () => {
-              if (!Value.Check(parameters, params))
-                throw new Error('The tool arguments do not match its schema.');
-              if (handsOverBrowser(name, params))
-                await computer.currentPage(browserId).catch(() => {
-                  throw new Error('Open the page in your browser before handing it to the user.');
-                });
-              return execute(params);
-            }),
-          );
-        },
-      }));
+      const bind = (turn: Turn, take: () => Promise<unknown>) =>
+        ottoTools(
+          turn,
+          createBrowserFlows(workspace, browser, turn.browserId, signal),
+          dependencies.skills,
+        ).map(({ name, description, parameters, execute }): AgentTool => ({
+          name,
+          description,
+          parameters,
+          parallel: parallelTools.has(name),
+          execute: async (params) => {
+            if (
+              (!context.readOnly || allowedReadOnly(name, params)) &&
+              (browserTools.has(name) || handsOverBrowser(name, params))
+            )
+              await take();
+            return inTurn(name, params, () =>
+              guard(name, params, async () => {
+                if (!Value.Check(parameters, params))
+                  throw new Error('The tool arguments do not match its schema.');
+                if (handsOverBrowser(name, params))
+                  await computer.currentPage(turn.browserId).catch(() => {
+                    throw new Error('Open the page in your browser before handing it to the user.');
+                  });
+                return execute(params);
+              }),
+            );
+          },
+        }));
       const system = systemPrompt(workspace, dependencies.skills);
+      const shared = {
+        context,
+        computer: browser,
+        reply,
+        invite: (text: string) => deliverReply(text),
+        pause,
+        confirm,
+      };
+      const delegate = async (title: string, instruction: string) => {
+        if (children.size >= 3)
+          throw new Error('Three subagents are already running. Wait for one to finish.');
+        const childBrowser = `${context.turnId}-${randomUUID().slice(0, 8)}`;
+        let browsed = false;
+        let answer = '';
+        const child = await agent.open({
+          threadId,
+          turnId: context.turnId,
+          systemPrompt: system,
+          systemContext: systemContext(context),
+          tools: bind({ ...shared, browserId: childBrowser }, async () => {
+            browsed = true;
+          }),
+          workspace,
+          timeZone: context.timeZone,
+          background: true,
+          runTool: guard,
+          shouldStop: () => stopped,
+          onEvent: (event) => {
+            if (event.type === 'model_usage') void observe(event);
+            if (event.type === 'final') answer = event.text;
+          },
+        });
+        children.add(child);
+        try {
+          signal.throwIfAborted();
+          await child.prompt(
+            `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nDo this part completely with your tools. Your final answer goes back to the agent that delegated it, not to the owner, so include every result it needs.`,
+            [],
+          );
+        } finally {
+          children.delete(child);
+          await Promise.resolve()
+            .then(() => child.dispose())
+            .catch(() => {});
+          if (browsed) await computer.discard?.(childBrowser).catch(() => {});
+        }
+        signal.throwIfAborted();
+        return answer || 'The subagent finished without an answer.';
+      };
+      const tools = bind({ ...shared, browserId, delegate }, takeBrowser);
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
       const instruct = (
         instruction: string,

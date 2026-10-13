@@ -195,6 +195,14 @@ export const toolDefinitions = {
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
   ),
+  delegate: defineTool(
+    'delegate',
+    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. At most three run at once, and a subagent cannot delegate.",
+    Type.Object({
+      title: Type.String({ minLength: 1, maxLength: 120 }),
+      instruction: Type.String({ minLength: 1, maxLength: 4000 }),
+    }),
+  ),
   ask_user: defineTool(
     'ask_user',
     'Ask one necessary question and pause until the user answers.',
@@ -424,7 +432,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?, instruction?} returns its id; with instruction it also starts a parallel task that does the work in its own session and browser while you continue, reports with send_message and finishes its card; give it a complete, self-contained instruction; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. Without instruction the card only reports. A card schedules nothing, grants no permission and is not a chat message.',
+    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?} returns its id; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. The card only reports: it schedules nothing, grants no permission and is not a chat message.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -435,7 +443,6 @@ export const toolDefinitions = {
           now: taskNow,
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
-          instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })),
         },
         { additionalProperties: false },
       ),
@@ -538,6 +545,9 @@ export function ottoTools(
       async (p) =>
         (await turn.reply(p.text, undefined, p.replyToMessageId)) ?? 'Message delivered.',
     ),
+    ...(turn.delegate
+      ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
+      : []),
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');

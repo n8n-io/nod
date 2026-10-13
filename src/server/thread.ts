@@ -325,29 +325,6 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   return turnId;
 }
 
-async function askingSession(client: PoolClient, replyToMessageId?: string) {
-  if (!replyToMessageId) return undefined;
-  const latest = (
-    await client.query<{
-      turn: {
-        session_id: string;
-        prompt: string;
-        task_id?: string | null;
-        status: string;
-        waiting_reason: string | null;
-      };
-    }>(
-      `SELECT row_to_json(w) AS turn FROM messages m
-       JOIN turns a ON a.id=m.turn_id AND a.owner_id=m.owner_id
-       JOIN LATERAL (SELECT * FROM turns w WHERE w.session_id=a.session_id AND w.owner_id=a.owner_id
-         ORDER BY w.created_at DESC,w.id DESC LIMIT 1) w ON true
-       WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND a.session_id<>a.thread_id`,
-      [replyToMessageId, ownerId],
-    )
-  ).rows[0]?.turn;
-  return latest?.status === 'waiting' && latest.waiting_reason === 'question' ? latest : undefined;
-}
-
 export function createUserMessageService(options: { confirmAction?: ConfirmAction } = {}) {
   return {
     submit: (text: string, attachments: Artifact[] = [], input: SubmitUserMessageOptions = {}) =>
@@ -439,26 +416,21 @@ export async function submitUserMessage(
         supersededApprovalId = confirmed.supersededApprovalId;
       else if (confirmed) return confirmed;
     }
-    const asking = await askingSession(client, options.replyToMessageId);
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,background,session_id)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7)`,
       [
         turnId,
         ownerId,
         thread.id,
         options.sourceId ?? null,
         messageId,
-        asking ? `${text}\nThe request was: ${asking.prompt}` : (options.prompt ?? text),
+        options.prompt ?? text,
         channel,
-        Boolean(asking),
-        asking?.session_id ?? null,
       ],
     );
-    if (asking?.task_id)
-      await client.query('UPDATE turns SET task_id=$1 WHERE id=$2', [asking.task_id, turnId]);
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
       [

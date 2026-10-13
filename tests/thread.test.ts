@@ -78,7 +78,7 @@ test(
     const { localArtifacts, storeArtifact } = await import('../src/server/artifacts.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
     const { createVault } = await import('../src/server/vault.ts');
-    const { createApprovals, turnOrigin } = await import('../src/server/approvals.ts');
+    const { createApprovals } = await import('../src/server/approvals.ts');
     const { events } = await import('../src/server/events.ts');
     const { createAccountSession } = await import('../src/server/account.ts');
     const { createAccountStore } = await import('../src/server/account-store.ts');
@@ -178,7 +178,6 @@ test(
       pool: db.pool,
       ownerId,
       withTurnLock: thread.withTurnLock,
-      enqueue: thread.enqueueTurn,
       everyMs: 100,
       curator: {
         id: 'fixture',
@@ -255,8 +254,6 @@ test(
 
     const runs: RuntimeContext[] = [];
     const sessionGates = new Map<string, Promise<void>>();
-    let delegated: { id: string } | undefined;
-    let nested: string | undefined;
     const taken = new Map<string, Array<{ id: string; text: string }>>();
     const gates = new Map<string, () => void>();
     const hold = (prompt: string) =>
@@ -341,45 +338,6 @@ test(
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
-          return { status: 'succeeded' };
-        }
-        if (context.prompt === 'delegate-fixture') {
-          delegated = (await context.task!({
-            action: 'start',
-            title: 'Compare synthetic quotes',
-            doneWhen: 'Three quotes are compared.',
-            now: 'Starting',
-            instruction: 'Collect the three synthetic quotes.',
-          })) as { id: string };
-          return { status: 'succeeded' };
-        }
-        if (context.prompt === 'delegate-ask-fixture') {
-          delegated = (await context.task!({
-            action: 'start',
-            title: 'Book a synthetic table',
-            doneWhen: 'A table is booked.',
-            now: 'Starting',
-            instruction: 'Ask the user which date works.',
-          })) as { id: string };
-          return { status: 'succeeded' };
-        }
-        if (context.prompt.startsWith('Parallel task ') && context.prompt.includes('which date')) {
-          await context.waitForUser!('Which date works for the table?');
-          return { status: 'waiting_user' };
-        }
-        if (context.prompt.startsWith('Parallel task ')) {
-          nested = await Promise.resolve(
-            context.task!({
-              action: 'start',
-              title: 'Nested',
-              doneWhen: 'Never.',
-              now: 'Starting',
-              instruction: 'Start another task.',
-            }),
-          ).then(
-            () => 'started',
-            (error: Error) => error.message,
-          );
           return { status: 'succeeded' };
         }
         if (context.prompt === 'background-research-fixture') {
@@ -997,105 +955,6 @@ test(
           assert.equal(ran(first)?.sessionId, first);
           assert.equal(ran(next)?.sessionId, first);
           assert.equal(ran(other)?.sessionId, other);
-        },
-      );
-
-      await t.test(
-        'a started task runs in its own session with the authority of the turn that started it',
-        async () => {
-          await waitFor(settledThread);
-          const parent = await thread.submitUserMessage('delegate-fixture', [], { channel: 'web' });
-          await waitFor(settled(parent.turnId));
-          const card = delegated!.id;
-          const child = (
-            await db.pool.query(
-              'SELECT id,source,source_id,background,session_id,channel,task_id FROM turns WHERE source_id=$1',
-              [`task:${parent.turnId}:${card}`],
-            )
-          ).rows[0];
-          assert.ok(child);
-          await waitFor(settled(child.id));
-          assert.equal(child.background, true);
-          assert.equal(child.session_id, child.id);
-          assert.equal(child.channel, 'web');
-          assert.equal(child.task_id, card);
-          assert.equal(
-            (await db.pool.query('SELECT task_id FROM turns WHERE id=$1', [parent.turnId])).rows[0]
-              .task_id === card,
-            false,
-          );
-          assert.equal((await turnOrigin(child.id))?.source, 'user');
-          assert.equal(nested, 'A parallel task cannot start another task.');
-          await db.pool.query("UPDATE tasks SET state='cancelled',closed_at=now() WHERE id=$1", [
-            card,
-          ]);
-        },
-      );
-
-      await t.test(
-        'a reply to a task question goes back to that task and nothing else does',
-        async () => {
-          await waitFor(settledThread);
-          const parent = await thread.submitUserMessage('delegate-ask-fixture', [], {
-            channel: 'web',
-          });
-          await waitFor(settled(parent.turnId));
-          const card = delegated!.id;
-          const child = (
-            await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
-              `task:${parent.turnId}:${card}`,
-            ])
-          ).rows[0].id as string;
-          await waitFor(settled(child));
-          const question = (
-            await db.pool.query(
-              "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text='Which date works for the table?'",
-              [child],
-            )
-          ).rows[0].id as string;
-          const chatAnswer = (
-            await db.pool.query(
-              "SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.role='assistant' AND u.session_id=u.thread_id ORDER BY m.created_at DESC LIMIT 1",
-            )
-          ).rows[0]?.id as string | undefined;
-          const answer = await thread.submitUserMessage('Friday at eight', [], {
-            channel: 'web',
-            replyToMessageId: question,
-          });
-          await waitFor(settled(answer.turnId));
-          assert.deepEqual(
-            (
-              await db.pool.query('SELECT session_id,background,task_id FROM turns WHERE id=$1', [
-                answer.turnId,
-              ])
-            ).rows[0],
-            { session_id: child, background: true, task_id: card },
-          );
-          assert.match(
-            ran(answer.turnId)!.prompt,
-            /^Friday at eight\nThe request was: Parallel task /,
-          );
-          const again = await thread.submitUserMessage('And for four people', [], {
-            channel: 'web',
-            replyToMessageId: question,
-          });
-          await waitFor(settled(again.turnId));
-          assert.equal(ran(again.turnId)?.sessionId, parent.threadId);
-          if (chatAnswer) {
-            const plain = await thread.submitUserMessage('thanks', [], {
-              channel: 'web',
-              replyToMessageId: chatAnswer,
-            });
-            await waitFor(settled(plain.turnId));
-            assert.equal(ran(plain.turnId)?.sessionId, parent.threadId);
-          }
-          await db.pool.query("UPDATE tasks SET state='cancelled',closed_at=now() WHERE id=$1", [
-            card,
-          ]);
-          await db.pool.query(
-            "UPDATE turns SET status='cancelled' WHERE session_id=$1 AND status='waiting'",
-            [child],
-          );
         },
       );
 

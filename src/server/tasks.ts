@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
-import type { enqueueTurn, TurnRef, TurnSource } from './thread.ts';
+import type { TurnRef, TurnSource } from './thread.ts';
 import { parentTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
@@ -30,7 +30,6 @@ const input = z.discriminatedUnion('action', [
       now,
       waitingFor: waits.optional(),
       nextCheck: nextCheck.optional(),
-      instruction: z.string().trim().min(1).max(4000).optional(),
     })
     .strict(),
   z
@@ -115,7 +114,6 @@ export function createTasks(options: {
   withTurnLock?: TurnLock;
   refresh?: () => void;
   everyMs?: number;
-  enqueue?: typeof enqueueTurn;
 }) {
   const { pool, ownerId, curator } = options;
   const everyMs = options.everyMs ?? 30_000;
@@ -195,45 +193,6 @@ export function createTasks(options: {
     );
   }
 
-  async function delegate(
-    client: PoolClient,
-    turn: TurnRef,
-    id: string,
-    request: { title: string; doneWhen: string; instruction?: string },
-  ) {
-    if (!options.enqueue) throw failure('Parallel tasks are unavailable.');
-    const parent = (
-      await client.query<{ channel: string; channel_source_id: string | null; nested: boolean }>(
-        `SELECT u.channel,u.channel_source_id,COALESCE(s.source_id LIKE 'task:%',false) AS nested
-         FROM turns u LEFT JOIN turns s ON s.id=u.session_id AND s.owner_id=u.owner_id
-         WHERE u.id=$1 AND u.owner_id=$2`,
-        [turn.turnId, ownerId],
-      )
-    ).rows[0];
-    if (!parent) throw failure('This turn is no longer active.');
-    if (parent.nested) throw failure('A parallel task cannot start another task.');
-    const running = await client.query<{ count: number }>(
-      `SELECT count(DISTINCT u.session_id)::int AS count FROM turns u
-       JOIN turns s ON s.id=u.session_id AND s.owner_id=u.owner_id
-       WHERE u.owner_id=$1 AND s.source_id LIKE 'task:%' AND u.status IN ('queued','running')`,
-      [ownerId],
-    );
-    if (running.rows[0]!.count >= 3)
-      throw failure('Three parallel tasks are already running. Wait for one to finish.');
-    const child = await options.enqueue(
-      `Parallel task ${id}: ${request.title}\nDone when: ${request.doneWhen}\n${request.instruction}\nReport with send_message only when the user needs to know something. Finish with task finish {id: "${id}"} once done.`,
-      {
-        source: 'resume',
-        sourceId: `task:${turn.turnId}:${id}`,
-        channel: parent.channel,
-        channelSourceId: parent.channel_source_id,
-        background: true,
-        client,
-      },
-    );
-    await link(client, child, id);
-  }
-
   async function act(client: PoolClient, turn: TurnRef, raw: unknown) {
     const request = input.parse(raw);
     if (request.action === 'list') return { tasks: await read(client) };
@@ -264,10 +223,6 @@ export function createTasks(options: {
           request.nextCheck ?? null,
         ],
       );
-      if (request.instruction) {
-        await delegate(client, turn, id, request);
-        return (await read(client, { id, closed: true }))[0];
-      }
     } else {
       id = request.id;
       const updated =
@@ -459,17 +414,15 @@ export function createTasks(options: {
   }
 
   async function begin(turn: TurnRef & { source: TurnSource }) {
-    const linked = (
-      await pool.query<{ own: string | null; parent: string | null }>(
-        `SELECT u.task_id AS own,t.id AS parent FROM turns u
-         LEFT JOIN turns p ON p.id=${parentTurnSql('u')} AND p.owner_id=u.owner_id
-         LEFT JOIN tasks t ON t.id=p.task_id AND t.owner_id=p.owner_id AND t.state='open'
+    const parent = (
+      await pool.query<{ id: string }>(
+        `SELECT t.id FROM turns u JOIN turns p ON p.id=${parentTurnSql('u')} AND p.owner_id=u.owner_id
+         JOIN tasks t ON t.id=p.task_id AND t.owner_id=p.owner_id AND t.state='open'
          WHERE u.id=$1 AND u.owner_id=$2`,
         [turn.turnId, ownerId],
       )
     ).rows[0];
-    if (!linked || linked.own) return;
-    if (linked.parent) return continueTask(turn.turnId, linked.parent);
+    if (parent) return continueTask(turn.turnId, parent.id);
     if (turn.source !== 'user' || !curator?.configured) return;
     const cards = await candidates(turn.turnId, true);
     if (!cards.length) return;

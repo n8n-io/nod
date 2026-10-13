@@ -1,13 +1,13 @@
 ---
 title: Threads and turns
-description: How every message, schedule fire, event and parallel task becomes a turn in a session, and how sessions wait, run in parallel, stop and fail.
+description: How every message, schedule fire and event becomes a turn in a session, how sessions run in parallel, and how subagents split a turn.
 sidebar:
   order: 2
 ---
 
 This page explains how Otto turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, and every schedule fire, app event and parallel task is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, and every schedule fire and app event is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -19,13 +19,12 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/otto/blob/m
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Session                                                       |
-| ---------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `user`     | A message from you                                                                         | The chat, or the task whose question you reply to on Otto web |
-| `schedule` | A schedule firing                                                                          | A new session                                                 |
-| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session                                                 |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                                        |
-| `resume`   | A parallel task started with `task start`                                                  | A new session                                                 |
+| `source`   | Created by                                                                                 | Session                |
+| ---------- | ------------------------------------------------------------------------------------------ | ---------------------- |
+| `user`     | A message from you                                                                         | The chat               |
+| `schedule` | A schedule firing                                                                          | A new session          |
+| `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session          |
+| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -75,8 +74,6 @@ A question, an approval or a credential request ends the turn as `waiting`. Your
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn.
 
-On Otto web, replying to a background session's question continues that session while its latest turn waits on the question. Any other message goes to the chat.
-
 ## Sessions
 
 ```mermaid
@@ -90,7 +87,7 @@ sequenceDiagram
   Note over C: Next chat turn sees them
 ```
 
-|             | Chat                       | Schedule, event and task sessions                                                 |
+|             | Chat                       | Schedule and event sessions                                                       |
 | ----------- | -------------------------- | --------------------------------------------------------------------------------- |
 | Key         | The thread ID              | The session's first turn                                                          |
 | Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                         |
@@ -101,13 +98,14 @@ sequenceDiagram
 
 When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
 
-## Parallel tasks
+## Subagents
 
-`task start` with an `instruction` starts a parallel task: a background turn in a new session, linked to its card on the **Tasks** page. The chat keeps going while it works.
+`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Otto's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The model then puts the answers together, such as comparing three shops.
 
-- **Authority.** A task's `resume` source ID names the turn that started it, so the trust check and Vault trace it to that turn. It carries the same owner words, schedule instruction or none, and a read-only start makes it read-only.
-- **Limits.** At most three tasks run at once, and a task can't start another task.
-- **Talking to you.** It reports with `send_message`, asks with `ask_user` and finishes its own card.
+- **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
+- **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
+- **Limits.** At most three run at once, a subagent can't delegate, and read-only turns and activity checks can't delegate.
+- **Browsers.** A subagent's browser is deleted when it finishes.
 
 ## Every session has its own browser
 

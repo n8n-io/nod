@@ -2024,6 +2024,116 @@ function context(directory: string): RuntimeContext {
   };
 }
 
+test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const opened = new Map<string, string>();
+  const discarded: string[] = [];
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let results: unknown[] = [];
+  let childTools: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async (text) => {
+          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
+          if (!input.tools.some((item) => item.name === 'delegate')) {
+            childTools = input.tools.map((item) => item.name);
+            const shop = /shop-\w/.exec(text)![0];
+            started.push(shop);
+            await tool('browser').execute({ action: 'open', url: `https://${shop}.example/drill` });
+            await gate;
+            input.onEvent({ type: 'final', text: `${shop} sells the drill for 89 EUR` });
+            return;
+          }
+          const delegate = (shop: string) =>
+            tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` });
+          const pending = ['shop-a', 'shop-b', 'shop-c'].map(delegate);
+          while (started.length < 3) await setTimeout(5);
+          await assert.rejects(delegate('shop-d'), /Three subagents are already running/);
+          release();
+          results = await Promise.all(pending);
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer({
+      act: async (id, action) => {
+        if (action.action === 'open' && action.url) opened.set(action.url, id);
+        return { text: 'Fixture page', url: action.url ?? 'https://example.com' };
+      },
+      discard: async (id) => {
+        discarded.push(id);
+      },
+    }),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
+    assert.equal(childTools.includes('delegate'), false);
+    const browsers = [...opened.values()];
+    assert.equal(new Set(browsers).size, 3);
+    assert.ok(browsers.every((id) => id !== 'fixture'));
+    assert.deepEqual(discarded.sort(), browsers.sort());
+    for (const [index, shop] of ['shop-a', 'shop-b', 'shop-c'].entries()) {
+      const text = JSON.stringify(results[index]);
+      assert.match(text, /untrusted_tool_result/);
+      assert.match(text, new RegExp(`${shop} sells the drill for 89 EUR`));
+    }
+  } finally {
+    release();
+    await runtime.dispose();
+  }
+});
+
+test('a subagent that needs the owner pauses the whole turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-pause-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const replies: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
+          if (!input.tools.some((item) => item.name === 'delegate')) {
+            await tool('ask_user').execute({ question: 'Which date works for the table?' });
+            return;
+          }
+          await tool('delegate').execute({ title: 'Book', instruction: 'Book a table.' });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+    assert.equal(result.status, 'waiting_user');
+    assert.deepEqual(replies, ['Which date works for the table?']);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test('stalled observations release active tasks on cancellation and disposal', async (t) => {
   for (const method of ['cancel', 'dispose'] as const) {
     await t.test(method, async () => {
