@@ -11,7 +11,7 @@ Besides [Composio apps](/connect/apps/), Otto connects to Notion and Linear dire
 
 Notion and Linear connect through their own hosted MCP servers. You sign in with OAuth, and you don't need a Composio key. Open **Apps** and select **Connect**.
 
-Otto's direct Linear connection uses Linear's read-only MCP endpoint.
+Otto can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. A Linear account connected before Otto had write access asks you to connect it again.
 
 ## Connect another service
 

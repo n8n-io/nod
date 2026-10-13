@@ -4707,7 +4707,7 @@ test(
 );
 
 test(
-  'direct Linear OAuth uses read access and keeps tokens encrypted',
+  'direct Linear OAuth asks for read and write access and keeps tokens encrypted',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `direct_${randomUUID().replaceAll('-', '')}`;
@@ -4724,11 +4724,11 @@ test(
     let mcpRequests = 0;
     const request: typeof fetch = async (input, init) => {
       const url = String(input);
-      if (url === 'https://mcp.linear.app/mcp/readonly') {
+      if (url === 'https://mcp.linear.app/mcp') {
         mcpRequests += 1;
         throw new Error('The synthetic MCP server is unavailable.');
       }
-      if (url.endsWith('/.well-known/oauth-protected-resource/mcp/readonly'))
+      if (url.endsWith('/.well-known/oauth-protected-resource/mcp'))
         return Response.json({ authorization_servers: ['https://mcp.linear.app'] });
       if (url.endsWith('/.well-known/oauth-authorization-server'))
         return Response.json({
@@ -4740,7 +4740,7 @@ test(
         });
       if (url.endsWith('/register')) {
         const body = JSON.parse(String(init?.body));
-        assert.equal(body.scope, 'read');
+        assert.equal(body.scope, 'read write');
         redirectUris.push(body.redirect_uris[0]);
         return Response.json({ client_id: 'fixture-client' });
       }
@@ -4748,7 +4748,7 @@ test(
         tokenRequests += 1;
         const body = init?.body as URLSearchParams;
         assert.equal(body.get('client_id'), 'fixture-client');
-        assert.equal(body.get('resource'), 'https://mcp.linear.app/mcp/readonly');
+        assert.equal(body.get('resource'), 'https://mcp.linear.app/mcp');
         if (body.get('grant_type') === 'refresh_token') {
           refreshRequests += 1;
           assert.equal(
@@ -4793,8 +4793,8 @@ test(
       );
       const url = new URL(attempt.url);
       assert.equal(url.origin, 'https://mcp.linear.app');
-      assert.equal(url.searchParams.get('scope'), 'read');
-      assert.equal(url.searchParams.get('resource'), 'https://mcp.linear.app/mcp/readonly');
+      assert.equal(url.searchParams.get('scope'), 'read write');
+      assert.equal(url.searchParams.get('resource'), 'https://mcp.linear.app/mcp');
       assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:4310/api/apps/callback');
       const hostedState = randomBytes(32).toString('base64url');
       const hosted = await session.authorize(
@@ -5339,7 +5339,7 @@ async function directFixture(t: TestContext) {
   };
   const request: typeof fetch = async (input, init) => {
     const url = String(input);
-    if (url === 'https://mcp.notion.com/mcp' || url === 'https://mcp.linear.app/mcp/readonly') {
+    if (url === 'https://mcp.notion.com/mcp' || url === 'https://mcp.linear.app/mcp') {
       if (server.mcpFailure) throw server.mcpFailure;
       if (server.mcpStatus !== 200) return new Response('revoked', { status: server.mcpStatus });
       if (init?.method === 'GET') return new Response(null, { status: 405 });
@@ -5411,6 +5411,7 @@ async function directFixture(t: TestContext) {
         refreshToken: 'synthetic-refresh-token',
         tokenEndpoint: `https://mcp.${service}.${service === 'notion' ? 'com' : 'app'}/token`,
         expiresAt: Date.now() + 3_600_000,
+        ...(service === 'linear' ? { resource: 'https://mcp.linear.app/mcp' } : {}),
         ...secrets,
       }),
     );
@@ -5427,7 +5428,7 @@ test(
     const id = await f.account('notion');
     const session = await f.provider.createSession(f.owner, { notion: [id] });
     await session.execute(
-      'NOTION_SEARCH_NOTION_PAGE',
+      'NOTION_SEARCH',
       {
         query: 'roadmap',
         page_url: 'https://www.notion.so/team/synthetic-page',
@@ -5436,13 +5437,8 @@ test(
       },
       id,
     );
-    await session.execute(
-      'NOTION_RETRIEVE_PAGE',
-      { id: 'synthetic-page', include_discussions: true },
-      id,
-    );
+    await session.execute('NOTION_FETCH', { id: 'synthetic-page', include_discussions: true }, id);
     assert.deepEqual(f.server.calls, [
-      { name: 'notion-get-tool-access', arguments: {} },
       {
         name: 'notion-search',
         arguments: {
@@ -5477,6 +5473,13 @@ test(
     f.server.mcpFailure = new Error('Synthetic network failure.');
     await assert.rejects(f.provider.inspectAccount(healthy, f.owner), /Synthetic network failure/);
     f.server.mcpFailure = undefined;
+    const readOnly = await f.account('linear', {
+      resource: 'https://mcp.linear.app/mcp/readonly',
+    });
+    assert.deepEqual(await f.provider.inspectAccount(readOnly, f.owner), {
+      active: false,
+      service: 'linear',
+    });
     const uncertain = await f.account('notion', { refreshUncertain: true });
     assert.deepEqual(await f.provider.inspectAccount(uncertain, f.owner), {
       active: false,
@@ -8544,6 +8547,7 @@ test(
             expiresAt: 1,
             clientId: 'fixture',
             tokenEndpoint: 'https://fixture.example/token',
+            resource: 'https://mcp.linear.app/mcp',
           }),
         );
       const wait = async (condition: () => boolean) => {
@@ -8902,7 +8906,7 @@ test(
         const { connectionId: _connectionId, ...createArgs } = args;
         assert.deepEqual(calls.at(-1), { name: 'notion-create-pages', args: createArgs });
         const id = [...pages.keys()].at(-1)!;
-        const read = await integrations.execute(ownerId, 'NOTION_RETRIEVE_PAGE', {
+        const read = await integrations.execute(ownerId, 'NOTION_FETCH', {
           connectionId,
           id,
         });
@@ -8918,7 +8922,7 @@ test(
         await integrations.execute(ownerId, 'NOTION_UPDATE_PAGE', update);
         const { connectionId: _updateConnectionId, ...updateArgs } = update;
         assert.deepEqual(calls.at(-1), { name: 'notion-update-page', args: updateArgs });
-        const updated = await integrations.execute(ownerId, 'NOTION_RETRIEVE_PAGE', {
+        const updated = await integrations.execute(ownerId, 'NOTION_FETCH', {
           connectionId,
           id,
         });

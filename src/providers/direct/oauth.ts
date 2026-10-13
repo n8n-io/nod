@@ -6,7 +6,7 @@ import type { CredentialKeyStore } from '../../ports/key-store.ts';
 
 export const endpoints = {
   notion: 'https://mcp.notion.com/mcp',
-  linear: 'https://mcp.linear.app/mcp/readonly',
+  linear: 'https://mcp.linear.app/mcp',
 } as const;
 export type Service = keyof typeof endpoints;
 export class ReconnectRequired extends Error {
@@ -95,7 +95,11 @@ export function createDirectOAuth(options: {
     const grant = await options.grantVault.read(account.id);
     signal?.throwIfAborted();
     const secrets = JSON.parse(grant.value) as Secrets;
-    if (!secrets.accessToken || secrets.refreshUncertain)
+    if (
+      !secrets.accessToken ||
+      secrets.refreshUncertain ||
+      (account.service === 'linear' && secrets.resource !== endpoints.linear)
+    )
       throw new ReconnectRequired(account.service);
     if (!secrets.expiresAt || secrets.expiresAt > Date.now() + 60_000) return secrets;
     let current = refreshes.get(account.id);
@@ -237,7 +241,7 @@ export function createDirectOAuth(options: {
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code'],
             token_endpoint_auth_method: 'none',
-            ...(service === 'linear' ? { scope: 'read' } : {}),
+            ...(service === 'linear' ? { scope: 'read write' } : {}),
           }),
         }),
       ),
@@ -282,7 +286,7 @@ export function createDirectOAuth(options: {
     if (service === 'notion') {
       url.searchParams.set('scope', 'default');
     } else {
-      url.searchParams.set('scope', 'read');
+      url.searchParams.set('scope', 'read write');
       url.searchParams.set('resource', resourceUrl!);
     }
     return { accountId: id, url: url.href };
