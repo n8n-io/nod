@@ -465,12 +465,13 @@ test('a read-only turn can load a trusted skill without changing the workspace',
   assert.equal(writes, 0);
 });
 
-test('an app call issued after one that asks never runs, while reads still run together', async () => {
+test('an app call issued after one that asks never runs, unless the ask fails first, and reads run together', async () => {
   const events: string[] = [];
   const integration: RuntimeContext['integration'] = async (action, _args, _signal, admit) => {
-    const asks = action === 'GMAIL_SEND_EMAIL';
+    const asks = action.endsWith('_SEND_EMAIL');
     await setTimeout(asks ? 30 : 0);
     await admit?.(asks);
+    if (action === 'OUTLOOK_SEND_EMAIL') throw new Error('Choose an account for this action.');
     if (asks) return { [appConfirmation]: 'Send this email?' };
     events.push(`start ${action}`);
     await setTimeout(20);
@@ -489,6 +490,11 @@ test('an app call issued after one that asks never runs, while reads still run t
   assert.ok(
     events.indexOf('start GOOGLECALENDAR_LIST_EVENTS') < events.indexOf('end GMAIL_FETCH_EMAILS'),
   );
+  const failed = await fixture(batch(['OUTLOOK_SEND_EMAIL', 'GMAIL_LIST_LABELS']), {
+    integration,
+  });
+  assert.equal(failed.result.status, 'succeeded');
+  assert.ok(events.includes('end GMAIL_LIST_LABELS'));
 });
 
 test('saved memory reaches Pi in the owner context and through memory tools', async () => {
