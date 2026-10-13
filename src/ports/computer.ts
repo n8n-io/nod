@@ -121,7 +121,7 @@ export interface CredentialSubmission {
   status: 'submitted';
 }
 export interface Computer {
-  bindProfile?(threadId: string, profileId: string): Promise<void>;
+  bindProfile?(threadId: string, profileId: string, signal?: AbortSignal): Promise<void>;
   deleteProfile?(profileId: string): Promise<void>;
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
   download?(
@@ -152,6 +152,7 @@ export interface Computer {
   hold(threadId: string, until: number | null): Promise<void>;
   pin?(threadId: string): Promise<void>;
   unpin?(threadId: string): Promise<void>;
+  unpinAll?(): Promise<void>;
   close(threadId: string): Promise<void>;
   discard?(threadId: string): Promise<void>;
   dispose(): Promise<void>;

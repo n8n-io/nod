@@ -136,6 +136,9 @@ export function createE2BAdapters(options: {
   return {
     computer: {
       ...browserComputer,
+      async hold(threadId, until) {
+        if (browserUsed) await computer.hold(threadId, until);
+      },
       status: () => (browserDisposed ? 'Workspace browser is stopped.' : computer.status()),
       dispose: disposeComputer,
     },

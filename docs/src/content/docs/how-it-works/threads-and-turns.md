@@ -120,9 +120,11 @@ A session opens its browser on its first browser call, so a session that never b
 - The browser container keeps at most four browsers live at once: enough for the chat and three other sessions. Subagent browsers count toward the four.
 - To make room, the container closes the browser used least recently. It never closes the browser of a session whose turn is running, or a browser held for you. A subagent's idle browser can close.
 - When no browser can close, a new one waits in line for a free slot. After two minutes the wait fails, so Otto can tell you or try again. **Stop** cancels the wait.
+- The container never closes a running turn's browser to free a saved browser session for another session either. That session waits in the same line.
+- A running turn pins its session's browser. When Otto starts, it clears the pins an earlier run left before it uses the browser, so a crash can't keep a browser pinned. After the browser container recovers, Otto pins the session again before it reopens the page.
 - A closed browser keeps its profile until it's used again. Otto still hides the secret values it entered there when the session opens it again.
-- A session that pauses on a question, approval or sign-in keeps an open page for 30 minutes, even when that turn didn't browse.
-- The limit is four for every computer provider. Measure memory on an E2B sandbox with 2 CPUs and 3 GB before you raise it in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts).
+- A session that pauses on a question, approval or sign-in keeps its open page for 30 minutes, even when that turn didn't browse. Pausing never starts a browser for a session that has none.
+- One setting sets the limit for every computer provider: `maxLiveSessions` in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts). Measure memory on an E2B sandbox with 2 CPUs and 3 GB before you raise it.
 
 ## How Otto web follows the work
 

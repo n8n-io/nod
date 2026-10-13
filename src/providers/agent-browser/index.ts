@@ -322,7 +322,7 @@ export function createAgentBrowserComputer(options: {
   const discarded = new Set<string>();
   const pinned = new Set<string>();
   const keptSecrets = new Map<string, Set<string>>();
-  const slotQueue: object[] = [];
+  const slotQueue: Array<{ slot: boolean }> = [];
   let slotFreed = gate();
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
@@ -351,7 +351,7 @@ export function createAgentBrowserComputer(options: {
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
-  const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
+  const maxLiveSessions = Math.max(1, options.maxLiveSessions ?? 4);
   const slotWaitMs = options.slotWaitMs ?? 120_000;
   let disposed = false;
   let activeCalls = 0;
@@ -471,13 +471,21 @@ export function createAgentBrowserComputer(options: {
 
   async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
     if (state.started || state.saved.navigationFailed) return;
-    const ticket = {};
+    const ticket = { slot: true };
+    await inLine(ticket, () => claimSlot(state, ticket), signal);
+  }
+
+  async function inLine(
+    ticket: { slot: boolean },
+    claim: () => Promise<boolean>,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + slotWaitMs;
     slotQueue.push(ticket);
     try {
       for (;;) {
         const freed = slotFreed.promise;
-        if (await allocate(() => claimSlot(state, ticket))) return;
+        if (await allocate(claim)) return;
         await new Promise<void>((resolve, reject) => {
           const settle = () => {
             clearTimeout(timer);
@@ -503,11 +511,11 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  async function claimSlot(state: BrowserState, ticket: object): Promise<boolean> {
+  async function claimSlot(state: BrowserState, ticket: { slot: boolean }): Promise<boolean> {
     const expired = () => disposed || state.closed || state.closing;
     if (expired()) throw new Error('The browser session has expired. Open the URL again.');
     if (state.started || state.saved.navigationFailed) return true;
-    if (slotQueue[0] !== ticket) return false;
+    if (slotQueue.find((entry) => entry.slot) !== ticket) return false;
     const occupied = () =>
       [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
     const attempted = new Set<string>();
@@ -1840,45 +1848,57 @@ export function createAgentBrowserComputer(options: {
     await pending;
   }
 
-  async function bindProfile(id: string, rawProfileId: string): Promise<void> {
+  async function bindProfile(
+    id: string,
+    rawProfileId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
     assertNotDiscarded(id);
-    await allocate(async () => {
-      assertNotDiscarded(id);
-      const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
-      if (previous?.saved.profileId === profileId) {
-        if (!previous.saved.restoreSession) {
-          previous.saved.restoreSession = true;
-          previous.saved.sensitive = true;
-          previous.saved.capturedAt = undefined;
-          await screens.clearImage(id);
-          await saveState(previous);
-        }
-        return;
+    await inLine({ slot: false }, () => bindFree(id, profileId), signal);
+  }
+
+  async function bindFree(id: string, profileId: string): Promise<boolean> {
+    assertNotDiscarded(id);
+    const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
+    if (previous?.saved.profileId === profileId) {
+      if (!previous.saved.restoreSession) {
+        previous.saved.restoreSession = true;
+        previous.saved.sensitive = true;
+        previous.saved.capturedAt = undefined;
+        await screens.clearImage(id);
+        await saveState(previous);
       }
-      if (previous?.injecting) throw new BrowserLockedError();
-      if (previous) await closeBrowser(id);
-      const relatedIds = await screens.profileScreens(profileId);
-      for (const otherId of relatedIds) {
-        if (otherId === id) continue;
-        const other = browsers.get(otherId) ?? (await recoverBrowser(otherId, true));
-        if (!other) continue;
-        if (other.busy || other.injecting || other.heldUntil > Date.now())
-          throw new BrowserLockedError();
-        await closeBrowser(otherId);
-      }
-      const state = stateFor(id);
-      state.saved = {
-        version: 1,
-        url: '',
-        sensitive: true,
-        active: false,
-        profileId,
-        restoreSession: true,
-      };
-      await screens.clearImage(id);
-      await saveState(state);
-    });
+      return true;
+    }
+    if (previous?.injecting) throw new BrowserLockedError();
+    const holders: BrowserState[] = [];
+    for (const otherId of await screens.profileScreens(profileId)) {
+      if (otherId === id) continue;
+      const other = browsers.get(otherId) ?? (await recoverBrowser(otherId, true));
+      if (!other) continue;
+      if (pinned.has(otherId)) return false;
+      if (other.busy || other.injecting || other.heldUntil > Date.now())
+        throw new BrowserLockedError();
+      holders.push(other);
+    }
+    if (previous) await closeBrowser(id);
+    for (const other of holders) {
+      if (pinned.has(other.id)) return false;
+      await closeBrowser(other.id);
+    }
+    const state = stateFor(id);
+    state.saved = {
+      version: 1,
+      url: '',
+      sensitive: true,
+      active: false,
+      profileId,
+      restoreSession: true,
+    };
+    await screens.clearImage(id);
+    await saveState(state);
+    return true;
   }
 
   async function deleteProfile(rawProfileId: string): Promise<void> {
@@ -1969,6 +1989,10 @@ export function createAgentBrowserComputer(options: {
     },
     unpin: async (id) => {
       pinned.delete(threadIdentity(id));
+      freeSlot();
+    },
+    unpinAll: async () => {
+      pinned.clear();
       freeSlot();
     },
     close: tracked(closeBrowser),

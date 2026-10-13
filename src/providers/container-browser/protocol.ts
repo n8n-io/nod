@@ -203,6 +203,7 @@ export const browserRequest = z.discriminatedUnion('method', [
     .strict(),
   z.object({ ...identity, method: z.literal('pin'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('unpin'), threadId: thread }).strict(),
+  z.object({ ...identity, method: z.literal('unpinAll') }).strict(),
   z.object({ ...identity, method: z.literal('close'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('discard'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('dispose') }).strict(),

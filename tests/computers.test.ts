@@ -591,6 +591,8 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
   const first = f.create('owner-one');
   const second = f.create('owner-two');
   try {
+    await first.computer.hold('task-one', Date.now() + 60_000);
+    assert.equal(f.state.records.size, 0);
     assert.equal(
       (await first.computer.act('task-one', { action: 'open', url: 'https://example.test/' })).text,
       'Synthetic page',
@@ -1208,7 +1210,7 @@ test('Cloudflare browser holds reach a running browser only and never start one'
       f.calls.filter((call) => call.method === 'hold').map((call) => call.input),
       [{ threadId: 'same-task', until: 123 }],
     );
-    assert.equal(f.launches.length, 2);
+    assert.equal(f.launches.length, 3);
     assert.deepEqual(
       statuses.map((request) => [
         request.method,

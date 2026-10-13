@@ -1727,6 +1727,121 @@ test('a browser closed to free a slot still hides its known secret values when i
   }
 });
 
+test('a pause holds a started session browser, also from a resumed turn that did not browse, and starts none for a session that never browsed', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-pause-hold-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    maxLiveSessions: 1,
+    slotWaitMs: 100,
+  });
+  const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
+  const runtimes = [0, 1].map(() =>
+    createAgentRuntime({
+      agent: {
+        open: async ({ turnId, tools }) => ({
+          resumed: false,
+          prompt: async () => {
+            await scripts.get(turnId)!(new Map(tools.map((tool) => [tool.name, tool])));
+          },
+          abort() {},
+          dispose() {},
+        }),
+        dispose() {},
+      },
+      computer,
+      workspace: fakeWorkspace(),
+    }),
+  );
+  const threadId = randomUUID();
+  const turn = (
+    sessionId: string,
+    script: (tools: Map<string, AgentTool>) => Promise<unknown>,
+    resumed = false,
+  ) => {
+    const turnId = randomUUID();
+    scripts.set(turnId, script);
+    return runtimes[resumed ? 1 : 0].runTurn({
+      threadId,
+      turnId,
+      sessionId,
+      background: true,
+      resumed,
+      prompt: 'Use the browser.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      emit: async () => {},
+      reply: async () => {},
+      delta() {},
+      publish: async () => {
+        throw new Error('unused');
+      },
+      requestCredential: async () => ({ filled: true }),
+      integration: async () => ({}),
+      manage: async () => ({}),
+    });
+  };
+  const ask = (tools: Map<string, AgentTool>) =>
+    tools.get('ask_user')!.execute({ question: 'Which date works?' });
+  const openOther = () =>
+    assert.rejects(
+      computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' }),
+      /browser sessions are busy/,
+    );
+  const browsing = randomUUID();
+  const quiet = randomUUID();
+  try {
+    const paused = await turn(browsing, async (tools) => {
+      await tools.get('browser')!.execute({ action: 'open', url: 'https://1.1.1.1/login' });
+      await ask(tools);
+    });
+    assert.equal(paused.status, 'waiting_user');
+    assert.equal((await turn(quiet, ask)).status, 'waiting_user');
+    assert.equal(fixture.pages.has(quiet), false);
+    await openOther();
+    await computer.hold(browsing, null);
+    assert.equal((await turn(browsing, ask, true)).status, 'waiting_user');
+    await openOther();
+    assert.equal(fixture.pages.get(browsing)?.closed, false);
+  } finally {
+    await Promise.allSettled(runtimes.map((runtime) => runtime.dispose()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a session that needs a saved profile a running session holds waits for it instead of closing its page', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-profile-wait-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  const profile = randomUUID();
+  try {
+    await computer.bindProfile!('holder', profile);
+    await computer.act('holder', { action: 'open', url: 'https://1.1.1.1/login' });
+    const page = fixture.pages.get(profile)!;
+    await computer.pin!('holder');
+    const controller = new AbortController();
+    const cancelled = computer.bindProfile!('cancelled', profile, controller.signal);
+    let bound = false;
+    const next = computer.bindProfile!('next', profile).then(() => {
+      bound = true;
+    });
+    await delay(50);
+    controller.abort();
+    await assert.rejects(cancelled, { name: 'AbortError' });
+    assert.equal(bound, false);
+    assert.equal(page.closed, false);
+    await computer.unpin!('holder');
+    await next;
+    assert.equal(page.closed, true);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('a browser handoff needs an open page, so Pi reopens it instead of handing over nothing', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-page-'));
   const replies: string[] = [];
@@ -2191,6 +2306,40 @@ test('pins and discard reach the namespace computer of the same thread only, and
   }
 });
 
+test('a restarted server clears the pins an earlier server left before it browses and still holds the pages it started', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-stale-pin-'));
+  const browser = stagedLoginBrowser();
+  const fixture = await harness({
+    computer: createBrowserFixture({
+      dataRoot: directory,
+      run: browser.run,
+      maxLiveSessions: 1,
+      slotWaitMs: 100,
+    }),
+  });
+  const open = (computer: Computer, id: string) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' });
+  try {
+    const crashed = fixture.client('/synthetic/stale-pin');
+    await crashed.pin!('chat');
+    await open(crashed, 'chat');
+    const page = browser.pages.get('chat')!;
+    await assert.rejects(open(crashed, 'other'));
+    assert.equal(page.closed, false);
+    const restarted = fixture.client('/synthetic/stale-pin');
+    await restarted.hold('chat', Date.now() + 60_000);
+    await assert.rejects(open(restarted, 'other'));
+    assert.equal(page.closed, false);
+    await restarted.hold('chat', null);
+    await open(restarted, 'other');
+    assert.equal(page.closed, true);
+    assert.equal(browser.pages.get('other')?.closed, false);
+  } finally {
+    await fixture.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('card destinations, the checkout image and the approved destinations cross the browser bridge intact', async () => {
   const fixture = await harness();
   try {
@@ -2284,6 +2433,7 @@ for (const method of ['open', 'bindProfile'] as const)
       await other.act('task', { action: 'snapshot' });
       const otherInstance = fixture.instance('/synthetic/other-session');
       const { computer, instance, release } = interrupted;
+      await computer.pin!('task');
       const launches = fixture.launches.length;
       await assert.rejects(computer.act('task', { action: 'open', url: 'x'.repeat(8193) }));
       for (const url of ['not-a-url', 'javascript:alert(1)', 'https://user:pass@example.com'])
@@ -2320,13 +2470,14 @@ for (const method of ['open', 'bindProfile'] as const)
         instance.calls.map(({ method }) => method),
         ['act', 'act', 'dispose'],
       );
-      assert.equal(restored.calls.length, 1);
+      assert.equal(restored.calls.length, 2);
+      assert.deepEqual(restored.calls[0], { method: 'pin', input: 'task' });
       if (method === 'open')
-        assert.deepEqual(restored.calls[0], {
+        assert.deepEqual(restored.calls[1], {
           method: 'act',
           input: { action: 'open', url: 'https://example.com/reopened' },
         });
-      else assert.equal(restored.calls[0].method, 'bindProfile');
+      else assert.equal(restored.calls[1].method, 'bindProfile');
       await computer.act('task', { action: 'snapshot' });
       await other.act('task', { action: 'snapshot' });
       assert.equal(fixture.instance('/synthetic/other-session'), otherInstance);

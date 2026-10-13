@@ -57,7 +57,7 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
   switch (request.method) {
     case 'bindProfile':
       if (!computer.bindProfile) throw new Error();
-      return computer.bindProfile(request.threadId, request.profileId);
+      return computer.bindProfile(request.threadId, request.profileId, signal);
     case 'deleteProfile':
       if (!computer.deleteProfile) throw new Error();
       return computer.deleteProfile(request.profileId);
@@ -122,6 +122,8 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.pin?.(request.threadId);
     case 'unpin':
       return computer.unpin?.(request.threadId);
+    case 'unpinAll':
+      return computer.unpinAll?.();
     case 'close':
       return computer.close(request.threadId);
     case 'discard':

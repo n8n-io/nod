@@ -182,7 +182,7 @@ export async function createBrowserConnections(
       );
       let bound = false;
       try {
-        await browser.bindProfile(browserOf(turn), profileId);
+        await browser.bindProfile(browserOf(turn), profileId, signal);
         bound = true;
         const observation = await browser.act(
           browserOf(turn),
@@ -241,7 +241,7 @@ export async function createBrowserConnections(
         (row.browser_id && row.browser_id !== browserOf(turn) && (await inUse(row.browser_id)))
       )
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-      await browser.bindProfile(browserOf(turn), row.profile_id);
+      await browser.bindProfile(browserOf(turn), row.profile_id, signal);
       const observation = await browser.act(
         browserOf(turn),
         { action: 'open', url: address.href, ...launch },

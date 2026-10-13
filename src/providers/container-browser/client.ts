@@ -50,6 +50,7 @@ export function createBridgeComputer(options: {
   const views = new Map<string, Set<(input: unknown) => void>>();
   const pins = new Map<string, Promise<boolean> | undefined>();
   let live = false;
+  let unpinned: Promise<void> | undefined;
   let disposing: Promise<void> | undefined;
   let recovering: Promise<void> | undefined;
   const reopenNotice =
@@ -57,23 +58,41 @@ export function createBridgeComputer(options: {
 
   function forgetPins() {
     live = false;
+    unpinned = Promise.resolve();
     for (const id of pins.keys()) pins.set(id, undefined);
   }
 
+  function cleared() {
+    if (!unpinned) {
+      const request = call({ method: 'unpinAll' }).then(() => undefined);
+      unpinned = request;
+      request.catch(() => {
+        if (unpinned === request) unpinned = undefined;
+      });
+    }
+    return unpinned;
+  }
+
   function sendPin(threadId: string) {
-    const sent: Promise<boolean> = call({ method: 'pin', threadId }).then(
-      () => true,
-      () => {
-        if (pins.get(threadId) === sent) pins.set(threadId, undefined);
-        return false;
-      },
-    );
+    const sent: Promise<boolean> = cleared()
+      .then(() => call({ method: 'pin', threadId }))
+      .then(
+        () => true,
+        () => {
+          if (pins.get(threadId) === sent) pins.set(threadId, undefined);
+          return false;
+        },
+      );
     pins.set(threadId, sent);
     return sent;
   }
 
   async function pinned(id: string) {
     const threadId = threadIdentity(id);
+    if (!uncertain)
+      await cleared().catch((error: unknown) => {
+        if (uncertain) throw error;
+      });
     if (pins.has(threadId) && !pins.get(threadId)) sendPin(threadId);
     await pins.get(threadId);
     return threadId;
@@ -126,7 +145,10 @@ export function createBridgeComputer(options: {
           (input.method === 'act' && input.input.action === 'open'))
       ) {
         if (input.method === 'act') browserUrl(input.input.url ?? '');
-        return recover().then(() => call(input, signal));
+        const { threadId } = input;
+        return recover()
+          .then(() => pinned(threadId))
+          .then(() => call(input, signal));
       }
       return Promise.reject(
         new Error(
@@ -309,9 +331,10 @@ export function createBridgeComputer(options: {
       }
       return result;
     },
-    bindProfile: async (id, profileId) => {
-      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId });
-      screens.delete(threadIdentity(id));
+    bindProfile: async (id, profileId, signal) => {
+      const threadId = await pinned(id);
+      await call({ method: 'bindProfile', threadId, profileId }, signal);
+      screens.delete(threadId);
     },
     deleteProfile: async (profileId) => {
       await call({ method: 'deleteProfile', profileId });
