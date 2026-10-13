@@ -1557,7 +1557,7 @@ test('every session drives its own browser, so background work never waits for t
     return runtime.runTurn({
       threadId,
       turnId,
-      browserId: sessionId,
+      sessionId,
       background: sessionId !== undefined,
       resumed,
       prompt: 'Use the browser.',

@@ -100,7 +100,8 @@ test('Pi drains every session before reporting an abort failure and retries fail
   try {
     for (let index = 0; index < 2; index += 1)
       await agent.open({
-        threadId: randomUUID(),
+        sessionKey: randomUUID(),
+        saved: true,
         turnId: randomUUID(),
         systemPrompt: 'fixture',
         ...sandbox,
@@ -133,7 +134,8 @@ test('Pi drains every session before reporting an abort failure and retries fail
     assert.equal(events.length, 6);
     await assert.rejects(
       agent.open({
-        threadId: randomUUID(),
+        sessionKey: randomUUID(),
+        saved: true,
         turnId: randomUUID(),
         systemPrompt: 'fixture',
         ...sandbox,
@@ -457,7 +459,8 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
       nativeNames,
     );
     const session = await agent.open({
-      threadId: randomUUID(),
+      sessionKey: randomUUID(),
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       workspace,
@@ -591,7 +594,8 @@ test('codemode scripts reach only workspace and web tools, each call through the
   });
   try {
     const session = await agent.open({
-      threadId: randomUUID(),
+      sessionKey: randomUUID(),
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       workspace,
@@ -623,10 +627,12 @@ test('codemode scripts reach only workspace and web tools, each call through the
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'otto-durable-pi-'));
   const store = createFilesystemObjectStore(join(directory, 'objects'));
+  const threadId = randomUUID();
   return {
     directory,
     store,
-    threadId: randomUUID(),
+    threadId,
+    sessionKey: threadId,
     close: () => rm(directory, { recursive: true, force: true }),
   };
 }
@@ -638,6 +644,51 @@ async function savedText(f: Awaited<ReturnType<typeof fixture>>) {
     objectStore: f.store,
   });
   return entries.map((entry) => JSON.stringify(entry)).join('\n');
+}
+
+function answeringAgent(sessionRoot: string, objectStore?: PrivateObjectStore) {
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture',
+    sessionRoot,
+    objectStore,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model) => {
+        const stream = createAssistantMessageEventStream();
+        stream.push({
+          type: 'done',
+          reason: 'stop',
+          message: {
+            ...fauxAssistantMessage([{ type: 'text', text: 'Synthetic answer' }]),
+            provider: model.provider,
+            model: model.id,
+            api: model.api,
+          },
+        });
+        return stream;
+      };
+      return result;
+    },
+  });
+  const ask = async (sessionKey: string, text: string) => {
+    const session = await agent.open({
+      sessionKey,
+      saved: true,
+      turnId: randomUUID(),
+      systemPrompt: 'fixture',
+      ...sandbox,
+      tools: [],
+      shouldStop: () => false,
+      onEvent() {},
+    });
+    try {
+      await session.prompt(text, []);
+    } finally {
+      await session.dispose();
+    }
+  };
+  return { agent, ask };
 }
 
 function visibleContext(manager: SessionManager) {
@@ -672,7 +723,7 @@ test('a durable saved session above the rebase size is rebased on load with the 
   try {
     const original = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'old'),
     });
     compactedHistory(original.manager, 'x'.repeat(Math.ceil(rebaseAt / 5)));
@@ -681,7 +732,7 @@ test('a durable saved session above the rebase size is rebased on load with the 
     assert.ok(saved > rebaseAt);
     const restored = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'new'),
     });
     assert.deepEqual(visibleContext(restored.manager), visibleContext(original.manager));
@@ -757,14 +808,14 @@ test('a saved session loses old plaintext logins from model context and storage 
   try {
     const original = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'old'),
     });
     legacyLogin(original.manager);
     await original.checkpoint();
     const restored = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'new'),
     });
     const context = JSON.stringify(restored.manager.buildSessionContext().messages);
@@ -835,7 +886,7 @@ test('short legacy passwords are removed after compaction without changing messa
     );
     const restored = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'new'),
     });
     assert.doesNotMatch(
@@ -868,7 +919,7 @@ test('legacy passwords are removed from embedded JSON strings', async () => {
     );
     const restored = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'new'),
     });
     const texts = restored.manager
@@ -1137,6 +1188,7 @@ for (const failure of [
 
 test('a stale Pi writer cannot overwrite a newer session checkpoint', async () => {
   const f = await fixture();
+  const { agent, ask } = answeringAgent(join(f.directory, 'cache'), f.store);
   try {
     const first = await createPiCheckpoint({ ...f, directory: f.directory });
     const next = await createPiCheckpoint({ ...f, directory: f.directory });
@@ -1148,7 +1200,27 @@ test('a stale Pi writer cannot overwrite a newer session checkpoint', async () =
     const restored = await createPiCheckpoint({ ...f, directory: f.directory });
     assert.match(JSON.stringify(restored.manager.getEntries()), /new version/);
     assert.doesNotMatch(JSON.stringify(restored.manager.getEntries()), /stale version/);
+    const taskKey = randomUUID();
+    await Promise.all([
+      ask(f.sessionKey, 'Synthetic chat request'),
+      ask(taskKey, 'Synthetic task request'),
+    ]);
+    const legacy = await createPiCheckpoint({ ...f, directory: f.directory });
+    legacyLogin(legacy.manager);
+    await legacy.checkpoint();
+    await ask(f.sessionKey, 'After the legacy rebase');
+    const chat = await savedText(f);
+    assert.match(chat, /new version[\s\S]*Synthetic chat request[\s\S]*After the legacy rebase/);
+    assert.doesNotMatch(chat, /Synthetic task request|synthetic-legacy-password/);
+    const task = JSON.stringify(
+      (
+        await createPiCheckpoint({ ...f, sessionKey: taskKey, directory: f.directory })
+      ).manager.buildSessionContext().messages,
+    );
+    assert.match(task, /Synthetic task request/);
+    assert.doesNotMatch(task, /new version|Synthetic chat request/);
   } finally {
+    await agent.dispose();
     await f.close();
   }
 });
@@ -1158,7 +1230,7 @@ test('the bug report reads only the requested saved Pi session', async () => {
   try {
     const checkpoint = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: f.directory,
     });
     checkpoint.manager.appendMessage({
@@ -1197,6 +1269,20 @@ test('the bug report reads only the requested saved Pi session', async () => {
     assert.ok((await readdir(localDirectory)).some((name) => name.endsWith('.jsonl')));
     const local = await readPiSessionEntries({ threadId: f.threadId, sessionRoot: localRoot });
     assert.match(JSON.stringify(local), /Local fixture question/);
+    const taskKey = randomUUID();
+    for (const task of [answeringAgent(localRoot), answeringAgent(localRoot, f.store)])
+      try {
+        await task.ask(taskKey, 'Newer task question');
+      } finally {
+        await task.agent.dispose();
+      }
+    for (const objectStore of [undefined, f.store]) {
+      const chat = JSON.stringify(
+        await readPiSessionEntries({ threadId: f.threadId, sessionRoot: localRoot, objectStore }),
+      );
+      assert.match(chat, /fixture question/);
+      assert.doesNotMatch(chat, /Newer task question/);
+    }
   } finally {
     await f.close();
   }
@@ -1265,7 +1351,8 @@ test('real Pi awaits durable final checkpoints and restores a conversation in a 
   const final: string[] = [];
   try {
     const session = await first.open({
-      threadId: f.threadId,
+      sessionKey: f.threadId,
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       ...sandbox,
@@ -1286,7 +1373,8 @@ test('real Pi awaits durable final checkpoints and restores a conversation in a 
     await first.dispose();
     await rm(join(f.directory, 'first'), { recursive: true, force: true });
     const restored = await second.open({
-      threadId: f.threadId,
+      sessionKey: f.threadId,
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       ...sandbox,
@@ -1349,7 +1437,8 @@ test('real Pi persists its user message and tool call before a side effect and r
   });
   try {
     const session = await agent.open({
-      threadId: f.threadId,
+      sessionKey: f.threadId,
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       ...sandbox,
@@ -1376,7 +1465,7 @@ test('real Pi persists its user message and tool call before a side effect and r
     await agent.dispose();
     const resumed = await createPiCheckpoint({
       store: f.store,
-      threadId: f.threadId,
+      sessionKey: f.threadId,
       directory: join(f.directory, 'replacement'),
     });
     assert.equal(
@@ -1397,7 +1486,7 @@ test('a restored durable session closes dangling tool calls before the next prom
   const prompts: string[] = [];
   const saved = await createPiCheckpoint({
     store: f.store,
-    threadId: f.threadId,
+    sessionKey: f.threadId,
     directory: join(f.directory, 'old'),
   });
   dangling(saved.manager, ['call-one']);
@@ -1440,7 +1529,8 @@ test('a restored durable session closes dangling tool calls before the next prom
   });
   try {
     const session = await agent.open({
-      threadId: f.threadId,
+      sessionKey: f.threadId,
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       ...sandbox,
@@ -2637,7 +2727,8 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
       });
       try {
         await agent.open({
-          threadId: randomUUID(),
+          sessionKey: randomUUID(),
+          saved: true,
           turnId: randomUUID(),
           systemPrompt: 'Independent synthetic fixture',
           workspace: {
@@ -3628,7 +3719,8 @@ test('Pi retries a transient provider error and the turn completes with the retr
   });
   try {
     const session = await agent.open({
-      threadId: randomUUID(),
+      sessionKey: randomUUID(),
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'Synthetic fixture',
       ...sandbox,
@@ -3688,7 +3780,8 @@ test('old screenshots leave the model request in steps while the saved session k
   const threadId = randomUUID();
   try {
     const session = await agent.open({
-      threadId,
+      sessionKey: threadId,
+      saved: true,
       turnId: randomUUID(),
       systemPrompt: 'Synthetic fixture',
       ...sandbox,
@@ -3733,7 +3826,7 @@ test('old screenshots leave the model request in steps while the saved session k
   }
 });
 
-test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {
+test('the Pi transcript keeps model changes for the next turn and each saved session only its own turns', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const backend = createPiModelBackend({
     fetch: async () => {
@@ -3784,14 +3877,16 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     },
   });
   const threadId = randomUUID();
-  const open = (background = false) =>
+  const taskId = randomUUID();
+  const scheduleId = randomUUID();
+  const open = (sessionKey = threadId, saved = true) =>
     agent.open({
-      threadId,
+      sessionKey,
+      saved,
       turnId: randomUUID(),
       systemPrompt: 'Fixture system',
       ...sandbox,
       tools: [],
-      background,
       shouldStop: () => false,
       onEvent() {},
     });
@@ -3805,10 +3900,13 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
       read: async () => ({ type: 'api_key', key: 'fixture-anthropic-key' }),
     };
     await first.prompt('Remember the synthetic blue label.', []);
-    const background = await open(true);
+    const background = await open(scheduleId, false);
     assert.equal(background.resumed, false);
     await background.prompt('Run the synthetic schedule.', []);
     await background.dispose();
+    const scheduleAgain = await open(scheduleId, false);
+    assert.equal(scheduleAgain.resumed, false);
+    await scheduleAgain.dispose();
     await first.dispose();
     const next = await open();
     assert.equal(next.resumed, true);
@@ -3844,6 +3942,23 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     assert.equal(requests[3].effort, 'high');
     assert.ok(requests[3].history.includes('Remember the synthetic blue label.'));
     assert.ok(!requests[3].history.includes(codexFixtureAccess()));
+    const task = await open(taskId);
+    assert.equal(task.resumed, false);
+    await task.prompt('Run the synthetic task.', []);
+    await task.dispose();
+    const taskAgain = await open(taskId);
+    assert.equal(taskAgain.resumed, true);
+    await taskAgain.prompt('Continue the synthetic task.', []);
+    await taskAgain.dispose();
+    const chat = await open();
+    assert.equal(chat.resumed, true);
+    await chat.prompt('Back in the chat.', []);
+    await chat.dispose();
+    assert.ok(requests[5].history.includes('Run the synthetic task.'));
+    assert.ok(!requests[5].history.includes('Remember the synthetic blue label.'));
+    assert.ok(requests[6].history.includes('Use the ChatGPT plan for the same label.'));
+    assert.ok(!requests[6].history.includes('synthetic task'));
+    assert.deepEqual((await readdir(directory)).sort(), [threadId, taskId].sort());
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });

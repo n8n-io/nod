@@ -57,8 +57,8 @@ function entries(bytes: Uint8Array): FileEntry[] {
   }
 }
 
-async function readSession(store: PrivateObjectStore, threadId: string) {
-  const saved = await store.read(`sessions/${threadId}.jsonl`, objectBytes);
+async function readSession(store: PrivateObjectStore, sessionKey: string) {
+  const saved = await store.read(`sessions/${sessionKey}.jsonl`, objectBytes);
   if (!saved) return undefined;
   let manifest: { type?: unknown; parts?: unknown; obsolete?: unknown } | undefined;
   try {
@@ -89,7 +89,7 @@ async function readSession(store: PrivateObjectStore, threadId: string) {
     throw failure();
   const chunks = await Promise.all(
     parts.map(async (part: string) => {
-      const object = await store.read(`sessions/${threadId}/${part}.jsonl`, objectBytes);
+      const object = await store.read(`sessions/${sessionKey}/${part}.jsonl`, objectBytes);
       if (!object) throw failure();
       return Buffer.from(object.bytes);
     }),
@@ -310,12 +310,12 @@ export function closeInterruptedCalls(manager: SessionManager) {
 
 export async function createPiCheckpoint(options: {
   store: PrivateObjectStore;
-  threadId: string;
+  sessionKey: string;
   directory: string;
 }) {
-  const { store, threadId } = options;
-  const key = `sessions/${threadId}.jsonl`;
-  const saved = await readSession(store, threadId);
+  const { store, sessionKey } = options;
+  const key = `sessions/${sessionKey}.jsonl`;
+  const saved = await readSession(store, sessionKey);
   let manager = SessionManager.inMemory(
     options.directory,
     undefined,
@@ -333,7 +333,7 @@ export async function createPiCheckpoint(options: {
   let tail = Promise.resolve();
   async function cleanup() {
     if (!obsolete.length) return;
-    await Promise.all(obsolete.map((old) => store.remove(`sessions/${threadId}/${old}.jsonl`)));
+    await Promise.all(obsolete.map((old) => store.remove(`sessions/${sessionKey}/${old}.jsonl`)));
     obsolete = [];
   }
   function checkpoint() {
@@ -351,7 +351,7 @@ export async function createPiCheckpoint(options: {
           if (size > maximum) throw failure();
           const id = randomUUID();
           written.push(id);
-          await store.write(`sessions/${threadId}/${id}.jsonl`, bytes, { expectedVersion: null });
+          await store.write(`sessions/${sessionKey}/${id}.jsonl`, bytes, { expectedVersion: null });
         }
         const nextParts = fresh ? written : [...parts, ...written];
         const nextObsolete = fresh ? [...new Set([...obsolete, ...parts])] : obsolete;
@@ -375,12 +375,12 @@ export async function createPiCheckpoint(options: {
         await cleanup();
       } catch {
         try {
-          const published = await readSession(store, threadId);
+          const published = await readSession(store, sessionKey);
           if (published) entries(published.bytes);
           await Promise.all(
             written
               .filter((id) => !published?.parts.includes(id))
-              .map((id) => store.remove(`sessions/${threadId}/${id}.jsonl`)),
+              .map((id) => store.remove(`sessions/${sessionKey}/${id}.jsonl`)),
           );
         } catch {}
         failed = true;

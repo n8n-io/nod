@@ -1084,7 +1084,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const result = await dependencies.runTurn({
       threadId,
       turnId,
-      browserId: turn.session_id,
+      sessionId: turn.session_id,
       resumed: turn.source === 'resume',
       prompt: turn.prompt,
       background: turn.background,

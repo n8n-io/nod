@@ -942,15 +942,15 @@ test(
             await waitFor(settled(chat.turnId));
             assert.equal(await turnStatus(first), 'running');
             assert.equal(await turnStatus(next), 'queued');
-            assert.equal(ran(chat.turnId)?.browserId, threadId);
+            assert.equal(ran(chat.turnId)?.sessionId, threadId);
           } finally {
             release();
           }
           await waitFor(settled(next));
           assert.equal(await turnStatus(next), 'succeeded');
-          assert.equal(ran(first)?.browserId, first);
-          assert.equal(ran(next)?.browserId, first);
-          assert.equal(ran(other)?.browserId, other);
+          assert.equal(ran(first)?.sessionId, first);
+          assert.equal(ran(next)?.sessionId, first);
+          assert.equal(ran(other)?.sessionId, other);
         },
       );
 

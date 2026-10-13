@@ -66,7 +66,7 @@ export type ActivityCheckResult =
 export interface RuntimeContext {
   threadId: string;
   turnId: string;
-  browserId?: string;
+  sessionId?: string;
   resumed?: boolean;
   prompt: string;
   background?: boolean;
@@ -203,14 +203,14 @@ export type AgentEvent =
   | ModelUsageObservation
   | { type: 'error' };
 export interface AgentSessionOptions {
-  threadId: string;
+  sessionKey: string;
+  saved: boolean;
   turnId: string;
   systemPrompt: string;
   systemContext?: string;
   tools: AgentTool[];
   workspace: WorkspaceSession;
   timeZone?: string;
-  background?: boolean;
   runTool(
     name: string,
     params: unknown,

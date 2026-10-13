@@ -14,7 +14,9 @@ The short version: `src/runtime` runs each turn in a Pi session. Every tool call
 Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) can run any number of turns per thread at once, each in its own Pi session:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
-- Background turns each get a new in-memory session.
+- Background turns each get a new in-memory session, which saves nothing.
+
+A saved session is stored under its session ID: its own folder on disk, or its own object in hosted mode. The chat's session ID is the thread ID. Loading or cleaning up one saved session never reads or removes another session's files.
 
 Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets only the messages that background turns sent since the previous conversation turn started.
 
@@ -28,7 +30,7 @@ Recent chat history goes into the prompt only when Pi has no saved session. A re
 
 ## Hosted transcript checkpoints
 
-In hosted mode, the conversation transcript lives in private object storage. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
+In hosted mode, each saved transcript lives in private object storage, keyed by its session ID. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
 
 - **When:** before each tool, at turn boundaries and before completion.
 - **How:** each checkpoint uploads only new entries as an immutable part. A small manifest lists the parts and is written with compare-and-swap, so a stale writer can't overwrite a newer session.

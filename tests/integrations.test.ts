@@ -7550,7 +7550,8 @@ test(
       for (const turnId of [chat, scheduled, foreign])
         await (
           await agent.open({
-            threadId: randomUUID(),
+            sessionKey: randomUUID(),
+            saved: true,
             turnId,
             systemPrompt: 'Synthetic prompt',
             tools: [],

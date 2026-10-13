@@ -215,7 +215,7 @@ export function createAgentRuntime(dependencies: {
     const lifecycle = new AbortController();
     const context = { ...input, signal: AbortSignal.any([input.signal, lifecycle.signal]) };
     const { signal, threadId } = context;
-    const browserId = context.browserId ?? context.threadId;
+    const sessionId = context.sessionId ?? threadId;
     let finished!: () => void;
     const done = new Promise<void>((resolve) => {
       finished = resolve;
@@ -313,7 +313,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (browsed) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
+      if (browsed) await computer.hold(sessionId, Date.now() + holdMs).catch(() => {});
       stopped = true;
       if (post && text) {
         if (context.waitForUser) await context.waitForUser(text);
@@ -611,7 +611,8 @@ export function createAgentRuntime(dependencies: {
         let browsed = false;
         let answer = '';
         const child = await agent.open({
-          threadId,
+          sessionKey: childBrowser,
+          saved: false,
           turnId: context.turnId,
           systemPrompt: system,
           systemContext: systemContext(context),
@@ -620,7 +621,6 @@ export function createAgentRuntime(dependencies: {
           }).filter((tool) => !ownBrowserTools.has(tool.name)),
           workspace,
           timeZone: context.timeZone,
-          background: true,
           runTool: guard,
           shouldStop: () => stopped,
           onEvent: (event) => {
@@ -645,7 +645,7 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
       };
-      const tools = bind({ ...shared, browserId, delegate }, async () => {
+      const tools = bind({ ...shared, browserId: sessionId, delegate }, async () => {
         browsed = true;
       });
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
@@ -669,14 +669,14 @@ export function createAgentRuntime(dependencies: {
       };
       const { takeMessages } = context;
       const opening = agent.open({
-        threadId,
+        sessionKey: sessionId,
+        saved: !context.background,
         turnId: context.turnId,
         systemPrompt: system,
         systemContext: systemContext(context),
         tools,
         workspace,
         timeZone: context.timeZone,
-        background: Boolean(context.background),
         runTool: guard,
         shouldStop: () => stopped || checkRecorded,
         nextMessages:
@@ -791,8 +791,8 @@ export function createAgentRuntime(dependencies: {
         await Promise.allSettled([...activeToolCalls]);
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
-          await computer.discard?.(browserId).catch(() => {});
+        if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
+          await computer.discard?.(sessionId).catch(() => {});
         finished();
       }
     }

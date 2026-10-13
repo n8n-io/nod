@@ -164,8 +164,8 @@ export function createPiAgent(options: {
             ),
         };
       }
-      const directory = resolve(options.sessionRoot, threadIdentity(input.threadId));
-      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const directory = resolve(options.sessionRoot, threadIdentity(input.sessionKey));
+      if (input.saved) await mkdir(directory, { recursive: true, mode: 0o700 });
       const connection = access ? await createPiModelRuntime(access) : undefined;
       const runtime = connection
         ? connection.runtime
@@ -199,16 +199,16 @@ export function createPiAgent(options: {
             }
           : selectedModel;
       const durable =
-        options.objectStore && !input.background
+        options.objectStore && input.saved
           ? await createPiCheckpoint({
               store: options.objectStore,
-              threadId: input.threadId,
+              sessionKey: input.sessionKey,
               directory,
             })
           : undefined;
-      const manager =
-        durable?.manager ??
-        (input.background ? SessionManager.inMemory(directory) : openLocalSession(directory));
+      const manager = input.saved
+        ? (durable?.manager ?? openLocalSession(directory))
+        : SessionManager.inMemory(directory);
       closeInterruptedCalls(manager);
       const completedEvents: AgentEvent[] = [];
       const checkpoint = async () => {
