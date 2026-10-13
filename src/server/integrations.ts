@@ -224,8 +224,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     END $$;
     ALTER TABLE integration_events DROP COLUMN IF EXISTS poll_connection_id, DROP COLUMN IF EXISTS intent;
   `);
-  await pool.query(
-    "DELETE FROM app_connections WHERE owner_id=$1 AND (provider_id='direct' OR slug=ANY($2::text[]))",
+  const stale = await pool.query<
+    Pick<ConnectionRow, 'provider_id' | 'account_id' | 'pending_account_id' | 'trigger_id'>
+  >(
+    `DELETE FROM app_connections WHERE owner_id=$1 AND (provider_id='direct' OR slug=ANY($2::text[]))
+     RETURNING provider_id,account_id,pending_account_id,trigger_id`,
     [configuredOwner, [...officialMcp.keys()]],
   );
   let draining = false;
@@ -236,6 +239,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (closed) return undefined;
     return options.admission ? options.admission.run(operation) : Promise.resolve().then(operation);
   }
+  const bounded = (operation: () => Promise<unknown>) =>
+    Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((resolve) => setTimeout(resolve, 10_000).unref()),
+    ]).catch(() => {});
+  void background(async () => {
+    if (!provider.configured) return;
+    for (const row of stale.rows.filter((item) => item.provider_id === providerId)) {
+      if (row.trigger_id) await bounded(() => provider.unsubscribe(row.trigger_id!));
+      for (const account of new Set([row.account_id, row.pending_account_id]))
+        if (account) await bounded(() => provider.deleteAccount(account));
+    }
+  })?.catch(() => {});
 
   function requiredProvider() {
     if (!provider.configured)
