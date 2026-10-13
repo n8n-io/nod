@@ -113,12 +113,6 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 A session opens its browser on its first browser call, so a session that never browses never starts one. Nothing waits for another session's browser.
 
-Sessions can share browsers too. `browser list` shows the browsers a session may use: its own, the chat's and those of other open tasks. Passing a `browserId` works in one of them, such as continuing a page the chat already signed in to.
-
-- **Look first.** If another session acted in a browser since you last looked, your next action there must be a snapshot. Nothing waits.
-- **Only your own for event and read-only work.** Those sessions start signed out, so they never get another session's browser.
-- **Sign-in and payment stay in your own browser.** `sign_in` and `pay` always use the session's own browser.
-
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
 - At most four browsers run at once. An idle one closes and keeps its profile until it's used again. One waiting for you stays open for 30 minutes.

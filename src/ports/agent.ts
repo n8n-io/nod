@@ -119,7 +119,6 @@ export interface RuntimeContext {
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   prepareBrowser?(): Promise<void>;
-  browsers?(): Promise<Array<{ browserId: string; task: string }>>;
   waitForUser?(question: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;

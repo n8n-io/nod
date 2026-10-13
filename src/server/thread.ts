@@ -155,7 +155,6 @@ export interface ThreadDependencies {
     launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
   prepareBrowser?: (turn: TurnRef) => Promise<void>;
-  browsers?: (turn: TurnRef) => Promise<Array<{ browserId: string; task: string }>>;
   reactToMessage?: (
     input: AgentReactionInput,
   ) => ReturnType<NonNullable<RuntimeContext['reactToMessage']>>;
@@ -324,24 +323,6 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   const turnId = options.client ? await create(options.client) : await transaction(create);
   if (!options.client) refresh();
   return turnId;
-}
-
-export async function threadBrowsers(turn: TurnRef, ownOnly: boolean) {
-  const own = { browserId: turn.sessionId ?? turn.threadId, task: 'yours' };
-  if (ownOnly) return [own];
-  const { rows } = await pool.query<{ browserId: string; task: string }>(
-    `SELECT s.session_id AS "browserId",
-       CASE WHEN s.session_id=s.thread_id THEN 'chat'
-         ELSE COALESCE((SELECT t.title FROM tasks t WHERE t.id=s.task_id), left(split_part(s.prompt,E'\n',1),100)) END AS task
-     FROM (SELECT DISTINCT ON (u.session_id) u.session_id,u.thread_id,u.task_id,u.prompt FROM turns u
-       WHERE u.owner_id=$1 AND u.thread_id=$2
-         AND EXISTS (SELECT 1 FROM turn_events e WHERE e.turn_id=u.id AND e.summary='browser')
-       ORDER BY u.session_id,u.created_at) s
-     WHERE s.session_id<>$3 AND (s.session_id=s.thread_id OR EXISTS (SELECT 1 FROM turns w
-       WHERE w.session_id=s.session_id AND w.owner_id=$1 AND w.status IN ('queued','running','waiting')))`,
-    [ownerId, turn.threadId, own.browserId],
-  );
-  return [own, ...rows];
 }
 
 async function askingSession(client: PoolClient, replyToMessageId?: string) {
@@ -1169,7 +1150,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           }),
         ),
       prepareBrowser: prepareBrowser && fenced(() => prepareBrowser(ref)),
-      browsers: dependencies.browsers && fenced(() => dependencies.browsers!(ref)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
       ...(dependencies.requestPayment
         ? {

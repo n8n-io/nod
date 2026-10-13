@@ -191,7 +191,6 @@ export function createAgentRuntime(dependencies: {
 }) {
   const { agent, computer } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
-  const lastActors = new Map<string, string>();
   let disposed = false;
   let disposal: Promise<void> | undefined;
   const completedDisposals = new Set<string>();
@@ -529,23 +528,12 @@ export function createAgentRuntime(dependencies: {
       const workspace = dependencies.workspace.open(context);
       const browser: Computer = {
         ...computer,
-        act: async (id, action, actionSignal) => {
-          const last = lastActors.get(id);
-          if (last && last !== browserId && !['snapshot', 'tab_list'].includes(action.action))
-            throw new Error(
-              'Another task used this browser since you last looked. Take a snapshot before acting.',
-            );
-          lastActors.set(id, browserId);
-          return computer.act(
+        act: (id, action, actionSignal) =>
+          computer.act(
             id,
             { ...action, timeZone: context.timeZone, locale: context.locale },
             actionSignal,
-          );
-        },
-        screenshot: async (id, screenshotSignal) => {
-          lastActors.set(id, browserId);
-          return computer.screenshot(id, screenshotSignal);
-        },
+          ),
       };
       const turn: Turn = {
         context,
@@ -739,10 +727,8 @@ export function createAgentRuntime(dependencies: {
         await browserReady?.catch(() => {});
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        if (context.background && !waitingForUser && browserReady) {
-          lastActors.delete(browserId);
+        if (context.background && !waitingForUser && browserReady)
           await computer.discard?.(browserId).catch(() => {});
-        }
         finished();
       }
     }
