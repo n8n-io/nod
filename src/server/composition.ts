@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
-import { appConfirmation, type Agent } from '../ports/agent.ts';
+import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/agent.ts';
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
@@ -118,7 +118,6 @@ import {
   startThreadWorkers,
   stopThreadWorkers,
   withTurnLock,
-  type ThreadDependencies,
   type TurnRef,
 } from './thread.ts';
 import { browserOf } from './turn-chain.ts';
@@ -134,8 +133,7 @@ import { createLinkPreviews } from './link-previews.ts';
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
-  observe?: ThreadDependencies['observe'];
-  inspectPrompt?: ThreadDependencies['inspectPrompt'];
+  observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   prepareComputer?(): Promise<void>;
@@ -463,6 +461,7 @@ async function initializeApplication(
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
+    observe: adapters.observe,
   });
   const speech = createSpeech(adapters.speech);
   let memoryStore = adapters.objectStore;
@@ -597,7 +596,7 @@ async function initializeApplication(
                     threadId: provenance.threadId,
                     turnId: provenance.turnId,
                   });
-                  await ledger.action(provenance.turnId, action, args);
+                  await ledger.action(provenance.turnId, action);
                   return (
                     await saveIntegrationFiles(result, async (file) => {
                       const name = `${randomUUID()}-${basename(file.name)}`;
@@ -719,8 +718,6 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
-      observe: adapters.observe,
-      inspectPrompt: adapters.inspectPrompt,
       accountProfile,
       connectedApps: integrations.connectedApps,
       activityCheck: triage.activityCheck,
@@ -913,7 +910,7 @@ async function initializeApplication(
           options?.signal,
           options?.checkConnectionId,
         );
-        await ledger.action(turn.turnId, action, args);
+        if (action !== 'SEARCH_TOOLS') await ledger.action(turn.turnId, action);
         return result;
       },
     });
@@ -932,7 +929,6 @@ async function initializeApplication(
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
     computer,
-    runtime,
     configuration: () =>
       configuration({
         provider: adapters.model.provider,

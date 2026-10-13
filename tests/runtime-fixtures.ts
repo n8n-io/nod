@@ -24,7 +24,6 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
     checkoutImage: async () => new Uint8Array(),
     dispose: async () => {},
-    status: () => 'fixture computer',
     ...overrides,
   };
 }
@@ -38,7 +37,6 @@ export function fakeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     }),
     writeArtifact: async () => {},
     readArtifact: async () => new Uint8Array(),
-    status: () => 'fixture workspace',
     dispose: () => {},
     ...overrides,
   };

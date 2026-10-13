@@ -39,8 +39,6 @@ export function createBridgeComputer(options: {
   let disposed = false;
   let uncertain = false;
   let sequence = 0;
-  let statusSequence = 0;
-  let status = 'Workspace browser is ready.';
   const screens = new Map<
     string,
     { sequence: number; value: ReturnType<NonNullable<Computer['screenStatus']>> }
@@ -68,10 +66,6 @@ export function createBridgeComputer(options: {
   }
 
   function updateMetadata(value: BrowserMetadata, order: number, input: BrowserCall) {
-    if (order >= statusSequence) {
-      statusSequence = order;
-      status = value.status;
-    }
     if (value.screen && order >= (screens.get(value.screen.threadId)?.sequence ?? 0)) {
       const { threadId: id, ...screen } = value.screen;
       screens.set(id, { sequence: order, value: screen });
@@ -286,7 +280,6 @@ export function createBridgeComputer(options: {
       await call({ method: 'deleteProfile', profileId });
     },
     screenStatus: (id) => screens.get(threadIdentity(id))?.value ?? { state: 'unavailable' },
-    status: () => (uncertain && !disposed ? reopenNotice : status),
     act: async (id, input, signal) =>
       observationSchema.parse(
         await call({ method: 'act', threadId: threadIdentity(id), input }, signal),
@@ -413,7 +406,6 @@ export function createBridgeComputer(options: {
         await Promise.allSettled([...pending]);
         await call({ method: 'dispose' });
         screens.clear();
-        status = 'Workspace browser is stopped.';
       })().catch((error) => {
         disposing = undefined;
         throw error;

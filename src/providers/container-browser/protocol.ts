@@ -205,7 +205,6 @@ export const browserRequest = z.discriminatedUnion('method', [
   z.object({ ...identity, method: z.literal('discard'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('dispose') }).strict(),
   z.object({ ...identity, method: z.literal('quiesce') }).strict(),
-  z.object({ ...identity, method: z.literal('status') }).strict(),
 ]);
 
 export type BrowserRequest = z.infer<typeof browserRequest>;
@@ -231,7 +230,6 @@ export const viewFrame = z
 export const viewBytes = 12 * 1024 * 1024;
 export const browserMetadata = z
   .object({
-    status: z.string().max(256),
     screen: z
       .object({
         threadId: thread,

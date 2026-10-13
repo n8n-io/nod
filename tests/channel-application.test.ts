@@ -136,7 +136,6 @@ test(
       computer: fakeComputer(),
       objectStore: createFilesystemObjectStore(objects),
       workspace: fakeWorkspace({
-        status: () => '',
         open: () => {
           throw new Error('No workspace in fixture');
         },

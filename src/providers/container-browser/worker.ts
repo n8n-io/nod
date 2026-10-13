@@ -43,12 +43,9 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
         : undefined);
   try {
     const screen = threadId ? computer?.screenStatus(threadId) : undefined;
-    return browserMetadata.parse({
-      status: computer?.status() ?? 'Workspace browser is unavailable.',
-      ...(screen && { screen: { threadId, ...screen } }),
-    });
+    return browserMetadata.parse(screen ? { screen: { threadId, ...screen } } : {});
   } catch {
-    return { status: 'Workspace browser is unavailable.' };
+    return {};
   }
 }
 
@@ -118,8 +115,6 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.close(request.threadId);
     case 'discard':
       return computer.discard(request.threadId);
-    case 'status':
-      return null;
     case 'view':
     case 'dispose':
     case 'quiesce':

@@ -691,7 +691,6 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
   let launches = 0;
   const workspace = createCommandWorkspace({
     workspaceRoot: f.directory,
-    status: 'fixture',
     instructions: 'fixture',
     runCommand: async (_id, args, input) => {
       launches++;

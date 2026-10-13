@@ -6,7 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
-import type { ModelUsageObservation, RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
+import type {
+  AgentToolResult,
+  ModelUsageObservation,
+  RuntimeContext,
+  RuntimeObservation,
+  RuntimeResult,
+} from '../src/ports/agent.ts';
 import type { Computer, Workspace } from '../src/ports/computer.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
@@ -196,6 +202,7 @@ const webTools = new Set([
 ]);
 const turns = new Map<string, VoiceScenario>();
 const violations = new Map<string, string[]>();
+const observers = new Map<string, (event: RuntimeObservation | ModelUsageObservation) => void>();
 const promptHashes = new Map<string, string>();
 const answerTools = new Set([
   'codemode',
@@ -225,7 +232,6 @@ const computer: Computer = {
   hold: async () => {},
   close: async () => {},
   dispose: async () => {},
-  status: () => 'eval computer',
 };
 
 const workspace: Workspace = {
@@ -234,7 +240,6 @@ const workspace: Workspace = {
     instructions: 'Evaluation workspace: commands run but return no output.',
     exec: async () => ({ exitCode: 0 }),
   }),
-  status: () => 'eval workspace',
   dispose: () => {},
 };
 
@@ -269,6 +274,19 @@ async function runScenario(
   const threadId = randomUUID();
   const turnId = randomUUID();
   turns.set(turnId, scenario);
+  observers.set(turnId, (event) => {
+    if (event.type === 'tool_start')
+      timeline.push({ kind: 'tool', at: at(), name: event.name, input: event.input });
+    if (event.type === 'tool_end')
+      timeline.push({
+        kind: 'result',
+        at: at(),
+        name: event.name,
+        status: event.status,
+        output: event.output ?? event.error,
+      });
+    if (event.type === 'model_usage') usage.set(event.id, event);
+  });
   violations.set(turnId, []);
   browsers.set(threadId, { pages: scenario.pages ?? {}, url: 'about:blank' });
   const context: RuntimeContext = {
@@ -305,19 +323,6 @@ async function runScenario(
     ...(scenario.answer ? { limits: { maxToolCalls: 12, timeoutMs: 90_000 } } : {}),
     attachments: [],
     emit: async () => {},
-    observe: async (event) => {
-      if (event.type === 'tool_start')
-        timeline.push({ kind: 'tool', at: at(), name: event.name, input: event.input });
-      if (event.type === 'tool_end')
-        timeline.push({
-          kind: 'result',
-          at: at(),
-          name: event.name,
-          status: event.status,
-          output: event.output ?? event.error,
-        });
-      if (event.type === 'model_usage') usage.set(event.id, event);
-    },
     delta: (text, id) => {
       if (id && text && !visible.has(id)) visible.set(id, at());
     },
@@ -630,34 +635,50 @@ const runRecord = {
 await writeFile(recordPath, JSON.stringify(runRecord, null, 2), { flag: 'wx' });
 const sessionRoot = await mkdtemp(join(tmpdir(), 'otto-voice-sessions-'));
 const agent = createPiAgent({ provider, model, apiKey, sessionRoot });
+const refused = (turnId: string, name: string) =>
+  Boolean(turns.get(turnId)?.answer) && !answerTools.has(name);
+const intercept = async (turnId: string, name: string, run: () => Promise<AgentToolResult>) => {
+  if (refused(turnId, name)) {
+    violations.get(turnId)!.push(name);
+    throw new Error('Only the supplied read-only fixtures are available in this evaluation.');
+  }
+  if (turns.get(turnId)?.answer || !webTools.has(name)) return run();
+  const results = Object.values(turns.get(turnId)?.search ?? {}).flat();
+  await sleep(3000);
+  return (name === 'web_search'
+    ? { source: 'eval', results }
+    : 'Full page content is not available in this evaluation. Use the search results.') as unknown as AgentToolResult;
+};
 const runtime = createAgentRuntime({
   agent: {
-    nativeTools: agent.nativeTools,
     open: (input) => {
       const prompt = promptOverride ?? input.systemPrompt;
       promptHashes.set(input.turnId, hash(prompt));
-      return agent.open({ ...input, systemPrompt: prompt });
+      return agent.open({
+        ...input,
+        systemPrompt: prompt,
+        tools: input.tools.map((tool) => ({
+          ...tool,
+          execute: (args) =>
+            refused(input.turnId, tool.name)
+              ? input.runTool(tool.name, args, () =>
+                  intercept(input.turnId, tool.name, () => tool.execute(args)),
+                )
+              : tool.execute(args),
+        })),
+        runTool: (name, params, run, options) =>
+          input.runTool(name, params, () => intercept(input.turnId, name, run), options),
+        onEvent: (event) => {
+          if (event.type === 'model_usage') observers.get(input.turnId)?.(event);
+          input.onEvent(event);
+        },
+      });
     },
     dispose: () => agent.dispose(),
   },
   computer,
   workspace,
-  withTool: <T>(turnId: string, _toolCallId: string, name: string, action: () => T): T => {
-    if (turns.get(turnId)?.answer) {
-      if (!answerTools.has(name)) {
-        violations.get(turnId)!.push(name);
-        throw new Error('Only the supplied read-only fixtures are available in this evaluation.');
-      }
-      return action();
-    }
-    if (!webTools.has(name)) return action();
-    const results = Object.values(turns.get(turnId)?.search ?? {}).flat();
-    return sleep(3000).then(() =>
-      name === 'web_search'
-        ? { source: 'eval', results }
-        : 'Full page content is not available in this evaluation. Use the search results.',
-    ) as T;
-  },
+  observe: (turnId, event) => observers.get(turnId)?.(event),
 });
 console.log(`${provider}/${model} · ${selected.length} scenarios × ${repeat} → ${label}`);
 try {

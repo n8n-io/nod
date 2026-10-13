@@ -29,8 +29,7 @@ export type RuntimeObservation =
       error?: string;
       finishedAt: string;
       durationMs: number;
-    }
-  | ModelUsageObservation;
+    };
 
 export type BrowserConnectionRequest =
   | {
@@ -103,8 +102,6 @@ export interface RuntimeContext {
   signal: AbortSignal;
   attachments: Array<{ path: string; mimeType: string }>;
   emit(type: string, summary: string): Promise<void>;
-  observe?(event: RuntimeObservation): Promise<void>;
-  inspectPrompt?(snapshot: PromptSnapshot): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(
     messageId: string,
@@ -154,15 +151,6 @@ export interface RuntimeContext {
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
-}
-export interface PromptSnapshot {
-  id: string;
-  system: string;
-  instruction: string;
-  resumed: boolean;
-  imageCount: number;
-  reason: 'user' | 'steer';
-  createdAt: string;
 }
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
@@ -227,7 +215,6 @@ export interface AgentSession {
   dispose(): void | Promise<void>;
 }
 export interface Agent {
-  nativeTools?: AgentToolMetadata[];
   open(options: AgentSessionOptions): Promise<AgentSession>;
   dispose(): void | Promise<void>;
 }

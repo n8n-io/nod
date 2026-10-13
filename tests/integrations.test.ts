@@ -10,13 +10,7 @@ import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client'
 import Fastify from 'fastify';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
-import type {
-  Agent,
-  AgentEvent,
-  AgentToolResult,
-  RuntimeContext,
-  RuntimeObservation,
-} from '../src/ports/agent.ts';
+import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import type { DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
@@ -3312,7 +3306,6 @@ async function searchFixture(
     controller?: AbortController;
     search?: IntegrationSession['search'];
     execute?: IntegrationSession['execute'];
-    observe?: (event: RuntimeObservation) => Promise<void>;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-integration-search-recovery-'));
@@ -3349,7 +3342,6 @@ async function searchFixture(
   const calls: Array<{ action: string; args: Record<string, unknown>; accountId?: string }> = [];
   const sessions: Array<{ owner: string; accounts: unknown }> = [];
   const events: string[] = [];
-  const observations: RuntimeObservation[] = [];
   const modelResults: unknown[] = [];
   const session: IntegrationSession = {
     id: 'fixture-search-session',
@@ -3449,10 +3441,6 @@ async function searchFixture(
     emit: async (type) => {
       events.push(type);
     },
-    observe: async (event) => {
-      observations.push(event);
-      await options.observe?.(event);
-    },
     reply: async () => {},
     delta() {},
     publish: async () => {
@@ -3472,7 +3460,6 @@ async function searchFixture(
     calls,
     sessions,
     events,
-    observations,
     modelResults,
     owner,
     connectionId,
@@ -3497,7 +3484,6 @@ test(
     assert.deepEqual(f.searches, []);
     assert.deepEqual(f.sessions, []);
     assert.deepEqual(f.calls, []);
-    assert.doesNotMatch(JSON.stringify(f.observations), /fixture-foreign/);
   },
 );
 
@@ -3527,8 +3513,6 @@ test(
     });
     assert.equal(f.calls.length, 1);
     assert.deepEqual(f.modelResults, []);
-    assert.match(JSON.stringify(f.observations), /private-provider-diagnostic/);
-    assert.doesNotMatch(JSON.stringify(f.observations), leaked);
   },
 );
 
@@ -3562,7 +3546,6 @@ test(
     assert.equal(f.searches.length, 1);
     assert.deepEqual(f.calls, []);
     assert.deepEqual(f.modelResults, []);
-    assert.equal(f.observations.filter((event) => event.type === 'tool_end').length, 1);
   },
 );
 
@@ -7485,7 +7468,10 @@ test(
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
-        CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
+        CREATE TABLE notifications(owner_id text,turn_id uuid,summary text);
+        CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
+          turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,action text NOT NULL,effect text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now())`);
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES
           ($1,'owner','user',NULL,'Tell Sam we take the quote',greatest(now()-interval '2 hours',date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),
@@ -7494,6 +7480,10 @@ test(
         [chat, scheduled, foreign, `schedule:${schedule}:1:now`],
       );
       await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
+      await pool.query(
+        "INSERT INTO app_actions(owner_id,turn_id,action,effect,created_at) VALUES('owner',$1,'NOTION_UPDATE_PAGE','change',now()-interval '90 minutes')",
+        [scheduled],
+      );
       const chatAnswer = randomUUID();
       const scheduledAnswer = randomUUID();
       await pool.query(
@@ -7580,9 +7570,9 @@ test(
           })
           .curate({ task: 'review', instructions: 'Synthetic', input: {} }),
       );
-      await ledger.action(chat, 'GMAIL_FETCH_EMAILS', { query: 'from:sam' });
-      await ledger.action(chat, 'GMAIL_SEND_EMAIL', { recipient_email: 'sam@example.test' });
-      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { recipient_email: 'x@example.test' });
+      await ledger.action(chat, 'GMAIL_FETCH_EMAILS');
+      await ledger.action(chat, 'GMAIL_SEND_EMAIL');
+      await ledger.action(foreign, 'GMAIL_SEND_EMAIL');
       for (let attempt = 0; attempt < 50; attempt++) {
         const rows = await pool.query('SELECT count(*)::int AS count FROM model_usage');
         if (rows.rows[0].count === 5) break;
@@ -7595,13 +7585,18 @@ test(
       assert.deepEqual(costs[chat], { messageId: chatAnswer, costUsd: 0.55 });
       assert.deepEqual(costs[scheduled], { messageId: scheduledAnswer, costUsd: null });
       assert.equal(Object.hasOwn(costs, foreign), false);
-      assert.deepEqual((await pool.query('SELECT action,effect FROM app_actions')).rows, [
-        { action: 'GMAIL_SEND_EMAIL', effect: 'outbound' },
-      ]);
+      assert.deepEqual(
+        (await pool.query('SELECT action FROM app_actions ORDER BY created_at')).rows,
+        [
+          { action: 'NOTION_UPDATE_PAGE' },
+          { action: 'GMAIL_FETCH_EMAILS' },
+          { action: 'GMAIL_SEND_EMAIL' },
+        ],
+      );
       const view = (await app.inject('/api/trust')).json();
       assert.deepEqual(
         { ...view.week, spentUsd: Math.round(view.week.spentUsd * 100) / 100 },
-        { things: 3, reached: 1, spentUsd: 0.65 },
+        { things: 3, actions: 3, spentUsd: 0.65 },
       );
       assert.equal(view.month.unpriced, true);
       assert.deepEqual(
@@ -7611,7 +7606,8 @@ test(
           ['Tell Sam we take the quote', 'chat', 0.55],
         ],
       );
-      assert.deepEqual(view.entries[1].actions, ['Gmail: send email']);
+      assert.deepEqual(view.entries[0].actions, ['Notion: update page']);
+      assert.deepEqual(view.entries[1].actions, ['Gmail: fetch emails', 'Gmail: send email']);
       assert.equal(view.entries[0].unpriced, true);
       const report = await ledger.report();
       assert.deepEqual(
@@ -7620,7 +7616,10 @@ test(
       );
       const pdf = usagePdf(report, new Date()).toString('latin1');
       assert.match(pdf, /^%PDF-1\.4\n/);
-      assert.match(pdf, /\(\d\d:\d\d  Tell Sam we take the quote \\\(Gmail: send email\\\)\) Tj/);
+      assert.match(
+        pdf,
+        /\(\d\d:\d\d  Tell Sam we take the quote \\\(Gmail: fetch emails, Gmail: send email\\\)\) Tj/,
+      );
       assert.doesNotMatch(pdf, /Foreign request/);
       assert.ok(pdf.slice(Number(/startxref\n(\d+)/.exec(pdf)![1])).startsWith('xref\n'));
       const limit = async (monthlyUsd: number | null) =>
@@ -7630,7 +7629,7 @@ test(
       assert.deepEqual(await limit(1), { monthlyUsd: 1, reached: false });
       assert.equal(await ledger.limitReached(), false);
       await pool.query(
-        "INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd) VALUES('extra','owner',NULL,'fixture',0.5)",
+        "INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES('extra','owner',NULL,0.5)",
       );
       assert.equal(await ledger.limitReached(), true);
       assert.deepEqual((await app.inject('/api/trust')).json().limit, {
@@ -7675,7 +7674,7 @@ test(
       await assert.rejects(curator.curate(request), /spending limit was reached/);
       assert.equal(modelRequests, 1);
       const recoveredUsage = await pool.query(
-        "SELECT created_at FROM model_usage WHERE owner_id='owner' AND turn_id IS NULL AND model='fixture-small'",
+        "SELECT created_at FROM model_usage WHERE owner_id='owner' AND turn_id IS NULL AND cost_usd=0.05",
       );
       assert.ok(recoveredUsage.rows[0].created_at.getTime() <= failedAt);
       assert.equal(

@@ -82,12 +82,12 @@ flowchart TD
   wrap --> pi[Back to Pi]:::accent
 ```
 
-- **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before and after they run.
+- **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before they run.
 - **Turn mode:** read-only turns can use only read tools and browser open, snapshot, scroll, screenshot and wait. Activity checks can read only the selected account.
-- **Observations:** the guard records each call, with typed text, flows and memory arguments redacted.
+- **Observations:** the guard reports each call to an optional observer. Only the evals harness sets one, and it redacts typed text, flows and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
-App and memory changes run one at a time in call order, even when other calls run in parallel.
+App and memory calls run one at a time in call order, reads included, even when other calls and subagents run in parallel. A confirmation stops the calls waiting behind it, so a turn never asks two questions at once.
 
 ## Codemode
 

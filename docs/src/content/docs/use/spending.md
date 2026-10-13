@@ -13,11 +13,11 @@ Otto itself doesn't charge you. Your model provider bills you for the requests O
 
 Open **Settings → Trust & cost** (⌘I on a Mac, Ctrl+I elsewhere).
 
-- **The last 7 days.** One line with how many things Otto did, how many reached other people and what it spent.
+- **The last 7 days.** One line with how many things Otto did, how many times it used your apps and what it spent.
 - **This month.** What Otto has spent so far, a chart and a forecast, such as "On track for $12.40".
 - **The statement.** Every request that cost money or acted in a connected app, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Otto did and the cost.
 
-Reads in your apps aren't recorded as actions. Changes and sends are.
+Every app action is recorded, reads included.
 
 ![Settings → Trust & cost showing $0.17 spent this month of a $25 limit, a spending chart and the day's statement.](../../../assets/screens/trust-cost-light.png)
 

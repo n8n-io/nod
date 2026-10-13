@@ -1846,12 +1846,6 @@ export function createAgentBrowserComputer(options: {
     screenStatuses.delete(id);
   }
 
-  function browserStatus(): string {
-    const count = [...browsers.values()].filter(
-      (state) => state.started || state.saved.navigationFailed,
-    ).length;
-    return `${count} task browser session${count === 1 ? '' : 's'}; workspace browser proxy enabled`;
-  }
   const cleanup = setInterval(
     () => {
       for (const state of browsers.values()) {
@@ -1895,7 +1889,6 @@ export function createAgentBrowserComputer(options: {
     hold: tracked(hold),
     close: tracked(closeBrowser),
     discard: tracked(discard),
-    status: browserStatus,
     dispose: async () => {
       disposed = true;
       clearInterval(cleanup);
