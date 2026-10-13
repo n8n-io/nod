@@ -60,7 +60,7 @@ The memory tools are actions of Pi's `manage_personal_context` tool. Pi can save
 
 So a fact from a web page, an email, a tool result or Otto's own reply can't be saved, and neither can a background or scheduled run, which has no owner message.
 
-Saves are silent: no notice appears in chat or on Telegram or WhatsApp. Text containing a card number, an API key or a link with a login in it is refused. A correction uses `replace: true` and archives the old version. Learning the same message again adds evidence to the entry that has it.
+Saves are silent: no notice appears in chat or on Telegram or WhatsApp. Text containing a card number, an API key or a link with a login in it is refused. A correction uses `replace: true` and archives the old version. Another owner message with the same text adds that message as evidence to the entry that has it. Learning the same message twice adds nothing.
 
 :::caution[Memory is context, not permission]
 A saved note never authorizes an action. For `memory_learn`, the sensitive-topic rule is a model instruction: the server checks the quote, not the topic.
@@ -102,7 +102,7 @@ The archive keeps only its latest 40 records.
 
 ### Reflect
 
-Reflection reads up to 40 owner messages written since the last batch. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, and messages with secrets.
+Reflection reads up to 40 owner messages written since the last batch. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, and messages with secrets or a memory-save approval.
 
 - A small model from the selected connection proposes at most six operations: add an entry, or archive an inferred one the owner said is wrong.
 - Each operation cites messages and a verbatim quote. Only cited messages that contain the quote count as evidence.

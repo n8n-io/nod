@@ -274,8 +274,11 @@ export function createMemoryService(options: {
     }));
     return owned((tree, now) =>
       valid.every((note) => {
-        if (unsafe(note.text) || areaEntries(tree, note.area).some((e) => same(e.text, note.text)))
-          return true;
+        if (unsafe(note.text)) return true;
+        const match = areaEntries(tree, note.area).find((entry) => same(entry.text, note.text));
+        if (match?.origin === 'inferred')
+          Object.assign(match, { origin: 'stated', updated: now, edited: now });
+        if (match) return true;
         if (tree.entries.length >= maxEntries) return false;
         tree.entries.push({
           area: note.area,

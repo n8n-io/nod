@@ -83,6 +83,22 @@ test(
       ].join('\n'),
     };
     await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
+    await mkdir(join(objects, 'memory'));
+    await writeFile(
+      join(objects, 'memory', 'MEMORY.md'),
+      JSON.stringify({
+        entries: [
+          {
+            area: 'about',
+            slug: 'location-lisbon',
+            text: 'Location: Lisbon',
+            origin: 'inferred',
+            updated: new Date().toISOString(),
+            sources: [randomUUID()],
+          },
+        ],
+      }),
+    );
     const plans = new Map<string, { steps: Step[]; finalText?: string }>();
     const finalTexts = new Set(['Synthetic memory request handled.']);
     const threads = new Set<string>();
@@ -244,7 +260,7 @@ test(
           .sort(),
         ['Location: Lisbon', 'Name: Memory Fixture'],
       );
-      assert.ok(migrated.every((note) => note.status === 'stated' && !note.sources.length));
+      assert.ok(migrated.every((note) => note.status === 'stated'));
       assert.equal((await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name, null);
 
       const unsupported = await ask('Review my synthetic project notes.', [
@@ -593,8 +609,8 @@ test(
       assert.deepEqual(await notices(), []);
 
       const full = JSON.parse(await memoryFile());
-      const kept = full.entries.length;
-      for (let index = kept; index < 300; index++)
+      const kept = 300;
+      for (let index = full.entries.length; index < kept; index++)
         full.entries.push({
           area: 'lessons',
           slug: `filler-${index}`,
@@ -605,22 +621,32 @@ test(
           sources: [],
         });
       await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(full));
-      await pool.query(
-        "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
-      );
-      await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
-      await application.personal.initialize({ workers: false });
+      const legacy = async () => {
+        await pool.query(
+          "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
+        );
+        await pool.query('INSERT INTO profiles VALUES($1,$2)', [ownerId, profile]);
+        await application.personal.initialize({ workers: false });
+      };
+      const profileTable = async () =>
+        (await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name;
+      const remembered = async () =>
+        (await view()).notes.some((note) => note.text === 'Name: Memory Fixture');
+      await legacy();
       assert.equal(
         (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data
           .name,
         'Memory Fixture',
       );
-      assert.equal(JSON.parse(await memoryFile()).entries.length, 300);
-      full.entries = full.entries.slice(0, kept);
-      await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(full));
+      assert.equal(JSON.parse(await memoryFile()).entries.length, kept);
+      const clear = 'Clear everything you saved about me.';
+      await ask(clear, [personal('memory_control', { clear: true, quote: clear })]);
+      assert.equal(await profileTable(), null);
       await application.personal.initialize({ workers: false });
-      assert.equal((await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name, null);
-      assert.ok((await view()).notes.some((note) => note.text === 'Name: Memory Fixture'));
+      assert.equal(await remembered(), false);
+      await legacy();
+      assert.equal(await profileTable(), null);
+      assert.equal(await remembered(), true);
     } finally {
       await application.app.close();
       await pool.end();
