@@ -468,7 +468,11 @@ async function initializeApplication(
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({ pool, ownerId, refresh });
   await tasks.initialize();
-  const triage = createTriage({ consumers, connectedApps: () => integrations.connectedApps() });
+  const triage = createTriage({
+    consumers,
+    connectedApps: () => integrations.connectedApps(),
+    sweep: () => vault.forgetExpiredHolds(),
+  });
   const grantVault = await createAppGrantVault(pool, {
     ownerId,
     keyStore: adapters.keyStore,
