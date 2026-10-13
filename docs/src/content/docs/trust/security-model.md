@@ -79,6 +79,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - The server and browser provider can read secret values. There's no isolated key service or hardware-backed key release.
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
+- The model can type any value it knows into a page, including a secret you typed into chat.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click, and the trust check covers app actions only.
 - The checker can be wrong, and the model isn't immune to prompt injection.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
