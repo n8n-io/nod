@@ -226,11 +226,26 @@ const computer: Computer = {
       candidates: [],
     };
   },
+  bindProfile: async () => {},
+  deleteProfile: async () => {},
+  download: async () => {
+    throw new Error('Downloads are unavailable in this evaluation.');
+  },
+  upload: async () => {
+    throw new Error('Uploads are unavailable in this evaluation.');
+  },
   screenshot: async () => null,
+  control: async () => {},
+  view: async function* () {},
+  screenStatus: () => ({ state: 'unavailable' }),
   injectCredentials: async () => {},
+  fillCard: async () => {},
+  cardDestinations: async () => ({ document: '', destinations: {} }),
+  checkoutImage: async () => new Uint8Array(),
   currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
   hold: async () => {},
   close: async () => {},
+  discard: async () => {},
   dispose: async () => {},
 };
 
@@ -240,6 +255,8 @@ const workspace: Workspace = {
     instructions: 'Evaluation workspace: commands run but return no output.',
     exec: async () => ({ exitCode: 0 }),
   }),
+  writeArtifact: async () => {},
+  readArtifact: async () => new Uint8Array(),
   dispose: () => {},
 };
 
@@ -356,7 +373,7 @@ async function runScenario(
       mimeType: 'application/octet-stream',
       size: 0,
     }),
-    requestCredential: async () => ({}),
+    requestCredential: async () => ({ url: '#' }),
     connections: async (action, service) => {
       if (action === 'list')
         return apps.map((slug, index) => ({

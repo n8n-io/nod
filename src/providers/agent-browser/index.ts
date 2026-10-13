@@ -189,6 +189,7 @@ export function createAgentBrowserComputer(options: {
   headless?: boolean;
   idleTimeoutMs?: number;
   slotWaitMs?: number;
+  evictIdleMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
@@ -226,6 +227,7 @@ export function createAgentBrowserComputer(options: {
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
   const slotWaitMs = options.slotWaitMs ?? 2 * 60_000;
+  const evictIdleMs = options.evictIdleMs ?? 5 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
   let disposed = false;
   let activeCalls = 0;
@@ -350,7 +352,8 @@ export function createAgentBrowserComputer(options: {
                 !entry.closed &&
                 !entry.closing &&
                 !entry.injecting &&
-                entry.heldUntil <= Date.now(),
+                entry.heldUntil <= Date.now() &&
+                Date.now() - entry.lastUsed >= evictIdleMs,
             )
             .sort((a, b) => a.lastUsed - b.lastUsed)[0];
           if (!candidate) return false;
@@ -1473,8 +1476,7 @@ export function createAgentBrowserComputer(options: {
     await serialize(state, async () => {
       if (until !== null && !Number.isFinite(until))
         throw new Error('A valid browser hold expiry is required.');
-      state.heldUntil =
-        until === null ? 0 : Math.max(state.heldUntil, Math.min(until, Date.now() + 30 * 60_000));
+      state.heldUntil = until === null ? 0 : Math.min(until, Date.now() + 30 * 60_000);
       if (state.heldUntil > Date.now()) await currentUrl(state);
       if (state.heldUntil > Date.now())
         await captureScreen(state).catch((error: unknown) => {

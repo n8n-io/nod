@@ -115,8 +115,8 @@ A session opens its browser on its first browser call, so a session that never b
 
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most three browsers live at once, enough for the chat and two subagents. At that limit, a new browser replaces the least recently used idle one, which closes and keeps its profile until it's used again.
-- A running session or subagent renews a one-minute hold on its browser, so it's never closed for another. One waiting for you stays open for 30 minutes. If the server stops without cleaning up, its holds end within a minute.
+- The browser container keeps at most three browsers live at once, enough for the chat and two subagents. At that limit, a new browser replaces the least recently used one that has been idle for five minutes, which closes and keeps its profile until it's used again.
+- A browser used in the last five minutes is never closed for another, so a running session or subagent keeps its page between steps. One waiting for you stays open for 30 minutes.
 - When no browser can close, a new one waits up to two minutes for a free slot, then the browser call fails as busy. **Stop** cancels the wait at once.
 
 ## Stop and failures

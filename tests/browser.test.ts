@@ -38,7 +38,6 @@ import {
 import { runProcess } from '../src/providers/process.ts';
 import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
-import { createBridgeComputer } from '../src/providers/container-browser/client.ts';
 import {
   browserNamespace,
   createContainerBrowserComputer,
@@ -1497,7 +1496,6 @@ test('every session drives its own browser, so background work never waits for t
   const opened = new Map<string, string>();
   const discarded: string[] = [];
   const held: string[] = [];
-  const leased: string[] = [];
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
     agent: {
@@ -1519,8 +1517,8 @@ test('every session drives its own browser, so background work never waits for t
       discard: async (id) => {
         discarded.push(id);
       },
-      hold: async (id, until) => {
-        (until && until - Date.now() > 10 * 60_000 ? held : leased).push(id);
+      hold: async (id) => {
+        held.push(id);
       },
     }),
     workspace: fakeWorkspace(),
@@ -1590,7 +1588,6 @@ test('every session drives its own browser, so background work never waits for t
     );
     assert.deepEqual(discarded, [finished]);
     assert.deepEqual(held.sort(), [asking, threadId].sort());
-    assert.deepEqual([...new Set(leased)].sort(), [threadId, asking, finished].sort());
     assert.equal((await turn(asking, async () => {}, true)).status, 'succeeded');
     assert.deepEqual(discarded, [finished, asking]);
   } finally {
@@ -1601,235 +1598,37 @@ test('every session drives its own browser, so background work never waits for t
   }
 });
 
-test('at the browser cap a leased browser stays open, a new one waits for a slot, and a lease nobody renews runs out', async () => {
+test('at the browser cap only a browser idle past the window and not held makes room, and a new one waits until then', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: fixture.run,
     maxLiveSessions: 2,
-    slotWaitMs: 4000,
+    evictIdleMs: 3000,
+    slotWaitMs: 1000,
   });
-  const running = new Set<string>();
-  const renew = (id: string) => computer.hold(id, Date.now() + 1000).catch(() => {});
-  const renewal = setInterval(() => {
-    for (const id of running) void renew(id);
-  }, 300);
-  const open = async (id: string, signal?: AbortSignal) => {
-    const page = await computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
-    running.add(id);
-    await renew(id);
-    return page;
-  };
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
   const pages = () => [...fixture.pages.keys()].sort();
   try {
-    await open('subagent');
     await open('chat');
-    let scheduled = false;
-    const waiting = open('scheduled').then(() => (scheduled = true));
-    const cancelled = new AbortController();
-    const event = open('event', cancelled.signal);
-    await delay(1500);
-    assert.equal(scheduled, false);
+    await open('subagent');
+    await assert.rejects(open('scheduled'), /The browser sessions are busy/);
     assert.deepEqual(pages(), ['chat', 'subagent']);
-    assert.match((await computer.act('subagent', { action: 'snapshot' })).text, /Sign in/);
-    cancelled.abort();
-    await assert.rejects(event, { name: 'AbortError' });
-    running.delete('subagent');
-    await computer.discard('subagent');
-    await waiting;
+    const stop = new AbortController();
+    const stopped = open('event', stop.signal);
+    await delay(200);
+    stop.abort();
+    await assert.rejects(stopped, { name: 'AbortError' });
+    assert.deepEqual(pages(), ['chat', 'subagent']);
+    await computer.hold('chat', Date.now() + 60_000);
+    await delay(3200);
+    await open('scheduled');
     assert.deepEqual(pages(), ['chat', 'scheduled']);
-    running.delete('chat');
-    await open('event');
-    assert.deepEqual(pages(), ['event', 'scheduled']);
-    await assert.rejects(open('late'), /The browser sessions are busy/);
-    assert.deepEqual(pages(), ['event', 'scheduled']);
   } finally {
-    clearInterval(renewal);
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('Stop during the first browser lease still discards the background browser', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-lease-stop-'));
-  const session = randomUUID();
-  const discarded: string[] = [];
-  const leasing = deferred();
-  const lease = deferred();
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async ({ tools }) => {
-        const stopped = deferred();
-        return {
-          resumed: false,
-          prompt: async () => {
-            void tools
-              .find((tool) => tool.name === 'browser')!
-              .execute({ action: 'open', url: 'https://example.com/' })
-              .catch(() => {});
-            await stopped.promise;
-          },
-          abort: () => stopped.resolve(),
-          dispose() {},
-        };
-      },
-      dispose() {},
-    },
-    computer: fakeComputer({
-      hold: async () => {
-        leasing.resolve();
-        await lease.promise;
-      },
-      discard: async (id) => {
-        discarded.push(id);
-      },
-    }),
-    workspace: fakeWorkspace(),
-  });
-  const stop = new AbortController();
-  try {
-    const result = runtime.runTurn({
-      threadId: randomUUID(),
-      turnId: randomUUID(),
-      browserId: session,
-      background: true,
-      prompt: 'Use the browser.',
-      history: [],
-      attachments: [],
-      workspacePath: directory,
-      signal: stop.signal,
-      emit: async () => {},
-      reply: async () => {},
-      delta() {},
-      publish: async () => {
-        throw new Error('unused');
-      },
-      requestCredential: async () => ({ filled: true }),
-      integration: async () => ({}),
-      manage: async () => ({}),
-    });
-    await leasing.promise;
-    stop.abort();
-    await result.catch(() => {});
-    assert.deepEqual(discarded, [session]);
-  } finally {
-    lease.resolve();
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('browser leases reach a worker that rejects requests it does not know', async () => {
-  const known = new Set([
-    'act',
-    'bindProfile',
-    'deleteProfile',
-    'download',
-    'upload',
-    'screenshot',
-    'view',
-    'currentPage',
-    'injectCredentials',
-    'fillCard',
-    'cardDestinations',
-    'checkoutImage',
-    'hold',
-    'close',
-    'discard',
-    'dispose',
-    'quiesce',
-    'status',
-  ]);
-  const root = await mkdtemp('/tmp/sk-old-worker-');
-  const socketPath = join(root, 'control.sock');
-  const browser = workerComputer();
-  const worker = await startContainerBrowserWorker({
-    socketPath,
-    dataRoot: root,
-    createComputer: async () => browser.computer,
-  });
-  const methods: string[] = [];
-  const computer = createBridgeComputer({
-    namespace: `sk-${'0'.repeat(24)}`,
-    launch: (input) => {
-      methods.push(input.method);
-      const process = Object.assign(new EventEmitter(), {
-        stdin: new PassThrough(),
-        stdout: new PassThrough(),
-        stderr: new PassThrough(),
-        kill() {
-          this.stdin.destroy();
-          return true;
-        },
-      });
-      void (
-        known.has(input.method)
-          ? runBrowserBridge({ input: process.stdin, output: process.stdout, socketPath })
-          : Promise.resolve(1)
-      ).then((code) => {
-        process.stdout.end();
-        process.stderr.end();
-        process.emit('close', code);
-      });
-      return process;
-    },
-  });
-  const directory = await mkdtemp(join(tmpdir(), 'otto-old-worker-'));
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (input) => ({
-        resumed: false,
-        abort() {},
-        dispose() {},
-        prompt: async () => {
-          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
-          await tool('browser').execute({ action: 'open', url: 'https://example.com/' });
-          if (input.tools.some((item) => item.name === 'delegate'))
-            await tool('delegate').execute({ title: 'Part', instruction: 'Open a page.' });
-          else input.onEvent({ type: 'final', text: 'Done.' });
-        },
-      }),
-      dispose() {},
-    },
-    computer,
-    workspace: fakeWorkspace(),
-  });
-  const threadId = randomUUID();
-  try {
-    const result = await runtime.runTurn({
-      threadId,
-      turnId: randomUUID(),
-      prompt: 'Use the browser.',
-      history: [],
-      attachments: [],
-      workspacePath: directory,
-      signal: new AbortController().signal,
-      emit: async () => {},
-      reply: async () => {},
-      delta() {},
-      publish: async () => {
-        throw new Error('unused');
-      },
-      requestCredential: async () => ({ filled: true }),
-      integration: async () => ({}),
-      manage: async () => ({}),
-    });
-    assert.equal(result.status, 'succeeded');
-    assert.deepEqual(
-      methods.filter((method) => !known.has(method) || method === 'dispose'),
-      [],
-    );
-    assert.ok(methods.includes('hold'));
-    assert.equal(
-      (await computer.act(threadId, { action: 'snapshot' })).url,
-      'https://example.com/',
-    );
-  } finally {
-    await runtime.dispose();
-    await worker.close();
-    await rm(directory, { recursive: true, force: true });
-    await rm(root, { recursive: true, force: true });
   }
 });
 
