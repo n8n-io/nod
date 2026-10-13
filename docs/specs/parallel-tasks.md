@@ -79,17 +79,19 @@ Otherwise, the conversation turn gives a quick answer. A conversation turn can s
 
 ### 4.2 Task statuses
 
-| Status    | When                                                    | Pill colour (`.task-status`) |
-| --------- | ------------------------------------------------------- | ---------------------------- |
-| Queued    | The task waits for a free slot (limit of 3)             | Neutral                      |
-| Working   | The latest task turn is queued or running               | Info                         |
-| Needs you | The latest task turn waits for the owner                | Accent                       |
-| Waiting   | The task waits for other people and has a planned check | Neutral                      |
-| Done      | The task gave its result                                | Success                      |
-| Stopped   | The owner stopped the task, or reset closed it          | Neutral                      |
-| Failed    | An error or a restart ended the task                    | Error                        |
+| Status    | When                                                                                | Pill colour (`.task-status`) |
+| --------- | ----------------------------------------------------------------------------------- | ---------------------------- |
+| Queued    | The task waits for a free slot (limit of 3)                                         | Neutral                      |
+| Working   | A task turn is running, or the latest turn is queued behind the task's running turn | Info                         |
+| Needs you | The latest task turn waits for the owner                                            | Accent                       |
+| Waiting   | The task waits for other people and has a planned check                             | Neutral                      |
+| Done      | The task gave its result                                                            | Success                      |
+| Stopped   | The owner stopped the task, or reset closed it                                      | Neutral                      |
+| Failed    | An error or a restart ended the task                                                | Error                        |
 
 A plain chat message never changes the status of a task. Only the task's own turns, Stop and reset change it.
+
+How the server gives the status (step 2): a task with a running turn is Working. Otherwise, a latest turn that is queued gives Queued, also for a resume that waits for a free slot. A latest turn that waits gives Needs you. An open task whose latest turn failed gives Failed, and one whose latest turn was cancelled gives Stopped, also before WP-08 and WP-20 write the state. A Failed or Stopped task is not in the chat's list of open tasks.
 
 ### 4.3 Messages of a task
 
@@ -246,7 +248,7 @@ The old columns `auto`, `turn_id`, `done_when` and `turns.task_id` go (WP-19). A
 
 | Tool                                                                     | Bound in                                                   | What it does                                                                                          |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `start_task {title, ack, instruction, steps?}`                           | Conversation turns, flag on, not read-only, not onboarding | Creates the task, posts `ack` as the "On it" message (fallback "On it."), queues the first task turn  |
+| `start_task {title, ack, brief, steps?}`                                 | Conversation turns, flag on, not read-only, not onboarding | Creates the task, posts `ack` as the "On it" message (fallback "On it."), queues the first task turn  |
 | `route_to_task {taskId}`                                                 | Conversation turns, flag on                                | Moves the current owner message, with its exact text, into that task session                          |
 | `task_progress {steps?, current?, now?, waitingFor?, nextCheck?, stop?}` | Task sessions only                                         | Silent edit of its own task row. `stop` ends the task as Stopped when the owner asks                  |
 | `check_in {text}`                                                        | Task sessions only                                         | A task reply, limited by the server (section 4.4)                                                     |
@@ -255,11 +257,15 @@ The old columns `auto`, `turn_id`, `done_when` and `turns.task_id` go (WP-19). A
 
 The old report-only `task` tool and the curator watcher go (WP-19).
 
+The `brief` of `start_task` is the model's working brief and becomes the prompt of the first task turn. It is not the owner's words. `tasks.instruction` holds the frozen owner words (section 5.4). Step 2 named the argument `instruction`; step 3 renames it to `brief`.
+
 ### 5.4 Task authority and the trust check
 
 - `turnOrigin` resolves a task session to origin `task`. The author is the current turn's owner message when the turn is a routed reply. Otherwise it is `tasks.source_message_id`. Read-only stays read-only (WP-03).
 - For an action in a task, the checker gets `taskInstruction` (frozen, outside the 24-hour and 5-message window), the newest 5 owner messages routed to that task, and the task's own last assistant message before them. It never gets chat words or another task's words (WP-04).
-- For a chat action, the checker gets only chat-session words. Task replies are not chat words.
+- At dispatch, the task also freezes the Otto message that the source message answered, if there is one. The checker gets it as the message the task instruction answered. So a task that starts from "yes, do that" has the proposal it agreed to. A tapped first-chat card never counts as owner words.
+- For a chat action, the checker gets the messages that are not in a task session: the chat, schedule and event sessions, and messages without a turn. So a yes to a schedule result in the chat still has the message it answered. Task replies and other task-internal messages are never chat words.
+- `memory_forget` in a task runs only when the trust checker approves it against the task's words.
 - A chat message that is not routed never extends a task's authority.
 - An `OTTO_vault_allow` grant covers the turns of the same task session (WP-03).
 
@@ -299,7 +305,9 @@ Each task gets a working folder `/workspace/<threadId>/tasks/<taskId>`. Only Pi'
 ### 5.9 History and context
 
 - A task's context is its source message, the messages of its own session and the owner replies routed to it. It does not see other sessions' messages (WP-17).
-- The chat's context leaves out task-internal messages but keeps the "On it" and result messages, plus a list of open tasks: title, status and `onItMessageId`.
+- The chat's context leaves out task-internal messages but keeps the "On it" message and the latest result message of each task, plus a list of open tasks: title, status and `onItMessageId`. The list goes in the request data of each chat turn, not in the system prompt, so a task status change does not invalidate the chat's prompt cache.
+- Notes that the server posts to a task and that are not in its Pi transcript (for example the failure note of WP-20) go into the first instruction of the task's next turn.
+- `history_search` in a task session still searches the whole thread. This is known and is not a safety boundary, because all sessions belong to the same owner.
 - Schedule and event sessions see the messages without a turn, the chat's messages from turns that finished before their trigger, and the messages of their own session. They do not see other background sessions (step 1).
 - Each schedule fire is its own session, so the unanswered count for schedule and event sessions stays thread-wide. It counts only Otto's messages from finished turns, as before. A task does not use the unanswered count, because its check-ins follow the progress mode.
 
@@ -320,7 +328,7 @@ A task that waits for other people calls `task_progress {waitingFor, nextCheck}`
 
 ### 5.13 Feature flag and rollout
 
-`OTTO_TASKS` is an environment flag for the deployment. When it is off, `start_task` and `route_to_task` are not bound, and no new task session can start. Existing task sessions finish. Step 1 of the build order ships with no flag because it changes no behaviour that the owner sees.
+`OTTO_TASKS` is an environment flag for the deployment. When it is off, `start_task` and `route_to_task` are not bound, and no new task session can start. Existing task sessions finish. In hosted mode, `src/server/runtime-host.ts` forwards `OTTO_TASKS` to each tenant runtime. Step 1 of the build order ships with no flag because it changes no behaviour that the owner sees.
 
 ## 6. Work packages
 
@@ -856,6 +864,8 @@ Status on main: missing.
 - TaskStatus = 'queued'|'working'|'needs_you'|'done'|'stopped'|'failed'.
 - scheduleDraft builds from task.instruction plus the owner messages in the session.
 - Migration: close open auto cards, then drop auto, turn_id, done_when, waiting_for, next_check and turns.task_id.
+- Step 2 result: the migration closed every open card without an 'On it' message as stopped, deleted the auto cards that had no owner turn, and changed the legacy state 'cancelled' to 'stopped'. The old `result` column stays for old closed cards. WP-29 adds waiting_for and next_check again.
+- An old card has no instruction and no task session. 'Schedule task' is not offered for a task without an 'On it' message.
 
 **Files.** `src/server/tasks.ts`, `src/server/composition.ts`, `src/runtime/tools.ts`, `src/runtime/prompt.ts`, `src/shared/contracts.ts`, `src/web/pages/tasks.tsx`
 
@@ -1079,6 +1089,7 @@ Status on main: missing.
 
 **Design.**
 
+- WP-19 dropped the old waiting_for and next_check columns. Add them again (ADD COLUMN IF NOT EXISTS), add 'waiting' to the tasks state check and to TaskStatus.
 - task_progress {waitingFor: [{who, via}], nextCheck} sets tasks.state = 'waiting', waiting_for and next_check, and ends the turn.
 - Add turns.not_before timestamptz. claimTurns skips a turn whose not_before is in the future. A pg-boss drain job with startAfter = nextCheck wakes the thread.
 - The check turn: source 'task', source_id 'task-check:<taskId>:<nextCheck ISO>' (idempotent), session_id = task ID, background true.
