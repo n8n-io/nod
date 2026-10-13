@@ -122,22 +122,6 @@ export const scheduleObservation = Type.Union([
   ),
 ]);
 
-const taskNow = Type.String({ minLength: 1, maxLength: 200 });
-const taskWaits = Type.Array(
-  Type.Object(
-    {
-      who: Type.String({ minLength: 1, maxLength: 80 }),
-      via: Type.String({ minLength: 1, maxLength: 40 }),
-    },
-    { additionalProperties: false },
-  ),
-  { maxItems: 10 },
-);
-const taskNextCheck = Type.String({
-  pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$',
-  description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
-});
-
 const activityCheckTool = defineTool(
   'record_activity_check',
   'Record this read-only activity check once. verified requires a successful read from the selected account; include at most one useful finding with its stable source ID. Use unavailable when the source could not be inspected. This does not notify the user or prepare work.',
@@ -442,43 +426,6 @@ export const toolDefinitions = {
       ),
     }),
   ),
-  task: defineTool(
-    'task',
-    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?} returns its id; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. The card only reports: it schedules nothing, grants no permission and is not a chat message.',
-    Type.Union([
-      Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
-      Type.Object(
-        {
-          action: Type.Literal('start'),
-          title: Type.String({ minLength: 1, maxLength: 120 }),
-          doneWhen: Type.String({ minLength: 1, maxLength: 300 }),
-          now: taskNow,
-          waitingFor: Type.Optional(taskWaits),
-          nextCheck: Type.Optional(taskNextCheck),
-        },
-        { additionalProperties: false },
-      ),
-      Type.Object(
-        {
-          action: Type.Literal('update'),
-          id: uuid,
-          now: Type.Optional(taskNow),
-          waitingFor: Type.Optional(taskWaits),
-          nextCheck: Type.Optional(taskNextCheck),
-        },
-        { additionalProperties: false },
-      ),
-      Type.Object(
-        {
-          action: Type.Literal('finish'),
-          id: uuid,
-          status: literals(['done', 'cancelled']),
-          result: Type.String({ minLength: 1, maxLength: 500 }),
-        },
-        { additionalProperties: false },
-      ),
-    ]),
-  ),
   share_file: defineTool(
     'share_file',
     'Send a workspace file to the user as an attachment. Check the file first; a successful call already delivers it.',
@@ -727,10 +674,6 @@ export function ottoTools(
       if (!Value.Check(scheduleObservation, p.args))
         return 'schedule_record_observation needs {status, sourceUrl, value, summary}; value is null when unavailable.';
       return context.manage(p.action, p.args);
-    }),
-    bind(toolDefinitions.task, async (p) => {
-      if (!context.task) throw new Error('Tasks are unavailable.');
-      return context.task(p);
     }),
     ...(context.startTask ? [bind(toolDefinitions.start_task, (p) => context.startTask!(p))] : []),
     bind(toolDefinitions.share_file, (p) => context.publish(p.path, p.name)),

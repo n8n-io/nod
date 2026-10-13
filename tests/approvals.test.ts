@@ -1589,7 +1589,7 @@ test(
           );
           const taskId = randomUUID();
           await db.pool.query(
-            "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,$2,'Synthetic task','','')",
+            "INSERT INTO tasks(id,owner_id,title) VALUES($1,$2,'Synthetic task')",
             [taskId, ownerId],
           );
           const tasked = await running(
@@ -2611,7 +2611,7 @@ test(
         async () => {
           const foreignTask = randomUUID();
           await db.pool.query(
-            "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,'another-owner','Fixture task','Fixture done','Fixture step')",
+            "INSERT INTO tasks(id,owner_id,title,now_text) VALUES($1,'another-owner','Fixture task','Fixture step')",
             [foreignTask],
           );
           assert.deepEqual((await request('GET', '/api/tasks')).json(), []);

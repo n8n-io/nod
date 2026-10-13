@@ -77,7 +77,6 @@ const readOnlyTools: Record<string, true | string[]> = {
     'schedule_list',
     'usage_get',
   ],
-  task: ['list'],
 };
 const readOnlyRefusal =
   'This turn can only read. Use app reads, and browser open, snapshot or scroll.';

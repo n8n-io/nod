@@ -68,10 +68,6 @@
   background: var(--info-soft);
   color: var(--info);
 }
-.task-status[data-status='stalled'] {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
 .task-status[data-status='done'],
 .task-status[data-status='succeeded'] {
   background: var(--success-soft);
@@ -90,21 +86,6 @@
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
-}
-.task-facts {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  color: var(--text-secondary);
-  font-size: var(--text-control);
-  line-height: 1.6;
-  list-style: none;
-  overflow-wrap: anywhere;
-}
-.task-facts > li > span {
-  margin-right: 8px;
-  color: var(--muted-foreground);
 }
 @media (max-width: 640px) {
   .tasks-page .saved-plan-footer .button {

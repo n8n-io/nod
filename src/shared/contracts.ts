@@ -229,22 +229,14 @@ export interface CurrentBrowser {
   status: string;
   lastActivityAt: string;
 }
-export type TaskStatus =
-  'working' | 'needs_you' | 'waiting' | 'scheduled' | 'stalled' | 'done' | 'cancelled';
-export interface TaskWait {
-  who: string;
-  via: string;
-}
+export type TaskStatus = 'queued' | 'working' | 'needs_you' | 'done' | 'stopped' | 'failed';
 export interface Task {
   id: string;
   title: string;
-  doneWhen: string;
   now: string;
   result: string;
   status: TaskStatus;
   question: string | null;
-  waitingFor: TaskWait[];
-  nextCheck: string | null;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;

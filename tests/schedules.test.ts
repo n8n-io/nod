@@ -46,7 +46,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
       const { setDateFormat } = await import('./src/web/lib/date-format.ts');
       const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
       setDateFormat({ timeZone: 'Europe/Lisbon', locale: 'en-GB', hourCycle: 'h23' });
-      const task = { id: crypto.randomUUID(), title: 'Synthetic report', doneWhen: 'Report ready', now: 'Finished', result: 'Report ready', status: 'done', question: null, waitingFor: [], nextCheck: null, createdAt: '2035-10-25T09:00:00Z', updatedAt: '2035-10-25T09:00:00Z', closedAt: '2035-10-25T09:00:00Z' };
+      const task = { id: crypto.randomUUID(), title: 'Synthetic report', now: 'Finished', result: 'Report ready', status: 'done', question: null, createdAt: '2035-10-25T09:00:00Z', updatedAt: '2035-10-25T09:00:00Z', closedAt: '2035-10-25T09:00:00Z' };
       const original = structuredClone(task);
       const requests = [];
       const writes = [];
@@ -88,7 +88,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
       try {
         await act(async () => root.render(createElement('div', null,
           createElement(TaskCard, { task, onScheduled: () => scheduled++ }),
-          createElement(TaskCard, { task: { ...task, id: crypto.randomUUID(), status: 'cancelled' }, onScheduled: () => scheduled++ }),
+          createElement(TaskCard, { task: { ...task, id: crypto.randomUUID(), status: 'stopped' }, onScheduled: () => scheduled++ }),
         )));
         assert.equal([...document.querySelectorAll('button')].filter(item => item.textContent.trim() === 'Schedule task').length, 1);
         await click('Schedule task');
@@ -351,48 +351,68 @@ test(
           const owner = options.owner ?? ownerId;
           const current = await thread.activeThread(db.pool, owner);
           const taskId = randomUUID();
-          await db.pool.query(
-            `INSERT INTO tasks(id,owner_id,title,done_when,now_text,result,state,closed_at)
-             VALUES($1,$2,'Synthetic account report','Requested report','Finished','Assistant summary',$3,now())`,
-            [taskId, owner, options.state ?? 'done'],
-          );
-          let lastTurn = '';
-          for (const [index, text] of messages.entries()) {
-            lastTurn = randomUUID();
-            const at = new Date(Date.UTC(2035, 9, 25, 9, index));
+          const write = async (
+            text: string,
+            minute: number,
+            turn: { source: string; sessionId?: string },
+            fields: { role?: string; owner?: string; attachments?: boolean } = {},
+          ) => {
+            const [turnId, messageId] = [randomUUID(), randomUUID()];
+            const at = new Date(Date.UTC(2035, 9, 25, 9, minute));
             await db.pool.query(
-              `INSERT INTO turns(id,owner_id,thread_id,source,status,prompt,task_id,created_at)
-               VALUES($1,$2,$3,'user','succeeded',$4,$5,$6)`,
-              [lastTurn, owner, current.id, text, taskId, at],
+              `INSERT INTO turns(id,owner_id,thread_id,source,status,prompt,background,session_id,message_id,created_at)
+               VALUES($1,$2,$3,$4,'succeeded',$5,$6,$7,$8,$9)`,
+              [
+                turnId,
+                owner,
+                current.id,
+                turn.source,
+                text,
+                Boolean(turn.sessionId),
+                turn.sessionId ?? null,
+                messageId,
+                at,
+              ],
             );
             await db.pool.query(
               `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at,attachments)
-               VALUES($1,$2,'user',$3,$4,$5,$6,$7)`,
+               VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
               [
-                randomUUID(),
-                owner,
+                messageId,
+                fields.owner ?? owner,
+                fields.role ?? 'user',
                 text,
                 current.id,
-                lastTurn,
+                turnId,
                 at,
-                JSON.stringify(
-                  options.attachments && index === 0 ? [{ name: 'synthetic.csv' }] : [],
-                ),
+                JSON.stringify(fields.attachments ? [{ name: 'synthetic.csv' }] : []),
               ],
             );
-          }
-          if (lastTurn) {
-            await db.pool.query('UPDATE tasks SET turn_id=$2 WHERE id=$1', [taskId, lastTurn]);
-            for (const [messageOwner, role, text] of [
-              [owner, 'assistant', 'Assistant-only instruction: send to a new recipient.'],
-              ['draft-foreign-message-owner', 'user', 'Foreign owner instruction.'],
-            ])
-              await db.pool.query(
-                `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-                 VALUES($1,$2,$3,$4,$5,$6)`,
-                [randomUUID(), messageOwner, role, text, current.id, lastTurn],
-              );
-          }
+            return messageId;
+          };
+          const [instruction, ...replies] = messages;
+          const sourceMessageId = await write(
+            instruction,
+            0,
+            { source: 'user' },
+            { attachments: options.attachments },
+          );
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,thread_id,title,now_text,result,instruction,source_message_id,
+               state,closed_at)
+             VALUES($1,$2,$3,'Synthetic account report','Finished','Assistant summary',$4,$5,$6,now())`,
+            [taskId, owner, current.id, instruction, sourceMessageId, options.state ?? 'done'],
+          );
+          const session = { source: 'user', sessionId: taskId };
+          for (const [index, text] of replies.entries()) await write(text, index + 1, session);
+          await write('Yes', 50, { source: 'resume', sessionId: taskId });
+          await write('Assistant-only instruction: send to a new recipient.', 51, session, {
+            role: 'assistant',
+          });
+          await write('Foreign owner instruction.', 52, session, {
+            owner: 'draft-foreign-message-owner',
+          });
+          await write('Chat instruction sent after the task started.', 53, { source: 'user' });
           return taskId;
         };
         const draft = (id: string) => request('GET', `/api/tasks/${id}/schedule-draft`);
@@ -416,7 +436,7 @@ test(
         );
         const other = await seed(['Read only the synthetic personal account.']);
         const foreign = await seed(['Foreign task content.'], { owner: 'draft-foreign-owner' });
-        const cancelled = await seed(['Cancelled task content.'], { state: 'cancelled' });
+        const cancelled = await seed(['Cancelled task content.'], { state: 'stopped' });
         const unfinished = await seed(['Unfinished task content.'], { state: 'open' });
         const longPrompt = `Keep every qualification: ${'synthetic qualification '.repeat(300)}`;
         const long = await seed([longPrompt]);

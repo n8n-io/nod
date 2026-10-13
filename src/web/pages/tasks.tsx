@@ -1,6 +1,5 @@
 import { useId, useState } from 'react';
 import {
-  CalendarClock,
   ChevronDown,
   CircleAlert,
   CircleCheck,
@@ -20,36 +19,30 @@ import { desktopSettingsAvailable } from '../lib/desktop';
 import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
 const labels: Record<TaskStatus, string> = {
+  queued: 'Queued',
   working: 'Working',
   needs_you: 'Needs you',
-  waiting: 'Waiting',
-  scheduled: 'Checking back',
-  stalled: 'Stalled',
   done: 'Done',
-  cancelled: 'Stopped',
+  stopped: 'Stopped',
+  failed: 'Failed',
 };
 const icons = {
+  queued: Hourglass,
   working: LoaderCircle,
   needs_you: MessageCircle,
-  waiting: Hourglass,
-  scheduled: CalendarClock,
-  stalled: CircleAlert,
   done: CircleCheck,
-  cancelled: CircleSlash,
+  stopped: CircleSlash,
+  failed: CircleAlert,
 };
-const order: TaskStatus[] = ['needs_you', 'working', 'stalled', 'waiting', 'scheduled'];
+const order: TaskStatus[] = ['needs_you', 'working', 'queued'];
 const views = ['current', 'scheduled', 'previous'] as const;
 const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
-const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
+const closed = (task: Task) => !order.includes(task.status);
 
 function headline(task: Task) {
   if (closed(task)) return task.result || task.now;
   if (task.status === 'needs_you')
-    return (
-      task.question ??
-      'Something stopped this before it finished. Check what happened, then tell Otto to continue.'
-    );
-  if (task.status === 'stalled') return 'Nothing is planned next. Tell Otto to keep going or stop.';
+    return task.question ?? 'Otto is waiting for your answer in chat.';
   return task.now;
 }
 
@@ -57,7 +50,6 @@ export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): vo
   const headingId = useId();
   const format = useDateFormat();
   const Icon = icons[task.status];
-  const when = (value: string) => formatDateTime(value, format, { weekday: true });
   return (
     <article className="saved-plan task-card" aria-labelledby={headingId}>
       <div className="saved-plan-title">
@@ -75,33 +67,11 @@ export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): vo
         <Clock size={16} aria-hidden="true" />
         <span>
           {task.closedAt
-            ? `${task.status === 'cancelled' ? 'Stopped' : 'Finished'} ${formatDateTime(task.closedAt, format)}`
+            ? `${task.status === 'done' ? 'Finished' : labels[task.status]} ${formatDateTime(task.closedAt, format)}`
             : `Started ${formatDateTime(task.createdAt, format)}`}
         </span>
       </p>
       <p className="task-now">{headline(task)}</p>
-      {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
-        <ul className="task-facts">
-          {task.waitingFor.map((wait) => (
-            <li key={`${wait.who}:${wait.via}`}>
-              <span>Waiting on</span>
-              {wait.who} · {wait.via}
-            </li>
-          ))}
-          {task.nextCheck && (
-            <li>
-              <span>Next check</span>
-              {when(task.nextCheck)}
-            </li>
-          )}
-          {task.doneWhen && (
-            <li>
-              <span>Done when</span>
-              {task.doneWhen}
-            </li>
-          )}
-        </ul>
-      )}
       {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
     </article>
   );
