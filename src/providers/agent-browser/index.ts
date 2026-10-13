@@ -335,10 +335,17 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + slotWaitMs;
+    const limit = AbortSignal.timeout(slotWaitMs);
+    const wait = signal ? AbortSignal.any([signal, limit]) : limit;
+    const stopped = new Promise<never>((_, reject) => {
+      if (wait.aborted) reject(wait.reason);
+      wait.addEventListener('abort', () => reject(wait.reason), { once: true });
+    });
+    stopped.catch(() => {});
     const reserve = () =>
       allocate(async () => {
         if (state.started || state.saved.navigationFailed) return true;
+        if (wait.aborted) return false;
         const occupied = () =>
           [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
         const attempted = new Set<string>();
@@ -368,15 +375,20 @@ export function createAgentBrowserComputer(options: {
         }
         if (disposed || state.closed || state.closing)
           throw new Error('The browser session has expired. Open the URL again.');
+        if (wait.aborted) return false;
         state.started = true;
         return true;
       });
-    while (!(await reserve())) {
-      if (disposed || state.closed || state.closing)
-        throw new Error('The browser session has expired. Open the URL again.');
-      if (Date.now() >= deadline)
+    try {
+      while (!(await Promise.race([reserve(), stopped]))) {
+        if (disposed || state.closed || state.closing)
+          throw new Error('The browser session has expired. Open the URL again.');
+        await delay(500, undefined, { signal: wait });
+      }
+    } catch (error) {
+      if (limit.aborted && !signal?.aborted)
         throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-      await delay(500, undefined, { signal });
+      throw error;
     }
   }
 
