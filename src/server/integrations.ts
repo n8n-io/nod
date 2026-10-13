@@ -8,6 +8,7 @@ import type { AppSetupStatus, Connection, VaultLoginEntry } from '../shared/cont
 import {
   IntegrationAuthConfigurationError,
   IntegrationCatalogAccessDenied,
+  IntegrationInboxCursorExpired,
   type ConnectedApp,
   type IntegrationProvider,
   type IntegrationSearch,
@@ -88,6 +89,12 @@ type ConnectionRow = {
   watch_requested: boolean;
   watch_attempted: boolean;
   watch_revision: number;
+  inbox_cursor: string | null;
+  inbox_poll_at: Date | null;
+  inbox_claim_id: string | null;
+  inbox_checked_at: Date | null;
+  inbox_failed: boolean;
+  inbox_reconnect_required: boolean;
   account_name: string | null;
   account_email: string | null;
   account_active: boolean;
@@ -209,11 +216,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       provider_id text NOT NULL DEFAULT 'composio'
     );
     CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
-    ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS setup_link_hash text,
+    ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
+      ADD COLUMN IF NOT EXISTS setup_link_hash text,
       ADD COLUMN IF NOT EXISTS pending_account_email text,
       ADD COLUMN IF NOT EXISTS pending_auth_config_id text,
-      DROP COLUMN IF EXISTS inbox_cursor, DROP COLUMN IF EXISTS inbox_poll_at, DROP COLUMN IF EXISTS inbox_claim_id,
-      DROP COLUMN IF EXISTS inbox_checked_at, DROP COLUMN IF EXISTS inbox_failed, DROP COLUMN IF EXISTS inbox_reconnect_required;
+      ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
+      ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
     DO $$ BEGIN
       IF to_regclass('direct_oauth_accounts') IS NOT NULL THEN
         IF to_regclass('vault_app_grants') IS NOT NULL THEN
@@ -222,7 +231,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         DROP TABLE direct_oauth_accounts;
       END IF;
     END $$;
-    ALTER TABLE integration_events DROP COLUMN IF EXISTS poll_connection_id, DROP COLUMN IF EXISTS intent;
+    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,
+      DROP COLUMN IF EXISTS intent;
   `);
   const stale = await pool.query<
     Pick<ConnectionRow, 'provider_id' | 'account_id' | 'pending_account_id' | 'trigger_id'>
@@ -234,6 +244,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   let draining = false;
   let closed = false;
   let refreshing: Promise<void> | undefined;
+  let polling: Promise<void> | undefined;
   const stop = new AbortController();
   function background(operation: () => Promise<void>) {
     if (closed) return undefined;
@@ -357,7 +368,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   function supportsWatch(slug: Slug) {
-    return provider.configured && provider.supportsSubscriptions.includes(slug);
+    return (
+      provider.configured &&
+      (provider.supportsSubscriptions.includes(slug) ||
+        (slug === 'gmail' && Boolean(provider.pollInbox)))
+    );
   }
 
   async function activateWatch(id: string) {
@@ -516,8 +531,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const accountEmail = row?.account_email ?? undefined;
         const supported = supportsWatch(slug);
         const requested = Boolean(supported && row?.watch_requested);
+        const pollingSupported = slug === 'gmail' && Boolean(provider.pollInbox);
+        const pollingActive = Boolean(
+          pollingSupported &&
+          row?.inbox_checked_at &&
+          !row.inbox_failed &&
+          new Date(row.inbox_checked_at).getTime() > Date.now() - 360_000,
+        );
         const triggersActive = Boolean(
-          active && requested && row?.triggers_enabled && row.trigger_id,
+          active &&
+          requested &&
+          !row?.inbox_reconnect_required &&
+          ((row?.triggers_enabled && row.trigger_id) || pollingActive),
         );
         result.push({
           slug,
@@ -533,6 +558,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ...(row ? { connectionId: row.id, accountId: row.account_id! } : {}),
           ...(row
             ? {
+                reconnectRequired: row.inbox_reconnect_required,
                 canReconnect: Boolean(
                   !row.revoked && provider.configured && provider.reconnectAccount,
                 ),
@@ -547,11 +573,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             ? 'disabled'
             : triggersActive
               ? 'active'
-              : !provider.webhooksConfigured
+              : (!provider.webhooksConfigured && !pollingSupported) || row?.inbox_failed
                 ? 'unavailable'
                 : 'pending',
           supportsTriggers: supported,
-          description: service.description,
+          description: row?.inbox_reconnect_required
+            ? 'Inbox history expired. Reconnect this account to resume new email updates. Review the missing interval separately; reconnecting does not recover it.'
+            : service.description,
         });
       }
     }
@@ -857,13 +885,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           `UPDATE app_connections SET account_id=pending_account_id,pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
            callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
            trigger_id=NULL,triggers_enabled=false,watch_attempted=false,watch_attempted_at=NULL,watch_failures=0,watch_retry_at=NULL,
-           watch_revision=watch_revision+1 WHERE id=$1`,
+           watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
+           WHERE id=$1`,
           [row.id, remote.accountName ?? row.account_name, remote.accountEmail],
         );
         await client.query(
           `UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND state IN ('queued','processing')
-           AND provider_id=$2 AND account_id=$3`,
-          [configuredOwner, row.provider_id, row.account_id],
+           AND (poll_connection_id=$2 OR (provider_id=$3 AND account_id=$4))`,
+          [configuredOwner, row.id, row.provider_id, row.account_id],
         );
       } else if (existing.rows[0]) {
         connectedId = existing.rows[0].id;
@@ -873,6 +902,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
            watch_requested=true,watch_attempted=CASE WHEN trigger_id IS NULL THEN false ELSE watch_attempted END WHERE id=$1`,
           [connectedId, remote.accountName ?? null, remote.accountEmail ?? null],
         );
+        if (existing.rows[0].revoked || existing.rows[0].inbox_reconnect_required) {
+          await client.query(
+            `UPDATE app_connections SET watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,
+             inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false WHERE id=$1`,
+            [connectedId],
+          );
+          await client.query(
+            "UPDATE integration_events SET state='discarded' WHERE poll_connection_id=$1 AND owner_id=$2 AND state IN ('queued','processing')",
+            [connectedId, configuredOwner],
+          );
+        }
       } else {
         await client.query(
           `UPDATE app_connections SET account_id=pending_account_id,pending_account_id=NULL,callback_hash=NULL,setup_link_hash=NULL,
@@ -912,13 +952,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       await client.query(
         `UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,
          callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-         watch_revision=watch_revision+1 WHERE id=$1 AND owner_id=$2 AND provider_id=$3`,
+         watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
+         WHERE id=$1 AND owner_id=$2 AND provider_id=$3`,
         [row.id, configuredOwner, row.provider_id],
       );
       await client.query(
-        `UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND state IN ('queued','processing')
-         AND provider_id=$2 AND account_id=$3`,
-        [configuredOwner, row.provider_id, row.account_id],
+        "UPDATE integration_events SET state='discarded' WHERE poll_connection_id=$1 AND owner_id=$2 AND state IN ('queued','processing')",
+        [row.id, configuredOwner],
       );
     }, pool);
     if (row.trigger_id) await provider.unsubscribe(row.trigger_id);
@@ -1290,12 +1330,117 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return row && provider.inboxSnippets ? provider.inboxSnippets(row.account_id!, signal) : [];
   }
 
+  function pollInboxes() {
+    if (closed || !provider.configured || !provider.pollInbox) return Promise.resolve();
+    if (polling) return polling;
+    polling = (async () => {
+      const { rows } = await pool.query<ConnectionRow>(
+        `WITH due AS (SELECT id FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND slug='gmail'
+         AND watch_requested AND account_active AND NOT revoked AND NOT inbox_reconnect_required AND account_id IS NOT NULL
+         AND (inbox_poll_at IS NULL OR inbox_poll_at<=now()) ORDER BY inbox_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
+         UPDATE app_connections c SET inbox_poll_at=now()+interval '5 minutes',inbox_claim_id=$3
+         FROM due WHERE c.id=due.id RETURNING c.*`,
+        [configuredOwner, providerId, randomBytes(16).toString('hex')],
+      );
+      await Promise.all(
+        rows.map(async (row) => {
+          let client: PoolClient | undefined;
+          try {
+            const result = await provider.pollInbox!(
+              row.account_id!,
+              row.inbox_cursor,
+              AbortSignal.any([stop.signal, AbortSignal.timeout(30_000)]),
+            );
+            stop.signal.throwIfAborted();
+            client = await pool.connect();
+            await client.query('BEGIN');
+            const saved = await client.query(
+              `UPDATE app_connections SET inbox_cursor=$1,inbox_checked_at=now(),inbox_failed=false,
+             inbox_poll_at=CASE WHEN $2 THEN now() ELSE inbox_poll_at END
+             WHERE id=$3 AND owner_id=$4 AND provider_id=$5 AND account_id=$6 AND watch_revision=$7 AND inbox_claim_id=$8
+             AND watch_requested AND account_active AND NOT revoked RETURNING id`,
+              [
+                result.cursor,
+                result.hasMore,
+                row.id,
+                configuredOwner,
+                providerId,
+                row.account_id,
+                row.watch_revision,
+                row.inbox_claim_id,
+              ],
+            );
+            if (saved.rowCount) {
+              for (const message of result.messages) {
+                const summary = `Source connectionId: ${row.id}.\n${eventOverview(
+                  'gmail',
+                  'inbox',
+                  {
+                    message_id: message.id,
+                    thread_id: message.threadId,
+                    subject: message.subject,
+                    sender: message.sender,
+                    timestamp: message.receivedAt,
+                  },
+                )}`;
+                await client.query(
+                  `INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
+                 VALUES ($1,$2,$3,'gmail',$4,$5,$6) ON CONFLICT(id) DO UPDATE SET poll_connection_id=EXCLUDED.poll_connection_id,
+                 state=CASE WHEN integration_events.state='discarded' THEN 'queued' ELSE integration_events.state END
+                 WHERE integration_events.owner_id=EXCLUDED.owner_id AND integration_events.provider_id=EXCLUDED.provider_id
+                 AND integration_events.account_id=EXCLUDED.account_id AND integration_events.state<>'delivered'`,
+                  [
+                    `${providerId}:gmail:${row.account_id}:${message.id}`,
+                    configuredOwner,
+                    summary,
+                    row.account_id,
+                    providerId,
+                    row.id,
+                  ],
+                );
+              }
+            }
+            await client.query('COMMIT');
+            if (saved.rowCount) options.refresh?.();
+          } catch (error) {
+            if (client) await client.query('ROLLBACK');
+            await (client ?? pool).query(
+              `WITH failed AS (UPDATE app_connections SET inbox_failed=true,inbox_reconnect_required=$7
+               WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND inbox_claim_id=$6
+               AND watch_requested AND NOT revoked RETURNING id)
+               INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
+               SELECT $8,$2,$9,'gmail',$4,$3,id FROM failed WHERE $7 ON CONFLICT(id) DO NOTHING`,
+              [
+                row.id,
+                configuredOwner,
+                providerId,
+                row.account_id,
+                row.watch_revision,
+                row.inbox_claim_id,
+                error instanceof IntegrationInboxCursorExpired,
+                `${providerId}:inbox-expired:${row.id}:${row.watch_revision}`,
+                `Gmail inbox updates need reconnection because the saved history expired. Reconnect this account to resume future updates; the missing interval still needs a separate inbox review. Source connectionId: ${row.id}.`,
+              ],
+            );
+            options.refresh?.();
+          } finally {
+            client?.release();
+          }
+        }),
+      );
+    })().finally(() => {
+      polling = undefined;
+    });
+    return polling;
+  }
+
   async function drain() {
     if (draining) return;
     draining = true;
     const matchingConnection = `c.owner_id=e.owner_id AND c.slug=e.slug
-      AND c.account_id=e.account_id AND c.provider_id=e.provider_id AND NOT c.revoked
-      AND c.trigger_id=e.trigger_id AND c.triggers_enabled`;
+      AND c.account_id=e.account_id AND c.provider_id=e.provider_id AND NOT c.revoked AND (
+        (e.poll_connection_id IS NULL AND c.trigger_id=e.trigger_id AND c.triggers_enabled) OR
+        (e.poll_connection_id=c.id AND c.watch_requested AND c.account_active))`;
     const currentConnection = `SELECT 1 FROM app_connections c WHERE ${matchingConnection}`;
     try {
       await pool.query(
@@ -1353,6 +1498,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   const timer = setInterval(() => {
     void background(drain)?.catch(() => {});
     void background(syncWatches)?.catch(() => {});
+    void background(pollInboxes)?.catch(() => {});
   }, 5000);
   timer.unref();
 
@@ -1361,7 +1507,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       closed = true;
       clearInterval(timer);
       stop.abort();
-      await refreshing;
+      await Promise.all([refreshing, polling]);
     });
     app.register(async (scope) => {
       scope.setErrorHandler((error, _request, reply) => {
@@ -1765,6 +1911,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     status: list,
     drain,
     syncWatches,
+    pollInboxes,
     ready: provider.configured,
   };
 }
