@@ -10,6 +10,7 @@ import type {
 } from '../ports/discovered.ts';
 import type { ConnectedCli } from '../ports/computer.ts';
 import type { Connection } from '../shared/contracts.ts';
+import { transaction } from './db.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 import type { TurnRef } from './thread.ts';
 import { isIntegrationFile } from './integration-files.ts';
@@ -217,22 +218,14 @@ export async function createDiscoveredConnections(
     ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text;
   `);
-  const recovery = await pool.connect();
-  try {
-    await recovery.query('BEGIN');
+  await transaction(async (recovery) => {
     const interrupted = await recovery.query<{ id: string }>(
       `UPDATE discovered_connection_proposals SET oauth_status='failed',oauth_state_hash=NULL
        WHERE owner_id=$1 AND oauth_status='completing' RETURNING id`,
       [owner],
     );
     for (const row of interrupted.rows) await options.grantVault.remove(row.id, recovery);
-    await recovery.query('COMMIT');
-  } catch (cause) {
-    await recovery.query('ROLLBACK');
-    throw cause;
-  } finally {
-    recovery.release();
-  }
+  }, pool);
   async function account(id: string) {
     const result = await pool.query<AccountRow>(
       'SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2',
@@ -357,9 +350,7 @@ export async function createDiscoveredConnections(
   }
   async function save(pending: ProposalRow, accountName: string, secret: string) {
     const idToSave = pending.connection_id ?? randomUUID();
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    await transaction(async (client) => {
       const used = pending.oauth_state_hash
         ? await client.query(
             `UPDATE discovered_connection_proposals SET oauth_status='connected',oauth_state_hash=NULL
@@ -403,13 +394,7 @@ export async function createDiscoveredConnections(
       await options.grantVault.put(idToSave, secret, client);
       if (pending.connection_id) await options.accountReplaced?.(idToSave, client);
       if (pending.oauth_state_hash) await options.grantVault.remove(pending.id, client);
-      await client.query('COMMIT');
-    } catch (cause) {
-      await client.query('ROLLBACK');
-      throw cause;
-    } finally {
-      client.release();
-    }
+    }, pool);
     options.refresh?.();
     const continued = pending.turn_id
       ? await options.resumeConnection?.(pending.turn_id, pending.name).catch(() => false)
@@ -458,9 +443,7 @@ export async function createDiscoveredConnections(
       })
       .strict()
       .parse(input);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    return transaction(async (client) => {
       const pending = await proposal(id, client, true);
       const path = pending.paths[0];
       if (path?.kind !== 'mcp' || path.auth !== 'oauth')
@@ -472,7 +455,6 @@ export async function createDiscoveredConnections(
         const saved = JSON.parse((await options.grantVault.read(pending.id, client)).value);
         if (typeof saved.url !== 'string')
           throw error('Continue the sign-in already open in your browser.', 409);
-        await client.query('COMMIT');
         return { url: saved.url };
       }
       if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
@@ -502,14 +484,8 @@ export async function createDiscoveredConnections(
         client,
         new Date(Date.now() + 15 * 60_000),
       );
-      await client.query('COMMIT');
       return { url: started.url };
-    } catch (cause) {
-      await client.query('ROLLBACK');
-      throw cause;
-    } finally {
-      client.release();
-    }
+    }, pool);
   }
   async function completeOAuth(input: unknown) {
     const parsed = z
@@ -531,22 +507,14 @@ export async function createDiscoveredConnections(
     ).rows[0];
     if (!pending) return undefined;
     async function failed(outcome: 'cancelled' | 'failed') {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
+      await transaction(async (client) => {
         const changed = await client.query(
           `UPDATE discovered_connection_proposals SET oauth_status=$4,oauth_state_hash=NULL
            WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3 AND oauth_status='completing' RETURNING id`,
           [pending.id, owner, hash, outcome],
         );
         if (changed.rowCount) await options.grantVault.remove(pending.id, client);
-        await client.query('COMMIT');
-      } catch (cause) {
-        await client.query('ROLLBACK');
-        throw cause;
-      } finally {
-        client.release();
-      }
+      }, pool);
       return {
         outcome,
         service: pending.service,
@@ -663,22 +631,14 @@ export async function createDiscoveredConnections(
     });
   }
   async function disconnect(connectionId: string, service: string) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    await transaction(async (client) => {
       const result = await client.query(
         'DELETE FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3',
         [z.uuid().parse(connectionId), owner, service],
       );
       if (!result.rowCount) throw error('This connected account is unavailable.', 404);
       await options.grantVault.remove(connectionId, client);
-      await client.query('COMMIT');
-    } catch (cause) {
-      await client.query('ROLLBACK');
-      throw cause;
-    } finally {
-      client.release();
-    }
+    }, pool);
     options.refresh?.();
     return { ok: true };
   }

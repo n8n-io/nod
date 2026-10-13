@@ -20,6 +20,7 @@ import { modelSource } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
+import { transaction } from './db.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
 const selectionSchema = z
@@ -125,22 +126,14 @@ export function createModelService(options: {
     run: (client: PoolClient) => Promise<T>,
     signal?: AbortSignal,
   ) {
-    const client = await database.connect();
     const lock = createHash('sha256').update(`model:${ownerId}:${id}`).digest().readBigInt64BE();
-    try {
-      signal?.throwIfAborted();
-      await client.query('BEGIN');
+    signal?.throwIfAborted();
+    return transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock($1)', [lock.toString()]);
       const result = await run(client);
       signal?.throwIfAborted();
-      await client.query('COMMIT');
       return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, database);
   }
   async function credential(id: string, client: Pool | PoolClient = database) {
     const row = (

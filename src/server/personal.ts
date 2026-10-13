@@ -5,6 +5,7 @@ import type { MemoryService } from './memory.ts';
 import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { personalSecret } from './memory-tree.ts';
+import { transaction } from './db.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
 
@@ -63,9 +64,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       .strict()
       .parse(args);
     const sourceMessageId = z.uuid().parse(provenance?.sourceMessageId);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    await transaction(async (client) => {
       const source = (
         await client.query(
           "SELECT text,turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' FOR SHARE",
@@ -103,13 +102,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
         'INSERT INTO profiles(owner_id,data) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET data=profiles.data || EXCLUDED.data',
         [ownerId, { [input.field]: input.value }],
       );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
     refresh();
     return { ok: true };
   }

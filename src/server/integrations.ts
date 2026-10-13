@@ -21,6 +21,7 @@ import {
   DiscoveredConnectionError,
   type createDiscoveredConnections,
 } from './discovered-connections.ts';
+import { transaction } from './db.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
 import type { TriageIntent } from './triage.ts';
@@ -1019,11 +1020,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         remote.authConfigId !== row.pending_auth_config_id)
     )
       throw new IntegrationError('Sign in with the original account to reconnect it.', 409);
-    const client = await pool.connect();
     let connectedId = row.id;
     let previousTrigger = row.trigger_id;
-    try {
-      await client.query('BEGIN');
+    await transaction(async (client) => {
       const claimed = await client.query<ConnectionRow>(
         `SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND callback_hash=$4
          AND callback_expires>now() AND pending_account_id=$5 AND account_id IS NOT DISTINCT FROM $6 AND NOT revoked FOR UPDATE`,
@@ -1083,13 +1082,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           [row.id, remote.accountName ?? null, remote.accountEmail ?? null],
         );
       }
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
     await resetSession(configuredOwner);
     const selected = providerForRow(row);
     if (row.account_id) {
@@ -1112,9 +1105,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function disconnect(slug: Slug, connectionId: string) {
     let row = await selectConnection(configuredOwner, slug, connectionId, true);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    await transaction(async (client) => {
       const current = await client.query<ConnectionRow>(
         'SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 FOR UPDATE',
         [row.id, configuredOwner, row.provider_id],
@@ -1133,13 +1124,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         "UPDATE integration_events SET state='discarded' WHERE poll_connection_id=$1 AND owner_id=$2 AND state IN ('queued','processing')",
         [row.id, configuredOwner],
       );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
     await resetSession(configuredOwner);
     const sdk = providerForRow(row);
     if (row.trigger_id) await sdk.unsubscribe(row.trigger_id);
