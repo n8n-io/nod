@@ -45,7 +45,7 @@ async function seedTurns(pool: pg.Pool) {
     'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
   );
   await pool.query(
-    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid NOT NULL);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
   );
   const threads = new Map<string, string>();
   const turn = async (owner = 'local-development') => {
@@ -56,7 +56,7 @@ async function seedTurns(pool: pg.Pool) {
       await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
     }
     const turnId = randomUUID();
-    await pool.query('INSERT INTO turns(id,owner_id,thread_id) VALUES($1,$2,$3)', [
+    await pool.query('INSERT INTO turns(id,owner_id,thread_id,session_id) VALUES($1,$2,$3,$3)', [
       turnId,
       owner,
       threadId,
@@ -76,8 +76,8 @@ async function seedTurns(pool: pg.Pool) {
   const resume = async (ref: { threadId: string; turnId: string }, source = 'credentials') => {
     const turnId = randomUUID();
     await pool.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,started_at)
-       SELECT $1,owner_id,thread_id,'resume',$3,clock_timestamp() FROM turns WHERE id=$2`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,started_at,background,session_id)
+       SELECT $1,owner_id,thread_id,'resume',$3,clock_timestamp(),background,session_id FROM turns WHERE id=$2`,
       [turnId, ref.turnId, `${source}:${ref.turnId}`],
     );
     return { threadId: ref.threadId, turnId };
@@ -787,7 +787,7 @@ async function vaultFixture(
     kind: 'password' as const,
     passwordSelector: '#password',
   };
-  const link = async (ref: { threadId: string; turnId: string }) =>
+  const link = async (ref: TurnRef) =>
     (await vault.request(ref, 'local-development', input)).url.replace(
       '/vault/',
       '/api/credential-requests/',
@@ -846,7 +846,7 @@ async function vaultFixture(
 }
 
 test(
-  'credential links work only while their turn waits for credentials and no later foreground turn started',
+  'credential links work only while their turn waits for credentials and no later turn in its session started',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const f = await vaultFixture();
@@ -869,7 +869,7 @@ test(
 
       const check = await f.turn();
       await f.pool.query(
-        'UPDATE turns SET background=true,started_at=clock_timestamp() WHERE id=$1',
+        'UPDATE turns SET background=true,session_id=id,started_at=clock_timestamp() WHERE id=$1',
         [check.turnId],
       );
       assert.equal(await f.status(url), 'pending');
@@ -909,6 +909,28 @@ test(
       );
       assert.equal((await f.submit(url)).statusCode, 200);
       assert.deepEqual(f.calls, { injected: 1, resumed: [running.turnId], retried: [] });
+
+      const task = await f.turn();
+      await f.pool.query('UPDATE turns SET background=true,session_id=id WHERE id=$1', [
+        task.turnId,
+      ]);
+      const taskUrl = await f.link({ ...task, browserId: task.turnId });
+      await f.wait(task);
+      const chat = await f.turn();
+      await f.pool.query('UPDATE turns SET started_at=clock_timestamp() WHERE id=$1', [
+        chat.turnId,
+      ]);
+      assert.equal(await f.status(taskUrl), 'pending');
+      const step = await f.resume(task, 'connection');
+      assert.equal(await f.status(taskUrl), 'expired');
+      assert.equal((await f.submit(taskUrl)).statusCode, 409);
+      await f.pool.query('UPDATE turns SET started_at=NULL WHERE id=$1', [step.turnId]);
+      assert.equal((await f.submit(taskUrl)).statusCode, 200);
+      assert.deepEqual(f.calls, {
+        injected: 2,
+        resumed: [running.turnId, task.turnId],
+        retried: [],
+      });
     } finally {
       await f.close();
     }
@@ -1227,7 +1249,7 @@ test(
       'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
     );
     await pool.query(
-      "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+      "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
     );
     const threads = new Map<string, string>();
     const tasks = new Map<string, TurnRef>();
@@ -1828,7 +1850,7 @@ test(
     };
     await pool.query(`
       CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
-      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
       CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
       CREATE TABLE vault_entries(id text PRIMARY KEY,owner_id text NOT NULL,label text NOT NULL,origin text NOT NULL,username_hint text NOT NULL,ciphertext text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),identifier_label text NOT NULL DEFAULT '');
     `);
@@ -2359,7 +2381,7 @@ test(
         'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
       );
       await pool.query(
-        "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+        "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
       );
       const threadId = randomUUID();
       await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'local-development')", [
@@ -3722,7 +3744,7 @@ async function seedCodeTurns(pool: pg.Pool) {
     'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
   );
   await pool.query(
-    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
+    "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
   );
   let threadId = '';
   const tasks = new Map<string, TurnRef>();
@@ -3973,6 +3995,27 @@ test(
     });
     assert.equal(await fill('current-challenge-email'), true);
     assert.equal(injected.at(-1)?.code, currentCode);
+    const asked = await begin('resumed-direct-email');
+    await pool.query(
+      "UPDATE turns SET created_at=now()-interval '6 minutes',started_at=now()-interval '6 minutes',status='waiting' WHERE id=$1",
+      [asked.turnId],
+    );
+    const connected = await turns.start('resumed-direct-email', asked.turnId);
+    await pool.query('UPDATE turns SET source_id=$2 WHERE id=$1', [
+      connected.turnId,
+      `connection:${asked.turnId}`,
+    ]);
+    emails = [
+      {
+        ...message,
+        id: 'resumed-challenge-code',
+        receivedAt: Date.now() - 1000,
+        text: `Your verification code is ${currentCode}.`,
+      },
+    ];
+    assert.equal(await fill('resumed-direct-email'), true);
+    assert.equal(injected.at(-1)?.code, currentCode);
+    assert.equal(await fill('resumed-direct-email'), false);
     const unrelatedTurn = await begin('unrelated-sender');
     emails = [
       {

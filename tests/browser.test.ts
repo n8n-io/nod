@@ -3861,7 +3861,7 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
     state.verificationRequests = [
       {
         id: requestId,
-        turnId: state.messages[0].turnId!,
+        sessionId: state.threadId,
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         kind: 'payment',
       },

@@ -455,7 +455,7 @@ export function Chat({
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
     const verificationRequests = (state.verificationRequests ?? []).filter(
-      (request) => !reply || request.turnId === reply.turnId,
+      (request) => !reply || request.sessionId === reply.sessionId,
     );
     const explicitVerification =
       classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));

@@ -90,7 +90,7 @@ export async function createChatVerification(
 
   async function pending(channel = 'web'): Promise<VerificationRequest[]> {
     const result = await pool.query<VerificationRequest>(
-      `SELECT r.id,u.id AS "turnId",r.expires_at AS "expiresAt",r.kind
+      `SELECT r.id,u.session_id AS "sessionId",r.expires_at AS "expiresAt",r.kind
        FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
        WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2
          AND r.status='pending' AND r.expires_at>now()
@@ -173,17 +173,17 @@ export async function createChatVerification(
               : 'unavailable',
         };
       }
-      let turnId: string | undefined;
+      let sessionId: string | undefined;
       if (input.replyToMessageId) {
         const target = (
           await client.query(
-            `SELECT u.id FROM messages m JOIN turns u ON u.id=m.turn_id
+            `SELECT u.session_id FROM messages m JOIN turns u ON u.id=m.turn_id
              WHERE m.id=$1 AND m.owner_id=$2 AND u.owner_id=$2 AND u.channel=$3 AND m.thread_id=$4`,
             [input.replyToMessageId, options.ownerId, channel, thread.id],
           )
         ).rows[0];
         if (!target) throw conflict('The reply is unavailable in this conversation.');
-        turnId = target.id;
+        sessionId = target.session_id;
       }
       const requests = await client.query<{
         id: string;
@@ -195,9 +195,15 @@ export async function createChatVerification(
            AND r.status='pending' AND r.expires_at>now()
            AND (r.kind<>'payment' OR u.channel='web')
            AND ${waitingTurnSql('u', 'credentials')}
-           AND ($3::uuid IS NULL OR r.turn_id=$3) AND ($4::text IS NULL OR r.id=$4)
+           AND ($3::uuid IS NULL OR u.session_id=$3) AND ($4::text IS NULL OR r.id=$4)
            ORDER BY r.expires_at,r.id LIMIT 2`,
-        [options.ownerId, channel, turnId ?? null, input.verificationRequestId ?? null, thread.id],
+        [
+          options.ownerId,
+          channel,
+          sessionId ?? null,
+          input.verificationRequestId ?? null,
+          thread.id,
+        ],
       );
       if (!requests.rowCount) {
         if (input.verificationRequestId) throw conflict(unavailableMessage);

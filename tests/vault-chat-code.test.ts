@@ -309,7 +309,7 @@ test(
               'expiresAt',
               'id',
               'kind',
-              'turnId',
+              'sessionId',
             ]);
             const response = await send(text);
             assert.equal(response.statusCode, 200, response.body);
@@ -460,6 +460,61 @@ test(
         assert.equal(injected[0]?.requestId, second.requestId);
         assert.deepEqual(ordinary, []);
       });
+      await t.test(
+        'a background session keeps its code request while the chat moves on, and a reply to any of its messages reaches it',
+        async () => {
+          await reset();
+          const threadId = (await thread.activeThread(db.pool, ownerId)).id;
+          const sessionId = randomUUID();
+          const firstMessageId = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,started_at)
+             VALUES($1,$2,$3,'event','Synthetic event','waiting',true,$1,clock_timestamp())`,
+            [sessionId, ownerId, threadId],
+          );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','On it.',$3,$4)",
+            [firstMessageId, ownerId, threadId, sessionId],
+          );
+          const taskTurnId = randomUUID();
+          const taskRequestId = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,status,waiting_reason,background,session_id,started_at)
+             VALUES($1,$2,$3,'resume',$4,'Continue','waiting','credentials',true,$5,clock_timestamp())`,
+            [taskTurnId, ownerId, threadId, `connection:${sessionId}`, sessionId],
+          );
+          await db.pool.query(
+            "INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,kind) VALUES($1,$2,$3,$4,'otp')",
+            [taskRequestId, threadId, taskTurnId, ownerId],
+          );
+          const chat = await seed();
+          assert.deepEqual(
+            (await verification.pending()).map((request) => [request.id, request.sessionId]).sort(),
+            [
+              [chat.requestId, threadId],
+              [taskRequestId, sessionId],
+            ].sort(),
+          );
+          const untargeted = await send('473826');
+          assert.equal(untargeted.statusCode, 409);
+          assert.match(untargeted.json().error, /More than one sign-in needs a code/);
+          assert.equal(injected.length, 0);
+          assert.deepEqual(ordinary, []);
+          assert.equal(
+            (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
+            0,
+          );
+          const response = await send('473826', { replyToMessageId: firstMessageId });
+          assert.equal(response.statusCode, 200, response.body);
+          assert.equal(response.json().verificationStatus, 'submitted');
+          assert.deepEqual(injected, [
+            { owner: ownerId, turnId: taskTurnId, code: '473826', requestId: taskRequestId },
+          ]);
+          assert.deepEqual(ordinary, []);
+          const persisted = await db.pool.query('SELECT row_to_json(m) AS row FROM messages m');
+          assert.doesNotMatch(JSON.stringify(persisted.rows), /473826/);
+        },
+      );
       await t.test(
         'code-shaped attachments and forced messages cannot bypass an OTP wait',
         async () => {

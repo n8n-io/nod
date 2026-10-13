@@ -17,6 +17,7 @@ export interface Message {
   role: 'user' | 'assistant';
   text: string;
   turnId: string | null;
+  sessionId?: string | null;
   createdAt: string;
   attachments: Artifact[];
   modelCostUsd?: number | null;
@@ -36,7 +37,7 @@ export interface SubmitMessageResponse {
 }
 export interface VerificationRequest {
   id: string;
-  turnId: string;
+  sessionId: string;
   expiresAt: string;
   kind: 'otp' | 'payment';
 }
