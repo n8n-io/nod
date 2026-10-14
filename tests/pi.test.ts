@@ -1456,11 +1456,12 @@ test('a restored durable session closes dangling tool calls before the next prom
 // Sandbox: native tools never touch the host and receive no host environment.
 
 const timeoutShim = `#!/usr/bin/perl
+my $verbose = $ARGV[0] eq '--verbose' ? shift : '';
 shift, shift if $ARGV[0] eq '-k';
 my $seconds = shift;
 my $pid = fork;
 if (!$pid) { exec @ARGV; exit 127 }
-$SIG{ALRM} = sub { kill 'KILL', $pid; exit 124 };
+$SIG{ALRM} = sub { print STDERR "timeout signal\\n" if $verbose; kill 'KILL', $pid; exit 124 };
 alarm $seconds;
 waitpid $pid, 0;
 exit($? >> 8);
@@ -1472,8 +1473,10 @@ async function hostSandbox(t: test.TestContext) {
   const root = join(host, 'root');
   await mkdir(bin);
   await mkdir(join(root, 'workspace'), { recursive: true });
-  await writeFile(join(bin, 'timeout'), timeoutShim);
-  await chmod(join(bin, 'timeout'), 0o755);
+  if (process.platform !== 'linux') {
+    await writeFile(join(bin, 'timeout'), timeoutShim);
+    await chmod(join(bin, 'timeout'), 0o755);
+  }
   t.after(() => rm(host, { recursive: true, force: true }));
   const prefix = `/otto-sandbox-${randomUUID()}`;
   const calls: Array<{ command: string; options: string[] }> = [];
@@ -1577,6 +1580,11 @@ test('bash output larger than Pi limits stays in the sandbox and never creates h
     run('bash', { command: 'sleep 5', timeout: 1 }),
     /timed out after 1 seconds/,
   );
+  if (process.platform === 'linux')
+    await assert.rejects(
+      run('bash', { command: "trap '' TERM; sleep 20", timeout: 1 }),
+      /timed out after 1 seconds/,
+    );
   assert.match(await run('bash', { command: 'exit 124' }), /Command exited with code 124/);
   const after = (await readdir(tmpdir())).filter((name) => name.startsWith('pi-bash-'));
   assert.deepEqual(after, before);
@@ -1726,6 +1734,17 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
   await writeFile(join(bin, 'rtk'), '#!/bin/sh\nsleep 4\nprintf done > rewrite-completed\n', {
     mode: 0o755,
   });
+  await writeFile(join(bin, 'wc'), '#!/bin/sh\nsleep 1.1\nexec /usr/bin/wc "$@"\n', {
+    mode: 0o755,
+  });
+  for (const code of [124, 137]) {
+    const output = await run('bash', {
+      command: `printf 'timeout signal\\n' >&2; exit ${code}`,
+      timeout: 1,
+    });
+    assert.match(output, new RegExp(`Command exited with code ${code}`));
+    assert.match(output, /timeout signal/);
+  }
   assert.match(
     await run('bash', { command: 'git status', timeout: 1 }),
     /Command exited with code 124/,
