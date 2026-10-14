@@ -135,6 +135,7 @@ export function MessageBubble({
   handoffPaused,
   handoffSession,
   embed,
+  quote,
   answers,
 }: {
   message: Message;
@@ -146,6 +147,7 @@ export function MessageBubble({
   handoffPaused?: boolean;
   handoffSession?: string;
   embed?: ReactNode;
+  quote?: ReactNode;
   answers?: ReactNode;
 }) {
   const dateFormat = useDateFormat();
@@ -383,12 +385,13 @@ export function MessageBubble({
       <div className="message-content">
         <div className="message-row">
           <div className={`message-body${embed ? ' message-body-embeds' : ''}`}>
-            {message.replyTo && (
-              <blockquote className="message-reply-quote">
-                <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
-                <span>{message.replyTo.text || 'Attachment'}</span>
-              </blockquote>
-            )}
+            {quote ??
+              (message.replyTo && (
+                <blockquote className="message-reply-quote">
+                  <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
+                  <span>{message.replyTo.text || 'Attachment'}</span>
+                </blockquote>
+              ))}
             {message.attachments.length > 0 && (
               <MessageAttachments attachments={message.attachments} />
             )}

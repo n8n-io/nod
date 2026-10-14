@@ -37,9 +37,14 @@ Long work, such as research in the browser or waiting for a reply, runs as a [ta
 
 When two or more tasks are open, or a task needs you, the Tasks strip shows above the message box:
 
-- Each task shows its title and status. Select it to scroll to its "On it" message and open its card.
+- It shows up to three tasks: the ones that need you first, then working, waiting and queued ones. Each shows its title, and its icon and colour show its status. Select a task to scroll to its "On it" message and open its card.
+- With more than three open tasks, a count such as **+2** opens the Tasks page.
 - The stop button next to a task stops only that task.
-- **Stop all** stops the chat, every task and the background runs that are working.
+- **Stop all** shows while two or more tasks are open. It stops the chat, every task and the background runs that are working.
+
+On a phone or in a narrow window, the strip is one button, such as **4 tasks · 1 needs you**, that opens the Tasks page.
+
+A task's later messages, such as its questions and its result, show the task's title above them. Select the title to scroll to the task's "On it" message and open its card.
 
 When a task asks for a yes or no, select **Yes** or **No** under its question. That answers only that question. To add to a task or answer it in your own words, reply to any of its messages. See [Add to a task or change it](/use/tasks/#add-to-a-task-or-change-it).
 

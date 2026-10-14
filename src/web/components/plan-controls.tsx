@@ -416,7 +416,7 @@ export function ScheduleTiming({
   );
 }
 
-function TaskScheduleForm({
+export function TaskScheduleForm({
   taskId,
   onClose,
   onCreated,
@@ -664,27 +664,6 @@ function TaskScheduleForm({
         )}
       </div>
     </form>
-  );
-}
-
-export function ScheduleTask({ taskId, onCreated }: { taskId: string; onCreated?(): void }) {
-  const [open, setOpen] = useState(false);
-  return open ? (
-    <TaskScheduleForm
-      key={taskId}
-      taskId={taskId}
-      onClose={() => setOpen(false)}
-      onCreated={() => {
-        setOpen(false);
-        onCreated?.();
-      }}
-    />
-  ) : (
-    <div className="saved-plan-footer">
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
-        Schedule task
-      </Button>
-    </div>
   );
 }
 

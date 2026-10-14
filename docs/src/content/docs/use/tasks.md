@@ -26,7 +26,7 @@ flowchart TD
   work --> result[The result replies to On it]:::go
 ```
 
-Everything a task sends replies to its "On it" message: its questions, the [trust check](/trust/approvals/)'s confirmations, sign-in and payment links, check-ins, files and the result. So each task stays together, even while you chat about something else.
+Everything a task sends replies to its "On it" message: its questions, the [trust check](/trust/approvals/)'s confirmations, sign-in and payment links, check-ins, files and the result. So each task stays together, even while you chat about something else. In the Otto app, these messages show the task's title above them. Select it to scroll to "On it" and open the task's card.
 
 A task acts on your message that started it and on your replies to it. A chat message about something else never changes what a task may do, and each action a task takes still goes through the [trust check](/trust/approvals/#what-the-checker-sees).
 
@@ -39,7 +39,7 @@ The "On it" message holds a card for the task. Otto updates the card as the task
 
 The task's questions aren't repeated in the card, because they reply to "On it" below it.
 
-When two or more tasks are open, or a task needs you, the Tasks strip above the message box shows each one. Select a task there to scroll to its "On it" message and open its card. See [Follow tasks from the message box](/use/chat/#follow-tasks-from-the-message-box).
+When two or more tasks are open, or a task needs you, the Tasks strip above the message box shows up to three of them, and a count such as **+2** for the rest. Select a task there to scroll to its "On it" message and open its card. See [Follow tasks from the message box](/use/chat/#follow-tasks-from-the-message-box).
 
 ## Add to a task or change it
 

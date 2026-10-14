@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   CalendarClock,
+  CalendarPlus,
   ChevronDown,
   Circle,
   CircleAlert,
@@ -10,6 +11,7 @@ import {
   FileImage,
   FileText,
   Hourglass,
+  ListChecks,
   LoaderCircle,
   Maximize2,
   MessageCircle,
@@ -29,7 +31,7 @@ import { errorMessage, post } from '../lib/api';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { Button, Notice } from './ui';
 import { MessageText } from './message';
-import { ScheduleTask } from './plan-controls';
+import { TaskScheduleForm } from './plan-controls';
 import {
   artifactPreview,
   attachmentKind,
@@ -65,7 +67,38 @@ export function TaskStatusPill({ status }: { status: TaskStatus }) {
 
 function stepState(task: Task, index: number) {
   if (task.status === 'done' || index < task.stepIndex) return 'done';
-  return index === task.stepIndex ? 'current' : 'todo';
+  return index === task.stepIndex && task.status !== 'stopped' ? 'current' : 'todo';
+}
+
+function showTasksPage(event: React.MouseEvent) {
+  if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  window.history.pushState(null, '', '/tasks');
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+}
+
+function focusTask(task: Task) {
+  window.dispatchEvent(
+    new window.CustomEvent('otto:focus-message', {
+      detail: { messageId: task.onItMessageId, taskId: task.id },
+    }),
+  );
+}
+
+export function TaskQuote({ task }: { task: Task }) {
+  return (
+    <button
+      type="button"
+      className="message-reply-quote message-task-quote"
+      aria-label={`Show task: ${task.title}`}
+      onClick={() => focusTask(task)}
+    >
+      <strong>
+        <ListChecks size={14} aria-hidden="true" />
+        {task.title}
+      </strong>
+    </button>
+  );
 }
 
 function useStop() {
@@ -176,7 +209,7 @@ export function ArtifactPanel({ artifact, onClose }: { artifact: Artifact; onClo
     >
       <header className="artifact-panel-header">
         <div className="artifact-panel-title">
-          <span>{fileType(artifact.name)}</span>
+          <span>Document</span>
           <h2>{artifact.name}</h2>
         </div>
         <Button variant="ghost" size="icon" asChild>
@@ -213,10 +246,17 @@ export function TaskPreview({
   const format = useDateFormat();
   const bodyId = useId();
   const [expanded, setExpanded] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
   const { stopping, error, stop } = useStop();
   const open = shown ?? expanded;
   const done = completedSteps(task);
   const showInChat = place === 'page' && task.onItMessageId !== null && task.threadId === threadId;
+  const schedule = place === 'page' && task.status === 'done' && task.onItMessageId !== null;
+  const line =
+    place === 'page' && open && task.status === 'needs_you'
+      ? task.now || 'Waiting for your answer'
+      : taskSummary(task);
+  const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
   return (
     <div className="task-preview" data-status={task.status}>
       <button
@@ -229,21 +269,22 @@ export function TaskPreview({
         <span className="task-preview-top">
           <span className="task-preview-title">{task.title}</span>
           <TaskStatusPill status={task.status} />
+          {task.steps.length === 0 && chevron}
         </span>
-        <span className="task-preview-line">{taskSummary(task)}</span>
-        <span className="task-preview-foot">
-          {task.steps.length > 0 && (
+        <span className="task-preview-line">{line}</span>
+        {task.steps.length > 0 && (
+          <span className="task-preview-foot">
             <span className="task-steps-bar" aria-hidden="true">
               {task.steps.map((step, index) => (
                 <i key={`${index}:${step}`} data-state={stepState(task, index)} />
               ))}
             </span>
-          )}
-          <span className="task-preview-count">
-            {task.steps.length > 0 && `${done} of ${task.steps.length} steps`}
-            <ChevronDown size={16} aria-hidden="true" />
+            <span className="task-preview-count">
+              {done} of {task.steps.length} steps
+              {chevron}
+            </span>
           </span>
-        </span>
+        )}
       </button>
       <div className="task-preview-body" id={bodyId} hidden={!open}>
         {open && (
@@ -304,7 +345,7 @@ export function TaskPreview({
                   : `Started ${formatDateTime(task.createdAt, format)}`}
               </p>
             )}
-            {(showInChat || isOpenTask(task)) && (
+            {(showInChat || schedule || isOpenTask(task)) && (
               <div className="task-preview-actions">
                 {showInChat && (
                   <Button
@@ -322,6 +363,17 @@ export function TaskPreview({
                     Show in chat
                   </Button>
                 )}
+                {schedule && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={scheduling}
+                    onClick={() => setScheduling(!scheduling)}
+                  >
+                    <CalendarPlus size={16} aria-hidden="true" />
+                    Schedule task
+                  </Button>
+                )}
                 {isOpenTask(task) && (
                   <Button
                     variant="ghost"
@@ -335,8 +387,16 @@ export function TaskPreview({
                 )}
               </div>
             )}
-            {place === 'page' && task.status === 'done' && task.onItMessageId !== null && (
-              <ScheduleTask taskId={task.id} onCreated={onScheduled} />
+            {schedule && scheduling && (
+              <TaskScheduleForm
+                key={task.id}
+                taskId={task.id}
+                onClose={() => setScheduling(false)}
+                onCreated={() => {
+                  setScheduling(false);
+                  onScheduled?.();
+                }}
+              />
             )}
             {error && <Notice>{error}</Notice>}
           </>
@@ -359,21 +419,28 @@ export function StopAllTasks() {
   );
 }
 
-export function TasksStrip({ tasks, onOpen }: { tasks: Task[]; onOpen(task: Task): void }) {
+export function TasksStrip({ tasks }: { tasks: Task[] }) {
   const { stopping, error, stop } = useStop();
   const open = tasks
     .filter((task) => isOpenTask(task) && task.onItMessageId)
     .sort((a, b) => openTaskOrder.indexOf(a.status) - openTaskOrder.indexOf(b.status));
-  if (open.length < 2 && !open.some((task) => task.status === 'needs_you')) return null;
+  const asking = open.filter((task) => task.status === 'needs_you').length;
+  if (open.length < 2 && !asking) return null;
+  const more = open.length - 3;
   return (
     <div className="tasks-strip" role="group" aria-label="Open tasks">
       <div className="tasks-strip-items">
-        {open.map((task) => (
+        {open.slice(0, 3).map((task) => (
           <span key={task.id} className="task-status tasks-strip-item" data-status={task.status}>
-            <button type="button" className="tasks-strip-open" onClick={() => onOpen(task)}>
+            <button
+              type="button"
+              className="tasks-strip-open"
+              aria-label={`${task.title}, ${taskLabels[task.status]}`}
+              title={task.title}
+              onClick={() => focusTask(task)}
+            >
               <StatusIcon status={task.status} size={14} />
               <span className="tasks-strip-title">{task.title}</span>
-              <span className="tasks-strip-state">{taskLabels[task.status]}</span>
             </button>
             <button
               type="button"
@@ -386,8 +453,29 @@ export function TasksStrip({ tasks, onOpen }: { tasks: Task[]; onOpen(task: Task
             </button>
           </span>
         ))}
+        {more > 0 && (
+          <a
+            className="task-status tasks-strip-more"
+            href="/tasks"
+            aria-label={`${more} more ${more === 1 ? 'task' : 'tasks'}`}
+            onClick={showTasksPage}
+          >
+            +{more}
+          </a>
+        )}
       </div>
-      <StopAllTasks />
+      <a
+        className="task-status tasks-strip-summary"
+        data-status={open[0].status}
+        href="/tasks"
+        onClick={showTasksPage}
+      >
+        <ListChecks size={14} aria-hidden="true" />
+        {open.length === 1
+          ? '1 task needs you'
+          : `${open.length} tasks${asking ? ` · ${asking} ${asking === 1 ? 'needs' : 'need'} you` : ''}`}
+      </a>
+      {open.length > 1 && <StopAllTasks />}
       {error && <Notice>{error}</Notice>}
     </div>
   );

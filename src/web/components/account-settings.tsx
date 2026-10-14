@@ -216,6 +216,7 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
   } = usePageData<AccountPreferences>('/api/preferences');
   const tasksEnabled = usePageData<Configuration>('/api/configuration').data?.tasksEnabled;
   const progressLabel = useId();
+  const notificationsHeading = useId();
   const [draft, setDraft] = useState<AccountPreferences | null>(null);
   const [saving, setSaving] = useState(false);
   const [regionBusy, setRegionBusy] = useState(false);
@@ -289,7 +290,14 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
   return (
     <>
       <LanguageAndRegion saved={saved} onBusyChange={setRegionBusy} />
-      <form onSubmit={(event) => void save(event)}>
+      <form
+        className="account-region"
+        aria-labelledby={notificationsHeading}
+        onSubmit={(event) => void save(event)}
+      >
+        <h4 id={notificationsHeading} data-analytics-public>
+          Notifications
+        </h4>
         {tasksEnabled && (
           <div className="account-preference-row account-clock-row">
             <span id={progressLabel} data-analytics-public>
@@ -312,6 +320,11 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
               ))}
             </div>
           </div>
+        )}
+        {tasksEnabled && (
+          <p className="field-hint">
+            Check-ins: short updates while a task runs. Quiet: only the result.
+          </p>
         )}
         <div className="account-preference-row">
           <div className="account-preference-label">

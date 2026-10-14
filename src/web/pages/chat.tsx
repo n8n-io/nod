@@ -15,7 +15,13 @@ import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
-import { ArtifactCard, TaskAnswer, TaskPreview, TasksStrip } from '../components/task-preview';
+import {
+  ArtifactCard,
+  TaskAnswer,
+  TaskPreview,
+  TaskQuote,
+  TasksStrip,
+} from '../components/task-preview';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
@@ -342,6 +348,14 @@ export function Chat({
       );
     return artifact && <ArtifactCard artifact={artifact} />;
   }
+  function quote(message: Message) {
+    if (tasksByOnIt.has(message.id)) return false;
+    const task =
+      message.role === 'assistant' && message.replyToMessageId
+        ? tasksByOnIt.get(message.replyToMessageId)
+        : undefined;
+    return task && <TaskQuote task={task} />;
+  }
   function withoutArtifact(message: Message) {
     const artifact = cardArtifact(message);
     return artifact
@@ -481,8 +495,11 @@ export function Chat({
   }, [connectionNotice]);
   useEffect(() => {
     const focusMessage = (event: Event) => {
-      const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
-      if (typeof detail?.messageId === 'string') setFocusTarget({ id: detail.messageId, pages: 0 });
+      const detail = (event as CustomEvent<{ messageId?: unknown; taskId?: unknown }>).detail;
+      if (typeof detail?.messageId !== 'string') return;
+      const taskId = detail.taskId;
+      if (typeof taskId === 'string') setOpenPreviews((current) => new Set(current).add(taskId));
+      setFocusTarget({ id: detail.messageId, pages: 0 });
     };
     window.addEventListener('otto:focus-message', focusMessage);
     return () => window.removeEventListener('otto:focus-message', focusMessage);
@@ -996,6 +1013,7 @@ export function Chat({
                   <MessageBubble
                     message={withoutArtifact(message)}
                     embed={embed(message)}
+                    quote={quote(message)}
                     answers={
                       answers.has(message.id) && (
                         <TaskAnswer
@@ -1097,13 +1115,7 @@ export function Chat({
             <a href="/trust">Raise the limit in Settings › Trust &amp; cost</a> to resume.
           </Notice>
         )}
-        <TasksStrip
-          tasks={tasks}
-          onOpen={(task) => {
-            setOpenPreviews((current) => new Set(current).add(task.id));
-            setFocusTarget({ id: task.onItMessageId!, pages: 0 });
-          }}
-        />
+        <TasksStrip tasks={tasks} />
         <div hidden={!state.configuration.llmReady && !working && !sending}>
           <ModelPicker />
           <Composer

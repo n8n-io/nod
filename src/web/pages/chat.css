@@ -222,6 +222,31 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.message-task-quote {
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.message-task-quote strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.message-task-quote svg {
+  color: var(--muted-foreground);
+}
+.message-task-quote:hover strong {
+  text-decoration: underline;
+}
+.message-task-quote:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .chat-page .thinking {
   display: flex;
   align-items: center;
@@ -604,6 +629,10 @@
   border-radius: calc(var(--bubble-radius) - var(--embed-inset));
   background: var(--embed);
 }
+.chat-page .message-body-embeds > .task-preview:has(> .task-preview-head:hover),
+.chat-page .message-body-embeds > .artifact-card:hover {
+  box-shadow: 0 0 0 1px var(--border);
+}
 .chat-page .message-content > .task-answer {
   margin-top: 8px;
 }
@@ -777,6 +806,24 @@
   .chat-page .message-row:has(.message-cost) .message-tools {
     position: static;
     transform: none;
+  }
+  .chat-page .message .message-body-embeds {
+    width: 100%;
+    max-width: 100%;
+  }
+  .chat-page .message-row:has(> .message-body-embeds) > .message-tools {
+    top: calc(100% - 4px);
+    flex-direction: row;
+    align-items: center;
+    transform: none;
+    pointer-events: none;
+  }
+  .chat-page .message-body-embeds .task-preview-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 .suggestions {

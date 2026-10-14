@@ -28,6 +28,7 @@ function minutes(task: Task) {
 
 export function taskSummary(task: Task) {
   if (task.status === 'needs_you') return plain(task.question ?? '') || 'Waiting for your answer';
+  if (task.status === 'queued') return 'Starts when another task finishes';
   if (task.status === 'done') return `Finished in ${minutes(task)} min`;
   if (task.status === 'stopped') return `Stopped after ${minutes(task)} min`;
   if (task.status === 'failed')

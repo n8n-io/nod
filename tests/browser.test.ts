@@ -4740,6 +4740,86 @@ test('task controls answer by approval ID, stop one task through its own route a
   }
 });
 
+test('the tasks strip shows three chips and a count, hides Stop all for one task, and a task quote opens its On it preview', async () => {
+  const state = requestedChatState();
+  const source = state.messages[0];
+  const statuses: Task['status'][] = ['queued', 'working', 'waiting', 'needs_you', 'working'];
+  const tasks = statuses.map((status, index) =>
+    syntheticTask({ title: `Synthetic task ${index}`, onItMessageId: randomUUID(), status }),
+  );
+  const onIts: Message[] = tasks.map((task, index) => ({
+    id: task.onItMessageId!,
+    role: 'assistant',
+    turnId: source.turnId,
+    text: 'On it.',
+    attachments: [],
+    replyToMessageId: source.id,
+    replyTo: { id: source.id, role: source.role, text: source.text },
+    createdAt: `2026-10-01T12:0${index + 1}:00.000Z`,
+  }));
+  const checkIn: Message = {
+    id: randomUUID(),
+    role: 'assistant',
+    turnId: randomUUID(),
+    sessionId: tasks[1].id,
+    text: 'A synthetic finding.',
+    attachments: [],
+    replyToMessageId: tasks[1].onItMessageId,
+    replyTo: { id: tasks[1].onItMessageId!, role: 'assistant', text: 'On it.' },
+    createdAt: '2026-10-01T12:07:00.000Z',
+  };
+  state.messages = [...state.messages, ...onIts, checkIn];
+  state.tasks = tasks;
+  const view = await handoffView(
+    async (path) => (path === '/api/apps' ? Response.json([]) : Response.json({}, { status: 404 })),
+    createElement(Chat, {
+      ownerId: 'synthetic-strip-owner',
+      state,
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+    }),
+  );
+  const document = view.dom.window.document;
+  const stopAll = () =>
+    [...document.querySelectorAll('button')].find((button) => button.textContent === 'Stop all');
+  try {
+    assert.deepEqual(
+      [...document.querySelectorAll('.tasks-strip-item')].map((chip) =>
+        chip.getAttribute('data-status'),
+      ),
+      ['needs_you', 'working', 'working'],
+    );
+    const more = view.element<HTMLAnchorElement>('.tasks-strip-more');
+    assert.ok(stopAll());
+    assert.equal(
+      document.querySelector(`[data-message-id="${tasks[1].onItMessageId}"] .message-reply-quote`),
+      null,
+    );
+    await act(async () => view.element<HTMLButtonElement>('.message-task-quote').click());
+    await act(async () => delay(50));
+    const onIt = view.element(`[data-message-id="${tasks[1].onItMessageId}"]`);
+    assert.equal(onIt.querySelector('.task-preview-head')?.getAttribute('aria-expanded'), 'true');
+    assert.equal(document.activeElement, onIt);
+    await act(async () => more.click());
+    assert.equal(view.dom.window.location.pathname, '/tasks');
+    await view.render(
+      createElement(Chat, {
+        ownerId: 'synthetic-strip-owner',
+        state: { ...state, tasks: [tasks[3]] },
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+      }),
+    );
+    assert.equal(document.querySelectorAll('.tasks-strip-item').length, 1);
+    assert.equal(document.querySelector('.tasks-strip-more'), null);
+    assert.equal(stopAll(), undefined);
+  } finally {
+    await view.close();
+  }
+});
+
 test('the Tasks page groups open tasks, answers by approval ID and shows only a task of this thread in the chat', async () => {
   const { Tasks } = await import('../src/web/pages/tasks.tsx');
   const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
