@@ -58,7 +58,7 @@ import { createPublicLinkPreviewProvider } from '../providers/public-web/link-pr
 import { createAgentRuntime } from '../runtime/index.ts';
 import { inFolder } from '../ports/thread-identity.ts';
 import { coreSkills } from '../runtime/prompt.ts';
-import { createApp, forgetHandoff } from './app.ts';
+import { createApp, forgetHandoffOnDiscard } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
@@ -485,13 +485,7 @@ async function initializeApplication(
   const ledger = createLedger({ pool, ownerId });
   await ledger.initialize();
   const { computer, workspace } = adapters;
-  const discard = computer.discard?.bind(computer);
-  if (discard)
-    computer.discard = async (id, generation) => {
-      const deleted = await discard(id, generation);
-      if (deleted !== false) forgetHandoff(id);
-      return deleted;
-    };
+  if (computer.discard) computer.discard = forgetHandoffOnDiscard(computer.discard.bind(computer));
   const curator = ledger.curator(memoryCurator);
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)

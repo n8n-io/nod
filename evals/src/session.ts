@@ -270,8 +270,7 @@ export function createSession(options: {
       const row = (
         await pool.query(
           `SELECT t.id,${latest(false)} AS last,${latest(true)} AS question
-           FROM tasks t JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
-           WHERE t.source_message_id=$1 AND t.thread_id=$2`,
+           FROM tasks t WHERE t.source_message_id=$1 AND t.thread_id=$2`,
           [requestId, await thread()],
         )
       ).rows[0];

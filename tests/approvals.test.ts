@@ -2546,7 +2546,16 @@ test(
               .requiresConfirmation,
             true,
           );
-          await finish(turn.turnId, 'succeeded');
+          const second = await running((await confirmTurn(turn.turnId))!.turnId);
+          await db.pool.query('UPDATE messages SET turn_id=NULL WHERE id=$1', [source]);
+          const before = calls.length;
+          await assert.rejects(
+            approvals.executeConfirmed(second.turnId, new AbortController().signal),
+            /schedule instruction/,
+          );
+          assert.equal((await proposal(turn.turnId)).status, 'confirmed');
+          assert.equal(calls.length, before);
+          await finish(second.turnId, 'failed');
         },
       );
 

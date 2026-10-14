@@ -142,7 +142,7 @@ The **Tasks** page shows what Otto is working on, what's scheduled and what's do
 | **Scheduled** | Your schedules and Otto's planned follow-ups. See [Schedules](/use/schedules/). |
 | **Previous**  | Done, stopped and failed tasks, and past schedule runs, newest first            |
 
-**Current** has **Stop all** while a task is open.
+**Current** has **Stop all** while two or more tasks are open. With one open task, use its **Stop task**.
 
 ![The Scheduled view with a weekday calendar check and a Friday weekly recap, each with its next run and a switch to pause it.](../../../assets/screens/tasks-light.png)
 

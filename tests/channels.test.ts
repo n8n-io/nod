@@ -1362,6 +1362,7 @@ test(
     const known = randomUUID();
     const stale = randomUUID();
     const taskId = randomUUID();
+    const broken = randomUUID();
     const pressed: unknown[] = [];
     let hold: Promise<void> | undefined;
     const transport = createChatSdkTransport(pool, fixtureEnv);
@@ -1377,6 +1378,8 @@ test(
       press: async (action, channel) => {
         pressed.push({ action, channel: channel.split(':')[0] });
         await hold;
+        if ('taskId' in action && action.taskId === broken)
+          throw new Error('Synthetic press failure.');
         if ('approvalId' in action && action.approvalId !== known)
           throw Object.assign(new Error('This confirmation is already handled.'), {
             statusCode: 409,
@@ -1477,6 +1480,15 @@ test(
       assert.deepEqual(answered[2], { callback_query_id: 'callback-5' });
       assert.equal(answered[3].callback_query_id, 'callback-6');
       assert.ok(answered[3].text);
+      assert.equal((await callback(5, `s:${taskId}`)).statusCode, 200);
+      assert.equal(pressed.length, 3);
+      assert.deepEqual(acks().at(-1), { callback_query_id: 'callback-5' });
+      for (let attempt = 0; attempt < 2; attempt++)
+        assert.equal((await callback(7, `s:${broken}`)).statusCode, 200);
+      assert.equal(pressed.length, 4);
+      assert.equal(acks().at(-2)?.callback_query_id, 'callback-7');
+      assert.ok(acks().at(-2)?.text);
+      assert.deepEqual(acks().at(-1), { callback_query_id: 'callback-7' });
 
       await tap('wamid.fixture-stale', `a:${stale}:y`);
       await tap('wamid.fixture-stale', `a:${stale}:y`);
@@ -1485,15 +1497,16 @@ test(
         release = resolve;
       });
       const first = tap('wamid.fixture-twice', `a:${known}:n`);
-      while (pressed.length < 5) await delay(5);
+      while (pressed.length < 6) await delay(5);
       const repeat = tap('wamid.fixture-twice', `a:${known}:n`);
       await Promise.race([repeat, delay(200)]);
       release();
       await Promise.all([first, repeat]);
+      assert.equal((await tap('wamid.fixture-broken', `s:${broken}`)).statusCode, 200);
       await channels.drain();
-      assert.equal(pressed.length, 5);
+      assert.equal(pressed.length, 7);
       const notes = calls.filter((call) => call.url.includes('graph.facebook.com'));
-      assert.equal(notes.length, 1);
+      assert.equal(notes.length, 2);
       assert.match(JSON.stringify(notes[0].body), /already handled/);
       assert.equal((await pool.query('SELECT 1 FROM turns')).rowCount, 0);
 

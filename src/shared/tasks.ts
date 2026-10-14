@@ -35,7 +35,7 @@ export function taskSummary(task: Task) {
     return plain(task.error ?? '') || `Failed after ${minutes(task)} min`;
   if (task.status === 'waiting' && !task.now)
     return `Waiting on ${task.waitingFor.map((wait) => wait.who).join(', ')}`;
-  return task.now || task.steps[task.stepIndex] || taskLabels[task.status];
+  return task.now || task.steps[task.stepIndex] || '';
 }
 
 export function completedSteps(task: Task) {

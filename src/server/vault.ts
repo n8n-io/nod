@@ -199,6 +199,7 @@ type SelectionRow = {
   ciphertext: string;
   blocked: boolean;
   expires_at: Date;
+  expired: boolean;
   credential_entered_at: Date | null;
   kind: 'identifier' | 'password';
 };
@@ -1085,7 +1086,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const start = (selected ? selected.credential_entered_at : turn.started_at)?.getTime();
     if (!start || start > now) return;
     if (!selected) return Math.max(start, now - 5 * 60_000);
-    if (now - start <= 5 * 60_000 && selected.expires_at.getTime() > Date.now()) return start;
+    if (now - start <= 5 * 60_000 && !selected.expired) return start;
   }
 
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
@@ -1099,7 +1100,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     database: Pick<PoolClient, 'query'> = pool,
   ) {
     const result = await database.query<SelectionRow>(
-      'SELECT * FROM credential_account_selections WHERE root_turn_id=$1 AND owner_id=$2 AND origin=$3',
+      'SELECT *,expires_at<=now() AS expired FROM credential_account_selections WHERE root_turn_id=$1 AND owner_id=$2 AND origin=$3',
       [rootTurnId, ownerId, origin],
     );
     return result.rows[0];
@@ -1134,7 +1135,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       username: string;
       password?: string;
       loginLabel?: string;
-      expiresAt: Date;
+      expiresAt?: Date;
       blocked: boolean;
       enteredAt?: Date | null | 'now';
       kind?: 'identifier' | 'password';
@@ -1147,7 +1148,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     });
     await database.query(
       `INSERT INTO credential_account_selections(id,root_turn_id,owner_id,origin,entry_id,ciphertext,blocked,expires_at,login_label,credential_entered_at,kind)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $12 THEN clock_timestamp() ELSE $10::timestamptz END,$11)
+       VALUES($1,$2,$3,$4,$5,$6,$7,COALESCE($8::timestamptz,now()+interval '10 minutes'),$9,CASE WHEN $12 THEN clock_timestamp() ELSE $10::timestamptz END,$11)
        ON CONFLICT(root_turn_id,owner_id,origin) DO UPDATE
        SET id=excluded.id,entry_id=excluded.entry_id,ciphertext=excluded.ciphertext,blocked=excluded.blocked,expires_at=excluded.expires_at,login_label=excluded.login_label,credential_entered_at=excluded.credential_entered_at,kind=excluded.kind`,
       [
@@ -1158,7 +1159,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         value.entryId,
         ciphertext,
         value.blocked,
-        value.expiresAt,
+        value.expiresAt ?? null,
         value.loginLabel ?? '',
         value.enteredAt === 'now' ? null : (value.enteredAt ?? null),
         value.kind ?? 'identifier',
@@ -1168,7 +1169,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function stagedUsername(selected: SelectionRow | undefined) {
-    if (!selected || new Date(selected.expires_at).getTime() <= Date.now()) return undefined;
+    if (!selected || selected.expired) return undefined;
     return openCredential(await key(), selected).username;
   }
 
@@ -1238,8 +1239,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const { input, inspection } = await inspectRequest(browserOf(turn), raw);
     const token = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(token).digest('hex');
-    const expiresAt = Date.now() + 10 * 60_000;
-    await options.hold?.(browserOf(turn), expiresAt);
+    await options.hold?.(browserOf(turn), Date.now() + 10 * 60_000);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1256,7 +1256,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
       await client.query(
         `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection,browser_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()+interval '10 minutes',$11,$12)`,
         [
           randomUUID(),
           hash,
@@ -1268,7 +1268,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           input.label,
           input.kind,
           storedSelectors(input),
-          new Date(expiresAt),
           JSON.stringify(inspection),
           browserOf(turn),
         ],
@@ -1429,7 +1428,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         )
           throw new VaultError('This selected account changed.', 409);
         const staged =
-          selected && encryptionKey && selected.expires_at.getTime() > Date.now()
+          selected && encryptionKey && !selected.expired
             ? openCredential(encryptionKey, selected)
             : undefined;
         if (source.kind === 'email') {
@@ -1534,7 +1533,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               origin: input.origin,
               entryId,
               username: secret.username,
-              expiresAt: selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
+              expiresAt: selected?.expires_at,
               blocked: false,
               enteredAt: selected?.credential_entered_at,
             });
@@ -1612,8 +1611,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             username: secret.username,
             password: heldPassword,
             loginLabel: heldLabel,
-            expiresAt:
-              request?.expires_at ?? selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
+            expiresAt: request?.expires_at ?? selected?.expires_at,
             blocked: source.kind === 'form' && input.kind === 'password',
             enteredAt: 'now',
             kind: input.kind,
@@ -1647,12 +1645,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
 
   async function consume(token: string, source: LoginSource, hashed = false) {
     const row = (
-      await pool.query<RequestRow>(
-        'SELECT * FROM credential_requests WHERE token_hash=$1 AND owner_id=$2',
+      await pool.query<RequestRow & { expired: boolean }>(
+        'SELECT *,expires_at<=now() AS expired FROM credential_requests WHERE token_hash=$1 AND owner_id=$2',
         [hashed ? token : tokenHash(token), owner],
       )
     ).rows[0];
-    if (!row || row.status !== 'pending' || row.expires_at.getTime() <= Date.now())
+    if (!row || row.status !== 'pending' || row.expired)
       throw new VaultError(
         'This request is expired, already used, or belongs to an earlier task step.',
         409,

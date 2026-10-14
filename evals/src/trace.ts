@@ -106,7 +106,8 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
     );
 }
 
-export async function sessionEvents(sessionRoot: string, captured: Set<string | undefined>) {
+export async function sessionEvents(sessionRoot: string, turns: Run['turns']) {
+  const captured = new Set(turns.filter((turn) => turn.background).map((turn) => turn.sessionId));
   const entries: any[] = [];
   for (const thread of await readdir(sessionRoot).catch(() => [] as string[])) {
     if (captured.has(thread)) continue;
@@ -215,10 +216,7 @@ export async function collect(options: {
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
   const background = turns.filter((turn) => turn.background);
-  for (const entry of await sessionEvents(
-    stack.sessionRoot,
-    new Set(background.map((turn) => turn.sessionId)),
-  )) {
+  for (const entry of await sessionEvents(stack.sessionRoot, turns)) {
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user') {

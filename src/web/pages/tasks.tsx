@@ -93,7 +93,7 @@ export function Tasks({ onAsk, threadId }: { onAsk(text: string): void; threadId
             <NewPlan onAsk={onAsk} />
           </div>
         )}
-        {view === 'current' && open.length > 0 && (
+        {view === 'current' && open.length > 1 && (
           <div className="secondary-heading-actions">
             <StopAllTasks />
           </div>

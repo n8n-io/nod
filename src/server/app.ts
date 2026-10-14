@@ -67,7 +67,13 @@ function messageView(
 }
 
 const handoffActivity = new Map<string, Date>();
-export const forgetHandoff = (sessionId: string) => handoffActivity.delete(sessionId.toLowerCase());
+export const forgetHandoffOnDiscard =
+  (discard: NonNullable<Computer['discard']>): NonNullable<Computer['discard']> =>
+  async (sessionId, generation) => {
+    const deleted = await discard(sessionId, generation);
+    if (deleted !== false) handoffActivity.delete(sessionId.toLowerCase());
+    return deleted;
+  };
 
 export interface AppDependencies {
   analytics?: CaptureAnalytics;

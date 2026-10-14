@@ -4018,6 +4018,32 @@ test(
           assert.equal(await fill(id), true, id);
           assert.equal(await fill(id), false, id);
         }
+        const asked = await begin(`request-skew-${skew}`);
+        const { url } = await vault.request(asked, owner, input);
+        await turns.wait(asked);
+        assert.equal(
+          (
+            await pool.query(
+              `SELECT count(*)::int AS fresh FROM (SELECT expires_at FROM credential_requests WHERE turn_id=$1
+               UNION ALL SELECT expires_at FROM credential_account_selections WHERE root_turn_id=$2) x
+               WHERE expires_at>now()+interval '9 minutes' AND expires_at<=now()+interval '10 minutes'`,
+              [asked.turnId, root(`saved-skew-${skew}`)],
+            )
+          ).rows[0].fresh,
+          2,
+        );
+        const picked = await app.inject({
+          method: 'POST',
+          url: `${url.replace('/vault/', '/api/credential-requests/')}/saved`,
+          payload: { entryId: saved.id },
+        });
+        assert.equal(picked.json().ok, true);
+        await start(`expired-skew-${skew}`);
+        await pool.query(
+          "UPDATE credential_account_selections SET expires_at=now()-interval '1 minute' WHERE root_turn_id=$1",
+          [root(`expired-skew-${skew}`)],
+        );
+        assert.equal(await fill(`expired-skew-${skew}`), false);
       } finally {
         clock.mock.restore();
       }

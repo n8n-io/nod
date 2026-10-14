@@ -150,11 +150,11 @@ function liveMessage(messageId: string, text: string, previews: boolean, view: T
   const task = previews ? view.tasks.find((item) => item.onItMessageId === messageId) : undefined;
   if (task) {
     const open = isOpenTask(task);
-    const steps = task.steps.length
-      ? `\n${completedSteps(task)} of ${task.steps.length} steps`
-      : '';
+    const steps = task.steps.length ? `${completedSteps(task)} of ${task.steps.length} steps` : '';
     return {
-      text: `${text}\n\n${task.title} · ${taskLabels[task.status]}\n${taskSummary(task)}${steps}`,
+      text: [`${text}\n`, `${task.title} · ${taskLabels[task.status]}`, taskSummary(task), steps]
+        .filter(Boolean)
+        .join('\n'),
       buttons: open ? [{ id: `s:${task.id}`, title: 'Stop task' }] : [],
       final: !open,
     };
@@ -513,8 +513,24 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       sentAt,
       text: data,
     };
+    let saved: boolean;
     try {
-      if (!(await saveReceipt(pool, inbox))) return;
+      saved = await saveReceipt(pool, inbox);
+    } catch (cause) {
+      logFailure('channel_press_failed', cause);
+      throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
+        statusCode: 503,
+      });
+    }
+    const ack = (text?: string) =>
+      transport.ack?.({ channelId, accountId, pressId, ...(text ? { text } : {}) });
+    const answer = async (text: string) => {
+      if (await ack(text)) return;
+      await inTransaction((client) => replyWithoutTurn(client, inbox, () => ({ text }), true));
+      void drain();
+    };
+    try {
+      if (!saved) return void (await ack());
       const match = pressData.exec(data);
       let note = match && options.press ? undefined : 'This button no longer works.';
       if (match && options.press)
@@ -528,21 +544,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           if (typeof status !== 'number' || status >= 500 || !(cause instanceof Error)) throw cause;
           note = cause.message;
         }
-      const acked = await transport.ack?.({
-        channelId,
-        accountId,
-        pressId,
-        ...(note ? { text: note } : {}),
-      });
-      if (acked || !note) return;
-      const reply = { text: note };
-      await inTransaction((client) => replyWithoutTurn(client, inbox, () => reply, true));
-      void drain();
+      await (note ? answer(note) : ack());
     } catch (cause) {
       logFailure('channel_press_failed', cause);
-      throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
-        statusCode: 503,
-      });
+      if (saved)
+        await answer('That did not work. Try again in Otto.').catch((failure: unknown) =>
+          logFailure('channel_press_failed', failure),
+        );
     }
   }
 

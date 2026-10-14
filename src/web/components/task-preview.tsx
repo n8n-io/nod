@@ -29,6 +29,7 @@ import {
 } from '../../shared/tasks';
 import { errorMessage, post } from '../lib/api';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
+import { navigate } from '../lib/navigation';
 import { Button, Notice } from './ui';
 import { MessageText } from './message';
 import { TaskScheduleForm } from './plan-controls';
@@ -73,8 +74,7 @@ function stepState(task: Task, index: number) {
 function showTasksPage(event: React.MouseEvent) {
   if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  window.history.pushState(null, '', '/tasks');
-  window.dispatchEvent(new window.PopStateEvent('popstate'));
+  navigate('/tasks');
 }
 
 function focusTask(task: Task) {
@@ -271,7 +271,7 @@ export function TaskPreview({
           <TaskStatusPill status={task.status} />
           {task.steps.length === 0 && chevron}
         </span>
-        <span className="task-preview-line">{line}</span>
+        {line && <span className="task-preview-line">{line}</span>}
         {task.steps.length > 0 && (
           <span className="task-preview-foot">
             <span className="task-steps-bar" aria-hidden="true">

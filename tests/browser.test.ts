@@ -103,7 +103,7 @@ test(
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
     process.env.OTTO_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
-    const { createApp } = await import('../src/server/app.ts');
+    const { createApp, forgetHandoffOnDiscard } = await import('../src/server/app.ts');
     const { activeThread } = await import('../src/server/thread.ts');
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     const headers = {
@@ -470,6 +470,13 @@ test(
       const taskBrowser = (await request(`/api/browser?session=${asking.id}`)).json();
       assert.equal(taskBrowser.currentBrowser.sessionId, asking.id);
       assert.ok(Date.parse(taskBrowser.currentBrowser.lastActivityAt) > Date.parse(capturedAt));
+      const discard = forgetHandoffOnDiscard(async (_id, generation) => generation !== 1);
+      const handedOverAt = async () =>
+        (await request(`/api/browser?session=${asking.id}`)).json().currentBrowser.lastActivityAt;
+      await discard(asking.id, 1);
+      assert.equal(await handedOverAt(), taskBrowser.currentBrowser.lastActivityAt);
+      await discard(asking.id, 2);
+      assert.equal(await handedOverAt(), capturedAt);
       assert.equal((await request(`/api/browser?session=${foreign.id}`)).statusCode, 404);
       assert.equal((await request(`/api/browser/screen?session=${asking.id}`)).statusCode, 200);
       assert.equal(captures.at(-1), asking.id);

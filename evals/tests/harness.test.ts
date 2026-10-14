@@ -1504,9 +1504,13 @@ test('the trace reads the chat transcript and skips saved task sessions, which a
     await mkdir(join(root, session));
     await writeFile(join(root, session, 'session.jsonl'), entry(text));
   }
-  const texts = (await sessionEvents(root, new Set(['task']))).map(
-    (item) => item.message.content[0].text,
-  );
+  const turn = { status: 'succeeded', source: 'task', error: null, background: true };
+  const texts = (
+    await sessionEvents(root, [
+      { ...turn, id: 'chat-turn', source: 'user', background: false, sessionId: 'chat' },
+      { ...turn, id: 'task-turn', sessionId: 'task' },
+    ])
+  ).map((item) => item.message.content[0].text);
   assert.deepEqual(texts, ['Chat reply.']);
 });
 

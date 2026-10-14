@@ -811,6 +811,9 @@
     width: 100%;
     max-width: 100%;
   }
+  .chat-page .message-row:has(> .message-body-embeds) {
+    margin-bottom: 28px;
+  }
   .chat-page .message-row:has(> .message-body-embeds) > .message-tools {
     top: calc(100% - 4px);
     flex-direction: row;

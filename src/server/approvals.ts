@@ -137,19 +137,25 @@ export async function createApprovals(
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 
-  async function run(approval: Record<string, any>, folder?: string) {
+  async function scheduleSource(
+    client: PoolClient,
+    action: string,
+    sourceMessageId: string | null,
+    threadId: string,
+  ) {
+    if (!isReversiblePlanAction(action) || !sourceMessageId) return undefined;
+    const source = (
+      await client.query<{ turn_id: string | null }>(
+        "SELECT turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
+        [sourceMessageId, ownerId, threadId],
+      )
+    ).rows[0];
+    if (!source?.turn_id) throw new Error('The schedule instruction is unavailable.');
+    return source.turn_id;
+  }
+
+  async function run(approval: Record<string, any>, folder?: string, sourceTurnId?: string) {
     try {
-      let sourceTurnId: string | undefined;
-      if (isReversiblePlanAction(approval.action) && approval.source_message_id) {
-        const source = (
-          await pool.query<{ turn_id: string }>(
-            "SELECT turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
-            [approval.source_message_id, ownerId, approval.thread_id],
-          )
-        ).rows[0];
-        if (!source?.turn_id) throw new Error('The schedule instruction is unavailable.');
-        sourceTurnId = source.turn_id;
-      }
       const result = await execute(approval.action, approval.args, {
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
@@ -280,6 +286,7 @@ export async function createApprovals(
             approval: pending,
             question: pending.question as string,
             task,
+            sourceTurnId: undefined,
           };
       }
       const direct = allowed;
@@ -297,6 +304,9 @@ export async function createApprovals(
             ])
           ).rows[0]?.title;
       }
+      const sourceTurnId = direct
+        ? await scheduleSource(client, action, authorMessageId, turn.threadId)
+        : undefined;
       const question = direct
         ? undefined
         : (options.question ?? actionConfirmation(action, snapshot, targetTitle));
@@ -330,14 +340,18 @@ export async function createApprovals(
           ],
         )
       ).rows[0];
-      return { cached: false as const, approval, question, task };
+      return { cached: false as const, approval, question, task, sourceTurnId };
     });
     if (proposal.cached) return proposal.result;
     if (proposal.question) {
       refresh();
       return { requiresConfirmation: true, question: proposal.question };
     }
-    return run(proposal.approval, proposal.task ? taskFolder(proposal.task.id) : undefined);
+    return run(
+      proposal.approval,
+      proposal.task ? taskFolder(proposal.task.id) : undefined,
+      proposal.sourceTurnId,
+    );
   }
 
   async function confirmationFor(
@@ -535,12 +549,18 @@ export async function createApprovals(
       if (!selected) return undefined;
       await preflight?.(selected.action, selected.args);
       const task = await taskOfTurn(client, ownerId, turnId);
+      const sourceTurnId = await scheduleSource(
+        client,
+        selected.action,
+        selected.source_message_id,
+        selected.thread_id,
+      );
       signal.throwIfAborted();
       await client.query("UPDATE approvals SET status='executing' WHERE id=$1", [selected.id]);
-      return { selected, folder: task ? taskFolder(task.id) : undefined };
+      return { selected, folder: task ? taskFolder(task.id) : undefined, sourceTurnId };
     });
     if (!approval) return undefined;
-    const result = await run(approval.selected, approval.folder);
+    const result = await run(approval.selected, approval.folder, approval.sourceTurnId);
     const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.selected.action} result`, JSON.stringify(result) ?? 'null')}`;
     signal.throwIfAborted();
     return { prompt };

@@ -16,7 +16,7 @@ import { DesktopToolbar } from './components/desktop-toolbar';
 import { SidebarToggleContext } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
-import { sidebarItems } from './lib/navigation';
+import { navigate, sidebarItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { ArtifactPanel } from './components/task-preview';
 import { ownedArtifactUrl } from './lib/attachment-url';
@@ -42,10 +42,6 @@ import {
 
 function replayingOnboarding(path: string) {
   return import.meta.env?.DEV === true && path === '/onboarding';
-}
-function navigate(path: string) {
-  window.history.pushState(null, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
 }
 function useSavedDateFormat() {
   const { data } = usePageData<AccountPreferences>('/api/preferences');

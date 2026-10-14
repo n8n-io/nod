@@ -8,6 +8,11 @@ export const sidebarItems = [
   { path: '/vault', label: 'Vault', key: 'k', icon: KeyRound },
 ] as const;
 
+export function navigate(path: string) {
+  window.history.pushState(null, '', path);
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+}
+
 export function isEditingTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
