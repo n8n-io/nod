@@ -74,7 +74,7 @@ export default defineConfig({
       autoTheme: false,
       enableLog: false,
       mermaidConfig: {
-        fontFamily: "'n8n Baumer Uniwidth', system-ui, sans-serif",
+        fontFamily: "'Geist', system-ui, sans-serif",
         themeVariables: { fontSize: '15px' },
         flowchart: { curve: 'basis', padding: 10, nodeSpacing: 28, rankSpacing: 32 },
         sequence: {
