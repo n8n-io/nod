@@ -3,13 +3,8 @@ import { ChevronDown } from 'lucide-react';
 import type { Schedule, ScheduleRun, Task } from '../../shared/contracts';
 import { PageTitle } from '../components/page-title';
 import { NewPlan, PlanToast } from '../components/plan-controls';
-import {
-  isOpenTask,
-  openTaskOrder,
-  StopAllTasks,
-  taskLabels,
-  TaskPreview,
-} from '../components/task-preview';
+import { StopAllTasks, TaskPreview } from '../components/task-preview';
+import { isOpenTask, openTaskOrder, taskLabels } from '../../shared/tasks';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { desktopSettingsAvailable } from '../lib/desktop';

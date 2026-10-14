@@ -120,6 +120,7 @@ import {
   resumeAfterPayment,
   retryCredentials,
   startThreadWorkers,
+  stopSession,
   stopThreadWorkers,
   withTurnLock,
   type ThreadDependencies,
@@ -1180,7 +1181,7 @@ async function initializeApplication(
       refresh,
       subscribe(listener) {
         const onEvent = (event: { type?: string }) => {
-          if (event.type === 'refresh') listener();
+          if (event.type === 'refresh' || event.type === 'task') listener();
         };
         events.on('event', onEvent);
         return () => {
@@ -1200,6 +1201,12 @@ async function initializeApplication(
         ).turnId,
       answer: (text, channel, replyToMessageId) =>
         userMessages.answer(text, { channel, replyToMessageId }),
+      taskMessages: tasks.channelMessages,
+      press: async (action, channel) => {
+        if ('approvalId' in action) return approvals.answer({ ...action, channel });
+        for (const id of (await stopSession(action)).browsers)
+          void computer.discard?.(id).catch(() => {});
+      },
     });
     channels.registerRoutes(app);
     await channelSettings?.recover();

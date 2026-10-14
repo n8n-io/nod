@@ -10,8 +10,10 @@ import type { ChannelAccountRegistry } from '../src/ports/channel-settings.ts';
 import {
   MessagingRetryLater,
   type InboundMessage,
+  type MessagingButton,
   type MessagingTransport,
 } from '../src/ports/messaging.ts';
+import type { Task } from '../src/shared/contracts.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createChannelAccountRegistry } from '../src/server/channel-account-registry.ts';
@@ -333,6 +335,8 @@ test(
       assert.equal((await save(0, '987:synthetic_token')).statusCode, 200);
       assert.equal((await save(1, '987:synthetic_token')).statusCode, 400);
       assert.equal(registrations.length, 1);
+      assert.equal(await settings[0].recover(), true);
+      assert.deepEqual(registrations, [registrations[0], registrations[0]]);
       assert.equal(claims.get('987'), 'owner-one');
       assert.equal((await settings[1].status()).channels.length, 0);
       assert.equal((await save(1, '988:synthetic_token')).statusCode, 200);
@@ -2221,5 +2225,229 @@ test(
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
     }
+  },
+);
+
+test(
+  'Telegram "On it" previews and buttons edit the sent message: revisions coalesce, nothing is re-sent and WhatsApp gets no edit',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_edits_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const owner = 'local-development';
+    const threadId = await createFixtureTables(pool, owner);
+    type Sent = { channelId: string; text: string; replyTo?: string; buttons?: MessagingButton[] };
+    const posts: Sent[] = [];
+    const edits: (Sent & { messageId: string })[] = [];
+    let throttle = false;
+    const transport: MessagingTransport = {
+      channels: [
+        {
+          id: 'telegram',
+          status: 'configured',
+          missing: [],
+          accountId: 'bot',
+          allowedSenderIds: ['111'],
+          edits: true,
+        },
+        {
+          id: 'whatsapp',
+          status: 'configured',
+          missing: [],
+          accountId: 'biz',
+          allowedSenderIds: ['222'],
+        },
+      ],
+      receive: async () => ({ status: 200, body: {} }),
+      post: async ({ channelId, text, replyTo, buttons }) => {
+        posts.push({
+          channelId,
+          text,
+          ...(replyTo ? { replyTo } : {}),
+          ...(buttons ? { buttons } : {}),
+        });
+        return {
+          ids: [`${channelId}-${posts.length}`],
+          ...(channelId === 'telegram' && buttons ? { editable: true } : {}),
+        };
+      },
+      edit: async ({ channelId, messageId, text, buttons }) => {
+        if (throttle) {
+          throttle = false;
+          throw new MessagingRetryLater(60_000);
+        }
+        edits.push({ channelId, messageId, text, buttons });
+      },
+      close: async () => {},
+    };
+    const task = (id: string, onItMessageId: string): Task => ({
+      id,
+      threadId,
+      title: 'Book dinner',
+      onItMessageId,
+      steps: ['Find a table', 'Book it', 'Confirm'],
+      stepIndex: 0,
+      now: 'Step A',
+      result: '',
+      resultMessageId: null,
+      artifact: null,
+      status: 'working',
+      question: null,
+      approvalId: null,
+      approvalMessageId: null,
+      error: null,
+      waitingFor: [],
+      nextCheck: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      closedAt: null,
+    });
+    const ids = Array.from({ length: 4 }, () => randomUUID());
+    const [telegramOnIt, whatsappOnIt, telegramQuestion, whatsappQuestion] = ids;
+    const tasks = [task(randomUUID(), telegramOnIt), task(randomUUID(), whatsappOnIt)];
+    let confirmations: { id: string; messageId: string }[] = [];
+    const channels = await createChannels(pool, {
+      ownerId: owner,
+      transport,
+      subscribe: () => () => {},
+      submit: async () => randomUUID(),
+      intervalMs: 600000,
+      taskMessages: async () => ({ tasks: structuredClone(tasks), confirmations }),
+    });
+    t.after(() => channels.close());
+    for (const [provider, account, sender, onIt] of [
+      ['telegram', 'bot', '111', telegramOnIt],
+      ['whatsapp', 'biz', '222', whatsappOnIt],
+    ]) {
+      const turn = randomUUID();
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,channel,status) VALUES($1,$2,$3,$4,'succeeded')",
+        [turn, owner, threadId, `${provider}:fixture`],
+      );
+      await pool.query(
+        `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,turn_id,state,owner_id,channel)
+         VALUES($1,$2,$3,$4,$5,'Book dinner',now(),$6,'submitted',$7,$8)`,
+        [
+          `${provider}-request`,
+          provider,
+          account,
+          sender,
+          `${provider}:chat`,
+          turn,
+          owner,
+          `${provider}:fixture`,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','On it.',$3,$4)",
+        [onIt, owner, threadId, turn],
+      );
+    }
+    const turnOf = async (message: string) =>
+      (await pool.query('SELECT turn_id FROM messages WHERE id=$1', [message])).rows[0].turn_id;
+
+    await channels.drain();
+    assert.equal(posts.length, 2);
+    assert.deepEqual(posts[0].buttons, [{ id: `s:${tasks[0].id}`, title: 'Stop task' }]);
+    assert.match(posts[0].text, /^On it\.\n[\s\S]*Step A[\s\S]*0 of 3 steps/);
+    assert.deepEqual(posts[1], { channelId: 'whatsapp', text: 'On it.' });
+
+    for (const [index, now] of ['Step B', 'Step C'].entries()) {
+      for (const item of tasks) {
+        item.now = now;
+        item.stepIndex = index + 1;
+      }
+    }
+    await channels.drain();
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0].messageId, 'telegram-1');
+    assert.match(edits[0].text, /Step C[\s\S]*2 of 3 steps/);
+    assert.doesNotMatch(edits[0].text, /Step B/);
+    await channels.drain();
+    assert.equal(edits.length, 1);
+
+    tasks[0].now = 'Step D';
+    throttle = true;
+    await channels.drain();
+    await channels.drain();
+    assert.equal(edits.length, 1);
+    await pool.query('UPDATE channel_edits SET retry_at=now()');
+    await channels.drain();
+    assert.equal(edits.length, 2);
+    assert.match(edits[1].text, /Step D/);
+
+    for (const [id, onIt] of [
+      [telegramQuestion, telegramOnIt],
+      [whatsappQuestion, whatsappOnIt],
+    ])
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id) VALUES($1,$2,'assistant','Book the table?',$3,$4,$5)",
+        [id, owner, threadId, await turnOf(onIt), onIt],
+      );
+    const [telegramApproval, whatsappApproval] = [randomUUID(), randomUUID()];
+    confirmations = [
+      { id: telegramApproval, messageId: telegramQuestion },
+      { id: whatsappApproval, messageId: whatsappQuestion },
+    ];
+    await channels.drain();
+    const answer = (id: string) => [
+      { id: `a:${id}:y`, title: 'Yes' },
+      { id: `a:${id}:n`, title: 'No' },
+    ];
+    assert.deepEqual(posts.slice(2), [
+      {
+        channelId: 'telegram',
+        text: 'Book the table?',
+        replyTo: 'telegram-1',
+        buttons: answer(telegramApproval),
+      },
+      {
+        channelId: 'whatsapp',
+        text: 'Book the table?',
+        replyTo: 'whatsapp-2',
+        buttons: answer(whatsappApproval),
+      },
+    ]);
+
+    confirmations = [];
+    for (const item of tasks) {
+      item.status = 'done';
+      item.closedAt = new Date().toISOString();
+    }
+    await channels.drain();
+    assert.deepEqual(
+      edits
+        .slice(2)
+        .map(({ messageId, buttons }) => ({ messageId, buttons }))
+        .sort((a, b) => a.messageId.localeCompare(b.messageId)),
+      [
+        { messageId: 'telegram-1', buttons: [] },
+        { messageId: 'telegram-3', buttons: [] },
+      ],
+    );
+    await channels.drain();
+    assert.equal(edits.length, 4);
+    assert.deepEqual((await pool.query('SELECT final FROM channel_edits')).rows, [
+      { final: true },
+      { final: true },
+    ]);
+
+    tasks[0].status = 'working';
+    tasks[0].closedAt = null;
+    await channels.drain();
+    assert.equal(edits.length, 5);
+    assert.deepEqual(edits[4].buttons, [{ id: `s:${tasks[0].id}`, title: 'Stop task' }]);
+    assert.equal(posts.length, 4);
+    assert.ok(edits.every((item) => item.channelId === 'telegram'));
   },
 );

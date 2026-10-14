@@ -6,6 +6,12 @@ export interface MessagingChannel {
   allowedSenderIds: string[];
   replyWindowMs?: number;
   supportsAttachments?: boolean;
+  edits?: boolean;
+}
+
+export interface MessagingButton {
+  id: string;
+  title: string;
 }
 
 export interface MessagingAttachment {
@@ -23,6 +29,16 @@ export interface InboundMessage {
   text: string;
   sentAt: Date;
   replyTo?: string;
+}
+
+export interface InboundPress {
+  channelId: string;
+  accountId: string;
+  senderId: string;
+  pressId: string;
+  threadId: string;
+  data: string;
+  sentAt: Date;
 }
 
 export interface ChannelPairingRequest {
@@ -50,6 +66,7 @@ export interface MessagingWebhookResult {
   body: string | Record<string, unknown>;
   contentType?: string;
   messages?: InboundMessage[];
+  presses?: InboundPress[];
   pairing?: ChannelPairingRequest;
 }
 
@@ -59,6 +76,7 @@ export interface MessagingTransport {
   poll?(
     accept: (message: InboundMessage) => Promise<void>,
     pair?: (request: ChannelPairingRequest) => Promise<void>,
+    press?: (press: InboundPress) => Promise<void>,
   ): Promise<void>;
   receive(request: MessagingWebhook): Promise<MessagingWebhookResult>;
   post(input: {
@@ -68,7 +86,22 @@ export interface MessagingTransport {
     text: string;
     attachments?: MessagingAttachment[];
     replyTo?: string;
-  }): Promise<{ ids: string[] }>;
+    buttons?: MessagingButton[];
+  }): Promise<{ ids: string[]; editable?: boolean }>;
+  edit?(input: {
+    channelId: string;
+    accountId: string;
+    threadId: string;
+    messageId: string;
+    text: string;
+    buttons: MessagingButton[];
+  }): Promise<void>;
+  ack?(input: {
+    channelId: string;
+    accountId: string;
+    pressId: string;
+    text?: string;
+  }): Promise<boolean>;
   close(): Promise<void>;
 }
 

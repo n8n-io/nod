@@ -7,7 +7,7 @@ import { channelReply, createChannels } from '../src/server/channels.ts';
 import { createChatVerification } from '../src/server/chat-verification.ts';
 import { createVault } from '../src/server/vault.ts';
 import { channelConfiguration, createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
-import type { MessagingTransport } from '../src/ports/messaging.ts';
+import { MessagingRetryLater, type MessagingTransport } from '../src/ports/messaging.ts';
 
 const fixtureEnv = {
   TELEGRAM_ENABLED: 'true',
@@ -1303,6 +1303,251 @@ test(
       } finally {
         await restarted.close();
       }
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'button presses pass the owner checks of messages, answer by approval ID without a turn, and edits survive "not modified" and 429',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_press_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    await createFixtureTables(pool, 'local-development');
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const edits: Response[] = [];
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        const body =
+          typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+        calls.push({ url, body });
+        const method = url.split('/').at(-1);
+        if (url.startsWith('https://api.telegram.org/bot987:fixture-not-live/')) {
+          if (method === 'getMe')
+            return Response.json({
+              ok: true,
+              result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
+            });
+          if (method === 'answerCallbackQuery') return Response.json({ ok: true, result: true });
+          if (method === 'editMessageText') return edits.shift()!;
+          return Response.json({
+            ok: true,
+            result: {
+              message_id: 200 + calls.length,
+              date: Math.floor(Date.now() / 1000),
+              chat: { id: 123456, type: 'private' },
+              text: 'Fixture reply',
+            },
+          });
+        }
+        if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/messages$/.test(url))
+          return Response.json({ messages: [{ id: `wamid.fixture-out-${calls.length}` }] });
+        throw new Error('Unexpected fixture provider call.');
+      },
+    );
+    const known = randomUUID();
+    const stale = randomUUID();
+    const taskId = randomUUID();
+    const pressed: unknown[] = [];
+    const transport = createChatSdkTransport(pool, fixtureEnv);
+    const app = Fastify();
+    const channels = await createChannels(pool, {
+      ownerId: 'local-development',
+      transport,
+      subscribe: () => () => {},
+      intervalMs: 600000,
+      submit: async () => {
+        throw new Error('A button press never submits a message.');
+      },
+      press: async (action, channel) => {
+        pressed.push({ action, channel: channel.split(':')[0] });
+        if ('approvalId' in action && action.approvalId !== known)
+          throw Object.assign(new Error('This confirmation is already handled.'), {
+            statusCode: 409,
+          });
+      },
+    });
+    channels.registerRoutes(app);
+    const callback = (
+      id: number,
+      data: string,
+      from = 123456,
+      chat: { id: number; type: string } = { id: from, type: 'private' },
+    ) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        headers: {
+          'content-type': 'application/json',
+          'x-telegram-bot-api-secret-token': fixtureEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN,
+        },
+        payload: JSON.stringify({
+          update_id: id,
+          callback_query: {
+            id: `callback-${id}`,
+            from: { id: from, is_bot: false, first_name: 'Fixture' },
+            chat_instance: 'fixture',
+            data,
+            message: {
+              message_id: 101,
+              date: Math.floor(Date.now() / 1000),
+              chat,
+              from: { id: 987, is_bot: true, first_name: 'Fixture' },
+              text: 'Fixture question',
+            },
+          },
+        }),
+      });
+    const tap = (id: string, data: string, from = '351910000000') => {
+      const body = JSON.stringify({
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            changes: [
+              {
+                field: 'messages',
+                value: {
+                  metadata: { phone_number_id: '555000' },
+                  messages: [
+                    {
+                      id,
+                      from,
+                      timestamp: String(Math.floor(Date.now() / 1000)),
+                      type: 'interactive',
+                      context: { from: '555000', id: 'wamid.fixture-question' },
+                      interactive: {
+                        type: 'button_reply',
+                        button_reply: { id: data, title: 'Yes' },
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      });
+      return app.inject({
+        method: 'POST',
+        url: '/api/webhooks/whatsapp',
+        headers: {
+          'content-type': 'application/json',
+          'x-hub-signature-256': `sha256=${createHmac('sha256', fixtureEnv.WHATSAPP_APP_SECRET).update(body).digest('hex')}`,
+        },
+        payload: body,
+      });
+    };
+    const acks = () =>
+      calls.filter((call) => call.url.endsWith('/answerCallbackQuery')).map((call) => call.body);
+    try {
+      assert.equal((await callback(1, `a:${known}:y`, 456789)).statusCode, 200);
+      await callback(2, `a:${known}:y`, 123456, { id: 123456, type: 'group' });
+      await tap('wamid.fixture-stranger', `a:${known}:y`, '351920000000');
+      assert.equal(pressed.length, 0);
+      assert.equal(calls.length, 0);
+
+      await callback(3, `a:${known}:y`);
+      await callback(4, `a:${stale}:n`);
+      await callback(5, `s:${taskId}`);
+      await callback(6, 'a:not-an-approval:y');
+      assert.deepEqual(pressed, [
+        { action: { approvalId: known, approved: true }, channel: 'telegram' },
+        { action: { approvalId: stale, approved: false }, channel: 'telegram' },
+        { action: { taskId }, channel: 'telegram' },
+      ]);
+      const answered = acks();
+      assert.deepEqual(answered[0], { callback_query_id: 'callback-3' });
+      assert.match(String(answered[1].text), /already handled/);
+      assert.deepEqual(answered[2], { callback_query_id: 'callback-5' });
+      assert.equal(answered[3].callback_query_id, 'callback-6');
+      assert.ok(answered[3].text);
+
+      await tap('wamid.fixture-stale', `a:${stale}:y`);
+      await tap('wamid.fixture-stale', `a:${stale}:y`);
+      await channels.drain();
+      assert.equal(pressed.length, 4);
+      const notes = calls.filter((call) => call.url.includes('graph.facebook.com'));
+      assert.equal(notes.length, 1);
+      assert.match(JSON.stringify(notes[0].body), /already handled/);
+      assert.equal((await pool.query('SELECT 1 FROM turns')).rowCount, 0);
+
+      const buttons = [
+        { id: `a:${known}:y`, title: 'Yes' },
+        { id: `a:${known}:n`, title: 'No' },
+      ];
+      const sent = await transport.post({
+        channelId: 'telegram',
+        accountId: '987',
+        threadId: 'telegram:123456',
+        text: 'Send the **email**?',
+        replyTo: '123456:101',
+        buttons,
+      });
+      assert.equal(sent.editable, true);
+      const question = calls.at(-1)!.body;
+      assert.deepEqual(question.reply_markup, {
+        inline_keyboard: [buttons.map(({ id, title }) => ({ text: title, callback_data: id }))],
+      });
+      assert.deepEqual(question.reply_parameters, {
+        message_id: 101,
+        allow_sending_without_reply: true,
+      });
+      await transport.post({
+        channelId: 'whatsapp',
+        accountId: '555000',
+        threadId: 'whatsapp:555000:351910000000',
+        text: 'Send the email?',
+        buttons,
+      });
+      assert.deepEqual((calls.at(-1)!.body.interactive as { action: unknown }).action, {
+        buttons: buttons.map(({ id, title }) => ({ type: 'reply', reply: { id, title } })),
+      });
+
+      const edit = {
+        channelId: 'telegram',
+        accountId: '987',
+        threadId: 'telegram:123456',
+        messageId: sent.ids[0],
+        text: 'On it.',
+        buttons: [],
+      };
+      edits.push(
+        Response.json(
+          { ok: false, error_code: 400, description: 'Bad Request: message is not modified' },
+          { status: 400 },
+        ),
+        Response.json(
+          {
+            ok: false,
+            error_code: 429,
+            description: 'Too Many Requests: retry after 7',
+            parameters: { retry_after: 7 },
+          },
+          { status: 429 },
+        ),
+      );
+      await transport.edit!(edit);
+      await assert.rejects(
+        transport.edit!(edit),
+        (error: unknown) => error instanceof MessagingRetryLater && error.retryAfterMs === 7000,
+      );
+      await assert.rejects(
+        transport.edit!({ ...edit, channelId: 'whatsapp', accountId: '555000' }),
+      );
+      assert.equal(calls.filter((call) => call.url.endsWith('/editMessageText')).length, 2);
     } finally {
       await app.close();
       await pool.end();

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Artifact } from '../shared/contracts.ts';
+import type { Artifact, Task } from '../shared/contracts.ts';
+import { completedSteps, isOpenTask, taskLabels, taskSummary } from '../shared/tasks.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -11,13 +12,22 @@ import {
   MessagingRetryLater,
   type ChannelPairingRequest,
   type InboundMessage,
+  type InboundPress,
   type MessagingAttachment,
+  type MessagingButton,
   type MessagingTransport,
 } from '../ports/messaging.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
+const uuid = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}';
+const pressData = new RegExp(`^(?:a:(${uuid}):([yn])|s:(${uuid}))$`);
+
+interface TaskMessages {
+  tasks: Task[];
+  confirmations: { id: string; messageId: string }[];
+}
 
 interface ChannelOptions {
   admission?: WorkAdmission;
@@ -59,6 +69,11 @@ interface ChannelOptions {
     threadId: string | null,
     link: string | null,
   ) => Promise<{ text: string; attachments: Artifact[] }>;
+  press?: (
+    action: { approvalId: string; approved: boolean } | { taskId: string },
+    channel: string,
+  ) => Promise<unknown>;
+  taskMessages?: (messageIds: string[]) => Promise<TaskMessages>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -80,6 +95,18 @@ interface OutboxRow extends ChannelIdentity {
   attachments: unknown[];
   reply_to: string | null;
 }
+interface EditRow extends ChannelIdentity {
+  message_id: string;
+  original: string;
+  text: string;
+  buttons: MessagingButton[];
+  revision: number;
+  state: string;
+  final: boolean;
+  due: boolean;
+  thread_id: string;
+  provider_id: string;
+}
 const messageSchema = z.object({
   channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
   accountId: z.string().min(1).max(256),
@@ -89,6 +116,15 @@ const messageSchema = z.object({
   text: z.string().trim().min(1).max(24000),
   sentAt: z.date(),
   replyTo: z.string().min(1).max(256).optional(),
+});
+const pressSchema = z.object({
+  channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
+  accountId: z.string().min(1).max(256),
+  senderId: z.string().min(1).max(256),
+  pressId: z.string().min(1).max(256),
+  threadId: z.string().min(1).max(1024),
+  data: z.string().min(1).max(256),
+  sentAt: z.date(),
 });
 
 function conversationChannel(row: ChannelIdentity) {
@@ -107,6 +143,32 @@ function inboundMessageId(ownerId: string, sourceId: string) {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const id = bytes.subarray(0, 16).toString('hex');
   return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
+}
+
+function liveMessage(messageId: string, text: string, previews: boolean, view: TaskMessages) {
+  const task = previews ? view.tasks.find((item) => item.onItMessageId === messageId) : undefined;
+  if (task) {
+    const open = isOpenTask(task);
+    const steps = task.steps.length
+      ? `\n${completedSteps(task)} of ${task.steps.length} steps`
+      : '';
+    return {
+      text: `${text}\n\n${task.title} · ${taskLabels[task.status]}\n${taskSummary(task)}${steps}`,
+      buttons: open ? [{ id: `s:${task.id}`, title: 'Stop task' }] : [],
+      final: !open,
+    };
+  }
+  const asking = view.confirmations.find((item) => item.messageId === messageId);
+  return asking
+    ? {
+        text,
+        buttons: [
+          { id: `a:${asking.id}:y`, title: 'Yes' },
+          { id: `a:${asking.id}:n`, title: 'No' },
+        ],
+        final: false,
+      }
+    : undefined;
 }
 
 export function channelReply(
@@ -199,7 +261,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ALTER TABLE channel_outbox DROP COLUMN provider_message_id;
     END IF;
   END $$;
-  CREATE INDEX IF NOT EXISTS channel_outbox_provider_ids ON channel_outbox USING gin(provider_message_ids)`);
+  CREATE INDEX IF NOT EXISTS channel_outbox_provider_ids ON channel_outbox USING gin(provider_message_ids);
+  CREATE TABLE IF NOT EXISTS channel_edits (
+    message_id uuid PRIMARY KEY REFERENCES channel_outbox(message_id), owner_id text NOT NULL,
+    text text NOT NULL, buttons jsonb NOT NULL DEFAULT '[]', revision integer NOT NULL DEFAULT 0,
+    state text NOT NULL DEFAULT 'sent', final boolean NOT NULL DEFAULT false, retry_at timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS channel_edits_live ON channel_edits(owner_id) WHERE NOT final OR state='pending'`);
   await pool.query(
     "UPDATE channel_outbox o SET state='uncertain',reason='interrupted_send',updated_at=now() FROM channel_inbox i WHERE o.source_id=i.source_id AND i.owner_id=$1 AND o.state='sending'",
     [ownerId],
@@ -222,7 +291,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       threadId: string | null,
     ) =>
       | Promise<{ text: string; attachments?: Artifact[] }>
-      | { text: string; attachments?: Artifact[] },
+      | { text: string; attachments?: Artifact[] }
+      | undefined,
   ) {
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
     const receipt = await client.query(
@@ -250,6 +320,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           ])
         ).rows[0]?.id ?? null);
     const reply = await compose(thread);
+    if (!reply) return;
     const replyId = randomUUID();
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'assistant',$3,$4,$5)",
@@ -401,6 +472,53 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       if (!ordinaryPersisted) await inTransaction(persist);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
+      throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
+        statusCode: 503,
+      });
+    }
+  }
+
+  async function press(input: InboundPress, channelId: string) {
+    const parsed = pressSchema.safeParse(input);
+    if (!parsed.success || parsed.data.channelId !== channelId) return;
+    const { accountId, senderId, pressId, threadId, data, sentAt } = parsed.data;
+    const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
+    if (closed || replacing || !permitted(identity) || sentAt.getTime() > Date.now() + 300000)
+      return;
+    const sourceId = `channel:${channelId}:${accountId}:${pressId}`;
+    try {
+      if (
+        (
+          await pool.query('SELECT 1 FROM channel_inbox WHERE source_id=$1 AND owner_id=$2', [
+            sourceId,
+            ownerId,
+          ])
+        ).rowCount
+      )
+        return;
+      const match = pressData.exec(data);
+      let note = match && options.press ? undefined : 'This button no longer works.';
+      if (match && options.press)
+        try {
+          await options.press(
+            match[3] ? { taskId: match[3] } : { approvalId: match[1], approved: match[2] === 'y' },
+            conversationChannel(identity),
+          );
+        } catch (cause) {
+          const status = (cause as { statusCode?: unknown }).statusCode;
+          if (typeof status !== 'number' || status >= 500 || !(cause instanceof Error)) throw cause;
+          note = cause.message;
+        }
+      if (await transport.ack?.({ channelId, accountId, pressId, ...(note ? { text: note } : {}) }))
+        return;
+      await inTransaction((client) =>
+        replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text: data }, () =>
+          note ? { text: note } : undefined,
+        ),
+      );
+      if (note) void drain();
+    } catch (cause) {
+      logFailure('channel_press_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
         statusCode: 503,
       });
@@ -622,24 +740,52 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         continue;
       }
+      const live =
+        options.taskMessages && !row.attachments?.length
+          ? await options
+              .taskMessages([row.message_id])
+              .then((view) =>
+                liveMessage(
+                  row.message_id,
+                  row.text,
+                  Boolean(channels.find((channel) => channel.id === row.provider)?.edits),
+                  view,
+                ),
+              )
+              .catch(() => undefined)
+          : undefined;
+      const text = channelReply(
+        live?.text ?? row.text,
+        Boolean(row.attachments?.length) && !attachments,
+        Boolean(attachments),
+        privateLinks,
+        options.appOrigin,
+      );
       try {
         const sent = await transport.post({
           channelId: row.provider,
           accountId: row.account_id,
           threadId: row.thread_id,
-          text: channelReply(
-            row.text,
-            Boolean(row.attachments?.length) && !attachments,
-            Boolean(attachments),
-            privateLinks,
-            options.appOrigin,
-          ),
+          text,
           ...(attachments ? { attachments } : {}),
           ...(row.reply_to ? { replyTo: row.reply_to } : {}),
+          ...(live ? { buttons: live.buttons } : {}),
         });
         await pool.query(
-          "UPDATE channel_outbox SET state='sent',provider_message_ids=$2,reason=NULL,retry_at=NULL,updated_at=now() WHERE message_id=$1",
-          [row.message_id, sent.ids],
+          `WITH sent AS (
+             UPDATE channel_outbox SET state='sent',provider_message_ids=$2,reason=NULL,retry_at=NULL,updated_at=now()
+             WHERE message_id=$1 RETURNING message_id)
+           INSERT INTO channel_edits(message_id,owner_id,text,buttons,final)
+           SELECT message_id,$3,$4,$5,$6 FROM sent WHERE $7 ON CONFLICT(message_id) DO NOTHING`,
+          [
+            row.message_id,
+            sent.ids,
+            ownerId,
+            text,
+            JSON.stringify(live?.buttons ?? []),
+            live?.final ?? true,
+            Boolean(live && sent.editable),
+          ],
         );
       } catch (cause) {
         if (cause instanceof MessagingRetryLater) {
@@ -653,6 +799,94 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         await pool.query(
           "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',provider_message_ids=$2,updated_at=now() WHERE message_id=$1",
           [row.message_id, cause instanceof MessagingPartialSend ? cause.ids : []],
+        );
+      }
+    }
+  }
+
+  async function drainEdits() {
+    if (
+      !options.taskMessages ||
+      !transport.edit ||
+      !channels.some((channel) => channel.edits && channel.status === 'configured')
+    )
+      return;
+    const select = (where: string, values: unknown[] = []) =>
+      pool.query<EditRow>(
+        `SELECT e.message_id,e.text,e.buttons,e.revision,e.state,e.final,
+           e.retry_at IS NULL OR e.retry_at<=now() AS due,m.text AS original,
+           i.provider,i.account_id,i.sender_id,i.thread_id,o.provider_message_ids[1] AS provider_id
+         FROM channel_edits e JOIN messages m ON m.id=e.message_id AND m.owner_id=e.owner_id
+         JOIN channel_outbox o ON o.message_id=e.message_id
+         JOIN channel_inbox i ON i.source_id=o.source_id AND i.owner_id=e.owner_id
+         WHERE e.owner_id=$1 AND ${where} ORDER BY e.updated_at,e.message_id`,
+        [ownerId, ...values],
+      );
+    const rows = (await select(`(NOT e.final OR e.state='pending')`)).rows;
+    const view = await options.taskMessages(rows.map((row) => row.message_id));
+    const reopened = view.tasks.flatMap((task) =>
+      task.onItMessageId &&
+      isOpenTask(task) &&
+      !rows.some((row) => row.message_id === task.onItMessageId)
+        ? [task.onItMessageId]
+        : [],
+    );
+    if (reopened.length)
+      rows.push(...(await select('e.message_id=ANY($2::uuid[])', [reopened])).rows);
+    for (const row of rows) {
+      if (closed || replacing) break;
+      const live = liveMessage(row.message_id, row.original, true, view);
+      const text = channelReply(live?.text ?? row.original, false, false, [], options.appOrigin);
+      const buttons = live?.buttons ?? [];
+      const final = live?.final ?? true;
+      let { revision, state } = row;
+      if (text !== row.text || JSON.stringify(buttons) !== JSON.stringify(row.buttons)) {
+        revision = (
+          await pool.query<{ revision: number }>(
+            `UPDATE channel_edits SET text=$2,buttons=$3,final=$4,revision=revision+1,state='pending',
+               updated_at=now() WHERE message_id=$1 RETURNING revision`,
+            [row.message_id, text, JSON.stringify(buttons), final],
+          )
+        ).rows[0]!.revision;
+        state = 'pending';
+      } else if (final !== row.final)
+        await pool.query('UPDATE channel_edits SET final=$2 WHERE message_id=$1', [
+          row.message_id,
+          final,
+        ]);
+      if (state !== 'pending' || !row.due) continue;
+      if (!permitted(row)) {
+        await pool.query(
+          "UPDATE channel_edits SET state='failed',final=true,updated_at=now() WHERE message_id=$1",
+          [row.message_id],
+        );
+        continue;
+      }
+      try {
+        await transport.edit({
+          channelId: row.provider,
+          accountId: row.account_id,
+          threadId: row.thread_id,
+          messageId: row.provider_id,
+          text,
+          buttons,
+        });
+        await pool.query(
+          "UPDATE channel_edits SET state='sent',retry_at=NULL,updated_at=now() WHERE message_id=$1 AND revision=$2",
+          [row.message_id, revision],
+        );
+      } catch (cause) {
+        if (cause instanceof MessagingRetryLater) {
+          await pool.query(
+            'UPDATE channel_edits SET retry_at=now()+make_interval(secs=>$2),updated_at=now() WHERE message_id=$1',
+            [row.message_id, cause.retryAfterMs / 1000],
+          );
+          continue;
+        }
+        logFailure('channel_edit_failed', cause);
+        await pool.query(
+          "UPDATE channel_edits SET state='failed',updated_at=now() WHERE message_id=$1 AND revision=$2",
+          [row.message_id, revision],
         );
       }
     }
@@ -675,12 +909,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             await transport.poll?.(
               (message) => accept(message, message.channelId),
               completePairing,
+              (item) => press(item, item.channelId),
             );
           } catch (cause) {
             pollingFailed = true;
             logFailure('channel_poll_failed', cause);
           }
-          for (const step of [drainInbox, drainOutbox])
+          for (const step of [drainInbox, drainOutbox, drainEdits])
             try {
               await step();
             } catch (cause) {
@@ -791,6 +1026,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             return reply.code(503).send({ error: 'Channel configuration changed. Try again.' });
           if (result.status >= 200 && result.status < 300) {
             for (const message of result.messages ?? []) await accept(message, channelId);
+            for (const item of result.presses ?? []) await press(item, channelId);
             if (result.messages?.length) void drain();
             if (result.pairing?.channelId === channelId) await completePairing(result.pairing);
           }

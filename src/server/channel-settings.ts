@@ -278,15 +278,20 @@ export async function createChannelSettings(
     return exclusive(async () => {
       const recovered = await reconcileClaims();
       const { rows } = await pool.query<SettingsRow>(
-        `SELECT * FROM channel_settings WHERE owner_id=$1 AND enabled=true AND summary->>'webhookStatus'='registration_pending'`,
+        `SELECT * FROM channel_settings WHERE owner_id=$1 AND enabled=true
+           AND (summary->>'webhookStatus'='registration_pending' OR (provider='telegram'
+             AND summary->>'mode'='webhook' AND summary->>'webhookStatus'='registered'))`,
         [owner],
       );
       for (const row of rows) {
         try {
-          await activate(providerSchema.parse(row.provider), {
+          const configuration = {
             environment: open(await encryptionKey(), owner, row),
             summary: summarySchema.parse(row.summary),
-          });
+          };
+          if (configuration.summary.webhookStatus === 'registered')
+            await options.verifier.register?.('telegram', configuration);
+          else await activate(providerSchema.parse(row.provider), configuration);
         } catch {
           return false;
         }

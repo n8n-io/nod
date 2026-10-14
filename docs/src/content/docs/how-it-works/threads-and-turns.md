@@ -173,12 +173,25 @@ A reply in Telegram or WhatsApp counts the same way. The channel inbox saves the
 The server binds each answer to one approval, never to "the newest question" across tasks:
 
 - **Reply target.** A reply to a task's message answers that task's one open confirmation, on the channel that asked. A reply to an Otto message in the chat never answers a task.
-- **Approval ID.** `POST /api/approvals/<id>/answer {approved}` answers that approval only, whichever channel asked it. It needs the owner key like every local route, skips the reply reader and resumes the task on its own channel. A press on an approval that isn't pending, belongs to another owner or has expired creates no turn and returns `409`. A payment or **Do it for me** approval takes an answer only from the Otto app, so a chat-app button can't approve it.
+- **Approval ID.** `POST /api/approvals/<id>/answer {approved}` answers that approval only, whichever channel asked it. It needs the owner key like every local route, skips the reply reader and resumes the task on its own channel. A press on an approval that isn't pending, belongs to another owner or has expired creates no turn and returns `409`. A payment or **Do it for me** approval takes an answer only from the Otto app, so a chat-app button can't approve it. Telegram and WhatsApp buttons carry `a:<approvalId>:y` or `a:<approvalId>:n` and take the same path. See [Chat-app buttons and live previews](#chat-app-buttons-and-live-previews).
 - **No reply target.** A yes or no without a target answers the newest Otto message you'd seen on that channel only when it's a confirmation and no other task confirmation is open there. With two or more open, nothing is answered and the message goes to the chat, which asks which one you mean. A chat confirmation you'd seen closes, as it does for any other chat message, so it can't run twice. A message without a target never cancels a task's confirmation.
 
 A task's confirmation expires 24 hours after Otto asks. A yes or no to it after that gets a short reply that the question expired, in the task's session and on its channel, and nothing runs. Chat, schedule and event confirmations stay open while their turn waits.
 
 The chat can also hand your message to a task. When your message answers, corrects or adds to an open task, Otto calls `route_to_task {taskId}`. The server moves your message itself, with its text and ID, into the task's session as your reply, and the chat writes nothing more about it. Otto never writes your words for a task, so the trust check sees exactly what you sent. A message the chat moved answers no Otto message, so a moved "yes" can't approve what the task proposed. The server refuses to move a message into a task that waits for your yes or no to a confirmation, so Otto asks you to reply to that confirmation. An expired confirmation doesn't block the move. When a bare yes or no could answer more than one task, Otto asks which one.
+
+### Chat-app buttons and live previews
+
+Telegram shows a task's preview by editing its "On it" message, and both chat apps carry buttons:
+
+| Message               | Telegram                                                                                                      | WhatsApp                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| "On it"               | Title, status, current step and steps done, kept current. **Stop task** (`s:<taskId>`) while the task is open | The model's text, as sent        |
+| A task's confirmation | **Yes** and **No** (`a:<approvalId>:y` and `a:<approvalId>:n`)                                                | **Yes** and **No** reply buttons |
+
+- **Buttons shown.** A confirmation gets buttons only while it's its task's one open confirmation, it hasn't expired and it isn't a payment approval. Private links and payment codes never go to a chat app.
+- **Edits.** When the outbox sends "On it" or a confirmation with buttons to Telegram, it saves the text and buttons it sent in `channel_edits`. On each pass, the server works out the message's current text and buttons from the task. When they differ, it saves them as the next `revision` and marks the row `pending`, so several changes between two passes become one edit. Only a message the outbox has sent is edited, and it's never sent again. An edit doesn't notify. Telegram's "message is not modified" counts as done, a `429` waits for Telegram's `retry_after`, and any other error marks that revision `failed` until the next change. The last edit of a closed task removes **Stop task**. A confirmation loses its buttons once it's answered, closed or expired. WhatsApp can't edit a message, so it gets no edits.
+- **Presses.** Telegram sends a press as a `callback_query`, which Otto asks for in `getUpdates` and in the webhook's `allowed_updates`. When Otto starts, it registers the Telegram webhook it manages again. WhatsApp sends a `button_reply`. A press gets the checks of a message: a verified webhook, the paired sender and account, and for Telegram a private chat with that sender. Otto then answers by approval ID through the same path as `POST /api/approvals/<id>/answer`, or stops the task like `POST /api/tasks/<id>/stop`. Telegram acknowledges the press with `answerCallbackQuery`, with a short note when nothing ran. A WhatsApp press is saved in the channel inbox, so it counts for the 24-hour window and a repeated delivery runs once. A WhatsApp press that ran nothing gets a short reply. A press that answers resumes the task like the web button, and a stale press creates no turn.
 
 ## Sessions
 
@@ -256,7 +269,7 @@ Stop works on one session or on all of them:
 | One task      | `POST /api/tasks/<id>/stop`             |
 | Every session | `POST /api/thread/stop`                 |
 
-**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** in a task's card or in the Tasks strip stops that task, and **Stop all** stops every session. **Stop** on the **Browser** page stops only the session whose browser it shows: the chat, or the task named by `?session=<taskId>`.
+**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** in a task's card, in the Tasks strip or under its "On it" message in Telegram stops that task, and **Stop all** stops every session. **Stop** on the **Browser** page stops only the session whose browser it shows: the chat, or the task named by `?session=<taskId>`.
 
 Stop locks the thread, then cancels the queued, running and waiting turns in its scope and aborts the running ones. In the same transaction, for each session it cancelled, it declines the open confirmations, closes the secure forms, verification code and payment requests, and closes the task as **Stopped** with a short note that replies to its "On it" message. Then it deletes the browser of each background session it cancelled.
 

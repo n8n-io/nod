@@ -53,7 +53,7 @@ When you write without a reply and Otto sees that your message belongs to an ope
 
 ## Answer a task's question
 
-To answer a task's confirmation, select **Yes** or **No** under it, or in the task's card on the Tasks page. You can also reply yes or no to the confirmation or to any other message of that task. Anything else you reply to the task cancels the confirmation, and the task reads your reply instead.
+To answer a task's confirmation, select **Yes** or **No** under it, or in the task's card on the Tasks page. In [Telegram and WhatsApp](/use/channels/#buttons), the buttons are under the confirmation message. You can also reply yes or no to the confirmation or to any other message of that task. Anything else you reply to the task cancels the confirmation, and the task reads your reply instead.
 
 **Yes** and **No** answer that one confirmation, and your answer shows in the chat as a reply to it. When a task has two confirmations open at once, neither has the buttons, so reply to the one you mean.
 
@@ -93,7 +93,7 @@ A task that waits for your answer or for someone else doesn't take a place. The 
 
 ## Stop a task
 
-To stop one task, select **Stop task** in its card, in the chat or on the Tasks page, or the stop button next to its name in the Tasks strip. The task closes as **Stopped** at once, and the chat and your other tasks keep running.
+To stop one task, select **Stop task** in its card, in the chat or on the Tasks page, or the stop button next to its name in the Tasks strip. In Telegram, **Stop task** is under the task's "On it" message. The task closes as **Stopped** at once, and the chat and your other tasks keep running.
 
 | Control                                               | Stops                                                         |
 | ----------------------------------------------------- | ------------------------------------------------------------- |
@@ -124,9 +124,11 @@ When a task's result is a document, such as a report, the result's message carri
 
 A task you start from [Telegram or WhatsApp](/use/channels/) replies there.
 
-- You get "On it", the task's check-ins, questions and result as messages that reply to each other. The task's card shows only in the Otto app.
-- Reply to any of the task's messages to add to it, or yes or no to answer a confirmation. A "stop" reply asks the task to stop at its next step. To stop it at once, select **Stop task** in the Otto app. See [Stop a task](#stop-a-task).
-- Sign-in forms, payment approvals and taking over the browser need the Otto app. The task carries on in the chat app after you finish there.
+- You get "On it", the task's check-ins, questions and result as messages that reply to each other.
+- In Telegram, "On it" shows the task's title, status, current step and steps done, and Otto changes it as the task works, without a new notification. WhatsApp can't change a sent message, so the task's card shows only in the Otto app.
+- A confirmation has **Yes** and **No** buttons. Reply to any of the task's messages to add to it, or yes or no to answer a confirmation.
+- To stop a task at once, select **Stop task** under "On it" in Telegram, or in the Otto app. A "stop" reply asks the task to stop at its next step. See [Stop a task](#stop-a-task).
+- Sign-in forms, payment approvals and taking over the browser need the Otto app. Payment approvals have no buttons in a chat app. The task carries on in the chat app after you finish there.
 - Telegram gets the task's files as documents. WhatsApp gets no files, so open Otto to get them.
 - More than 24 hours after your last WhatsApp message, Otto can't write to WhatsApp. The task's later messages then show only in Otto.
 

@@ -20,6 +20,7 @@ import { turnChain, untakenTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 import { answered } from './trust.ts';
+import { appOnlyActions } from './approvals.ts';
 import { isQuietTime, readPreferences } from './preferences.ts';
 import { taskChanged } from './events.ts';
 import type { WorkConsumers } from './work-admission.ts';
@@ -124,7 +125,12 @@ export function createTasks(options: {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
 
-  async function rows(threadId: string | null, openOnly = false, taskId: string | null = null) {
+  async function rows(
+    threadId: string | null,
+    openOnly = false,
+    taskId: string | null = null,
+    messageIds: string[] | null = null,
+  ) {
     return (
       await pool.query<Row>(
         `SELECT t.id,t.thread_id,t.title,t.on_it_message_id,t.steps,t.step_index,t.now_text,
@@ -150,8 +156,9 @@ export function createTasks(options: {
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
            AND (NOT $3::boolean OR t.state IN ('queued','open','waiting'))
            AND ($4::uuid IS NULL OR t.id=$4)
+           AND ($5::uuid[] IS NULL OR t.on_it_message_id=ANY($5) OR t.state IN ('queued','open','waiting'))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
-        [ownerId, threadId, openOnly, taskId],
+        [ownerId, threadId, openOnly, taskId, messageIds],
       )
     ).rows;
   }
@@ -201,6 +208,23 @@ export function createTasks(options: {
 
   async function read(threadId?: string): Promise<Task[]> {
     return (await rows(threadId ?? null)).map(view);
+  }
+
+  async function channelMessages(messageIds: string[]) {
+    const [tasks, confirmations] = await Promise.all([
+      rows(null, false, null, messageIds),
+      pool.query<{ id: string; messageId: string }>(
+        `SELECT a.id,a.confirmation_message_id AS "messageId" FROM approvals a
+         JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+         JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id
+         WHERE a.owner_id=$1 AND a.confirmation_message_id=ANY($2::uuid[]) AND a.status='pending'
+           AND a.expires_at>now() AND a.action<>ALL($3::text[]) AND u.status IN ('running','waiting')
+           AND NOT EXISTS (SELECT 1 FROM approvals o WHERE o.owner_id=a.owner_id AND o.turn_id=a.turn_id
+             AND o.status='pending' AND o.confirmation_message_id IS NOT NULL AND o.id<>a.id)`,
+        [ownerId, messageIds, appOnlyActions],
+      ),
+    ]);
+    return { tasks: tasks.map(view), confirmations: confirmations.rows };
   }
 
   async function transaction<T>(operation: (client: PoolClient) => Promise<T>) {
@@ -674,6 +698,7 @@ export function createTasks(options: {
     checkIn,
     open,
     read,
+    channelMessages,
     forget,
     expire,
     startRetention,

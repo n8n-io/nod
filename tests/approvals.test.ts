@@ -1994,6 +1994,17 @@ test(
           );
           await finish(a.turn.turnId);
           await finish(b.turn.turnId);
+          const buttons = async (...ids: string[]) =>
+            (
+              await tasks.channelMessages(
+                await Promise.all(
+                  ids.map(async (id) => (await stored(id)).confirmation_message_id),
+                ),
+              )
+            ).confirmations
+              .map((item) => item.id)
+              .sort();
+          assert.deepEqual(await buttons(x, y), [x, y].sort());
           for (const text of ['Yes.', 'What is on my synthetic calendar?']) {
             const sent = await messages.submit(text);
             assert.equal(await session(sent.turnId), sent.threadId);
@@ -2008,6 +2019,7 @@ test(
             [(await stored(x)).status, (await stored(y)).status],
             ['confirmed', 'pending'],
           );
+          assert.deepEqual(await buttons(x, y), [y]);
           assert.deepEqual(
             [await session(yes.turnId), (await row(yes.turnId)).background],
             [a.taskId, true],
@@ -2037,6 +2049,7 @@ test(
           );
           await finish(paying.turn.turnId);
           const payment = (await proposal(paying.turn.turnId)).id as string;
+          assert.deepEqual(await buttons(payment), []);
           const payTurns = await turnCount();
           await assert.rejects(
             approvals.answer({ approvalId: payment, approved: true, channel: 'telegram' }),

@@ -46,7 +46,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 }
 
 const expiredQuestion = 'That question expired, so I did nothing.';
-const appOnlyActions = ['OTTO_payment_approve', 'OTTO_payment_setting'];
+export const appOnlyActions = ['OTTO_payment_approve', 'OTTO_payment_setting'];
 
 const confirmationFields = `a.*,u.status AS turn_status,u.background AS turn_background,
   u.session_id AS turn_session_id,u.prompt AS turn_prompt,u.channel AS turn_channel,t.id AS task_id,

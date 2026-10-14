@@ -18,6 +18,13 @@ import {
   X,
 } from 'lucide-react';
 import type { Artifact, Task, TaskStatus } from '../../shared/contracts';
+import {
+  completedSteps,
+  isOpenTask,
+  openTaskOrder,
+  taskLabels,
+  taskSummary,
+} from '../../shared/tasks';
 import { errorMessage, post } from '../lib/api';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { Button, Notice } from './ui';
@@ -31,15 +38,6 @@ import {
 } from './attachment-images';
 import { fileSize, fileType } from './attachment-card';
 
-export const taskLabels: Record<TaskStatus, string> = {
-  queued: 'Queued',
-  working: 'Working',
-  needs_you: 'Needs you',
-  waiting: 'Waiting',
-  done: 'Done',
-  stopped: 'Stopped',
-  failed: 'Failed',
-};
 const icons = {
   queued: Hourglass,
   working: LoaderCircle,
@@ -49,9 +47,6 @@ const icons = {
   stopped: CircleSlash,
   failed: CircleAlert,
 };
-export const openTaskOrder: TaskStatus[] = ['needs_you', 'working', 'waiting', 'queued'];
-export const isOpenTask = (task: Task) => openTaskOrder.includes(task.status);
-
 function StatusIcon({ status, size = 16 }: { status: TaskStatus; size?: number }) {
   const Icon = icons[status];
   return (
@@ -66,31 +61,6 @@ export function TaskStatusPill({ status }: { status: TaskStatus }) {
       {taskLabels[status]}
     </span>
   );
-}
-
-function plain(text: string) {
-  const line =
-    text.split('\n').find((value) => value.trim() && !/^\s*\[[^\]]+\]:\s/.test(value)) ?? '';
-  return line
-    .replace(/!?\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])/g, '$1')
-    .replace(/[*_`#>~]/g, '')
-    .trim();
-}
-
-function minutes(task: Task) {
-  const end = Date.parse(task.closedAt ?? task.updatedAt);
-  return Math.max(1, Math.round((end - Date.parse(task.createdAt)) / 60_000));
-}
-
-function summary(task: Task) {
-  if (task.status === 'needs_you') return plain(task.question ?? '') || 'Waiting for your answer';
-  if (task.status === 'done') return `Finished in ${minutes(task)} min`;
-  if (task.status === 'stopped') return `Stopped after ${minutes(task)} min`;
-  if (task.status === 'failed')
-    return plain(task.error ?? '') || `Failed after ${minutes(task)} min`;
-  if (task.status === 'waiting' && !task.now)
-    return `Waiting on ${task.waitingFor.map((wait) => wait.who).join(', ')}`;
-  return task.now || task.steps[task.stepIndex] || taskLabels[task.status];
 }
 
 function stepState(task: Task, index: number) {
@@ -245,8 +215,7 @@ export function TaskPreview({
   const [expanded, setExpanded] = useState(false);
   const { stopping, error, stop } = useStop();
   const open = shown ?? expanded;
-  const done =
-    task.status === 'done' ? task.steps.length : Math.min(task.stepIndex, task.steps.length);
+  const done = completedSteps(task);
   const showInChat = place === 'page' && task.onItMessageId !== null && task.threadId === threadId;
   return (
     <div className="task-preview" data-status={task.status}>
@@ -261,7 +230,7 @@ export function TaskPreview({
           <span className="task-preview-title">{task.title}</span>
           <TaskStatusPill status={task.status} />
         </span>
-        <span className="task-preview-line">{summary(task)}</span>
+        <span className="task-preview-line">{taskSummary(task)}</span>
         <span className="task-preview-foot">
           {task.steps.length > 0 && (
             <span className="task-steps-bar" aria-hidden="true">
