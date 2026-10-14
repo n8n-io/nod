@@ -472,15 +472,19 @@ export async function createDiscoveredConnections(
       .parse(input);
     const pending = await proposal(id);
     if (pending.paths[0]?.auth === 'oauth') throw error('Use the service sign-in link.');
-    const names = pending.paths.find((path) => path.kind === 'cli')?.env;
+    const names = pending.paths.find((path) => path.kind === 'cli')?.env ?? [];
     if (
-      typeof entered === 'object' &&
-      Object.keys(entered).sort().join() !== [...(names ?? [])].sort().join()
+      typeof entered === 'object'
+        ? !names.length || Object.keys(entered).sort().join() !== [...names].sort().join()
+        : names.length > 1
     )
       throw error('Enter a value for each setting.');
-    if (typeof entered === 'string' && names && names.length > 1)
-      throw error('Enter a value for each setting.');
-    const token = typeof entered === 'string' ? entered : JSON.stringify(entered);
+    const token =
+      typeof entered === 'string'
+        ? entered
+        : names.length === 1
+          ? entered[names[0]]
+          : JSON.stringify(entered);
     for (const path of pending.paths) {
       try {
         if (path.kind === 'mcp') {

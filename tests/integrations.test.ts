@@ -5251,6 +5251,33 @@ test(
       );
       assert.deepEqual(environments, [values]);
       assert.equal(JSON.stringify(result).includes('synthetic-'), false);
+      const single = await discovered.propose({
+        service: 'fixture-tool',
+        name: 'Fixture tool',
+        paths: [{ ...cli, env: ['FIXTURE_TOKEN'] }],
+      });
+      const singleId = new URL(single.url, 'http://localhost:4310').searchParams.get('connect');
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/apps/discovery/${singleId}/complete`,
+            payload: { token: { FIXTURE_TOKEN: 'synthetic-tool-token' }, accountName: 'Tool' },
+          })
+        ).statusCode,
+        200,
+      );
+      const tool = await pool.query<{ id: string; paths: Array<{ id: string }> }>(
+        "SELECT id,paths FROM discovered_connections WHERE owner_id=$1 AND service='fixture-tool'",
+        [owner],
+      );
+      await discovered.execute(
+        'CONNECTED_CLI',
+        { connectionId: tool.rows[0].id, pathId: tool.rows[0].paths[0].id, argv: ['whoami'] },
+        { threadId: randomUUID(), turnId: randomUUID() },
+        new AbortController().signal,
+      );
+      assert.deepEqual(environments.at(-1), { FIXTURE_TOKEN: 'synthetic-tool-token' });
     } finally {
       await app.close();
       await pool.end();
