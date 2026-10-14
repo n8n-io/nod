@@ -1972,10 +1972,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     return process as unknown as ChildProcessWithoutNullStreams;
   };
   const clients: Computer[] = [];
-  function client(
-    dataRoot: string,
-    options: { timeoutMs?: number; drainTimeoutMs?: number } = {},
-  ) {
+  function client(dataRoot: string, options: { timeoutMs?: number; drainTimeoutMs?: number } = {}) {
     const value = createContainerBrowserComputer({ dataRoot, spawn: launch, ...options });
     clients.push(value);
     return value;
