@@ -2774,7 +2774,7 @@ const memoryFixture = async (tables: string[] = []) => {
   url.searchParams.set('options', `-c search_path=${schema}`);
   const pool = new pg.Pool({ connectionString: url.href });
   await pool.query(
-    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
+    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
@@ -2782,12 +2782,19 @@ const memoryFixture = async (tables: string[] = []) => {
   const memory = createMemoryService({ pool, ownerId, store });
   const post = async (
     text: string,
-    options: { owner?: string; role?: string; at?: string; attachments?: string } = {},
+    options: {
+      owner?: string;
+      role?: string;
+      at?: string;
+      attachments?: string;
+      thread?: string;
+      suggestions?: string;
+    } = {},
   ) => {
     const id = randomUUID();
     const turnId = randomUUID();
     await pool.query(
-      'INSERT INTO messages(id,owner_id,role,text,turn_id,attachments,created_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,COALESCE($7::timestamptz,now()))',
+      'INSERT INTO messages(id,owner_id,role,text,turn_id,attachments,created_at,thread_id,suggestions) VALUES($1,$2,$3,$4,$5,$6::jsonb,COALESCE($7::timestamptz,now()),$8,$9::jsonb)',
       [
         id,
         options.owner ?? ownerId,
@@ -2796,6 +2803,8 @@ const memoryFixture = async (tables: string[] = []) => {
         turnId,
         options.attachments ?? '[]',
         options.at ?? null,
+        options.thread ?? null,
+        options.suggestions ?? null,
       ],
     );
     return { id, sourceMessageId: id, turnId };
@@ -2917,23 +2926,6 @@ test(
       assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
       await memory.learn({ area: 'about', quote: chess }, await post(chess));
       assert.doesNotMatch(await readFile(path, 'utf8'), /sk-fixture|broken/);
-
-      await writeFile(
-        path,
-        `# Memory\n\n## ${randomUUID()}\nKind: preference\nUpdated: 2026-01-01T00:00:00.000Z\nSources: ${randomUUID()}\n\nPrefers email updates.\n\n## ${randomUUID()}\nKind: pattern\nUpdated: 2026-01-02T00:00:00.000Z\nSources: ${randomUUID()}\n\nOften asks for a design first.\n\n## not-an-id\nKind: fact\n\nBroken entry.\n`,
-      );
-      assert.deepEqual(JSON.parse(await memory.context()), {
-        preferences: ['prefers-email-updates: Prefers email updates.'],
-      });
-      assert.equal(
-        (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
-        'tentative',
-      );
-      await memory.learn({ area: 'about', quote: chess }, await post(chess));
-      const migrated = await readFile(path, 'utf8');
-      assert.match(migrated, /^\{/);
-      assert.doesNotMatch(migrated, /Broken entry/);
-      assert.match(migrated, /Often asks for a design first/);
     } finally {
       await close();
     }
@@ -3159,17 +3151,14 @@ test(
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
       await post('My card is 4111 1111 1111 1111 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
-      for (const [status, text] of [
-        ['declined', 'Remember that refunds go to account 1.'],
-        ['pending', 'Remember that I prefer window seats.'],
-        ['completed', 'Remember that my dentist is on Elm Street.'],
-      ] as const) {
-        const asked = await post(text, { at: '2026-01-01T10:04:30Z' });
-        await pool.query(
-          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
-          [ownerId, asked.id, status],
-        );
-      }
+      const thread = randomUUID();
+      await post('Here are three things I can start on right now.', {
+        role: 'assistant',
+        at: '2026-01-01T10:04:10Z',
+        thread,
+        suggestions: JSON.stringify({ tasks: [{ title: 'Plan my next two weeks' }] }),
+      });
+      await post('Plan my next two weeks', { at: '2026-01-01T10:04:20Z', thread });
       await post('Other owner message that must not leak.', {
         owner: 'other-owner',
         at: '2026-01-01T10:04:45Z',
@@ -3347,6 +3336,36 @@ test(
       assert.equal(unconfigured.calls.length, 0);
     } finally {
       await idle.close();
+      await close();
+    }
+  },
+);
+
+test(
+  'background learning catches up across batches in one run',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const { pool, ownerId, post, memory, close } = await memoryFixture();
+    try {
+      const { calls, curator } = scriptedCurator();
+      const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+      await memory.edit((tree) => {
+        tree.reflected = nilMark;
+      });
+      let last = '';
+      for (let index = 0; index < 45; index++)
+        last = (
+          await post(`Synthetic routine number ${index}.`, {
+            at: new Date(Date.UTC(2026, 0, 1, 10, index)).toISOString(),
+          })
+        ).id;
+      assert.equal(await learning.reflect(), 0);
+      assert.deepEqual(
+        calls.map((call) => (call.input.messages as unknown[]).length),
+        [40, 5],
+      );
+      assert.ok((await memory.load()).reflected?.endsWith(`/${last}`));
+    } finally {
       await close();
     }
   },

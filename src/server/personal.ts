@@ -129,14 +129,16 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return memory.forget(args.path);
     }
     if (action === 'history_search') {
-      const query = z.string().min(1).max(200).parse(args.query);
+      const { query, before } = z
+        .object({ query: z.string().min(1), before: z.iso.datetime({ offset: true }).optional() })
+        .parse(args);
       const turns = await pool.query(
-        `SELECT u.id,left(u.prompt,200) AS title,u.status,u.source,u.created_at,split_part(u.channel,':',1) AS channel FROM turns u WHERE u.owner_id=$1 AND ${activeThreadSql('u')} AND to_tsvector('simple',u.prompt) @@ plainto_tsquery('simple',$2) ORDER BY u.created_at DESC LIMIT 15`,
-        [ownerId, query],
+        `SELECT u.id,left(u.prompt,200) AS title,u.status,u.source,u.created_at,split_part(u.channel,':',1) AS channel FROM turns u WHERE u.owner_id=$1 AND ${activeThreadSql('u')} AND to_tsvector('simple',u.prompt) @@ plainto_tsquery('simple',$2) AND ($3::timestamptz IS NULL OR u.created_at<$3) ORDER BY u.created_at DESC LIMIT 15`,
+        [ownerId, query, before ?? null],
       );
       const messages = await pool.query(
-        `SELECT m.role,m.text,m.turn_id,split_part(COALESCE(u.channel,'web'),':',1) AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND to_tsvector('simple',m.text) @@ plainto_tsquery('simple',$2) ORDER BY m.created_at DESC LIMIT 15`,
-        [ownerId, query],
+        `SELECT m.role,m.text,m.turn_id,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND to_tsvector('simple',m.text) @@ plainto_tsquery('simple',$2) AND ($3::timestamptz IS NULL OR m.created_at<$3) ORDER BY m.created_at DESC LIMIT 15`,
+        [ownerId, query, before ?? null],
       );
       return { turns: turns.rows, messages: messages.rows };
     }

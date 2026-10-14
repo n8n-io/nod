@@ -11,9 +11,9 @@ The short version: memory can hold only what the owner said in their own message
 
 ## Where memory lives
 
-Memory is one JSON document, `memory/MEMORY.md`, in Otto's private object store: the database in local mode, private object storage in hosted mode. It sits outside the thread workspace, so it survives a thread reset. It holds at most 300 entries and 256 KiB.
+Memory is one JSON document, `memory/MEMORY.md`, in Otto's private object store: the database in local mode, private object storage in hosted mode. It sits outside the thread workspace, so it survives a thread reset. It holds up to 256 KiB.
 
-Each entry has an address, `area/slug`, a text of up to 600 characters and an optional one-line abstract. There are five areas:
+Each entry has an address, `area/slug`, a text of up to 4,000 characters and an optional one-line abstract. There are five areas:
 
 | Area          | Holds                               |
 | ------------- | ----------------------------------- |
@@ -50,7 +50,7 @@ flowchart TD
 
 ## How the model saves memory
 
-The memory tools are actions of Pi's `manage_personal_context` tool. Pi can save only the owner's own words: `memory_learn` stores the current owner message as it was written, with line breaks turned into spaces, up to 600 characters. It keeps the message ID as evidence.
+The memory tools are actions of Pi's `manage_personal_context` tool. Pi can save only the owner's own words: `memory_learn` stores the current owner message as it was written, with line breaks turned into spaces, up to 4,000 characters. It keeps the message ID as evidence.
 
 | Action           | What the server requires                                                                                    |
 | ---------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -98,13 +98,13 @@ Repair runs first on every tick, even without a model key. It archives:
 - inferred entries with one source that nobody repeated for 60 days, and
 - duplicates whose text matches after normalizing case, accents and punctuation. The stronger entry stays.
 
-The archive keeps only its latest 40 records.
+The archive keeps as many records as fit. When the file reaches 256 KiB, the oldest archived records go first. A save that still doesn't fit is refused with **Memory is full**.
 
 ### Reflect
 
-Reflection reads up to 40 owner messages written since the last batch. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, and messages with secrets or a memory-save approval.
+Reflection reads owner messages written since the last batch, 40 at a time, until it has caught up. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, messages with secrets, and task-card titles the owner tapped, which are Otto's wording.
 
-- A small model from the selected connection proposes at most six operations: add an entry, or archive an inferred one the owner said is wrong.
+- A small model from the selected connection proposes operations: add an entry, or archive an inferred one the owner said is wrong. An add that would overflow the file is skipped.
 - Each operation cites messages and a verbatim quote. Only cited messages that contain the quote count as evidence.
 - An add with the same text as an inferred entry adds evidence to it. Reflection never changes a stated entry.
 - Each add must say whether it's sensitive. Unless the owner turned on **Remember sensitive topics**, the server drops sensitive adds. An add without the flag is invalid.

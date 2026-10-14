@@ -16,7 +16,6 @@ import {
   line,
   locate,
   maxBytes,
-  maxEntries,
   open,
   parse,
   path,
@@ -38,24 +37,19 @@ const learnInput = z
   .object({
     area,
     slug: slug.optional(),
-    quote: z.string().max(4000),
+    quote: z.string(),
     expires: z.iso.date().optional(),
     replace: z.boolean().optional(),
   })
   .strict();
 const flat = (value: string) => value.replace(/\s+/g, ' ').trim();
-const findInput = z
-  .object({ query: z.string().trim().min(1).max(200), area: area.optional() })
-  .strict();
+const findInput = z.object({ query: z.string().trim().min(1), area: area.optional() }).strict();
 const readInput = z.object({ path: z.union([area, path]) }).strict();
-const noteInput = z.object({ area, text: line(600), expires: z.iso.date().optional() }).strict();
-const restateInput = z
-  .array(z.object({ area, slug, text: line(600) }).strict())
-  .min(1)
-  .max(10);
+const noteInput = z.object({ area, text: line(), expires: z.iso.date().optional() }).strict();
+const restateInput = z.array(z.object({ area, slug, text: line() }).strict()).min(1);
 const changeInput = z
   .object({
-    text: line(600).optional(),
+    text: line().optional(),
     expires: z.iso.date().nullable().optional(),
     confirm: z.literal(true).optional(),
   })
@@ -144,7 +138,7 @@ export function createMemoryService(options: {
     provenance: { sourceMessageId: string | null; turnId: string },
   ) {
     const input = learnInput.parse(raw);
-    const text = line(600).parse(flat(input.quote));
+    const text = line().parse(flat(input.quote));
     if (unsafe(text))
       throw new Error(
         'Sign-in details, payment secrets and instructions to the assistant cannot be remembered.',
@@ -163,8 +157,6 @@ export function createMemoryService(options: {
         throw new Error(
           'A change of memory text needs a replacement. For an additional fact or exception, choose a distinct new slug. Use replace:true only for a correction that preserves the details still valid.',
         );
-      if (!existing && tree.entries.length >= maxEntries)
-        throw new Error('The memory is full. Forget entries first.');
       if (existing && replaced) archive(tree, existing, 'superseded', now);
       const abstract = replaced ? undefined : existing?.abstract;
       const expires = input.expires ?? (replaced ? undefined : existing?.expires);
@@ -193,7 +185,7 @@ export function createMemoryService(options: {
       .object({
         enabled: z.boolean().optional(),
         clear: z.boolean().default(false),
-        quote: z.string().trim().min(1).max(2000),
+        quote: z.string().trim().min(1),
       })
       .strict()
       .parse(raw);
@@ -251,7 +243,6 @@ export function createMemoryService(options: {
     safe(input.text);
     return owned((tree, now) => {
       duplicate(tree, input.area, input.text);
-      if (tree.entries.length >= maxEntries) fail('Memory is full. Forget a note first.');
       const entry: Entry = {
         area: input.area,
         slug: slugFor(tree, input.area, input.text),
@@ -270,7 +261,7 @@ export function createMemoryService(options: {
   async function adopt(notes: Array<{ area: Area; text: string }>) {
     const valid = notes.map((note) => ({
       area: area.parse(note.area),
-      text: line(600).parse(note.text),
+      text: line().parse(note.text),
     }));
     return owned((tree, now) =>
       valid.every((note) => {
@@ -279,7 +270,6 @@ export function createMemoryService(options: {
         if (match?.origin === 'inferred')
           Object.assign(match, { origin: 'stated', updated: now, edited: now });
         if (match) return true;
-        if (tree.entries.length >= maxEntries) return false;
         tree.entries.push({
           area: note.area,
           slug: slugFor(tree, note.area, note.text),
@@ -303,21 +293,19 @@ export function createMemoryService(options: {
         if (current?.origin === 'stated' && current.text === note.text) continue;
         if (current) archive(tree, current, 'superseded', now);
         if (areaEntries(tree, note.area).some((entry) => same(entry.text, note.text))) continue;
-        if (tree.entries.length >= maxEntries) fail('Memory is full. Forget a note first.');
         tree.entries.push({ ...note, origin: 'stated', updated: now, edited: now, sources: [] });
       }
     });
   }
 
   async function style(raw: string) {
-    const text = line(600).parse(raw);
+    const text = line().parse(raw);
     safe(text);
     return edit((tree) => {
       const now = new Date().toISOString();
       const current = locate(tree, 'preferences/writing-style');
       if (current && (current.origin !== 'email' || current.text === text)) return;
       if (current) archive(tree, current, 'superseded', now);
-      else if (tree.entries.length >= maxEntries) fail('Memory is full. Forget a note first.');
       tree.entries.push({
         area: 'preferences',
         slug: 'writing-style',
@@ -371,8 +359,6 @@ export function createMemoryService(options: {
       const replaces =
         !!current && item.reason === 'superseded' && (item.by ?? input.path) === input.path;
       duplicate(tree, item.area, item.text, replaces ? current : undefined);
-      if (!replaces && tree.entries.length >= maxEntries)
-        fail('Memory is full. Forget a note first.');
       tree.archive = tree.archive.filter((entry) => entry !== item);
       if (current && replaces) archive(tree, current, 'superseded', now);
       const entry: Entry = {
@@ -419,7 +405,7 @@ export function createMemoryService(options: {
     const { tree } = await load();
     const ids = [...new Set([...tree.entries, ...tree.archive].flatMap((entry) => entry.sources))];
     const { rows } = await options.pool.query(
-      `SELECT m.id,left(m.text,600) AS text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel
+      `SELECT m.id,m.text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel
        FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.role='user' AND m.id=ANY($2::uuid[])`,
       [options.ownerId, ids],

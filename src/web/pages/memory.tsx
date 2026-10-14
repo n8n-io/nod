@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { ChevronLeft, Download, Plus } from 'lucide-react';
 import {
   memoryAreas,
+  noteChars,
   type MemoryArchived,
   type MemoryArea,
   type MemoryNote,
@@ -216,7 +217,7 @@ function NoteDetail({
           <textarea
             className="input"
             value={text}
-            maxLength={600}
+            maxLength={noteChars}
             rows={3}
             aria-label="Note"
             autoFocus
@@ -390,7 +391,7 @@ function AddNote({
           <textarea
             className="input"
             value={text}
-            maxLength={600}
+            maxLength={noteChars}
             rows={3}
             placeholder="I prefer an aisle seat"
             aria-label="Note"
