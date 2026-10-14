@@ -13,7 +13,7 @@ Otto keeps one ongoing conversation with you. The desktop app, the web app, Tele
 
 Type in the message box and press Enter. Press Shift+Enter for a new line.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/) and sees images directly, unless the model you chose can't read images.
+- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
 - **Reply to a message.** Hover over a message and select **Reply** to point Otto at it.
 
 ## Keep talking while Otto works

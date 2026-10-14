@@ -55,9 +55,9 @@ The workspace can reach the internet. Code that Otto runs there can download fil
 
 ## Get files from Otto
 
-When Otto shares a file, it appears as an attachment in chat, up to 90 MB. Select it to preview or download it.
+When Otto shares a file, it appears as an attachment in the Otto app, up to 90 MB. Select it to preview or download it.
 
-Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
+Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
 
 ## How long files stay
 
