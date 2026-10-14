@@ -194,8 +194,7 @@ async function sendDrain(client: PoolClient | undefined, threadId: string) {
       ...(client
         ? { db: { executeSql: (sql: string, values: unknown[]) => client.query(sql, values) } }
         : {}),
-      retryLimit: 0,
-      expireInSeconds: 86400,
+      retryLimit: 2,
     },
   );
 }
@@ -212,8 +211,8 @@ async function insertEvent(
     [
       randomUUID(),
       turnId,
-      type.slice(0, 80),
-      summary.slice(0, 2000),
+      type,
+      summary,
       event?.execution.runId ?? null,
       event?.execution.parentRunId ?? null,
       event?.execution.sessionId ?? null,
@@ -627,7 +626,7 @@ export async function initializeThreads() {
     console.error('The thread queue reported an error. Check database availability.'),
   );
   await boss.start();
-  await boss.createQueue(queue, { retryLimit: 0, expireInSeconds: 86400 });
+  await boss.createQueue(queue);
 }
 
 export const interruptedMessage =
