@@ -319,7 +319,8 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
     },
     {
       slug: 'GMAIL_REPLY_TO_THREAD',
-      description: 'Send a reply in an existing Gmail thread.',
+      description:
+        "Send a reply in an existing Gmail thread using the original thread's subject; use GMAIL_SEND_EMAIL to set a different subject.",
       inputSchema: obj(
         {
           thread_id: str('The thread to reply in.'),
@@ -330,7 +331,9 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
       ),
       write: 'send',
       run(args) {
-        const sent = compose(args, ['SENT']);
+        const original = mails.find((mail) => mail.threadId === args.thread_id);
+        if (!original) throw new Error('Gmail thread not found.');
+        const sent = compose({ ...args, subject: original.subject }, ['SENT']);
         mails.push(sent);
         return { id: sent.id, threadId: sent.threadId, labelIds: ['SENT'] };
       },
