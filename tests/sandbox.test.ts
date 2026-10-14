@@ -398,6 +398,19 @@ test('output overflow and timeout drain the remote command before rejecting', as
   }
 });
 
+test('a command timeout beyond the timer limit still lets the command run', async () => {
+  const f = await local();
+  try {
+    const result = await f.run(['python3', '-c', 'import time;time.sleep(0.3);print("done")'], {
+      timeoutMs: 2 ** 32,
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.toString().trim(), 'done');
+  } finally {
+    await f.close();
+  }
+});
+
 test('connected CLIs run only their sealed install with a clean environment', async () => {
   const root = await mkdtemp('/tmp/otto-connected-');
   const home = join(root, 'home');

@@ -315,7 +315,10 @@ export function runSupervisedCommand(options: {
     let drain: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(
       () => cancel(),
-      transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
+      Math.min(
+        transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
+        2 ** 31 - 1,
+      ),
     );
     const cleanup = () => {
       clearTimeout(timer);
