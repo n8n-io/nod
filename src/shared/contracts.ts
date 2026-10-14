@@ -111,7 +111,6 @@ export type VaultActivityReason =
   | 'injection'
   | 'unrequested'
   | 'payment'
-  | 'chat_app'
   | 'code_typed'
   | 'said_yes'
   | 'owner';
@@ -155,11 +154,6 @@ export interface VaultImportResult {
   skipped: number;
 }
 
-export interface VaultPermission {
-  id: string;
-  origin: string;
-  createdAt: string;
-}
 export interface VaultSession {
   kind: 'session';
   id: string;

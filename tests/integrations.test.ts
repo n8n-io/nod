@@ -5,19 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Composio } from '@composio/core';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
+import { Composio } from '@composio/core';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
-import type {
-  Agent,
-  AgentEvent,
-  AgentToolResult,
-  RuntimeContext,
-  RuntimeObservation,
-} from '../src/ports/agent.ts';
-import type { DiscoveredOAuthState } from '../src/ports/discovered.ts';
+import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
+import { DiscoveredSignInRequired, type DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
   IntegrationInboxCursorExpired,
@@ -27,16 +21,15 @@ import {
   type IntegrationSession,
 } from '../src/ports/integrations.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
-import { createDirectProvider } from '../src/providers/direct/integrations.ts';
-import { createDirectOAuth } from '../src/providers/direct/oauth.ts';
-import { withDirectMcp } from '../src/providers/direct/mcp.ts';
 import { createDiscoveredOAuth } from '../src/providers/discovered/oauth.ts';
 import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/discovered/remote.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
+import { channelReply } from '../src/server/channels.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
+import { cachedIcons } from '../src/server/link-previews.ts';
 import { createIntegrationKeyService } from '../src/server/integration-key.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
 import { createLedger } from '../src/server/ledger.ts';
@@ -54,7 +47,6 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     webhooksConfigured: true,
     supportsSubscriptions: ['gmail', 'googlecalendar'],
     createSession: async () => session,
-    restoreSession: async () => session,
     deleteSession: async () => {},
     inspectAccount: async () => ({ active: true, service: 'gmail' }),
     deleteAccount: async () => {},
@@ -283,11 +275,16 @@ test('notification summaries exclude message bodies, tokens, and unbounded provi
     payload: { password: 'another-secret' },
   });
   assert.equal(summary.match(/<\/?untrusted_tool_result\b/g)?.length, 2);
-  assert.match(summary, /\(ignore_instructions\)/);
   assert.match(summary, /person@example.com/);
   for (const excluded of ['123456', 'private body', 'provider-secret', 'another-secret'])
     assert.equal(summary.includes(excluded), false);
   assert.ok(summary.length < 1500);
+  const webhook = eventOverview('slack', 'SLACK_RECEIVE_MESSAGE', {
+    text: 'Lunch at noon?',
+    headers: [{ name: 'Authorization', value: 'header-secret' }],
+  });
+  assert.match(webhook, /Lunch at noon/);
+  assert.equal(webhook.includes('header-secret'), false);
 });
 
 test(
@@ -327,10 +324,10 @@ test(
       ownerId: 'local-development',
       provider,
       baseUrl: 'http://localhost:4310',
-      icon: async (origin) => {
+      icon: cachedIcons(async (origin) => {
         iconOrigins.push(origin);
         return { bytes: new Uint8Array([137, 80, 78, 71]), mimeType: 'image/png' };
-      },
+      }),
       browserAccounts: async () => {
         savedLoginReads++;
         return [
@@ -864,7 +861,7 @@ test(
       assert.deepEqual(executions, [
         { action: 'GMAIL_LIST_LABELS', args: { user_id: 'me' }, accountId: 'account-2' },
       ]);
-      assert.deepEqual(accountSets.at(-1), { gmail: ['account-1', 'account-2'] });
+      assert.deepEqual(accountSets.at(-1), { gmail: ['account-2'] });
       const sent = await integrations.execute('local-development', 'GMAIL_SEND_EMAIL', {
         connectionId: first.connectionId,
         subject: 'Fixture',
@@ -972,12 +969,7 @@ async function appsFixture(
   listing: Partial<
     Pick<
       Parameters<typeof createIntegrations>[1],
-      | 'browserConnections'
-      | 'browserAccounts'
-      | 'validateActivityCheck'
-      | 'wake'
-      | 'readWorkspaceFile'
-      | 'learnWritingStyle'
+      'browserConnections' | 'browserAccounts' | 'wake' | 'readWorkspaceFile' | 'learnWritingStyle'
     >
   > = {},
 ) {
@@ -997,7 +989,6 @@ async function appsFixture(
   const removed: string[] = [];
   const sessions: unknown[] = [];
   const wakes: string[] = [];
-  const wakeIntents: Array<string | undefined> = [];
   const session: IntegrationSession = {
     id: 'current-session',
     authorize: async (service, callback) => {
@@ -1017,13 +1008,10 @@ async function appsFixture(
     configured: true,
     supportedServices: integrationServiceIds,
     webhooksConfigured: true,
-    supportsSubscriptions: ['gmail', 'googlecalendar', 'slack', 'notion'],
+    supportsSubscriptions: ['gmail', 'googlecalendar', 'slack', 'googledocs'],
     createSession: async (_owner, selected) => {
       sessions.push(selected);
       return session;
-    },
-    restoreSession: async () => {
-      assert.fail('An old session must be replaced.');
     },
     deleteSession: async (id) => {
       removed.push(id);
@@ -1061,9 +1049,8 @@ async function appsFixture(
     baseUrl: 'http://localhost:4310',
     wake:
       listing.wake ??
-      (async (_prompt, id, intent) => {
+      (async (_prompt, id) => {
         wakes.push(id);
-        wakeIntents.push(intent);
       }),
   });
   service.registerRoutes(app);
@@ -1101,7 +1088,6 @@ async function appsFixture(
     removed,
     sessions,
     wakes,
-    wakeIntents,
     callbacks,
   };
 }
@@ -1792,6 +1778,194 @@ test(
 );
 
 test(
+  'Notion and Linear connect only through their official MCP servers and stale accounts are dropped on upgrade',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const ownerId = 'local-development';
+    const grantVault = await createAppGrantVault(f.pool, {
+      ownerId,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
+    });
+    const directId = randomUUID();
+    await grantVault.put(directId, JSON.stringify({ accessToken: 'synthetic-private-token' }));
+    await f.pool.query(`CREATE TABLE direct_oauth_accounts (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, service text NOT NULL,
+      state_hash text UNIQUE, expires_at timestamptz, connected boolean NOT NULL DEFAULT false
+    )`);
+    await f.pool.query(
+      "INSERT INTO direct_oauth_accounts(id,owner_id,service,connected) VALUES($1,$2,'linear',true)",
+      [directId, ownerId],
+    );
+    await f.pool.query(
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,trigger_id) VALUES
+       ($1,'linear',$2,'direct',NULL),($1,'notion','legacy-composio','fixture','legacy-trigger')`,
+      [ownerId, directId],
+    );
+    let release = () => {};
+    const revoking = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const unsubscribe = f.provider.unsubscribe;
+    f.provider.unsubscribe = async (id) => {
+      await revoking;
+      await unsubscribe(id);
+    };
+    await createIntegrations(f.pool, {
+      ownerId,
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+    });
+    assert.equal((await f.pool.query('SELECT * FROM app_connections')).rowCount, 0);
+    assert.deepEqual(f.removed, []);
+    release();
+    for (let attempt = 0; attempt < 100 && f.removed.length < 2; attempt++) await delay(10);
+    assert.deepEqual(f.removed, ['legacy-trigger', 'legacy-composio']);
+    const begun: Array<{ endpoint: string; scope?: string }> = [];
+    const resumed: Array<{ turnId: string; service: string }> = [];
+    const discovered = await createDiscoveredConnections(f.pool, {
+      ownerId,
+      baseUrl: 'http://127.0.0.1:4310',
+      grantVault,
+      transport: {
+        validateEndpoint: async (endpoint) => endpoint,
+        http: async () => ({ status: 200, body: null }),
+        listTools: async () => [{ name: 'list_issues', inputSchema: {} }],
+        callTool: async () => ({}),
+      },
+      oauth: {
+        begin: async (endpoint, redirectUri, state, scope) => {
+          begun.push({ endpoint, scope });
+          return {
+            url: `https://consent.example.test/authorize?state=${state}`,
+            saved: { redirectUri },
+          };
+        },
+        finish: async (_endpoint, saved) => ({
+          ...saved,
+          tokens: {
+            access_token: 'synthetic-private-token',
+            refresh_token: 'synthetic-private-refresh',
+            token_type: 'Bearer',
+          },
+          expiresAt: Date.now() - 1000,
+        }),
+        refresh: async () => {
+          throw new DiscoveredSignInRequired();
+        },
+      },
+      resumeConnection: async (turnId, service) => {
+        resumed.push({ turnId, service });
+        return true;
+      },
+    });
+    const service = await createIntegrations(f.pool, {
+      ownerId,
+      provider: { ...f.provider, configured: false },
+      baseUrl: 'http://localhost:4310',
+      discovered,
+      wake: async () => {},
+    });
+    const app = Fastify();
+    t.after(() => app.close());
+    service.registerRoutes(app);
+    assert.equal((await f.pool.query('SELECT * FROM app_connections')).rowCount, 0);
+    assert.equal(
+      (await f.pool.query("SELECT to_regclass('direct_oauth_accounts') AS name")).rows[0].name,
+      null,
+    );
+    await assert.rejects(grantVault.read(directId));
+    assert.deepEqual(
+      (await service.list())
+        .filter((item) => ['gmail', 'notion', 'linear'].includes(item.slug))
+        .map(({ slug, status, connectionId }) => ({ slug, status, connectionId })),
+      [
+        { slug: 'gmail', status: 'not_configured', connectionId: undefined },
+        { slug: 'notion', status: 'disconnected', connectionId: undefined },
+        { slug: 'linear', status: 'disconnected', connectionId: undefined },
+      ],
+    );
+    for (const slug of ['notion', 'linear']) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/apps/${slug}/connect`,
+        payload: { returnTo: 'apps' },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.match(response.json().url, /^https:\/\/consent\.example\.test\/authorize\?state=/);
+    }
+    assert.deepEqual(begun, [
+      { endpoint: 'https://mcp.notion.com/mcp', scope: undefined },
+      { endpoint: 'https://mcp.linear.app/mcp', scope: 'read write' },
+    ]);
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    const linked = await service.manageConnections('connect', 'linear', turn);
+    const url = 'url' in linked ? String(linked.url) : '';
+    assert.match(url, /^https:\/\/consent\.example\.test\/authorize\?state=/);
+    assert.equal(
+      channelReply(`Connect Linear: ${url}`, false, false, [], 'https://otto.example'),
+      `Connect Linear: ${url}`,
+    );
+    const hash = createHash('sha256').update(url).digest('hex');
+    const status = async () =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/apps/setup-status',
+          payload: { hashes: [hash] },
+        })
+      ).json();
+    assert.deepEqual(await status(), {
+      completed: [],
+      apps: [{ hash, slug: 'linear', name: 'Linear' }],
+    });
+    const callback = await app.inject({
+      url: `/api/apps/callback?state=${new URL(url).searchParams.get('state')}&code=fixture-code`,
+    });
+    assert.equal(new URL(callback.headers.location!).searchParams.get('connection'), 'continued');
+    assert.deepEqual(resumed, [{ turnId: turn.turnId, service: 'Linear' }]);
+    assert.deepEqual(await status(), { completed: [hash], apps: [] });
+    const [linear] = await discovered.list();
+    assert.equal(linear.status, 'connected');
+    await assert.rejects(
+      service.execute(ownerId, 'CONNECTED_MCP_CALL', {
+        connectionId: linear.connectionId,
+        pathId: linear.accessPaths![0].id,
+        tool: 'list_issues',
+      }),
+      { statusCode: 409 },
+    );
+    const expired = (await service.list()).find(
+      (item) => item.connectionId === linear.connectionId,
+    );
+    assert.equal(expired?.status, 'disconnected');
+    assert.equal(expired?.canReconnect, true);
+    const again = await app.inject({
+      method: 'POST',
+      url: '/api/apps/linear/connect',
+      payload: { returnTo: 'apps', connectionId: linear.connectionId },
+    });
+    assert.equal(again.statusCode, 200, again.body);
+    await app.inject({
+      url: `/api/apps/callback?state=${new URL(again.json().url).searchParams.get('state')}&code=fixture-code`,
+    });
+    assert.deepEqual(
+      (await discovered.list()).map(({ connectionId, status }) => ({ connectionId, status })),
+      [{ connectionId: linear.connectionId, status: 'connected' }],
+    );
+    f.session.search = async () => ({
+      tools: { NOTION_SEARCH: {}, LINEAR_LIST_ISSUES: {}, GMAIL_LIST_LABELS: {} },
+      suggestions: [],
+    });
+    const found = await f.service.execute(ownerId, 'SEARCH_TOOLS', { query: 'pages' });
+    assert.deepEqual(Object.keys((found as { tools: object }).tools), ['GMAIL_LIST_LABELS']);
+    await assert.rejects(f.service.execute(ownerId, 'NOTION_SEARCH', {}), { statusCode: 409 });
+    assert.deepEqual(f.executed, []);
+  },
+);
+
+test(
   'native app setup reuses owned accounts unless another account is explicitly requested',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -2083,7 +2257,7 @@ test(
       },
     );
     const selected = await f.connect('slack');
-    const disconnected = await f.connect('notion');
+    const disconnected = await f.connect('googledrive');
     await f.pool.query(
       "UPDATE app_connections SET account_checked_at=NULL,account_email='owner@example.test'",
     );
@@ -2168,115 +2342,6 @@ test(
 );
 
 test(
-  'scoped activity discovery rechecks the account and receipt after temporary session creation',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const turn = { threadId: randomUUID(), turnId: randomUUID() };
-    let valid = true;
-    const f = await appsFixture(
-      t,
-      {},
-      {
-        validateActivityCheck: async (received) => {
-          assert.deepEqual(received, turn);
-          if (!valid) throw new Error('The activity receipt was invalidated.');
-        },
-      },
-    );
-    const selected = await f.connect('gmail');
-    await f.connect('gmail');
-    let entered = false,
-      searches = 0;
-    let release = () => {};
-    let pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    t.mock.method(
-      f.provider,
-      'createSession',
-      async (_owner: string, accounts: Parameters<IntegrationProvider['createSession']>[1]) => {
-        assert.deepEqual(accounts, { gmail: [selected.accountId] });
-        entered = true;
-        await pending;
-        return f.session;
-      },
-    );
-    t.mock.method(f.session, 'search', async () => {
-      searches++;
-      return { tools: { GMAIL_GET_PROFILE: {}, SLACK_SEARCH: {} }, suggestions: [] };
-    });
-    const search = () =>
-      f.service.execute(
-        'local-development',
-        'SEARCH_TOOLS',
-        { query: 'recent activity' },
-        turn,
-        undefined,
-        selected.connectionId,
-      );
-    const waitForSession = async () => {
-      for (let attempt = 0; attempt < 100 && !entered; attempt++) await delay(5);
-      assert.equal(entered, true);
-    };
-    const revoked = search();
-    await waitForSession();
-    await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
-      selected.connectionId,
-    ]);
-    release();
-    await assert.rejects(revoked);
-    assert.equal(searches, 0);
-    await f.pool.query('UPDATE app_connections SET revoked=false WHERE id=$1', [
-      selected.connectionId,
-    ]);
-    entered = false;
-    pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const replaced = search();
-    await waitForSession();
-    valid = false;
-    release();
-    await assert.rejects(replaced);
-    assert.equal(searches, 0);
-    valid = true;
-    const result = (await search()) as {
-      tools: Record<string, unknown>;
-      accounts: Array<{ connectionId: string }>;
-    };
-    assert.equal(searches, 1);
-    assert.deepEqual(Object.keys(result.tools), ['GMAIL_GET_PROFILE']);
-    assert.deepEqual(
-      result.accounts.map((account) => account.connectionId),
-      [selected.connectionId],
-    );
-    await assert.rejects(
-      f.service.execute(
-        'local-development',
-        'GMAIL_GET_PROFILE',
-        { connectionId: randomUUID() },
-        turn,
-        undefined,
-        selected.connectionId,
-      ),
-    );
-    assert.equal(f.executed.length, 0);
-    t.mock.method(f.session, 'execute', async (...input: unknown[]) => ({ options: input[4] }));
-    assert.deepEqual(
-      await f.service.execute(
-        'local-development',
-        'GMAIL_GET_ATTACHMENT',
-        {},
-        turn,
-        undefined,
-        selected.connectionId,
-      ),
-      { options: { files: false } },
-    );
-  },
-);
-
-test(
   'private Gmail drafts run on the selected active owned account',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -2310,6 +2375,29 @@ test(
       statusCode: 404,
     });
     assert.equal(f.executed.length, 1);
+    const deleting: string[] = [];
+    f.provider.deleteSession = async (id) => {
+      deleting.push(id);
+      await new Promise(() => {});
+    };
+    await f.pool.query('UPDATE app_connections SET revoked=false WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    const unblocked = <T>(work: Promise<T>) =>
+      Promise.race([
+        work,
+        delay(2000).then(() => assert.fail('Session cleanup must not hold the result.')),
+      ]);
+    assert.deepEqual(await unblocked(f.service.execute('local-development', action, args)), {
+      ok: true,
+    });
+    f.session.execute = async () => {
+      throw new Error('Synthetic provider failure.');
+    };
+    await assert.rejects(unblocked(f.service.execute('local-development', action, args)), {
+      statusCode: 502,
+    });
+    assert.deepEqual(deleting, [f.session.id, f.session.id]);
   },
 );
 
@@ -2455,6 +2543,7 @@ test(
     await send('112233445566');
     for (let attempt = 0; attempt < 100 && !f.wakes.length; attempt++) await delay(10);
     assert.equal(f.wakes.length, 1);
+    await send('112233445566');
     await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
       selected.connectionId,
     ]);
@@ -2467,7 +2556,6 @@ test(
     assert.equal(receipts.length, 2);
     assert.equal(new Set(f.wakes).size, 2);
     assert.equal(f.wakes.length, 2);
-    assert.deepEqual(f.wakeIntents, ['inspect_message', 'inspect_message']);
     assert.match(receipts[0].summary, /112233445566/);
     assert.match(receipts[1].summary, /223344556677/);
     assert.match(receipts[1].summary, /998877665544/);
@@ -2482,7 +2570,6 @@ test(
     await send('');
     for (let attempt = 0; attempt < 100 && f.wakes.length < 3; attempt++) await delay(10);
     assert.equal(f.wakes.length, 3);
-    assert.equal(f.wakeIntents.at(-1), 'classify');
     const calendar = await f.connect('googlecalendar');
     await f.app.inject({
       method: 'POST',
@@ -2500,7 +2587,6 @@ test(
     });
     for (let attempt = 0; attempt < 100 && f.wakes.length < 4; attempt++) await delay(10);
     assert.equal(f.wakes.length, 4);
-    assert.equal(f.wakeIntents.at(-1), 'classify');
     assert.equal(f.executed.length, 0);
   },
 );
@@ -2668,7 +2754,7 @@ test(
         t,
         {},
         {
-          wake: async (_summary, _id, _intent, current) => {
+          wake: async (_summary, _id, current) => {
             enter();
             await released;
             const client = await f.pool.connect();
@@ -3020,17 +3106,89 @@ test(
 );
 
 test(
-  'Slack and Notion keep owned accounts, direct actions and signed event boundaries',
+  'Gmail inbox accounts and queued updates keep working after the session cache and event intent are dropped',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const gmail = await f.connect('gmail');
+    await f.app.close();
+    await f.pool.query(`
+      ALTER TABLE integration_events ADD COLUMN intent text NOT NULL DEFAULT 'classify';
+      CREATE TABLE integration_sessions (
+        owner_id text PRIMARY KEY, session_id text NOT NULL,
+        provider_id text NOT NULL DEFAULT 'composio', configuration_version integer NOT NULL DEFAULT 1
+      );
+      INSERT INTO integration_sessions VALUES('local-development','old-session','fixture',3);
+    `);
+    await f.pool.query(
+      "UPDATE app_connections SET inbox_cursor='old-cursor',inbox_checked_at=now() WHERE id=$1",
+      [gmail.connectionId],
+    );
+    await f.pool.query(
+      `INSERT INTO integration_events(id,owner_id,summary,slug,account_id,provider_id,poll_connection_id,intent)
+       VALUES('fixture:gmail:legacy','local-development','Legacy inbox update','gmail',$1,'fixture',$2,'inspect_message')`,
+      [gmail.accountId, gmail.connectionId],
+    );
+    const woken: string[] = [];
+    const upgraded = await createIntegrations(f.pool, {
+      ownerId: 'local-development',
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async (_summary, id) => {
+        woken.push(id);
+      },
+    });
+    assert.equal(
+      (
+        await f.pool.query(
+          `SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema()
+           AND table_name='integration_events' AND column_name='intent'`,
+        )
+      ).rowCount,
+      0,
+    );
+    assert.equal(
+      (await f.pool.query("SELECT to_regclass('integration_sessions') AS name")).rows[0].name,
+      null,
+    );
+    for (let attempt = 0; attempt < 100 && !f.removed.includes('old-session'); attempt++)
+      await delay(10);
+    assert.ok(f.removed.includes('old-session'));
+    assert.equal(
+      (
+        await f.pool.query('SELECT inbox_cursor FROM app_connections WHERE id=$1', [
+          gmail.connectionId,
+        ])
+      ).rows[0].inbox_cursor,
+      'old-cursor',
+    );
+    const listed = (await upgraded.list()).find((item) => item.connectionId === gmail.connectionId);
+    assert.equal(listed?.status, 'connected');
+    assert.equal(listed?.triggerStatus, 'active');
+    await upgraded.drain();
+    assert.deepEqual(woken, ['fixture:gmail:legacy']);
+    assert.deepEqual(
+      await upgraded.execute('local-development', 'GMAIL_LIST_LABELS', {
+        connectionId: gmail.connectionId,
+      }),
+      { ok: true },
+    );
+    assert.deepEqual(f.sessions.at(-1), { gmail: [gmail.accountId] });
+  },
+);
+
+test(
+  'Slack and Docs keep owned accounts, direct actions and signed event boundaries',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const f = await appsFixture(t);
     const slack = await f.connect('slack');
     const another = await f.connect('slack');
-    const notion = await f.connect('notion');
+    const docs = await f.connect('googledocs');
     assert.equal((await f.app.inject({ url: '/api/connections' })).statusCode, 404);
     assert.equal((await f.service.list()).length, 9);
     assert.equal(slack.triggerStatus, 'active');
-    assert.equal(notion.triggerStatus, 'active');
+    assert.equal(docs.triggerStatus, 'active');
     await assert.rejects(
       f.service.execute('local-development', 'SLACK_SEARCH_MESSAGES', { query: 'project' }),
       { statusCode: 409 },
@@ -3039,16 +3197,16 @@ test(
       connectionId: another.connectionId,
       query: 'project',
     });
-    await f.service.execute('local-development', 'NOTION_RETRIEVE_PAGE', {
-      connectionId: notion.connectionId,
-      page_id: 'fixture-page',
+    await f.service.execute('local-development', 'GOOGLEDOCS_GET_DOCUMENT_BY_ID', {
+      connectionId: docs.connectionId,
+      id: 'fixture-document',
     });
     assert.deepEqual(f.executed, [
       { action: 'SLACK_SEARCH_MESSAGES', args: { query: 'project' }, accountId: another.accountId },
       {
-        action: 'NOTION_RETRIEVE_PAGE',
-        args: { page_id: 'fixture-page' },
-        accountId: notion.accountId,
+        action: 'GOOGLEDOCS_GET_DOCUMENT_BY_ID',
+        args: { id: 'fixture-document' },
+        accountId: docs.accountId,
       },
     ]);
     for (const [action, connectionId] of [
@@ -3056,8 +3214,8 @@ test(
       ['SLACK_ENABLE_PUBLIC_SHARING_OF_A_FILE', slack.connectionId],
       ['SLACK_DOWNLOAD_SLACK_FILE', slack.connectionId],
       ['SLACK_GET_AND_DELETE_MESSAGES', slack.connectionId],
-      ['NOTION_UPDATE_PAGE', notion.connectionId],
-      ['NOTION_CREATE_FILE_UPLOAD', notion.connectionId],
+      ['GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT', docs.connectionId],
+      ['GOOGLEDOCS_CREATE_DOCUMENT', docs.connectionId],
     ]) {
       const result = await f.service.execute('local-development', action!, { connectionId });
       assert.deepEqual(result, { ok: true });
@@ -3069,12 +3227,12 @@ test(
         { action: 'SLACK_ENABLE_PUBLIC_SHARING_OF_A_FILE', accountId: slack.accountId },
         { action: 'SLACK_DOWNLOAD_SLACK_FILE', accountId: slack.accountId },
         { action: 'SLACK_GET_AND_DELETE_MESSAGES', accountId: slack.accountId },
-        { action: 'NOTION_UPDATE_PAGE', accountId: notion.accountId },
-        { action: 'NOTION_CREATE_FILE_UPLOAD', accountId: notion.accountId },
+        { action: 'GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT', accountId: docs.accountId },
+        { action: 'GOOGLEDOCS_CREATE_DOCUMENT', accountId: docs.accountId },
       ],
     );
     await assert.rejects(
-      f.service.execute('local-development', 'NOTION_RETRIEVE_PAGE', {
+      f.service.execute('local-development', 'GOOGLEDOCS_GET_DOCUMENT_BY_ID', {
         connectionId: slack.connectionId,
       }),
       { statusCode: 404 },
@@ -3110,7 +3268,7 @@ test(
     await f.service.drain();
     const receipts = (await f.pool.query('SELECT * FROM integration_events')).rows;
     assert.equal(receipts.length, 1);
-    assert.equal(receipts[0].summary.includes('private message body'), false);
+    assert.equal(receipts[0].summary.includes('private message body'), true);
     assert.equal(receipts[0].summary.includes('private-token'), false);
     assert.match(receipts[0].summary, /D-fixture/);
     assert.equal(
@@ -3307,7 +3465,6 @@ async function searchFixture(
     controller?: AbortController;
     search?: IntegrationSession['search'];
     execute?: IntegrationSession['execute'];
-    observe?: (event: RuntimeObservation) => Promise<void>;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-integration-search-recovery-'));
@@ -3344,7 +3501,6 @@ async function searchFixture(
   const calls: Array<{ action: string; args: Record<string, unknown>; accountId?: string }> = [];
   const sessions: Array<{ owner: string; accounts: unknown }> = [];
   const events: string[] = [];
-  const observations: RuntimeObservation[] = [];
   const modelResults: unknown[] = [];
   const session: IntegrationSession = {
     id: 'fixture-search-session',
@@ -3371,7 +3527,6 @@ async function searchFixture(
       sessions.push({ owner: sessionOwner, accounts });
       return session;
     },
-    restoreSession: async () => session,
     deleteSession: async () => {},
     inspectAccount: async (id) => ({
       active: true,
@@ -3444,10 +3599,6 @@ async function searchFixture(
     emit: async (type) => {
       events.push(type);
     },
-    observe: async (event) => {
-      observations.push(event);
-      await options.observe?.(event);
-    },
     reply: async () => {},
     delta() {},
     publish: async () => {
@@ -3467,7 +3618,6 @@ async function searchFixture(
     calls,
     sessions,
     events,
-    observations,
     modelResults,
     owner,
     connectionId,
@@ -3492,7 +3642,6 @@ test(
     assert.deepEqual(f.searches, []);
     assert.deepEqual(f.sessions, []);
     assert.deepEqual(f.calls, []);
-    assert.doesNotMatch(JSON.stringify(f.observations), /fixture-foreign/);
   },
 );
 
@@ -3522,8 +3671,6 @@ test(
     });
     assert.equal(f.calls.length, 1);
     assert.deepEqual(f.modelResults, []);
-    assert.match(JSON.stringify(f.observations), /private-provider-diagnostic/);
-    assert.doesNotMatch(JSON.stringify(f.observations), leaked);
   },
 );
 
@@ -3557,7 +3704,6 @@ test(
     assert.equal(f.searches.length, 1);
     assert.deepEqual(f.calls, []);
     assert.deepEqual(f.modelResults, []);
-    assert.equal(f.observations.filter((event) => event.type === 'tool_end').length, 1);
   },
 );
 
@@ -3593,9 +3739,7 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   });
   const accounts = new Map([['old-account', remoteAccount('old-account', 'EXPIRED')]]);
   const emails = new Map([['old-account', 'work@example.test']]);
-  const configurations = new Map<string, Record<string, unknown>>([
-    ['old-execution-session', { connected_accounts: { gmail: ['old-account'] } }],
-  ]);
+  const configurations = new Map<string, Record<string, unknown>>();
   const links: Array<{ id: string; accountId: string; callback: URL }> = [];
   const removed: string[] = [];
   const unsubscribed: string[] = [];
@@ -3636,10 +3780,6 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     const id = `recovery-session-${++nextSession}`;
     configurations.set(id, config);
     await control.pause('create', id);
-    return snapshot(id);
-  });
-  t.mock.method(transport, 'retrieve', async (id: string) => {
-    await control.pause('restore', id);
     return snapshot(id);
   });
   t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
@@ -3709,16 +3849,6 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   const integrations = await createIntegrations(pool, {
     ownerId,
     provider,
-    additionalProviders: [
-      {
-        ...provider,
-        id: 'different-default',
-        supportedServices: ['gmail'],
-        reconnectAccount: async () => assert.fail('Reconnect must retain the saved provider.'),
-        createSession: async () =>
-          assert.fail('Saved accounts must execute through their original provider.'),
-      },
-    ],
     baseUrl: 'http://localhost:4310',
     wake: async () => {},
     resumeConnection: async (turnId, service) => {
@@ -3740,11 +3870,6 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     [ownerId, watchRequested],
   );
   const connectionId = inserted.rows[0].id;
-  await pool.query(
-    `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_version)
-     VALUES($1,'old-execution-session','composio',3)`,
-    [ownerId],
-  );
   await pool.query(
     `INSERT INTO integration_events(id,owner_id,summary,slug,account_id,trigger_id,provider_id,poll_connection_id)
      VALUES('old-event',$1,'Synthetic old update','gmail','old-account','old-trigger','composio',$2)`,
@@ -3869,8 +3994,6 @@ test(
           (await f.pool.query('SELECT state,poll_connection_id FROM integration_events')).rows,
           [{ state: 'discarded', poll_connection_id: f.connectionId }],
         );
-        assert.equal((await f.pool.query('SELECT * FROM integration_sessions')).rowCount, 0);
-        assert.equal(f.removed.includes('old-execution-session'), true);
         await f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
           connectionId: f.connectionId,
           user_id: 'me',
@@ -4048,7 +4171,6 @@ test(
           assert.equal(after[key], before[key], key);
         assert.equal(f.accounts.has('old-account'), true);
         assert.equal(f.removed.includes('old-account'), false);
-        assert.equal(f.removed.includes('old-execution-session'), false);
         const retained = ['owner', 'missing-owner', 'id', 'already-saved'].includes(kind);
         assert.equal(f.accounts.has(link.accountId), retained);
         assert.equal(f.removed.includes(link.accountId), !retained);
@@ -4061,10 +4183,6 @@ test(
         assert.equal(
           (await f.pool.query('SELECT state FROM integration_events')).rows[0].state,
           'queued',
-        );
-        assert.equal(
-          (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
-          'old-execution-session',
         );
         assert.equal(await f.complete(link), 'expired');
         if (kind !== 'expired')
@@ -4161,7 +4279,6 @@ test(
         assert.deepEqual(f.subscribed, []);
         assert.equal(f.accounts.has('old-account'), false);
         assert.equal(f.accounts.has(f.links[0].accountId), false);
-        assert.equal((await f.pool.query('SELECT * FROM integration_sessions')).rowCount, 0);
       });
   },
 );
@@ -4200,119 +4317,6 @@ test(
     assert.deepEqual(f.unsubscribed, ['updated-trigger']);
     assert.deepEqual(f.subscribed, []);
     assert.equal(f.removed.filter((id) => id === 'old-account').length, 1);
-  },
-);
-
-test(
-  'managed reconnect discards in-flight session creation without overwriting its replacement session',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await managedReconnectFixture(t);
-    await f.pool.query('DELETE FROM integration_sessions');
-    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
-      f.connectionId,
-    ]);
-    const entered = deferred();
-    const release = deferred();
-    let staleSession = '';
-    f.control.pause = async (phase, id) => {
-      const bindings = f.configurations.get(id)?.connected_accounts as Record<string, string[]>;
-      if (phase !== 'create' || !bindings?.gmail?.includes('old-account')) return;
-      staleSession = id;
-      entered.resolve();
-      await release.promise;
-    };
-    const execute = () =>
-      f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
-        connectionId: f.connectionId,
-        user_id: 'me',
-      });
-    const oldExecution = assert.rejects(execute());
-    await entered.promise;
-    assert.equal((await f.reconnect()).statusCode, 200);
-    const link = f.links[0];
-    f.accounts.get(link.accountId)!.status = 'ACTIVE';
-    assert.equal(await f.complete(link), 'connected');
-    await execute();
-    const replacementSession = (await f.pool.query('SELECT session_id FROM integration_sessions'))
-      .rows[0].session_id;
-    assert.notEqual(replacementSession, staleSession);
-    release.resolve();
-    await oldExecution;
-    assert.equal(
-      (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
-      replacementSession,
-    );
-    assert.equal(f.removed.includes(staleSession), true);
-    assert.equal(f.removed.includes(replacementSession), false);
-    const sessionCount = f.configurations.size;
-    await execute();
-    assert.equal(f.configurations.size, sessionCount);
-    assert.deepEqual(f.executed.at(-1), { action: 'GMAIL_LIST_LABELS', account: link.accountId });
-  },
-);
-
-test(
-  'a stale restore cannot delete the saved session reused after a failed reset',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await managedReconnectFixture(t);
-    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
-      f.connectionId,
-    ]);
-    const other = await f.pool.query<{ id: string }>(
-      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active)
-       VALUES($1,'gmail','other-account','composio',true) RETURNING id`,
-      [f.ownerId],
-    );
-    const query = f.pool.query;
-    let failReset = true;
-    t.mock.method(f.pool, 'query', function (this: pg.Pool, ...args: unknown[]) {
-      if (
-        failReset &&
-        typeof args[0] === 'string' &&
-        args[0].startsWith('DELETE FROM integration_sessions') &&
-        args[0].includes('RETURNING')
-      ) {
-        failReset = false;
-        return Promise.reject(new Error('Synthetic session reset failure.'));
-      }
-      return Reflect.apply(query, this, args);
-    });
-    const entered = deferred();
-    const release = deferred();
-    let restores = 0;
-    f.control.pause = async (phase, id) => {
-      if (phase !== 'restore' || id !== 'old-execution-session') return;
-      restores++;
-      if (restores !== 1) return;
-      entered.resolve();
-      await release.promise;
-    };
-    const execute = () =>
-      f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
-        connectionId: f.connectionId,
-        user_id: 'me',
-      });
-    const stale = assert.rejects(execute());
-    await entered.promise;
-    const response = await f.app.inject({
-      method: 'POST',
-      url: `/api/apps/gmail/accounts/${other.rows[0].id}/disconnect`,
-    });
-    assert.equal(response.statusCode, 502);
-    assert.equal(failReset, false);
-    await execute();
-    assert.equal(restores, 2);
-    release.resolve();
-    await stale;
-    assert.equal(f.removed.includes('old-execution-session'), false);
-    assert.equal(
-      (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
-      'old-execution-session',
-    );
-    await execute();
-    assert.equal(restores, 2);
   },
 );
 
@@ -4432,7 +4436,6 @@ test(
           ...(input.cursor ? { cursor: input.cursor } : {}),
         });
         assert.equal(options.signal.aborted, false);
-        assert.equal(options.maxRetries, 0);
         if (authFailure === 'permission')
           throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
         if (authFailure === 'transport') throw new Error('synthetic-private-auth-detail');
@@ -4461,9 +4464,7 @@ test(
         };
       },
     );
-    const configurations = new Map<string, Record<string, unknown>>([
-      ['execution-session', { connected_accounts: { gmail: ['existing-account'] } }],
-    ]);
+    const configurations = new Map<string, Record<string, unknown>>();
     function session(id: string) {
       return {
         session_id: id,
@@ -4472,7 +4473,6 @@ test(
         config_version: 1,
       };
     }
-    t.mock.method(transport, 'retrieve', async (id: string) => session(id));
     t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
       const id = `consent-session-${created.length + 1}`;
       configurations.set(id, {
@@ -4493,7 +4493,6 @@ test(
         input: Record<string, unknown>,
         options: { signal: AbortSignal; maxRetries: number },
       ) => {
-        assert.notEqual(id, 'execution-session');
         assert.equal(input.expected_config_version, 1);
         assert.equal(options.signal.aborted, false);
         assert.equal(options.maxRetries, 0);
@@ -4505,6 +4504,7 @@ test(
         return { ...session(id), config_version: 2 };
       },
     );
+    let consentOrigin = 'https://connect.composio.dev';
     let failure: 'provider' | 'url' | undefined;
     let cleanupFailure = false;
     t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
@@ -4528,7 +4528,7 @@ test(
         redirect_url:
           failure === 'url'
             ? 'https://untrusted.example/connect'
-            : 'https://connect.composio.dev/link/synthetic-consent',
+            : `${consentOrigin}/link/synthetic-consent`,
       };
     });
     t.mock.method(
@@ -4540,7 +4540,6 @@ test(
         assert.equal(options.signal.aborted, false);
         const id = decodeURIComponent(path.split('/').at(-1)!);
         deleted.push(id);
-        assert.notEqual(id, 'execution-session');
         if (cleanupFailure) throw new Error('synthetic-private-cleanup-detail');
         return { session_id: id, deleted: true };
       },
@@ -4556,7 +4555,9 @@ test(
       transport,
       'execute',
       async (id: string, input: Record<string, unknown>) => {
-        assert.equal(id, 'execution-session');
+        assert.deepEqual(configurations.get(id)?.connected_accounts, {
+          gmail: ['existing-account'],
+        });
         assert.equal(input.account, 'existing-account');
         return { data: { labels: [] }, error: null, log_id: 'synthetic-log' };
       },
@@ -4575,10 +4576,6 @@ test(
     const account = await pool.query<{ id: string }>(
       `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at)
        VALUES('local-development','gmail','existing-account','composio',true,now()) RETURNING id`,
-    );
-    await pool.query(
-      `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_version)
-       VALUES('local-development','execution-session','composio',3)`,
     );
     await pool.query(
       `INSERT INTO app_connections(owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id)
@@ -4618,9 +4615,6 @@ test(
     const callback = new URL(String(links[0].input.callback_url));
     assert.equal(callback.pathname, '/api/apps/callback');
     assert.match(callback.searchParams.get('state')!, /^[A-Za-z0-9_-]{43}$/);
-    assert.deepEqual((await pool.query('SELECT session_id FROM integration_sessions')).rows, [
-      { session_id: 'execution-session' },
-    ]);
     assert.deepEqual(
       (
         await pool.query(
@@ -4695,843 +4689,12 @@ test(
     );
     failure = undefined;
     cleanupFailure = true;
+    consentOrigin = 'https://app.composio.dev';
     const accepted = await connect();
     assert.equal(accepted.statusCode, 200);
+    assert.equal(accepted.json().url, 'https://app.composio.dev/link/synthetic-consent');
     assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 3);
     assert.equal(deleted.at(-1), created.at(-1)!.id);
-  },
-);
-
-test(
-  'direct Linear OAuth uses read access and keeps tokens encrypted',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `direct_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const address = new URL(process.env.TEST_DATABASE_URL!);
-    address.searchParams.set('options', `-c search_path=${schema}`);
-    const pool = new pg.Pool({ connectionString: address.href });
-    const secretKey = randomBytes(32);
-    const keyStore = { id: 'fixture', configured: true, getKey: async () => secretKey };
-    const redirectUris: string[] = [];
-    let tokenRequests = 0;
-    let refreshRequests = 0;
-    let mcpRequests = 0;
-    const request: typeof fetch = async (input, init) => {
-      const url = String(input);
-      if (url === 'https://mcp.linear.app/mcp/readonly') {
-        mcpRequests += 1;
-        throw new Error('The synthetic MCP server is unavailable.');
-      }
-      if (url.endsWith('/.well-known/oauth-protected-resource/mcp/readonly'))
-        return Response.json({ authorization_servers: ['https://mcp.linear.app'] });
-      if (url.endsWith('/.well-known/oauth-authorization-server'))
-        return Response.json({
-          issuer: 'https://mcp.linear.app',
-          authorization_response_iss_parameter_supported: true,
-          authorization_endpoint: 'https://mcp.linear.app/authorize',
-          token_endpoint: 'https://mcp.linear.app/token',
-          registration_endpoint: 'https://mcp.linear.app/register',
-        });
-      if (url.endsWith('/register')) {
-        const body = JSON.parse(String(init?.body));
-        assert.equal(body.scope, 'read');
-        redirectUris.push(body.redirect_uris[0]);
-        return Response.json({ client_id: 'fixture-client' });
-      }
-      if (url.endsWith('/token')) {
-        tokenRequests += 1;
-        const body = init?.body as URLSearchParams;
-        assert.equal(body.get('client_id'), 'fixture-client');
-        assert.equal(body.get('resource'), 'https://mcp.linear.app/mcp/readonly');
-        if (body.get('grant_type') === 'refresh_token') {
-          refreshRequests += 1;
-          assert.equal(
-            body.get('refresh_token'),
-            refreshRequests === 1 ? 'private-refresh-token' : 'first-refresh-token',
-          );
-          return Response.json({
-            access_token:
-              refreshRequests === 1 ? 'first-refreshed-access-token' : 'refreshed-access-token',
-            refresh_token:
-              refreshRequests === 1 ? 'first-refresh-token' : 'refreshed-refresh-token',
-            expires_in: refreshRequests === 1 ? 0 : 3600,
-          });
-        }
-        assert.ok(body.get('code_verifier'));
-        return Response.json({
-          access_token: 'private-access-token',
-          refresh_token: 'private-refresh-token',
-          expires_in: 0,
-        });
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    };
-    try {
-      const grantVault = await createAppGrantVault(pool, {
-        ownerId: 'fixture-owner',
-        keyStore,
-      });
-      const provider = createDirectProvider({
-        pool,
-        keyStore,
-        grantVault,
-        ownerId: 'fixture-owner',
-        request,
-      });
-      assert.deepEqual(provider.supportedServices, ['notion', 'linear']);
-      const session = await provider.createSession('fixture-owner', {});
-      const state = randomBytes(32).toString('base64url');
-      const attempt = await session.authorize(
-        'linear',
-        `http://localhost:4310/api/apps/callback?state=${state}`,
-      );
-      const url = new URL(attempt.url);
-      assert.equal(url.origin, 'https://mcp.linear.app');
-      assert.equal(url.searchParams.get('scope'), 'read');
-      assert.equal(url.searchParams.get('resource'), 'https://mcp.linear.app/mcp/readonly');
-      assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:4310/api/apps/callback');
-      const hostedState = randomBytes(32).toString('base64url');
-      const hosted = await session.authorize(
-        'linear',
-        `https://sidekick.example/api/apps/callback?state=${hostedState}`,
-      );
-      assert.equal(
-        new URL(hosted.url).searchParams.get('redirect_uri'),
-        'https://sidekick.example/api/apps/callback',
-      );
-      assert.deepEqual(redirectUris, [
-        'http://127.0.0.1:4310/api/apps/callback',
-        'https://sidekick.example/api/apps/callback',
-      ]);
-      await assert.rejects(
-        Promise.resolve().then(() =>
-          provider.parseCallback({ state: 'wrong', code: 'fixture-code' }),
-        ),
-      );
-      await assert.rejects(() =>
-        Promise.resolve(provider.parseCallback({ state, code: 'fixture-code' })),
-      );
-      const callback = await provider.parseCallback({
-        state,
-        code: 'fixture-code',
-        iss: 'https://mcp.linear.app',
-      });
-      assert.deepEqual(callback, { state, accountId: attempt.accountId, success: true });
-      const stored = await pool.query<{ ciphertext: string }>(
-        'SELECT ciphertext FROM vault_app_grants WHERE id=$1',
-        [attempt.accountId],
-      );
-      assert.doesNotMatch(stored.rows[0].ciphertext, /private-access-token|fixture-client/);
-      const oauth = createDirectOAuth({
-        pool,
-        keyStore,
-        grantVault,
-        ownerId: 'fixture-owner',
-        request,
-      });
-      assert.deepEqual(await oauth.access('fixture-owner', attempt.accountId), {
-        service: 'linear',
-        accessToken: 'first-refreshed-access-token',
-      });
-      assert.equal(refreshRequests, 1);
-      assert.deepEqual(await oauth.access('fixture-owner', attempt.accountId), {
-        service: 'linear',
-        accessToken: 'refreshed-access-token',
-      });
-      assert.equal(refreshRequests, 2);
-      await oauth.access('fixture-owner', attempt.accountId);
-      assert.equal(refreshRequests, 2);
-      assert.doesNotMatch(
-        (
-          await pool.query<{ ciphertext: string }>(
-            'SELECT ciphertext FROM vault_app_grants WHERE id=$1',
-            [attempt.accountId],
-          )
-        ).rows[0].ciphertext,
-        /refreshed-access-token/,
-      );
-      const expiredId = randomUUID();
-      await pool.query(
-        `INSERT INTO direct_oauth_accounts(id,owner_id,service,connected,expires_at)
-         VALUES($1,$2,'linear',false,now()-interval '1 minute')`,
-        [expiredId, 'fixture-owner'],
-      );
-      await pool.query(
-        `INSERT INTO direct_oauth_accounts(id,owner_id,service,connected)
-         VALUES($1,$2,$3,true)`,
-        ['00000000-0000-0000-0000-000000000001', 'fixture-owner', 'linear'],
-      );
-      const recovered = createDirectOAuth({
-        pool,
-        keyStore,
-        grantVault,
-        ownerId: 'fixture-owner',
-        request,
-      });
-      assert.equal(
-        (await recovered.access('fixture-owner', attempt.accountId)).accessToken,
-        'refreshed-access-token',
-      );
-      assert.equal(
-        (await pool.query('SELECT id FROM direct_oauth_accounts WHERE id=$1', [expiredId]))
-          .rowCount,
-        0,
-      );
-      const connectedSession = await provider.createSession('fixture-owner', {
-        linear: ['00000000-0000-0000-0000-000000000001', attempt.accountId],
-      });
-      assert.deepEqual((await connectedSession.search('linear')).tools, {});
-      assert.ok(mcpRequests > 0);
-      assert.deepEqual((await session.search('linear')).tools, {});
-      await assert.rejects(
-        session.execute('LINEAR_DELETE_ISSUE', {}, attempt.accountId),
-        /unavailable/,
-      );
-      assert.deepEqual(
-        await provider.parseCallback({
-          state,
-          code: 'fixture-code',
-          iss: 'https://mcp.linear.app',
-        }),
-        callback,
-      );
-      assert.equal(tokenRequests, 3);
-      const raceState = randomBytes(32).toString('base64url');
-      const race = await oauth.authorize(
-        'fixture-owner',
-        'linear',
-        `http://localhost:4310/api/apps/callback?state=${raceState}`,
-      );
-      let resumeRead = () => {};
-      let readStarted = () => {};
-      const readWait = new Promise<void>((resolve) => {
-        resumeRead = resolve;
-      });
-      const started = new Promise<void>((resolve) => {
-        readStarted = resolve;
-      });
-      const errorCallback = createDirectOAuth({
-        pool,
-        keyStore,
-        grantVault: {
-          ...grantVault,
-          read: async (id) => {
-            const grant = await grantVault.read(id);
-            if (id === race.accountId) {
-              readStarted();
-              await readWait;
-            }
-            return grant;
-          },
-        },
-        ownerId: 'fixture-owner',
-        request,
-      });
-      const errorResult = errorCallback.parseCallback({
-        state: raceState,
-        error: 'access_denied',
-        iss: 'https://mcp.linear.app',
-      });
-      await started;
-      try {
-        await oauth.parseCallback({
-          state: raceState,
-          code: 'fixture-code',
-          iss: 'https://mcp.linear.app',
-        });
-      } finally {
-        resumeRead();
-      }
-      assert.deepEqual(await errorResult, {
-        state: raceState,
-        accountId: race.accountId,
-        success: false,
-      });
-      assert.equal(
-        JSON.parse((await grantVault.read(race.accountId)).value).accessToken,
-        'private-access-token',
-      );
-    } finally {
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
-test(
-  'direct Notion and Linear accounts preserve native setup beside existing HTTP and Composio accounts',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `direct_routes_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const app = Fastify();
-    const calls: string[] = [];
-    const authorizations: string[] = [];
-    const resumes: string[] = [];
-    const directAccounts: Array<Record<string, unknown>> = [];
-    let composioSearchFails = false;
-    let directSearchFails = false;
-    let failInspectOnce = false;
-    let state = '';
-    let lastService = 'notion';
-    const session = (id: string): IntegrationSession => ({
-      id,
-      authorize: async (service, callback) => {
-        authorizations.push(`${id}:${service}`);
-        if (id === 'direct') {
-          state = new URL(callback).searchParams.get('state')!;
-          lastService = service;
-        }
-        return { accountId: `${id}-${service}`, url: 'https://example.test/authorize' };
-      },
-      search: async () => {
-        if ((id === 'composio' && composioSearchFails) || (id === 'direct' && directSearchFails))
-          throw new Error('Provider unavailable.');
-        return {
-          tools: {
-            [`${id}_tool`]: {},
-            NOTION_RETRIEVE_PAGE: { provider: id },
-            ...(id === 'composio' ? { NOTION_FETCH_DATABASE: { provider: id } } : {}),
-          },
-          suggestions: [],
-        };
-      },
-      execute: async (action) => {
-        calls.push(`${id}:${action}`);
-        return { id };
-      },
-    });
-    const provider = (
-      id: string,
-      services: IntegrationProvider['supportedServices'],
-    ): IntegrationProvider => ({
-      id,
-      configured: true,
-      supportedServices: services,
-      webhooksConfigured: false,
-      supportsSubscriptions: [],
-      createSession: async (_ownerId, accounts) => {
-        if (id === 'direct') directAccounts.push(accounts);
-        return session(id);
-      },
-      restoreSession: async () => session(id),
-      deleteSession: async () => {},
-      inspectAccount: async (accountId) => {
-        if (accountId.endsWith('linear') && failInspectOnce) {
-          failInspectOnce = false;
-          throw new Error('Temporary MCP failure.');
-        }
-        return { active: true, service: accountId.endsWith('linear') ? 'linear' : 'notion' };
-      },
-      deleteAccount: async () => {},
-      parseCallback: async (query) => ({
-        state: (query as { state: string }).state,
-        accountId: `direct-${lastService}`,
-        success: true,
-      }),
-      subscribe: async () => ({ id: '' }),
-      unsubscribe: async () => {},
-      verifyWebhook: async () => {
-        throw new Error('Unavailable.');
-      },
-      matchesSubscription: () => false,
-    });
-    try {
-      const key = randomBytes(32);
-      const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
-      const grantVault = await createAppGrantVault(pool, {
-        ownerId: 'local-development',
-        keyStore,
-      });
-      const unavailableFetch = async () => {
-        throw new Error('Native setup must not contact a discovered connection.');
-      };
-      const discovered = await createDiscoveredConnections(pool, {
-        ownerId: 'local-development',
-        baseUrl: 'http://localhost:4310',
-        grantVault,
-        transport: createDiscoveredTransport(unavailableFetch),
-        oauth: createDiscoveredOAuth(unavailableFetch),
-      });
-      const httpId = randomUUID();
-      const foreignHttpId = randomUUID();
-      const httpPaths = [
-        {
-          id: randomUUID(),
-          kind: 'http',
-          endpoint: 'https://example.test/notion/api',
-          auth: 'bearer',
-          testPath: 'me',
-        },
-      ];
-      for (const [id, owner] of [
-        [httpId, 'local-development'],
-        [foreignHttpId, 'another-owner'],
-      ])
-        await pool.query(
-          `INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths)
-           VALUES($1,$2,'notion','Notion','HTTP account',$3)`,
-          [id, owner, JSON.stringify(httpPaths)],
-        );
-      const integrations = await createIntegrations(pool, {
-        ownerId: 'local-development',
-        provider: provider('composio', ['notion']),
-        additionalProviders: [provider('direct', ['notion', 'linear'])],
-        discovered,
-        resumeConnection: async (turnId, service) => {
-          resumes.push(`${turnId}:${service}`);
-          return true;
-        },
-        baseUrl: 'http://localhost:4310',
-        wake: async () => {},
-      });
-      integrations.registerRoutes(app);
-      const existing = await pool.query<{ id: string }>(
-        `INSERT INTO app_connections(owner_id,slug,account_id,provider_id)
-         VALUES('local-development','notion','composio-notion','composio') RETURNING id`,
-      );
-      const foreignNative = await pool.query<{ id: string }>(
-        `INSERT INTO app_connections(owner_id,slug,account_id,provider_id)
-         VALUES('another-owner','notion','foreign-notion','direct') RETURNING id`,
-      );
-      const listed = await integrations.manageConnections('list');
-      assert.ok(Array.isArray(listed));
-      const inventory = listed.flatMap((item) => ('slug' in item ? [item] : []));
-      assert.deepEqual(inventory.find((item) => item.connectionId === httpId)?.accessPaths, [
-        { id: httpPaths[0].id, kind: 'http', endpoint: httpPaths[0].endpoint },
-      ]);
-      assert.equal(
-        inventory.some((item) =>
-          [foreignHttpId, foreignNative.rows[0].id].includes(item.connectionId ?? ''),
-        ),
-        false,
-      );
-      const legacy = await integrations.execute('local-development', 'SEARCH_TOOLS', {
-        query: 'notion',
-      });
-      assert.ok((legacy as { tools: Record<string, unknown> }).tools.NOTION_FETCH_DATABASE);
-      const connect = await integrations.manageConnections('connect', 'notion');
-      assert.equal('accounts' in connect, false);
-      assert.equal('url' in connect && connect.url, 'https://example.test/authorize');
-      const callback = await app.inject({ url: `/api/apps/callback?state=${state}&code=fixture` });
-      assert.equal(callback.headers.location, 'http://localhost:4310/apps?connection=connected');
-      const rows = (await integrations.list()).filter((item) => item.slug === 'notion');
-      assert.equal(rows.length, 3);
-      const direct = rows.find(
-        (item) => item.connectionId !== existing.rows[0].id && item.connectionId !== httpId,
-      )!;
-      assert.equal(direct.status, 'connected');
-      assert.equal(rows[0]?.connectionId, direct.connectionId);
-      assert.deepEqual(await integrations.manageConnections('connect', 'notion'), {
-        name: direct.name,
-        accounts: [
-          {
-            connectionId: direct.connectionId,
-            accountName: direct.accountName,
-            accountEmail: direct.accountEmail,
-          },
-        ],
-      });
-      assert.deepEqual(authorizations, ['direct:notion']);
-      assert.deepEqual(
-        await integrations.execute('local-development', 'NOTION_SEARCH_NOTION_PAGE', {}),
-        { id: 'direct' },
-      );
-      assert.deepEqual(
-        await integrations.execute('local-development', 'NOTION_SEARCH_NOTION_PAGE', {
-          connectionId: existing.rows[0].id,
-        }),
-        { id: 'composio' },
-      );
-      assert.deepEqual(
-        await integrations.execute('local-development', 'NOTION_SEARCH_NOTION_PAGE', {
-          connectionId: direct.connectionId,
-        }),
-        { id: 'direct' },
-      );
-      const search = await integrations.execute('local-development', 'SEARCH_TOOLS', {
-        query: 'notion',
-      });
-      assert.ok(
-        directAccounts.some(
-          (accounts) => Array.isArray(accounts.notion) && accounts.notion.includes('direct-notion'),
-        ),
-      );
-      assert.deepEqual(Object.keys((search as { tools: object }).tools), [
-        'composio_tool',
-        'NOTION_RETRIEVE_PAGE',
-        'direct_tool',
-        'CONNECTED_HTTP',
-        'CONNECTED_MCP_CALL',
-        'CONNECTED_CLI',
-      ]);
-      assert.deepEqual((search as { tools: Record<string, unknown> }).tools.NOTION_RETRIEVE_PAGE, {
-        provider: 'direct',
-      });
-      assert.equal(
-        Object.hasOwn(
-          (search as { tools: Record<string, unknown> }).tools,
-          'NOTION_FETCH_DATABASE',
-        ),
-        false,
-      );
-      await pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
-        direct.connectionId,
-      ]);
-      const inactive = await integrations.execute('local-development', 'SEARCH_TOOLS', {
-        query: 'notion',
-      });
-      assert.equal(directAccounts.at(-1)?.notion, undefined);
-      assert.deepEqual(
-        (inactive as { tools: Record<string, unknown> }).tools.NOTION_RETRIEVE_PAGE,
-        { provider: 'composio' },
-      );
-      assert.deepEqual(
-        await integrations.execute('local-development', 'NOTION_SEARCH_NOTION_PAGE', {}),
-        { id: 'composio' },
-      );
-      await pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
-        direct.connectionId,
-      ]);
-      composioSearchFails = true;
-      const partial = await integrations.execute('local-development', 'SEARCH_TOOLS', {
-        query: 'notion',
-      });
-      assert.deepEqual(Object.keys((partial as { tools: object }).tools), [
-        'direct_tool',
-        'NOTION_RETRIEVE_PAGE',
-        'CONNECTED_HTTP',
-        'CONNECTED_MCP_CALL',
-        'CONNECTED_CLI',
-      ]);
-      assert.match((partial as { incomplete: string }).incomplete, /composio/);
-      assert.doesNotMatch((partial as { incomplete: string }).incomplete, /direct/);
-      directSearchFails = true;
-      const unavailable = (await integrations.execute('local-development', 'SEARCH_TOOLS', {
-        query: 'notion',
-      })) as { tools: Record<string, unknown>; discovered: unknown[]; incomplete: string };
-      assert.deepEqual(Object.keys(unavailable.tools), [
-        'CONNECTED_HTTP',
-        'CONNECTED_MCP_CALL',
-        'CONNECTED_CLI',
-      ]);
-      assert.equal(unavailable.discovered.length, 1);
-      assert.match(unavailable.incomplete, /composio, direct/);
-      await pool.query("UPDATE discovered_connections SET owner_id='another-owner' WHERE id=$1", [
-        httpId,
-      ]);
-      await assert.rejects(
-        integrations.execute('local-development', 'SEARCH_TOOLS', { query: 'notion' }),
-        { message: 'App tool search failed: Provider unavailable.; Provider unavailable.' },
-      );
-      await pool.query(
-        "UPDATE discovered_connections SET owner_id='local-development' WHERE id=$1",
-        [httpId],
-      );
-      directSearchFails = false;
-      composioSearchFails = false;
-      await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
-        existing.rows[0].id,
-      ]);
-      const directOnly = await integrations.execute('local-development', 'SEARCH_TOOLS', {
-        query: 'notion',
-      });
-      assert.deepEqual(
-        (directOnly as { tools: Record<string, unknown> }).tools.NOTION_RETRIEVE_PAGE,
-        { provider: 'direct' },
-      );
-      const turnId = randomUUID();
-      await integrations.manageConnections('connect', 'linear', {
-        threadId: randomUUID(),
-        turnId,
-      });
-      failInspectOnce = true;
-      const firstCallback = await app.inject({
-        url: `/api/apps/callback?state=${state}&code=fixture`,
-      });
-      assert.equal(
-        firstCallback.headers.location,
-        'http://localhost:4310/?connection=failed&service=linear',
-      );
-      const chatCallback = await app.inject({
-        url: `/api/apps/callback?state=${state}&code=fixture`,
-      });
-      assert.equal(
-        chatCallback.headers.location,
-        'http://localhost:4310/?connection=continued&service=linear',
-      );
-      assert.deepEqual(resumes, [`${turnId}:linear`]);
-      const linear = (await integrations.list()).find((item) => item.slug === 'linear');
-      assert.equal(linear?.status, 'connected');
-      assert.deepEqual(
-        await integrations.manageConnections('connect', 'linear', {
-          threadId: randomUUID(),
-          turnId: randomUUID(),
-        }),
-        {
-          name: linear?.name,
-          accounts: [
-            {
-              connectionId: linear?.connectionId,
-              accountName: linear?.accountName,
-              accountEmail: linear?.accountEmail,
-            },
-          ],
-        },
-      );
-      assert.deepEqual(
-        await integrations.execute('local-development', 'LINEAR_LIST_PROJECTS', {
-          connectionId: linear?.connectionId,
-        }),
-        { id: 'direct' },
-      );
-      assert.deepEqual(calls, [
-        'direct:NOTION_SEARCH_NOTION_PAGE',
-        'composio:NOTION_SEARCH_NOTION_PAGE',
-        'direct:NOTION_SEARCH_NOTION_PAGE',
-        'composio:NOTION_SEARCH_NOTION_PAGE',
-        'direct:LINEAR_LIST_PROJECTS',
-      ]);
-    } finally {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
-async function directFixture(t: TestContext) {
-  const schema = `direct_fixture_${randomUUID().replaceAll('-', '')}`;
-  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-  await admin.query(`CREATE SCHEMA ${schema}`);
-  const pool = new pg.Pool({
-    connectionString: process.env.TEST_DATABASE_URL,
-    options: `-c search_path=${schema}`,
-  });
-  t.after(async () => {
-    await pool.end();
-    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-    await admin.end();
-  });
-  const owner = 'fixture-owner';
-  const key = randomBytes(32);
-  const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
-  const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
-  const server = {
-    mcpStatus: 200,
-    mcpFailure: undefined as Error | undefined,
-    tokenStatus: 200,
-    tools: ['notion-search', 'notion-fetch', 'notion-get-tool-access', 'list_issues'],
-    calls: [] as Array<{ name: string; arguments: unknown }>,
-  };
-  const request: typeof fetch = async (input, init) => {
-    const url = String(input);
-    if (url === 'https://mcp.notion.com/mcp' || url === 'https://mcp.linear.app/mcp/readonly') {
-      if (server.mcpFailure) throw server.mcpFailure;
-      if (server.mcpStatus !== 200) return new Response('revoked', { status: server.mcpStatus });
-      if (init?.method === 'GET') return new Response(null, { status: 405 });
-      const message = JSON.parse(String(init?.body));
-      if (message.id === undefined) return new Response(null, { status: 202 });
-      if (message.method === 'tools/call') {
-        server.calls.push({ name: message.params.name, arguments: message.params.arguments });
-        return Response.json({
-          jsonrpc: '2.0',
-          id: message.id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text:
-                  message.params.name === 'notion-get-tool-access'
-                    ? JSON.stringify({
-                        current_tool_access: { ai_search: { status: 'unavailable' } },
-                      })
-                    : 'synthetic result',
-              },
-            ],
-          },
-        });
-      }
-      return Response.json({
-        jsonrpc: '2.0',
-        id: message.id,
-        result:
-          message.method === 'initialize'
-            ? {
-                protocolVersion: message.params.protocolVersion,
-                capabilities: { tools: {} },
-                serverInfo: { name: 'fixture', version: '1' },
-              }
-            : { tools: server.tools.map((name) => ({ name, inputSchema: { type: 'object' } })) },
-      });
-    }
-    if (url.includes('/.well-known/oauth-protected-resource'))
-      return Response.json({ authorization_servers: [new URL(url).origin] });
-    if (url.endsWith('/.well-known/oauth-authorization-server'))
-      return Response.json({
-        issuer: new URL(url).origin,
-        authorization_endpoint: `${new URL(url).origin}/authorize`,
-        token_endpoint: `${new URL(url).origin}/token`,
-        registration_endpoint: `${new URL(url).origin}/register`,
-      });
-    if (url.endsWith('/register')) return Response.json({ client_id: 'fixture-client' });
-    if (url.endsWith('/token')) {
-      if (server.tokenStatus !== 200) return new Response('{}', { status: server.tokenStatus });
-      return Response.json({ access_token: 'synthetic-renewed-token', expires_in: 3600 });
-    }
-    throw new Error(`Unexpected request: ${url}`);
-  };
-  const oauth = createDirectOAuth({ pool, keyStore, grantVault, ownerId: owner, request });
-  await oauth.ready;
-  const provider = createDirectProvider({ pool, keyStore, grantVault, ownerId: owner, request });
-  async function account(service: 'notion' | 'linear', secrets: Record<string, unknown> = {}) {
-    const id = randomUUID();
-    await pool.query(
-      'INSERT INTO direct_oauth_accounts(id,owner_id,service,connected) VALUES($1,$2,$3,true)',
-      [id, owner, service],
-    );
-    await grantVault.put(
-      id,
-      JSON.stringify({
-        clientId: 'fixture-client',
-        accessToken: 'synthetic-access-token',
-        refreshToken: 'synthetic-refresh-token',
-        tokenEndpoint: `https://mcp.${service}.${service === 'notion' ? 'com' : 'app'}/token`,
-        expiresAt: Date.now() + 3_600_000,
-        ...secrets,
-      }),
-    );
-    return id;
-  }
-  return { owner, pool, provider, server, account };
-}
-
-test(
-  'direct Notion reads forward every argument Pi chose',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await directFixture(t);
-    const id = await f.account('notion');
-    const session = await f.provider.createSession(f.owner, { notion: [id] });
-    await session.execute(
-      'NOTION_SEARCH_NOTION_PAGE',
-      {
-        query: 'roadmap',
-        page_url: 'https://www.notion.so/team/synthetic-page',
-        query_type: 'internal',
-        filters: { created_date_range: { start_date: '2026-01-01' } },
-      },
-      id,
-    );
-    await session.execute(
-      'NOTION_RETRIEVE_PAGE',
-      { id: 'synthetic-page', include_discussions: true },
-      id,
-    );
-    assert.deepEqual(f.server.calls, [
-      { name: 'notion-get-tool-access', arguments: {} },
-      {
-        name: 'notion-search',
-        arguments: {
-          query: 'roadmap',
-          page_url: 'https://www.notion.so/team/synthetic-page',
-          query_type: 'internal',
-          filters: { created_date_range: { start_date: '2026-01-01' } },
-        },
-      },
-      { name: 'notion-fetch', arguments: { id: 'synthetic-page', include_discussions: true } },
-    ]);
-  },
-);
-
-test(
-  'direct accounts that lost their authorization turn inactive so Pi can connect them again',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await directFixture(t);
-    const healthy = await f.account('linear');
-    assert.deepEqual(await f.provider.inspectAccount(healthy, f.owner), {
-      active: true,
-      service: 'linear',
-      accountName: `Linear account ${healthy.slice(0, 8)}`,
-    });
-    f.server.mcpStatus = 401;
-    assert.deepEqual(await f.provider.inspectAccount(healthy, f.owner), {
-      active: false,
-      service: 'linear',
-    });
-    f.server.mcpStatus = 200;
-    f.server.mcpFailure = new Error('Synthetic network failure.');
-    await assert.rejects(f.provider.inspectAccount(healthy, f.owner), /Synthetic network failure/);
-    f.server.mcpFailure = undefined;
-    const uncertain = await f.account('notion', { refreshUncertain: true });
-    assert.deepEqual(await f.provider.inspectAccount(uncertain, f.owner), {
-      active: false,
-      service: 'notion',
-    });
-    const expired = await f.account('linear', { expiresAt: Date.now() - 1000 });
-    f.server.tokenStatus = 500;
-    await assert.rejects(f.provider.inspectAccount(expired, f.owner), /Provider request failed/);
-    f.server.tokenStatus = 400;
-    assert.deepEqual(await f.provider.inspectAccount(expired, f.owner), {
-      active: false,
-      service: 'linear',
-    });
-    f.server.tokenStatus = 200;
-    const app = Fastify();
-    t.after(() => app.close());
-    let refreshes = 0;
-    const integrations = await createIntegrations(f.pool, {
-      ownerId: f.owner,
-      provider: f.provider,
-      baseUrl: 'http://localhost:4310',
-      wake: async () => {},
-      refresh: () => {
-        refreshes++;
-      },
-    });
-    integrations.registerRoutes(app);
-    await f.pool.query(
-      "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES($1,'notion',$2,'direct')",
-      [f.owner, uncertain],
-    );
-    const inspected = async (before: Date | null) => {
-      for (let attempt = 0; attempt < 100; attempt++) {
-        await integrations.list(f.owner);
-        const row = await f.pool.query(
-          'SELECT account_active,account_checked_at FROM app_connections',
-        );
-        if (row.rows[0].account_checked_at && row.rows[0].account_checked_at > (before ?? 0))
-          return row.rows[0];
-        await delay(20);
-      }
-      throw new Error('The account was never inspected.');
-    };
-    const first = await inspected(null);
-    assert.equal(first.account_active, false);
-    for (let attempt = 0; attempt < 100 && refreshes < 1; attempt++) await delay(20);
-    assert.equal(refreshes, 1);
-    await f.pool.query("UPDATE app_connections SET account_checked_at=now()-interval '2 minutes'");
-    const stale = (await f.pool.query('SELECT account_checked_at FROM app_connections')).rows[0];
-    await inspected(stale.account_checked_at);
-    await delay(50);
-    assert.equal(refreshes, 1);
-    const [notion] = (await integrations.list(f.owner, { refresh: false })).filter(
-      (item) => item.slug === 'notion',
-    );
-    assert.equal(notion.status, 'disconnected');
-    const reconnect = await integrations.manageConnections('connect', 'notion');
-    assert.equal('accounts' in reconnect, false);
-    assert.match('url' in reconnect ? reconnect.url : '', /^https:\/\/mcp\.notion\.com\//);
   },
 );
 
@@ -5607,7 +4770,7 @@ test('a discovered MCP server can register, sign in and refresh without service 
 });
 
 test(
-  'discovered setup preserves owned paths, scoped checks, and atomic replacement invalidation',
+  'discovered setup preserves owned paths, scoped discovery and account replacement',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_discovery_${randomUUID().replaceAll('-', '')}`;
@@ -5628,8 +4791,6 @@ test(
       const catalogs: string[] = [];
       let cliCalls = 0;
       const cliRuns: unknown[] = [];
-      let replacementCalls = 0;
-      let failReplacement = false;
       let blocked: 'http' | 'listTools' | 'callTool' | 'cli' | undefined;
       let entered = () => {};
       const waitForAbort = async (method: typeof blocked, signal?: AbortSignal) => {
@@ -5641,9 +4802,6 @@ test(
           signal.addEventListener('abort', () => reject(signal.reason), { once: true });
         });
       };
-      await pool.query(
-        'CREATE TABLE fixture_checks(owner_id text,connection_id uuid,turn_id uuid)',
-      );
       const discovered = await createDiscoveredConnections(pool, {
         ownerId: owner,
         baseUrl: 'http://localhost:4310',
@@ -5678,14 +4836,6 @@ test(
           cliRuns.push(cli);
           await waitForAbort('cli', signal);
           throw new Error('The CLI must not run during setup.');
-        },
-        accountReplaced: async (connectionId, client) => {
-          replacementCalls++;
-          await client.query('DELETE FROM fixture_checks WHERE owner_id=$1 AND connection_id=$2', [
-            owner,
-            connectionId,
-          ]);
-          if (failReplacement) throw new Error('Synthetic replacement failure.');
         },
       });
       const cliProposal = (source?: unknown) => ({
@@ -5770,11 +4920,6 @@ test(
         if (accountOwner === owner) await grantVault.put(accountId, `synthetic-token-${accountId}`);
       }
       const ref = { threadId: randomUUID(), turnId: randomUUID() };
-      await pool.query('INSERT INTO fixture_checks VALUES($1,$2,$3)', [
-        owner,
-        connectionId,
-        ref.turnId,
-      ]);
       const provider = fakeProvider({
         id: 'unused',
         authorize: async () => {
@@ -5794,13 +4939,6 @@ test(
         discovered,
         baseUrl: 'http://localhost:4310',
         wake: async () => {},
-        validateActivityCheck: async (turn, selectedId) => {
-          const receipt = await pool.query(
-            'SELECT 1 FROM fixture_checks WHERE owner_id=$1 AND connection_id=$2 AND turn_id=$3',
-            [owner, selectedId, turn.turnId],
-          );
-          if (!receipt.rowCount) throw new Error('This activity check is unavailable.');
-        },
       });
       integrations.registerRoutes(app);
       const setupPage = await app.inject({ url: `/api/apps/discovery/${id}` });
@@ -5877,10 +5015,9 @@ test(
       const search = (await integrations.execute(
         owner,
         'SEARCH_TOOLS',
-        { query: 'list_records' },
+        { query: 'list_records', connectionId },
         ref,
         new AbortController().signal,
-        connectionId,
       )) as { accounts: Array<{ connectionId: string }> };
       assert.deepEqual(
         search.accounts.map((item) => item.connectionId),
@@ -5890,10 +5027,9 @@ test(
       const sentence = (await integrations.execute(
         owner,
         'SEARCH_TOOLS',
-        { query: 'please list the open records' },
+        { query: 'please list the open records', connectionId },
         ref,
         new AbortController().signal,
-        connectionId,
       )) as {
         discovered: Array<{ paths: Array<{ id: string; tools?: Array<{ name: string }> }> }>;
       };
@@ -5902,17 +5038,6 @@ test(
           .find((item) => item.id === mcpPath)
           ?.tools?.map((tool) => tool.name),
         ['list_records'],
-      );
-      await assert.rejects(
-        integrations.execute(
-          owner,
-          'CONNECTED_CLI',
-          { connectionId, pathId: cliPath, argv: ['list'] },
-          ref,
-          new AbortController().signal,
-          connectionId,
-        ),
-        /only read its selected account/,
       );
       assert.equal(cliCalls, 0);
       await assert.rejects(
@@ -6016,38 +5141,16 @@ test(
           url: `/api/apps/discovery/${proposalId}/complete`,
           payload: { token: 'synthetic-new-token', accountName: 'Replacement account' },
         });
-      failReplacement = true;
-      assert.equal((await complete()).statusCode, 502);
-      assert.deepEqual(captured, [connectionUpdated]);
-      assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 1);
-      assert.equal(
-        (
-          await pool.query('SELECT account_name FROM discovered_connections WHERE id=$1', [
-            connectionId,
-          ])
-        ).rows[0].account_name,
-        'Synthetic account',
-      );
-      assert.equal((await grantVault.read(connectionId)).value, `synthetic-token-${connectionId}`);
-      failReplacement = false;
+      const account = async () =>
+        (await integrations.connectedApps(owner, true)).find(
+          (item) => item.connectionId === connectionId,
+        )?.accountId;
+      const replacedAccount = await account();
+      assert.ok(replacedAccount);
       assert.equal((await complete()).statusCode, 200);
       assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
-      assert.equal(replacementCalls, 2);
-      assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 0);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
-      const count = catalogs.length;
-      await assert.rejects(
-        integrations.execute(
-          owner,
-          'SEARCH_TOOLS',
-          { query: 'list_records' },
-          ref,
-          new AbortController().signal,
-          connectionId,
-        ),
-        /unavailable/,
-      );
-      assert.equal(catalogs.length, count);
+      assert.notEqual(await account(), replacedAccount);
     } finally {
       await app.close();
       await pool.end();
@@ -6079,6 +5182,7 @@ test(
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
     const image = Buffer.from('synthetic agenda image');
+    const toolCalls: unknown[] = [];
     const transport = createDiscoveredTransport(async (input, init) => {
       if (String(input) === 'https://fixture.example/api/records')
         return Response.json(
@@ -6108,6 +5212,7 @@ test(
       if (init?.method === 'GET') return new Response(null, { status: 405 });
       const message = JSON.parse(String(init?.body));
       if (message.id === undefined) return new Response(null, { status: 202 });
+      if (message.method === 'tools/call') toolCalls.push(message.params.arguments);
       return Response.json({
         jsonrpc: '2.0',
         id: message.id,
@@ -6210,11 +5315,17 @@ test(
         error: 'The file was withheld because it contains the connection credential.',
       },
     });
+    const input = {
+      query: 'roadmap',
+      page_url: 'https://www.notion.so/team/synthetic-page',
+      filters: { created_date_range: { start_date: '2026-01-01' } },
+    };
     assert.deepEqual(
       await discovered.execute('CONNECTED_MCP_CALL', {
         connectionId,
         pathId: mcpPath,
         tool: 'agenda',
+        input,
       }),
       {
         content: [
@@ -6223,6 +5334,82 @@ test(
         ],
       },
     );
+    assert.deepEqual(toolCalls.at(-1), input);
+  },
+);
+
+test(
+  'an older MCP sign-in cannot replace a connection after a newer one',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const ownerId = 'local-development';
+    const grantVault = await createAppGrantVault(f.pool, {
+      ownerId,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
+    });
+    const discovered = await createDiscoveredConnections(f.pool, {
+      ownerId,
+      baseUrl: 'http://127.0.0.1:4310',
+      grantVault,
+      transport: {
+        validateEndpoint: async (endpoint) => endpoint,
+        http: async () => ({ status: 200, body: null }),
+        listTools: async () => [{ name: 'search', inputSchema: {} }],
+        callTool: async () => ({}),
+      },
+      oauth: {
+        begin: async (_endpoint, redirectUri, state) => ({
+          url: `https://consent.example.test/authorize?state=${state}`,
+          saved: { redirectUri },
+        }),
+        finish: async (_endpoint, saved, code) => ({
+          ...saved,
+          tokens: { access_token: `token-${code}`, token_type: 'Bearer' },
+        }),
+        refresh: async () => assert.fail('No refresh is expected.'),
+      },
+    });
+    const app = Fastify();
+    t.after(() => app.close());
+    discovered.registerRoutes(app);
+    const connectionId = randomUUID();
+    await f.pool.query(
+      `INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths)
+       VALUES($1,$2,'fixture-app','Fixture app','Synthetic account','[]')`,
+      [connectionId, ownerId],
+    );
+    await grantVault.put(connectionId, JSON.stringify({ tokens: { access_token: 'token-old' } }));
+    const start = async () => {
+      const { url } = await discovered.propose({
+        service: 'fixture-app',
+        name: 'Fixture app',
+        connectionId,
+        paths: [{ kind: 'mcp', endpoint: 'https://fixture.example/mcp', auth: 'oauth' }],
+      });
+      const id = new URL(url, 'http://127.0.0.1:4310').searchParams.get('connect');
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/apps/discovery/${id}/authorize`,
+        payload: {},
+      });
+      return new URL(response.json().url).searchParams.get('state')!;
+    };
+    const finish = async (state: string, code: string) =>
+      (await discovered.completeOAuth({ state, code }))?.outcome;
+    const token = async () =>
+      JSON.parse((await grantVault.read(connectionId)).value).tokens.access_token;
+    const older = await start();
+    const newer = await start();
+    assert.equal(await finish(newer, 'newer'), 'connected');
+    assert.equal(await finish(older, 'older'), 'failed');
+    assert.equal(await token(), 'token-newer');
+    const open = await start();
+    const latest = await start();
+    assert.equal(await finish(open, 'open'), 'failed');
+    assert.equal(await token(), 'token-newer');
+    assert.equal(await finish(latest, 'latest'), 'connected');
+    assert.equal(await token(), 'token-latest');
   },
 );
 
@@ -6469,8 +5656,7 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
   const listing = t.mock.method(
     client.getClient().toolkits,
     'list',
-    async (input: { cursor?: string }, options: { signal: AbortSignal; maxRetries: number }) => {
-      assert.equal(options.maxRetries, 0);
+    async (input: { cursor?: string }, options: { signal: AbortSignal }) => {
       assert.equal(options.signal.aborted, false);
       await gate.promise;
       if (!input.cursor)
@@ -6661,7 +5847,7 @@ test('Composio rejects invalid catalog pages and repeated cursors without cachin
   assert.equal(listing.mock.callCount(), 5);
 });
 
-test('Composio catalog failures preserve owned accounts and restored session permissions', async (t) => {
+test('Composio catalog failures preserve owned accounts', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
     allowTracking: false,
@@ -6676,27 +5862,6 @@ test('Composio catalog failures preserve owned accounts and restored session per
     sessionId: 'new-session',
     execute,
   }));
-  const search = t.mock.fn(async (_input: { toolkits: string[] }) => ({
-    success: true,
-    error: null,
-    toolSchemas: {
-      GMAIL_FETCH_EMAILS: {
-        toolSlug: 'GMAIL_FETCH_EMAILS',
-        toolkit: 'gmail',
-        inputSchema: { type: 'object' },
-      },
-    },
-    results: [],
-  }));
-  t.mock.method(client.sessions, 'use', async () => ({
-    sessionId: 'restored-session',
-    config: {
-      toolkits: { enabled: ['granola_mcp', 'retired_mcp'] },
-      connected_accounts: { retired_mcp: ['owned-account'], gmail: ['excluded-account'] },
-    },
-    execute,
-    search,
-  }));
   const provider = createComposioProvider({ client });
   await assert.rejects(provider.listServices!(), (error: Error) => {
     assert.ok(error instanceof IntegrationCatalogAccessDenied);
@@ -6708,14 +5873,7 @@ test('Composio catalog failures preserve owned accounts and restored session per
   const configuration = create.mock.calls[0]!.arguments[1] as unknown as { toolkits: string[] };
   assert.ok(configuration.toolkits.includes('retired_mcp'));
   await session.execute('RETIRED_MCP_LIST', {}, 'owned-account');
-  const restored = await provider.restoreSession('restored-session');
-  await restored.execute('GRANOLA_MCP_LIST', {}, 'granola-account');
-  await restored.execute('RETIRED_MCP_LIST', {}, 'owned-account');
-  await assert.rejects(restored.execute('GMAIL_FETCH_EMAILS', {}, 'excluded-account'));
-  await assert.rejects(restored.search('Find email'));
-  const searched = search.mock.calls[0]!.arguments[0];
-  assert.equal(searched.toolkits.includes('gmail'), false);
-  assert.equal(execute.mock.callCount(), 3);
+  assert.equal(execute.mock.callCount(), 1);
   assert.equal(listing.mock.callCount(), 1);
 });
 
@@ -7026,6 +6184,116 @@ test('Composio account identity uses safe display metadata and account-bound pro
   assert.equal(profileSessions, 4);
 });
 
+test('Composio connection requests classify HTTP failures without repeating consent or exposing provider details', async (t) => {
+  const { createServer } = await import('node:http');
+  const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
+  let failure: { phase: string; status: number } | undefined;
+  let rejected = 0;
+  const server = createServer(async (request, response) => {
+    const path = new URL(request.url!, 'http://localhost').pathname;
+    const phase = path.endsWith('/auth_configs')
+      ? 'auth_config'
+      : path.endsWith('/link')
+        ? 'link'
+        : path.endsWith('/tool_router/session')
+          ? 'session'
+          : undefined;
+    response.setHeader('content-type', 'application/json');
+    if (failure && failure.phase === phase && phase) {
+      rejected++;
+      response.statusCode = failure.status;
+      response.end(JSON.stringify({ error: { message: 'synthetic-private-provider-body' } }));
+      return;
+    }
+    if (path.endsWith('/toolkits') || phase === 'auth_config') {
+      response.end(JSON.stringify({ items: [], next_cursor: null }));
+      return;
+    }
+    if (phase === 'session') {
+      let body = '';
+      for await (const chunk of request) body += chunk;
+      response.end(
+        JSON.stringify({
+          session_id: 'fixture-consent',
+          mcp: { type: 'http', url: `http://${request.headers.host}/tool_router/mcp/fixture` },
+          config: JSON.parse(body),
+          config_version: 1,
+        }),
+      );
+      return;
+    }
+    if (phase === 'link') {
+      response.end(
+        JSON.stringify({
+          connected_account_id: 'fixture-account',
+          redirect_url: 'https://connect.composio.dev/link/fixture',
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end('{}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  const address = server.address() as { port: number };
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    baseURL: `http://127.0.0.1:${address.port}`,
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const provider = createComposioProvider({ client });
+  const connect = async () => {
+    const session = await provider.createSession('fixture-owner', {});
+    return session.authorize('gmail', 'http://localhost:4310/api/apps/callback');
+  };
+  for (const phase of ['session', 'auth_config', 'link'] as const) {
+    for (const [status, reason] of [
+      [401, 'authorization'],
+      [403, 'permission'],
+      [429, 'rate_limit'],
+      [503, 'unavailable'],
+      [504, 'timeout'],
+    ] as const) {
+      failure = { phase, status };
+      const before = rejected;
+      await assert.rejects(connect(), (error: unknown) => {
+        assert.ok(error instanceof IntegrationConnectionError);
+        assert.equal(error.reason, reason);
+        assert.equal(error.phase, phase);
+        assert.doesNotMatch(String(error), /synthetic-private|fixture-key/);
+        assert.equal(error.cause, undefined);
+        return true;
+      });
+      if (phase !== 'auth_config') assert.equal(rejected, before + 1);
+    }
+  }
+  failure = undefined;
+  assert.equal((await connect()).accountId, 'fixture-account');
+  for (const [cause, reason] of [
+    [new APIConnectionError({ message: 'synthetic-private-network-detail' }), 'unavailable'],
+    [new APIConnectionTimeoutError(), 'timeout'],
+  ] as const) {
+    const create = t.mock.method(client.getClient().toolRouter.session, 'create', async () => {
+      throw cause;
+    });
+    await assert.rejects(connect(), (error: unknown) => {
+      assert.ok(error instanceof IntegrationConnectionError);
+      assert.equal(error.reason, reason);
+      assert.equal(error.cause, undefined);
+      assert.doesNotMatch(String(error), /synthetic-private/);
+      return true;
+    });
+    assert.equal(create.mock.callCount(), 1);
+    create.mock.restore();
+  }
+});
+
 test('Composio Google consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -7053,10 +6321,6 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
     await pause('create');
     return snapshot(id);
   });
-  t.mock.method(transport, 'retrieve', async (id: string) => {
-    await pause('restore');
-    return snapshot(id);
-  });
   const deleted: string[] = [];
   t.mock.method(client.getClient(), 'delete', async (path: string) => {
     const id = decodeURIComponent(path.split('/').at(-1)!);
@@ -7065,7 +6329,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
     return { session_id: id, deleted: true };
   });
   let empty = false;
-  let paused: 'create' | 'restore' | 'list' | 'patch' | 'link' | undefined;
+  let paused: 'create' | 'list' | 'patch' | 'link' | undefined;
   let started = deferred();
   let released = deferred();
   async function pause(phase: typeof paused) {
@@ -7104,6 +6368,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
       return { ...snapshot(id), config_version: 2 };
     },
   );
+  let redirectUrl = 'https://connect.composio.dev/link/fixture';
   const link = t.mock.method(
     transport,
     'link',
@@ -7112,7 +6377,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
       await pause('link');
       return {
         connected_account_id: 'fixture-account',
-        redirect_url: 'https://connect.composio.dev/link/fixture',
+        redirect_url: redirectUrl,
       };
     },
   );
@@ -7139,6 +6404,28 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
   assert.equal(list.mock.callCount(), 6);
   assert.equal(patch.mock.callCount(), 5);
   assert.equal(configurations.get(fallback.id)?.auth_configs, undefined);
+  for (const origin of ['https://connect.composio.dev', 'https://app.composio.dev']) {
+    redirectUrl = `${origin}/link/fixture`;
+    assert.deepEqual(await fallback.authorize('gmail', callback), {
+      accountId: 'fixture-account',
+      url: redirectUrl,
+    });
+  }
+  for (const url of [
+    'https://untrusted.example/link/fixture',
+    'https://connect.composio.dev.untrusted.example/link/fixture',
+    'http://connect.composio.dev/link/fixture',
+    'https://connect.composio.dev:444/link/fixture',
+    'https://user:secret@connect.composio.dev/link/fixture',
+    'https://user:secret@app.composio.dev/link/fixture',
+    'javascript:alert(1)',
+    'not-a-url',
+    '',
+  ]) {
+    redirectUrl = url;
+    await assert.rejects(fallback.authorize('gmail', callback), /sign-in address is invalid/);
+  }
+  redirectUrl = 'https://connect.composio.dev/link/fixture';
   empty = false;
   for (const phase of ['list', 'patch', 'link'] as const) {
     paused = phase;
@@ -7163,21 +6450,16 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
     assert.equal(list.mock.callCount(), before.list + 1);
   }
   const before = list.mock.callCount();
-  for (const phase of ['create', 'restore'] as const) {
-    paused = phase;
-    started = deferred();
-    released = deferred();
-    const changed = createComposioProvider({ client });
-    const pending =
-      phase === 'create'
-        ? changed.createSession('fixture-owner', {})
-        : changed.restoreSession(session.id);
-    await started.promise;
-    changed.setApiKey!();
-    released.resolve();
-    await assert.rejects(pending, /connection provider changed/);
-    assert.equal(list.mock.callCount(), before);
-  }
+  paused = 'create';
+  started = deferred();
+  released = deferred();
+  const changed = createComposioProvider({ client });
+  const pending = changed.createSession('fixture-owner', {});
+  await started.promise;
+  changed.setApiKey!();
+  released.resolve();
+  await assert.rejects(pending, /connection provider changed/);
+  assert.equal(list.mock.callCount(), before);
   assert.deepEqual(deleted, [[...configurations.keys()].at(-1)]);
   assert.equal(deleted.includes(session.id), false);
 });
@@ -7316,9 +6598,6 @@ test(
           execute: async () => ({}),
           search: async () => ({ tools: {}, suggestions: [] }),
         };
-      },
-      restoreSession: async () => {
-        throw new Error();
       },
       deleteSession: async () => {},
       deleteAccount: async () => {},
@@ -7474,12 +6753,14 @@ test(
       await pool.query(`
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
-          read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
+          error text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
-        CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
+        CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
+          turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,action text NOT NULL,effect text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now())`);
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES
           ($1,'owner','user',NULL,'Tell Sam we take the quote',greatest(now()-interval '2 hours',date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),
@@ -7488,6 +6769,10 @@ test(
         [chat, scheduled, foreign, `schedule:${schedule}:1:now`],
       );
       await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
+      await pool.query(
+        "INSERT INTO app_actions(owner_id,turn_id,action,effect,created_at) VALUES('owner',$1,'NOTION_UPDATE_PAGE','change',now()-interval '90 minutes')",
+        [scheduled],
+      );
       const chatAnswer = randomUUID();
       const scheduledAnswer = randomUUID();
       await pool.query(
@@ -7574,9 +6859,9 @@ test(
           })
           .curate({ task: 'review', instructions: 'Synthetic', input: {} }),
       );
-      await ledger.action(chat, 'GMAIL_FETCH_EMAILS', { query: 'from:sam' });
-      await ledger.action(chat, 'GMAIL_SEND_EMAIL', { recipient_email: 'sam@example.test' });
-      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { recipient_email: 'x@example.test' });
+      await ledger.action(chat, 'GMAIL_FETCH_EMAILS');
+      await ledger.action(chat, 'GMAIL_SEND_EMAIL');
+      await ledger.action(foreign, 'GMAIL_SEND_EMAIL');
       for (let attempt = 0; attempt < 50; attempt++) {
         const rows = await pool.query('SELECT count(*)::int AS count FROM model_usage');
         if (rows.rows[0].count === 5) break;
@@ -7589,13 +6874,18 @@ test(
       assert.deepEqual(costs[chat], { messageId: chatAnswer, costUsd: 0.55 });
       assert.deepEqual(costs[scheduled], { messageId: scheduledAnswer, costUsd: null });
       assert.equal(Object.hasOwn(costs, foreign), false);
-      assert.deepEqual((await pool.query('SELECT action,effect FROM app_actions')).rows, [
-        { action: 'GMAIL_SEND_EMAIL', effect: 'outbound' },
-      ]);
+      assert.deepEqual(
+        (await pool.query('SELECT action FROM app_actions ORDER BY created_at')).rows,
+        [
+          { action: 'NOTION_UPDATE_PAGE' },
+          { action: 'GMAIL_FETCH_EMAILS' },
+          { action: 'GMAIL_SEND_EMAIL' },
+        ],
+      );
       const view = (await app.inject('/api/trust')).json();
       assert.deepEqual(
         { ...view.week, spentUsd: Math.round(view.week.spentUsd * 100) / 100 },
-        { things: 3, reached: 1, spentUsd: 0.65 },
+        { things: 3, actions: 3, spentUsd: 0.65 },
       );
       assert.equal(view.month.unpriced, true);
       assert.deepEqual(
@@ -7605,7 +6895,8 @@ test(
           ['Tell Sam we take the quote', 'chat', 0.55],
         ],
       );
-      assert.deepEqual(view.entries[1].actions, ['Gmail: send email']);
+      assert.deepEqual(view.entries[0].actions, ['Notion: update page']);
+      assert.deepEqual(view.entries[1].actions, ['Gmail: fetch emails', 'Gmail: send email']);
       assert.equal(view.entries[0].unpriced, true);
       const report = await ledger.report();
       assert.deepEqual(
@@ -7614,7 +6905,10 @@ test(
       );
       const pdf = usagePdf(report, new Date()).toString('latin1');
       assert.match(pdf, /^%PDF-1\.4\n/);
-      assert.match(pdf, /\(\d\d:\d\d  Tell Sam we take the quote \\\(Gmail: send email\\\)\) Tj/);
+      assert.match(
+        pdf,
+        /\(\d\d:\d\d  Tell Sam we take the quote \\\(Gmail: fetch emails, Gmail: send email\\\)\) Tj/,
+      );
       assert.doesNotMatch(pdf, /Foreign request/);
       assert.ok(pdf.slice(Number(/startxref\n(\d+)/.exec(pdf)![1])).startsWith('xref\n'));
       const limit = async (monthlyUsd: number | null) =>
@@ -7624,7 +6918,7 @@ test(
       assert.deepEqual(await limit(1), { monthlyUsd: 1, reached: false });
       assert.equal(await ledger.limitReached(), false);
       await pool.query(
-        "INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd) VALUES('extra','owner',NULL,'fixture',0.5)",
+        "INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES('extra','owner',NULL,0.5)",
       );
       assert.equal(await ledger.limitReached(), true);
       assert.deepEqual((await app.inject('/api/trust')).json().limit, {
@@ -7669,7 +6963,7 @@ test(
       await assert.rejects(curator.curate(request), /spending limit was reached/);
       assert.equal(modelRequests, 1);
       const recoveredUsage = await pool.query(
-        "SELECT created_at FROM model_usage WHERE owner_id='owner' AND turn_id IS NULL AND model='fixture-small'",
+        "SELECT created_at FROM model_usage WHERE owner_id='owner' AND turn_id IS NULL AND cost_usd=0.05",
       );
       assert.ok(recoveredUsage.rows[0].created_at.getTime() <= failedAt);
       assert.equal(
@@ -8146,6 +7440,80 @@ test('Composio inbox polling rejects mismatched metadata and stops immediately o
   assert.equal(calls, 4);
 });
 
+test('connected tool search loads missing schemas in batches of twenty', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
+  const slugs = Array.from({ length: 25 }, (_, index) => `GMAIL_FIXTURE_ACTION_${index}`);
+  const managed = {
+    sessionId: 'fixture-session',
+    search: async () => ({
+      success: true,
+      error: null,
+      results: [],
+      toolSchemas: Object.fromEntries(
+        slugs.map((slug, index) => [
+          slug,
+          {
+            toolSlug: slug,
+            toolkit: 'gmail',
+            hasFullSchema: false,
+            schemaRef: {
+              tool: 'COMPOSIO_GET_TOOL_SCHEMAS',
+              args: { toolSlugs: slugs.slice(index < 20 ? 0 : 20, index < 20 ? 20 : 25) },
+            },
+          },
+        ]),
+      ),
+    }),
+  };
+  t.mock.method(client.sessions, 'create', async () => managed);
+  const batches: string[][] = [];
+  t.mock.method(
+    client.getClient().toolRouter.session,
+    'executeMeta',
+    async (_id: string, input: { arguments: { tool_slugs: string[] } }) => {
+      batches.push(input.arguments.tool_slugs);
+      return {
+        error: null,
+        data: {
+          success: true,
+          tool_schemas: Object.fromEntries(
+            input.arguments.tool_slugs.map((slug) => [
+              slug,
+              {
+                tool_slug: slug,
+                toolkit: 'gmail',
+                input_schema: { type: 'object', properties: {} },
+              },
+            ]),
+          ),
+        },
+      };
+    },
+  );
+  const provider = createComposioProvider({ client });
+  const session = await provider.createSession('fixture-owner', { gmail: ['fixture-account'] });
+  const found = await session.search('fixture');
+  assert.deepEqual(
+    batches.map((batch) => batch.length),
+    [20, 5],
+  );
+  const tools = Object.values(found.tools as Record<string, Record<string, unknown>>);
+  assert.equal(tools.length, 25);
+  for (const tool of tools) {
+    assert.equal(tool.hasFullSchema, true);
+    assert.deepEqual(tool.inputSchema, { type: 'object', properties: {} });
+  }
+});
+
 test('connected provider cancellation reaches session creation, search, schemas, and execution', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -8193,9 +7561,10 @@ test('connected provider cancellation reaches session creation, search, schemas,
       _action: string,
       _args: unknown,
       account: { account: string },
-      options: { signal?: AbortSignal },
+      options: { signal?: AbortSignal; maxRetries?: number },
     ) => {
       assert.equal(account.account, 'fixture-account');
+      assert.equal(options.maxRetries, 0);
       return block(options.signal);
     },
   };
@@ -8206,28 +7575,15 @@ test('connected provider cancellation reaches session creation, search, schemas,
       phase === 'create' ? block(options.signal) : managed,
   );
   t.mock.method(
-    client.sessions,
-    'use',
-    async (_id: string, _input: unknown, options: { signal?: AbortSignal }) =>
-      phase === 'restore' ? block(options.signal) : managed,
-  );
-  t.mock.method(
     client.getClient().toolRouter.session,
     'executeMeta',
-    async (
-      _id: string,
-      _input: unknown,
-      options: { signal?: AbortSignal; maxRetries?: number },
-    ) => {
-      assert.equal(options.maxRetries, 0);
-      return block(options.signal);
-    },
+    async (_id: string, _input: unknown, options: { signal?: AbortSignal }) =>
+      block(options.signal),
   );
   const provider = createComposioProvider({ client });
   const session = await provider.createSession('fixture-owner', { gmail: ['fixture-account'] });
   for (const [name, run] of [
     ['create', (signal: AbortSignal) => provider.createSession('fixture-owner', {}, signal)],
-    ['restore', (signal: AbortSignal) => provider.restoreSession('fixture-session', signal)],
     ['search', (signal: AbortSignal) => session.search('email', signal)],
     ['schema', (signal: AbortSignal) => session.search('email', signal)],
     [
@@ -8249,61 +7605,84 @@ test('connected provider cancellation reaches session creation, search, schemas,
     await assert.rejects(run(controller.signal), { name: 'AbortError' });
     assert.equal(requests.length, count);
   }
-  assert.equal(requests.length, 5);
+  assert.equal(requests.length, 4);
 });
 
-test('direct MCP cancellation aborts pending tool discovery and reads', async () => {
-  for (const blockedMethod of ['tools/list', 'tools/call']) {
-    const controller = new AbortController();
-    let started = () => {};
-    const waiting = new Promise<void>((resolve) => {
-      started = resolve;
+test('discovered requests follow redirects only to checked public addresses and drop credentials across origins', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { EventEmitter } = await import('node:events');
+  const sent: Array<{ url: string; authorization?: string }> = [];
+  const routes: Record<string, { status: number; location?: string }> = {
+    'https://api.fixture.example/start': {
+      status: 302,
+      location: 'https://files.fixture.example/data',
+    },
+    'https://files.fixture.example/data': { status: 200 },
+    'https://api.fixture.example/private': {
+      status: 307,
+      location: 'https://internal.fixture.example/',
+    },
+    'https://api.fixture.example/item': {
+      status: 301,
+      location: 'https://api.fixture.example/items/1',
+    },
+    'https://api.fixture.example/items/1': { status: 200 },
+    'https://api.fixture.example/broken': { status: 302, location: 'https://[' },
+  };
+  const methods: string[] = [];
+  const request = ((
+    url: URL,
+    options: { method: string; headers: Record<string, string> },
+    callback: (incoming: unknown) => void,
+  ) => {
+    methods.push(options.method);
+    sent.push({ url: url.href, authorization: options.headers.authorization });
+    const route = routes[url.href]!;
+    const incoming = Object.assign(new PassThrough(), {
+      statusCode: route.status,
+      headers: route.location ? { location: route.location } : { 'content-type': 'text/plain' },
     });
-    let pendingSignal: AbortSignal | null | undefined;
-    const request: typeof fetch = async (_input, init) => {
-      if (init?.method === 'GET') return new Response(null, { status: 405 });
-      const message = JSON.parse(String(init?.body));
-      if (message.method === blockedMethod) {
-        pendingSignal = init?.signal;
-        assert.ok(pendingSignal);
-        return new Promise<Response>((_resolve, reject) => {
-          pendingSignal!.addEventListener('abort', () => reject(pendingSignal!.reason), {
-            once: true,
-          });
-          started();
-        });
-      }
-      if (message.id === undefined) return new Response(null, { status: 202 });
-      return Response.json({
-        jsonrpc: '2.0',
-        id: message.id,
-        result:
-          message.method === 'initialize'
-            ? {
-                protocolVersion: message.params.protocolVersion,
-                capabilities: { tools: {} },
-                serverInfo: { name: 'fixture', version: '1' },
-              }
-            : { tools: [{ name: 'list_issues', inputSchema: { type: 'object' } }] },
-      });
-    };
-    const result = assert.rejects(
-      withDirectMcp(
-        'linear',
-        'synthetic-token',
-        request,
-        async (client) => {
-          await client.listTools();
-          return client.callTool({ name: 'list_issues', arguments: {} });
-        },
-        controller.signal,
-      ),
-    );
-    await waiting;
-    controller.abort();
-    await result;
-    assert.equal(pendingSignal?.aborted, true);
-  }
+    queueMicrotask(() => {
+      callback(incoming);
+      incoming.end(route.status === 200 ? 'synthetic file' : '');
+    });
+    return Object.assign(new EventEmitter(), { end() {} });
+  }) as unknown as NonNullable<Parameters<typeof safeRemoteFetch>[2]>['request'];
+  const validate = async (value: string) => {
+    const url = new URL(value);
+    if (url.hostname === 'internal.fixture.example')
+      throw new Error('Private network destinations are blocked.');
+    return { url, address: '93.184.216.34' };
+  };
+  const response = await safeRemoteFetch(
+    'https://api.fixture.example/start',
+    { headers: { authorization: 'Bearer synthetic-token' } },
+    { validate, request },
+  );
+  assert.equal(await response.text(), 'synthetic file');
+  assert.deepEqual(sent, [
+    { url: 'https://api.fixture.example/start', authorization: 'Bearer synthetic-token' },
+    { url: 'https://files.fixture.example/data', authorization: undefined },
+  ]);
+  await assert.rejects(
+    safeRemoteFetch(
+      'https://api.fixture.example/private',
+      { method: 'POST', body: '{}' },
+      { validate, request },
+    ),
+    /Private network/,
+  );
+  methods.length = 0;
+  await safeRemoteFetch(
+    'https://api.fixture.example/item',
+    { method: 'DELETE' },
+    { validate, request },
+  );
+  assert.deepEqual(methods, ['DELETE', 'DELETE']);
+  await assert.rejects(
+    safeRemoteFetch('https://api.fixture.example/broken', {}, { validate, request }),
+    /invalid address/,
+  );
 });
 
 test('discovered validation cancellation never starts HTTP after a late DNS settlement', async () => {
@@ -8337,167 +7716,6 @@ test('discovered validation cancellation never starts HTTP after a late DNS sett
     assert.equal(requests, 0);
   }
 });
-
-test(
-  'direct OAuth refresh cancellation serializes settlement and fences uncertain rotating tokens',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `direct_cancel_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const ownerId = 'fixture-owner';
-    const accountId = randomUUID();
-    const key = randomBytes(32);
-    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
-    try {
-      const vault = await createAppGrantVault(pool, { ownerId, keyStore });
-      let reads = 0;
-      const requests: Array<{
-        signal: AbortSignal;
-        resolve: (response: Response) => void;
-        reject: (error: unknown) => void;
-      }> = [];
-      const oauth = createDirectOAuth({
-        pool,
-        ownerId,
-        keyStore,
-        grantVault: {
-          ...vault,
-          read: async (id) => {
-            const grant = await vault.read(id);
-            reads++;
-            return grant;
-          },
-        },
-        request: async (_input, init) => {
-          const signal = init?.signal;
-          assert.ok(signal);
-          return new Promise<Response>((resolve, reject) => {
-            requests.push({ signal, resolve, reject });
-          });
-        },
-      });
-      await oauth.ready;
-      await pool.query(
-        'INSERT INTO direct_oauth_accounts(id,owner_id,service,connected) VALUES($1,$2,$3,true)',
-        [accountId, ownerId, 'linear'],
-      );
-      const expire = () =>
-        vault.put(
-          accountId,
-          JSON.stringify({
-            accessToken: 'synthetic-old-token',
-            refreshToken: 'synthetic-refresh',
-            expiresAt: 1,
-            clientId: 'fixture',
-            tokenEndpoint: 'https://fixture.example/token',
-          }),
-        );
-      const wait = async (condition: () => boolean) => {
-        const deadline = performance.now() + 10_000;
-        while (!condition() && performance.now() < deadline) await delay(5);
-        assert.ok(condition(), `reads=${reads}, requests=${requests.length}`);
-      };
-      await expire();
-      const cancelled = new AbortController();
-      const live = new AbortController();
-      const first = assert.rejects(oauth.access(ownerId, accountId, cancelled.signal), {
-        name: 'AbortError',
-      });
-      const second = oauth.access(ownerId, accountId, live.signal);
-      await wait(() => reads === 2 && requests.length === 1);
-      cancelled.abort();
-      await first;
-      assert.equal(requests[0].signal.aborted, false);
-      requests[0].resolve(Response.json({ access_token: 'synthetic-new-token', expires_in: 3600 }));
-      assert.equal((await second).accessToken, 'synthetic-new-token');
-      assert.equal(
-        JSON.parse((await vault.read(accountId)).value).accessToken,
-        'synthetic-new-token',
-      );
-      await expire();
-      const abandoned = new AbortController();
-      const third = assert.rejects(oauth.access(ownerId, accountId, abandoned.signal), {
-        name: 'AbortError',
-      });
-      await wait(() => requests.length === 2);
-      abandoned.abort();
-      await third;
-      assert.equal(requests[1].signal.aborted, true);
-      assert.equal(
-        JSON.parse((await vault.read(accountId)).value).accessToken,
-        'synthetic-old-token',
-      );
-      let completed = false;
-      const before = reads;
-      const late = oauth.access(ownerId, accountId).finally(() => {
-        completed = true;
-      });
-      await wait(() => reads > before);
-      assert.equal(requests.length, 2);
-      assert.equal(completed, false);
-      requests[1].resolve(
-        Response.json({
-          access_token: 'synthetic-late-token',
-          refresh_token: 'synthetic-rotated-token',
-          expires_in: 3600,
-        }),
-      );
-      assert.equal((await late).accessToken, 'synthetic-late-token');
-      assert.equal(
-        JSON.parse((await vault.read(accountId)).value).refreshToken,
-        'synthetic-rotated-token',
-      );
-      await expire();
-      const uncertain = new AbortController();
-      const fourth = assert.rejects(oauth.access(ownerId, accountId, uncertain.signal), {
-        name: 'AbortError',
-      });
-      await wait(() => requests.length === 3);
-      uncertain.abort();
-      await fourth;
-      const beforeJoining = reads;
-      const joining = assert.rejects(oauth.access(ownerId, accountId), { name: 'AbortError' });
-      await wait(() => reads > beforeJoining);
-      assert.equal(requests.length, 3);
-      requests[2].reject(requests[2].signal.reason);
-      await joining;
-      await assert.rejects(oauth.access(ownerId, accountId), {
-        message: 'Connect this account again.',
-      });
-      const restarted = createDirectOAuth({
-        pool,
-        ownerId,
-        keyStore,
-        grantVault: vault,
-        request: async () => {
-          throw new Error('An uncertain refresh must not be retried.');
-        },
-      });
-      await assert.rejects(restarted.access(ownerId, accountId), {
-        message: 'Connect this account again.',
-      });
-      assert.equal(requests.length, 3);
-      await expire();
-      const recovered = oauth.access(ownerId, accountId);
-      await wait(() => requests.length === 4);
-      requests[3].resolve(
-        Response.json({ access_token: 'synthetic-recovered-token', expires_in: 3600 }),
-      );
-      assert.equal((await recovered).accessToken, 'synthetic-recovered-token');
-      await oauth.access(ownerId, accountId);
-      assert.equal(requests.length, 4);
-    } finally {
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
 
 test('discovered transports cancel HTTP, MCP discovery, and MCP reads in flight', async () => {
   for (const blockedMethod of ['http', 'initialize', 'tools/list', 'tools/call']) {
@@ -8636,182 +7854,6 @@ test('discovered OAuth cancellation stops discovery and token refresh without sa
     assert.equal(requests, 1);
   }
 });
-
-test(
-  'direct Notion page writes preserve native schemas, arguments and owned account boundaries',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `notion_write_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const ownerId = 'fixture-owner';
-    const accountId = randomUUID();
-    const otherAccountId = randomUUID();
-    const key = randomBytes(32);
-    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
-    const pages = new Map<string, { title: string; content: string; parent?: unknown }>();
-    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-    const definitions = [
-      { name: 'notion-create-pages', inputSchema: { type: 'object', required: ['pages'] } },
-      {
-        name: 'notion-update-page',
-        inputSchema: { type: 'object', required: ['page_id', 'command'] },
-      },
-      { name: 'notion-fetch', inputSchema: { type: 'object', required: ['id'] } },
-      { name: 'notion-get-async-task', inputSchema: { type: 'object', required: ['task_id'] } },
-    ];
-    let writesAvailable = true;
-    const request: typeof fetch = async (_input, init) => {
-      if (init?.method === 'GET') return new Response(null, { status: 405 });
-      const message = JSON.parse(String(init?.body));
-      if (message.id === undefined) return new Response(null, { status: 202 });
-      let result: unknown;
-      if (message.method === 'initialize')
-        result = {
-          protocolVersion: message.params.protocolVersion,
-          capabilities: { tools: {} },
-          serverInfo: { name: 'notion-fixture', version: '1' },
-        };
-      else if (message.method === 'tools/list')
-        result = {
-          tools: definitions.filter((tool) => writesAvailable || tool.name === 'notion-fetch'),
-        };
-      else {
-        assert.equal(
-          new Headers(init?.headers).get('authorization'),
-          'Bearer synthetic-notion-token',
-        );
-        const { name, arguments: args } = message.params;
-        calls.push({ name, args });
-        if (name === 'notion-create-pages') {
-          assert.ok(Array.isArray(args.pages));
-          assert.equal(args.pages.length, 1);
-          const id = randomUUID();
-          pages.set(id, {
-            title: args.pages[0].properties.title,
-            content: args.pages[0].content,
-            parent: args.parent,
-          });
-          result = { content: [{ type: 'text', text: JSON.stringify({ id }) }] };
-        } else if (name === 'notion-update-page') {
-          assert.equal(args.command, 'insert_content');
-          const page = pages.get(args.page_id)!;
-          page.content += '\n' + args.content;
-          result = { content: [{ type: 'text', text: JSON.stringify({ id: args.page_id }) }] };
-        } else if (name === 'notion-get-async-task') {
-          result = { content: [{ type: 'text', text: JSON.stringify({ status: 'succeeded' }) }] };
-        } else {
-          assert.equal(name, 'notion-fetch');
-          result = { content: [{ type: 'text', text: JSON.stringify(pages.get(args.id)) }] };
-        }
-      }
-      return Response.json({ jsonrpc: '2.0', id: message.id, result });
-    };
-    try {
-      const grantVault = await createAppGrantVault(pool, { ownerId, keyStore });
-      const provider = createDirectProvider({ pool, ownerId, keyStore, grantVault, request });
-      await assert.rejects(provider.inspectAccount(accountId, ownerId));
-      await pool.query(
-        "INSERT INTO direct_oauth_accounts(id,owner_id,service,connected) VALUES($1,$2,'notion',true),($3,'other-owner','notion',true)",
-        [accountId, ownerId, otherAccountId],
-      );
-      await grantVault.put(accountId, JSON.stringify({ accessToken: 'synthetic-notion-token' }));
-      const integrations = await createIntegrations(pool, {
-        ownerId,
-        provider,
-        baseUrl: 'http://localhost:4310',
-        wake: async () => {},
-      });
-      const connectionId = (
-        await pool.query(
-          "INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at) VALUES($1,'notion',$2,'direct',true,now()) RETURNING id",
-          [ownerId, accountId],
-        )
-      ).rows[0].id;
-      const session = await provider.createSession(ownerId, { notion: [accountId] });
-      const discovered = await session.search('notion');
-      assert.deepEqual(
-        (discovered.tools as Record<string, { inputSchema: unknown }>).NOTION_CREATE_PAGES
-          .inputSchema,
-        definitions[0].inputSchema,
-      );
-      assert.ok((discovered.tools as Record<string, unknown>).NOTION_UPDATE_PAGE);
-      for (const parent of [undefined, { page_id: 'parent-fixture' }]) {
-        const args = {
-          connectionId,
-          pages: [
-            { properties: { title: 'Otto diagnostic' }, content: 'Synthetic diagnostic content.' },
-          ],
-          ...(parent ? { parent } : { creation_mode: 'draft' }),
-          allow_async: false,
-        };
-        await integrations.execute(ownerId, 'NOTION_CREATE_PAGES', args);
-        const { connectionId: _connectionId, ...createArgs } = args;
-        assert.deepEqual(calls.at(-1), { name: 'notion-create-pages', args: createArgs });
-        const id = [...pages.keys()].at(-1)!;
-        const read = await integrations.execute(ownerId, 'NOTION_RETRIEVE_PAGE', {
-          connectionId,
-          id,
-        });
-        assert.match(JSON.stringify(read), /Synthetic diagnostic content\./);
-        assert.equal(pages.get(id)?.title, 'Otto diagnostic');
-        assert.deepEqual(pages.get(id)?.parent, parent);
-        const update = {
-          connectionId,
-          page_id: id,
-          command: 'insert_content',
-          content: 'Follow-up detail.',
-        };
-        await integrations.execute(ownerId, 'NOTION_UPDATE_PAGE', update);
-        const { connectionId: _updateConnectionId, ...updateArgs } = update;
-        assert.deepEqual(calls.at(-1), { name: 'notion-update-page', args: updateArgs });
-        const updated = await integrations.execute(ownerId, 'NOTION_RETRIEVE_PAGE', {
-          connectionId,
-          id,
-        });
-        assert.match(JSON.stringify(updated), /Follow-up detail\./);
-      }
-      assert.match(
-        JSON.stringify(
-          await integrations.execute(ownerId, 'NOTION_GET_ASYNC_TASK', {
-            connectionId,
-            task_id: 'task-fixture',
-          }),
-        ),
-        /succeeded/,
-      );
-      const before = calls.length;
-      await assert.rejects(
-        integrations.execute('other-owner', 'NOTION_CREATE_PAGES', {
-          connectionId,
-          pages: [],
-        }),
-      );
-      await assert.rejects(session.execute('NOTION_CREATE_PAGES', { pages: [] }, otherAccountId));
-      await assert.rejects(
-        session.execute('NOTION_CREATE_PAGES', { pages: [] }, accountId, AbortSignal.abort()),
-      );
-      writesAvailable = false;
-      assert.equal(
-        ((await session.search('notion')).tools as Record<string, unknown>).NOTION_CREATE_PAGES,
-        undefined,
-      );
-      await assert.rejects(session.execute('NOTION_CREATE_PAGES', { pages: [] }, accountId));
-      await assert.rejects(session.execute('NOTION_DELETE_PAGE', {}, accountId));
-      await pool.query('UPDATE direct_oauth_accounts SET connected=false WHERE id=$1', [accountId]);
-      await assert.rejects(session.execute('NOTION_CREATE_PAGES', { pages: [] }, accountId));
-      assert.equal(calls.length, before);
-    } finally {
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
 
 test('desktop OAuth retains pending sign-in links and matches onboarding completion attempts', async () => {
   const { JSDOM } = await import('jsdom');
@@ -9369,3 +8411,74 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       else Reflect.deleteProperty(globalThis, key);
   }
 });
+
+test(
+  'connection failures expose bounded recovery errors and require a manual retry',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
+    const f = await appsFixture(t);
+    const authorize = f.session.authorize;
+    const privateValue = 'synthetic-private-provider-key';
+    let failure: Error | undefined;
+    let phase: 'session' | 'auth_config' | 'link' = 'session';
+    let sessions = 0;
+    let authorizations = 0;
+    f.provider.createSession = async () => {
+      sessions++;
+      if (failure && phase === 'session') throw failure;
+      return f.session;
+    };
+    f.session.authorize = async (...args) => {
+      authorizations++;
+      if (failure) throw failure;
+      return authorize(...args);
+    };
+    const connect = () =>
+      f.app.inject({
+        method: 'POST',
+        url: '/api/apps/gmail/connect',
+        payload: { returnTo: 'window' },
+      });
+    const pending = async () =>
+      Number((await f.pool.query('SELECT count(*) FROM app_connections')).rows[0].count);
+    for (const [reason, status] of [
+      ['authorization', 503],
+      ['permission', 503],
+      ['rate_limit', 429],
+      ['timeout', 504],
+      ['unavailable', 502],
+    ] as const) {
+      for (phase of ['session', 'auth_config', 'link'] as const) {
+        failure = Object.assign(new IntegrationConnectionError(reason, phase), {
+          cause: new Error(privateValue),
+          response: { body: privateValue },
+        });
+        const before = { sessions, authorizations };
+        const response = await connect();
+        assert.equal(response.statusCode, status);
+        assert.deepEqual(response.json(), { error: failure.message });
+        assert.doesNotMatch(response.body, new RegExp(privateValue));
+        assert.equal(sessions, before.sessions + 1);
+        assert.equal(authorizations, before.authorizations + (phase === 'session' ? 0 : 1));
+        assert.equal(await pending(), 0);
+      }
+    }
+    phase = 'session';
+    failure = Object.assign(new Error(privateValue), { statusCode: 401, code: privateValue });
+    const beforeFailure = sessions;
+    const unknown = await connect();
+    assert.equal(unknown.statusCode, 502);
+    assert.doesNotMatch(unknown.body, new RegExp(privateValue));
+    assert.deepEqual(Object.keys(unknown.json()), ['error']);
+    assert.equal(sessions, beforeFailure + 1);
+    assert.equal(await pending(), 0);
+    failure = undefined;
+    const retried = await connect();
+    assert.equal(retried.statusCode, 200, retried.body);
+    assert.equal(sessions, beforeFailure + 2);
+    assert.equal(new URL(retried.json().url).origin, 'https://consent.example.com');
+    assert.match(retried.json().attempt, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(await pending(), 1);
+  },
+);

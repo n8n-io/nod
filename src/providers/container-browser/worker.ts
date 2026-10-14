@@ -42,14 +42,13 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
         ? request.input.threadId
         : undefined);
   try {
-    const screen = threadId ? computer?.screenStatus?.(threadId) : undefined;
+    const screen = threadId ? computer?.screenStatus(threadId) : undefined;
     return browserMetadata.parse({
-      status: computer?.status() ?? 'Workspace browser is unavailable.',
-      currentSession: computer?.currentSession?.() ?? null,
+      status: 'Workspace browser is ready.',
       ...(screen && { screen: { threadId, ...screen } }),
     });
   } catch {
-    return { status: 'Workspace browser is unavailable.', currentSession: null };
+    return { status: 'Workspace browser is unavailable.' };
   }
 }
 
@@ -57,15 +56,12 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
   signal.throwIfAborted();
   switch (request.method) {
     case 'bindProfile':
-      if (!computer.bindProfile) throw new Error();
-      return computer.bindProfile(request.threadId, request.profileId, request.origins);
+      return computer.bindProfile(request.threadId, request.profileId);
     case 'deleteProfile':
-      if (!computer.deleteProfile) throw new Error();
       return computer.deleteProfile(request.profileId);
     case 'act':
       return computer.act(request.threadId, request.input, signal);
     case 'download': {
-      if (!computer.download) throw new Error();
       const file = await computer.download(request.threadId, request.input, signal);
       signal.throwIfAborted();
       if (
@@ -90,7 +86,6 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return { data: file.bytes.toString('base64'), name: file.name, mimeType: file.mimeType };
     }
     case 'upload': {
-      if (!computer.upload) throw new Error();
       const { data, ...input } = request.input;
       if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw new Error();
       const bytes = Buffer.from(data, 'base64');
@@ -122,12 +117,7 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     case 'close':
       return computer.close(request.threadId);
     case 'discard':
-      if (!computer.discard) throw new Error();
       return computer.discard(request.threadId);
-    case 'signOut':
-      return computer.signOut(request.threadId);
-    case 'status':
-      return null;
     case 'view':
     case 'dispose':
     case 'quiesce':
@@ -248,7 +238,6 @@ export async function startContainerBrowserWorker(
         void dispose(request.namespace).catch(() => {});
     });
     const view = async (computer: Computer, threadId: string, id: string) => {
-      if (!computer.view || !computer.control) throw new Error();
       let sent = 0;
       for await (const image of computer.view(threadId, controller.signal)) {
         const line =
@@ -310,6 +299,7 @@ export async function startContainerBrowserWorker(
               : error instanceof Error && 'statusCode' in error && error.statusCode === 423
                 ? 'locked'
                 : 'unavailable',
+          ...(error instanceof BrowserActionError && error.detail ? { detail: error.detail } : {}),
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

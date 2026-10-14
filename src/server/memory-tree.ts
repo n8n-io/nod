@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { secretToken } from './redaction.ts';
 import { memoryAreas, type MemorySource, type MemoryView } from '../shared/memory.ts';
 
 export const areas = memoryAreas;
@@ -8,17 +8,17 @@ export const maxEntries = 300;
 export const maxArchive = 40;
 export const indexBudget = 6000;
 
-export const personalSecret =
-  /\b(?:password|passcode|passphrase|otp|pin|2fa|api[ _-]?key|secret|token|bearer|private[ _-]?key|security code|cvv|cvc|verification code|recovery code|palavra[ _-]?passe|senha|código de verificação)\b|\bsk-[A-Za-z0-9_-]{12,}|\b(?:\d[ -]?){14,19}\b/i;
-const injection =
-  /\b(?:ignore|disregard|forget|override)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|all)\b[^.\n]{0,40}\b(?:instructions?|rules?|prompts?)\b|\bauthorized_keys\b|\bcurl\b[^\n]*\|\s*(?:ba)?sh\b|https?:\/\/[^\s/@]+:[^\s/@]+@|[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\ufeff]/iu;
+export const personalSecret = new RegExp(
+  String.raw`\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@|` + secretToken.source,
+  'i',
+);
 const slugPattern = '[a-z0-9]+(?:-[a-z0-9]+)*';
 const legacyKinds = { fact: 'about', preference: 'preferences', pattern: 'lessons' } as const;
 const legacy =
   /^## ([0-9a-f-]{36})\nKind: (fact|preference|pattern)\nUpdated: (\d{4}-\d\d-\d\dT[^\n]+)\nSources: ([0-9a-f-, ]+)\n\n([^\n]+)$/;
 
 export function unsafe(...texts: Array<string | undefined>) {
-  return texts.some((text) => !!text && (personalSecret.test(text) || injection.test(text)));
+  return texts.some((text) => !!text && personalSecret.test(text));
 }
 
 export const id = z.uuid();
@@ -66,10 +66,6 @@ const archivedSchema = entryFields
     by: path.optional(),
   })
   .refine(evidenced);
-const overviewSchema = z.object({
-  text: line(1200),
-  digest: z.string().regex(/^[0-9a-f]{12}$/),
-});
 const watermark = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z\/[0-9a-f-]{36}$/;
 
 export type Area = z.infer<typeof area>;
@@ -82,8 +78,6 @@ export interface Tree {
   reflected: string | null;
   retries: number;
   entries: Entry[];
-  overviews: Partial<Record<Area, z.infer<typeof overviewSchema>>>;
-  consolidated: Partial<Record<Area, string>>;
   archive: Archived[];
 }
 
@@ -93,8 +87,6 @@ export const emptyTree = (): Tree => ({
   reflected: null,
   retries: 0,
   entries: [],
-  overviews: {},
-  consolidated: {},
   archive: [],
 });
 export const isEmpty = (tree: Tree) =>
@@ -119,20 +111,6 @@ export const same = (a: string, b: string) => {
   const left = tokens(a).join(' ');
   return !!left && left === tokens(b).join(' ');
 };
-
-const numbers = (set: Set<string>) =>
-  [...set]
-    .filter((word) => /\p{N}/u.test(word))
-    .sort()
-    .join(' ');
-
-export function similar(a: string, b: string, threshold: number) {
-  const left = new Set(words(a));
-  const right = new Set(words(b));
-  if (numbers(left) !== numbers(right)) return false;
-  const shared = [...left].filter((word) => right.has(word)).length;
-  return !!shared && shared / (left.size + right.size - shared) >= threshold;
-}
 
 export const abstractOf = (entry: Entry) =>
   entry.abstract ??
@@ -163,18 +141,6 @@ export const slugFor = (tree: Tree, target: Area, text: string) =>
       .slice(0, 44)
       .replace(/-+$/, '') || 'note',
   );
-
-export function digest(entries: Entry[]) {
-  return createHash('sha256')
-    .update(
-      entries
-        .toSorted(bySlug)
-        .map((entry) => `${entry.slug}\n${entry.text}\n${entry.abstract ?? ''}`)
-        .join('\n\n'),
-    )
-    .digest('hex')
-    .slice(0, 12);
-}
 
 export const areaEntries = (tree: Tree, target: Area) =>
   tree.entries.filter((entry) => entry.area === target);
@@ -234,12 +200,6 @@ export function parse(bytes?: Uint8Array): Tree {
     if (entry.success && !unsafe(entry.data.text, entry.data.abstract))
       tree.archive.push(entry.data);
   }
-  for (const target of areas) {
-    const overview = overviewSchema.safeParse((doc.overviews as Record<string, unknown>)?.[target]);
-    if (overview.success && !unsafe(overview.data.text)) tree.overviews[target] = overview.data;
-    const attempt = timestamp.safeParse((doc.consolidated as Record<string, unknown>)?.[target]);
-    if (attempt.success) tree.consolidated[target] = attempt.data;
-  }
   return tree;
 }
 
@@ -256,15 +216,6 @@ export function render(tree: Tree) {
           entries: tree.entries.toSorted(
             (a, b) => areas.indexOf(a.area) - areas.indexOf(b.area) || bySlug(a, b),
           ),
-          overviews: Object.fromEntries(
-            areas.flatMap((target) => {
-              const overview = tree.overviews[target];
-              return overview?.digest === digest(areaEntries(tree, target))
-                ? [[target, overview]]
-                : [];
-            }),
-          ),
-          consolidated: tree.consolidated,
           archive: archived,
         },
         null,
@@ -358,14 +309,11 @@ export function find(tree: Tree, query: string, within?: Area) {
 
 export function open(tree: Tree, target: string) {
   const owner = area.safeParse(target);
-  if (owner.success) {
-    const overview = tree.overviews[owner.data];
+  if (owner.success)
     return {
       path: owner.data,
-      ...(overview ? { overview: overview.text } : {}),
       entries: areaEntries(tree, owner.data).toSorted(bySlug).map(brief),
     };
-  }
   const entry = locate(tree, target);
   if (!entry) throw new Error('The memory entry was not found.');
   return {
@@ -378,10 +326,7 @@ export function open(tree: Tree, target: string) {
   };
 }
 
-export function view(
-  tree: Tree,
-  source: (id: string) => MemorySource,
-): Omit<MemoryView, 'profile'> {
+export function view(tree: Tree, source: (id: string) => MemorySource): MemoryView {
   const index = indexLayout(tree);
   return {
     saving: tree.enabled,

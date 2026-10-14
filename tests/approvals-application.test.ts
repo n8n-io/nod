@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { AgentToolResult } from '../src/ports/agent.ts';
+import type { Preferences } from '../src/server/preferences.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -43,9 +44,19 @@ test(
       string,
       { tool?: string; action: string; args: Record<string, unknown> }
     >();
+    const batches = new Map<
+      string,
+      { subagents: boolean; calls: Array<{ action: string; args: Record<string, unknown> }> }
+    >();
+    const parts = new Map<string, { action: string; args: Record<string, unknown> }>();
+    let partsWaiting = 0;
+    let partsArrived = () => {};
+    let partsReady = Promise.resolve();
     let steering:
       { entered(turnId: string): void; wait: Promise<void>; messages: string[] } | undefined;
     const ids: string[] = [];
+    const asked = new Set<string>();
+    const cleared = new Set<string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -60,6 +71,36 @@ test(
               abort() {},
               dispose() {},
               async prompt(text) {
+                const tool = (name: string) => options.tools.find((item) => item.name === name)!;
+                const part = parts.get(
+                  /one part of the owner's request: (\S+)/.exec(text)?.[1] ?? '',
+                );
+                if (part) {
+                  if (--partsWaiting === 0) partsArrived();
+                  await partsReady;
+                  await tool('apps')
+                    .execute(part)
+                    .catch(() => {});
+                  return;
+                }
+                const batch =
+                  phase === 0
+                    ? batches.get(
+                        JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
+                          .currentInstruction,
+                      )
+                    : undefined;
+                if (batch) {
+                  await Promise.allSettled(
+                    batch.calls.map((call, index) => {
+                      if (!batch.subagents) return tool('apps').execute(call);
+                      const title = `${options.turnId}-${index}`;
+                      parts.set(title, call);
+                      return tool('delegate').execute({ title, instruction: 'Run this part.' });
+                    }),
+                  );
+                  return;
+                }
                 if (held) {
                   held.entered(options.turnId);
                   await held.wait;
@@ -101,8 +142,31 @@ test(
           }),
         },
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
-        relevance: { id: 'fixture', configured: false, classify: async () => 'ignore' },
         model: { provider: 'fixture', name: 'fixture', configured: true },
+        onboardingCurator: {
+          id: 'fixture',
+          configured: true,
+          curate: async ({ task, input }) =>
+            task === 'review' && 'reply' in input
+              ? {
+                  answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
+                }
+              : task === 'review'
+                ? {
+                    run:
+                      asked.has(
+                        (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
+                          ?.text ?? '',
+                      ) ||
+                      cleared.has(
+                        String(
+                          (input as { action?: { arguments?: { recipient_email?: unknown } } })
+                            .action?.arguments?.recipient_email,
+                        ),
+                      ),
+                  }
+                : undefined,
+        },
       },
       { channels: false },
     );
@@ -184,7 +248,9 @@ test(
       );
     }
     async function pendingPlan(action: string, args: Record<string, unknown>) {
-      const id = await propose('profile_update', { preferences: 'Synthetic pending plan fixture' });
+      const id = await propose('notification_preferences_update', {
+        notificationRule: 'Synthetic pending plan fixture',
+      });
       const [pending] = await approvalsFor(id);
       await pool.query('UPDATE approvals SET action=$2,args=$3 WHERE id=$1', [
         pending.id,
@@ -237,12 +303,117 @@ test(
         },
       );
 
+      await t.test('tool discovery runs without waiting for the checker', async () => {
+        const turn = await propose('SEARCH_TOOLS', { query: 'gmail email' }, 'apps');
+        const result = results.get(turn);
+        assert.ok(result);
+        const text = result.content.map((part) => ('text' in part ? part.text : '')).join('');
+        assert.match(text, /GMAIL_FETCH_EMAILS/);
+        assert.equal((await approvalsFor(turn)).length, 0);
+      });
+
+      await t.test(
+        'parallel app calls in one turn open one confirmation, in a batch or across subagents',
+        async () => {
+          const sends = () =>
+            integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length;
+          for (const subagents of [false, true]) {
+            partsWaiting = 2;
+            partsReady = new Promise<void>((resolve) => {
+              partsArrived = resolve;
+            });
+            const text = `Synthetic parallel sends ${randomUUID()}`;
+            batches.set(text, {
+              subagents,
+              calls: ['first', 'second'].map((name) => ({
+                action: 'GMAIL_SEND_EMAIL',
+                args: {
+                  recipient_email: `${name}@example.test`,
+                  subject: 'Synthetic invoices',
+                  body: 'Synthetic content.',
+                },
+              })),
+            });
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            if (subagents) {
+              const reached = await Promise.race([
+                partsReady.then(() => true),
+                delay(5000, false, { ref: false }),
+              ]);
+              partsArrived();
+              assert.ok(reached, 'Both synthetic subagents must start before either uses an app.');
+            }
+            await waitFor(turn, 'waiting');
+            const cards = await approvalsFor(turn);
+            assert.deepEqual(
+              cards.map((card) => card.status),
+              ['pending'],
+            );
+            assert.equal(
+              (
+                await pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+                  turn,
+                ])
+              ).rowCount,
+              1,
+            );
+            assert.equal(sends(), 0);
+            const declined = await request('POST', '/api/messages', {
+              text: 'No',
+              replyToMessageId: cards[0].confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(declined.statusCode, 200, declined.body);
+            await waitFor(declined.json().turnId, 'succeeded');
+          }
+        },
+      );
+
+      await t.test('an allowed send issued after one that asks never runs', async () => {
+        cleared.add('allowed@example.test');
+        const text = `Synthetic ordered sends ${randomUUID()}`;
+        batches.set(text, {
+          subagents: false,
+          calls: ['asked', 'allowed'].map((name) => ({
+            action: 'GMAIL_SEND_EMAIL',
+            args: {
+              recipient_email: `${name}@example.test`,
+              subject: 'Synthetic invoices',
+              body: 'Synthetic content.',
+            },
+          })),
+        });
+        const response = await request('POST', '/api/messages', { text });
+        assert.equal(response.statusCode, 200, response.body);
+        const turn = response.json().turnId as string;
+        await waitFor(turn, 'waiting');
+        const cards = await approvalsFor(turn);
+        assert.deepEqual(
+          cards.map((card) => [card.status, card.args.recipient_email]),
+          [['pending', 'asked@example.test']],
+        );
+        assert.equal(
+          integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length,
+          0,
+        );
+        const declined = await request('POST', '/api/messages', {
+          text: 'No',
+          replyToMessageId: cards[0].confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(declined.statusCode, 200, declined.body);
+        await waitFor(declined.json().turnId, 'succeeded');
+        cleared.clear();
+      });
+
       await t.test(
         'a schedule cancellation steered into a confirmed turn uses the fresh owner request',
         async () => {
           const schedule = await reminder();
-          const proposed = await propose('profile_update', {
-            preferences: 'Synthetic confirmed preference',
+          const proposed = await propose('notification_preferences_update', {
+            notificationRule: 'Synthetic confirmed preference',
           });
           const [approval] = await approvalsFor(proposed);
           let enter!: (turnId: string) => void;
@@ -282,6 +453,7 @@ test(
             );
             assert.equal((await approvalsFor(proposed))[0].status, 'completed');
             const text = 'Cancel the synthetic reminder now.';
+            asked.add(text);
             plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
             const cancellation = await request('POST', '/api/messages', {
               text,
@@ -318,6 +490,7 @@ test(
           const [approval] = await approvalsFor(background);
           assert.equal(approval.status, 'pending');
           const text = 'Cancel that synthetic reminder.';
+          asked.add(text);
           plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
           const cancellation = await request('POST', '/api/messages', {
             text,
@@ -415,13 +588,13 @@ test(
             404,
           );
           assert.equal((await approvalsFor(id))[0].status, 'pending');
-          const legacyId = await pendingPlan('profile_update', {
-            preferences: 'Valid at proposal',
+          const legacyId = await pendingPlan('notification_preferences_update', {
+            notificationRule: 'Valid at proposal',
           });
           const [legacy] = await approvalsFor(legacyId);
           await pool.query('UPDATE approvals SET args=$2 WHERE id=$1', [
             legacy.id,
-            { preferences: 'Invalid historical payload', unexpected: true },
+            { notificationRule: 'Invalid historical payload', unexpected: true },
           ]);
           assert.equal(
             (
@@ -435,7 +608,8 @@ test(
           );
           assert.equal((await approvalsFor(legacyId))[0].status, 'pending');
           assert.notEqual(
-            (await application.personal.getProfile()).preferences,
+            ((await application.personal.manage('notification_preferences_get', {})) as Preferences)
+              .notificationRule,
             'Invalid historical payload',
           );
         },

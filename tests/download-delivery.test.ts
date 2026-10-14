@@ -264,6 +264,7 @@ test(
               : createAgentBrowserComputer({
                   dataRoot: join(dataRoot, 'browser'),
                   browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+                  privateNetwork: true,
                   headless: true,
                 });
           const agent: Agent = {

@@ -45,12 +45,6 @@ const channels: Record<string, string> = {
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
 };
-const profileLabels = {
-  name: 'Name',
-  location: 'Location',
-  phone: 'Phone',
-  preferences: 'Preferences',
-} as const;
 
 const day = (value: string) => value.slice(0, 10);
 const text = (value: string) =>
@@ -58,12 +52,6 @@ const text = (value: string) =>
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[\\`*_[\]<>|~#]/g, '\\$&');
-
-function profile(view: MemoryView) {
-  return (Object.keys(profileLabels) as Array<keyof typeof profileLabels>)
-    .filter((field) => view.profile[field])
-    .map((field) => `${profileLabels[field]}: ${text(view.profile[field])}`);
-}
 
 function note(entry: MemoryNote) {
   return [
@@ -86,7 +74,6 @@ export function memoryFileName(exported: Date) {
 }
 
 export function memoryMarkdown(view: MemoryView, exported: Date) {
-  const saved = profile(view);
   const sections = statuses.flatMap(({ status, label }) => {
     const notes = view.notes.filter((entry) => entry.status === status);
     if (!notes.length) return [];
@@ -105,7 +92,6 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
       '- **Let go**: Replaced, expired or not mentioned for 60 days. Kept so you can bring it back.',
     ].join('\n'),
     `Saving new notes is ${view.saving ? 'on' : 'off'}. Sensitive topics (health, religion, politics and similar) are ${view.sensitive ? 'remembered' : 'learned only when you ask'}.`,
-    ...(saved.length ? [`## Profile\n\n${saved.map((line) => `- ${line}`).join('\n')}`] : []),
     ...sections,
     ...(view.archive.length
       ? [
@@ -117,14 +103,12 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
             .join('\n')}`,
         ]
       : []),
-    ...(view.notes.length || saved.length ? [] : ['Nothing yet.']),
+    ...(view.notes.length ? [] : ['Nothing yet.']),
   ].join('\n\n')}\n`;
 }
 
 export function memoryDigest(view: MemoryView, link: string | null, limit = 3800) {
   const lines = ['**What Otto remembers about you**'];
-  const saved = profile(view).map((line) => (line.length > 300 ? `${line.slice(0, 299)}…` : line));
-  if (saved.length) lines.push('', ...saved);
   for (const { status, label } of statuses) {
     const notes = view.notes.filter((entry) => entry.status === status);
     if (notes.length)
@@ -134,7 +118,7 @@ export function memoryDigest(view: MemoryView, link: string | null, limit = 3800
         ...notes.map((entry) => `• ${text(entry.text)}`),
       );
   }
-  if (!view.notes.length && !saved.length) lines.push('', 'Nothing yet.');
+  if (!view.notes.length) lines.push('', 'Nothing yet.');
   const footer = [
     '',
     ...(view.archive.length ? [`Let go: ${view.archive.length}`] : []),

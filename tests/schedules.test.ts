@@ -295,7 +295,7 @@ test(
       };
     };
     const createRouted = (
-      provenance?: { turnId: string; sourceMessageId: string | null; sourceTurnId?: string },
+      provenance?: { turnId: string; sourceMessageId: string | null },
       timing: Record<string, unknown> = {},
     ) =>
       personal.manage(
@@ -449,7 +449,7 @@ test(
             assert.equal(response.statusCode, 200, response.body);
             assert.deepEqual(response.json(), {
               title: 'Synthetic account report',
-              prompt: `${first}\n\n${clarification}`,
+              prompt: `${first}\n\nMy password is synthetic-only.\n\n${clarification}`,
               omittedSensitive: true,
               hasAttachments: true,
             });
@@ -832,7 +832,7 @@ test(
           const continuation = await thread.enqueueTurn('Synthetic continuation.', {
             source: 'resume',
           });
-          const provenance = { ...origin, turnId: continuation, sourceTurnId: origin.turnId };
+          const provenance = { ...origin, turnId: continuation };
           const schedule = await createRouted(provenance);
           const stored = (
             await db.pool.query(
@@ -846,11 +846,6 @@ test(
             authority_instruction: 'Remind me in a minute.',
             authority_source_message_id: origin.sourceMessageId,
           });
-          const unrelated = await receive('An unrelated source instruction.');
-          await assert.rejects(
-            createRouted({ ...provenance, sourceMessageId: unrelated.sourceMessageId }),
-            /unavailable/,
-          );
           for (const sourceOwner of [ownerId, 'foreign-source']) {
             const sourceThread = randomUUID();
             const sourceTurn = randomUUID();
@@ -868,11 +863,7 @@ test(
               "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'user','Unrelated source.')",
               [sourceMessage, sourceOwner, sourceThread, sourceTurn],
             );
-            const unownedSource = {
-              turnId: continuation,
-              sourceTurnId: sourceTurn,
-              sourceMessageId: sourceMessage,
-            };
+            const unownedSource = { turnId: continuation, sourceMessageId: sourceMessage };
             await assert.rejects(createRouted(unownedSource), /unavailable/);
             await assert.rejects(
               personal.manage(

@@ -177,7 +177,6 @@ export function createChatSdkTransport(
   let offsetsReady: Promise<unknown> | undefined;
   const transport: MessagingTransport = {
     channels,
-    pollingEnabled: Boolean(telegram && env.TELEGRAM_MODE === 'polling'),
     async poll(accept, pair) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
       polling = true;

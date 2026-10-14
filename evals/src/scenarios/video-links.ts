@@ -20,13 +20,7 @@ const requests = [
     video: false,
   },
 ];
-const detours = new Set([
-  'manage_apps',
-  'browser',
-  'browser_session',
-  'browser_flow',
-  'web_search',
-]);
+const detours = new Set(['manage_apps', 'browser', 'browser_session', 'web_search']);
 
 function turns(run: Run) {
   const asked = requests.map(

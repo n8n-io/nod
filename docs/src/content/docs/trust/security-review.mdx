@@ -64,13 +64,13 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 ## Built on published research
 
-| Pattern                                      | Source                                                                                                             | In Otto                                                                       |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Privileged decisions from trusted input only | [CaMeL](https://arxiv.org/abs/2503.18813), [agent design patterns](https://arxiv.org/abs/2506.08837)               | The review sees user messages and the action only                             |
-| Review the proposed action, not the content  | [Chrome agent security](https://blog.google/security/architecting-security-for-agentic/)                           | Confirmations show the request as sent                                        |
-| Fill credentials outside the model           | [1Password agentic autofill](https://1password.com/blog/closing-the-credential-risk-gap-for-browser-use-ai-agents) | Private entry on a verified origin                                            |
-| No token passthrough                         | [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)                  | Connection secrets stay server-side                                           |
-| Classifiers are a layer, not the boundary    | [The Attacker Moves Second](https://arxiv.org/abs/2510.09023)                                                      | The tripwire only warns and holds Vault and payments; the trust check decides |
+| Pattern                                      | Source                                                                                                             | In Otto                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| Privileged decisions from trusted input only | [CaMeL](https://arxiv.org/abs/2503.18813), [agent design patterns](https://arxiv.org/abs/2506.08837)               | The review sees user messages and the action only                         |
+| Review the proposed action, not the content  | [Chrome agent security](https://blog.google/security/architecting-security-for-agentic/)                           | Confirmations show the request as sent                                    |
+| Fill credentials outside the model           | [1Password agentic autofill](https://1password.com/blog/closing-the-credential-risk-gap-for-browser-use-ai-agents) | Private entry on a verified origin                                        |
+| No token passthrough                         | [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)                  | Connection secrets stay server-side                                       |
+| Classifiers are a layer, not the boundary    | [The Attacker Moves Second](https://arxiv.org/abs/2510.09023)                                                      | No pattern classifier; the trust check, Vault and payment approval decide |
 
 ## Common questions
 

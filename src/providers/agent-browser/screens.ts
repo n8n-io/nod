@@ -82,7 +82,7 @@ export function createScreenStore(root: string) {
 }
 
 export class DaemonCommandError extends Error {
-  constructor() {
+  constructor(readonly detail?: string) {
     super('Browser action could not complete. Observe the page again before retrying.');
   }
 }
@@ -176,7 +176,9 @@ export function existingDaemonCommand(
             /^Navigation failed: net::ERR_[A-Z_]+/.test(response.error)
           )
             return stop(new BrowserActionError('browser_navigation_failed'));
-          return stop(new DaemonCommandError());
+          return stop(
+            new DaemonCommandError(typeof response.error === 'string' ? response.error : undefined),
+          );
         }
         if (response.success !== true) throw new Error();
         stop(undefined, response.data ?? {});

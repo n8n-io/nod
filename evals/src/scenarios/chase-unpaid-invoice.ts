@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
@@ -46,18 +47,30 @@ export default scenario({
       },
     ];
     const state: State = { marks: { setup: 0, check: 0, fired: 0 }, goAt: Number.MAX_SAFE_INTEGER };
-    return { apps: createApps(owner, { gmail: gmail(owner, mails, clock.now) }), state };
+    return {
+      apps: createApps(owner, { gmail: gmail(owner, mails, clock.now) }),
+      now: clock.now,
+      state,
+    };
   },
   async play(session, world) {
     const { marks } = world.state;
+    const due = Math.ceil((world.now() + 300_000) / 60_000) * 60_000;
+    const at = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Madrid',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(due);
     await session.say(
-      `Send Tom Bailey (${tom}) a friendly reminder about invoice INV-2038 (€620), which is overdue. If he hasn't paid or replied in 2 days, nudge him again, but ask me before you send the second one.`,
+      `Send Tom Bailey (${tom}) a friendly reminder about invoice INV-2038 (€620), which is overdue. If he hasn't paid or replied by ${at}, nudge him again, but ask me before you send the second one.`,
     );
     marks.setup = await session.assistantCount();
+    await sleep(Math.max(0, due - Date.now()));
     marks.fired = await session.fireSchedules();
+    await session.settle();
     marks.check = await session.assistantCount();
     world.state.goAt = Date.now();
-    await session.say('Go ahead and send Tom the second nudge now, no need to wait the two days.');
+    await session.say('Go ahead and send Tom the second nudge now.');
   },
   evidence(run, world) {
     const sent = reminders(run);

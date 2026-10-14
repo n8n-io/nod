@@ -29,9 +29,21 @@ export function isPublicAddress(address: string): boolean {
   return false;
 }
 
+const systemResolver: AddressResolver = (host) => lookup(host, { all: true, verbatim: true });
+
+async function publicAddress(hostname: string, resolver: AddressResolver) {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || /\.(localhost|local|internal)$/i.test(host))
+    throw new Error('Private network destinations are blocked.');
+  const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await resolver(host);
+  if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address)))
+    throw new Error('Private network destinations are blocked.');
+  return addresses[0].address;
+}
+
 export async function publicUrl(
   value: string,
-  resolver: AddressResolver = (host) => lookup(host, { all: true, verbatim: true }),
+  resolver: AddressResolver = systemResolver,
 ): Promise<{ url: URL; address: string }> {
   let url: URL;
   try {
@@ -46,13 +58,7 @@ export async function publicUrl(
     (url.port && !['80', '443'].includes(url.port))
   )
     throw new Error('Only public HTTP and HTTPS destinations on ports 80 or 443 are permitted.');
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || /\.(localhost|local|internal)$/i.test(host))
-    throw new Error('Private network destinations are blocked.');
-  const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await resolver(host);
-  if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address)))
-    throw new Error('Private network destinations are blocked.');
-  return { url, address: addresses[0].address };
+  return { url, address: await publicAddress(url.hostname, resolver) };
 }
 
 export function browserUrl(value: string): URL {
@@ -67,7 +73,13 @@ export function browserUrl(value: string): URL {
   return url;
 }
 
-export function createBrowserProxy(allow: (origin: string) => boolean = () => true) {
+export function createBrowserProxy(
+  options: { privateNetwork?: boolean; resolver?: AddressResolver } = {},
+) {
+  const destination = (url: URL) =>
+    options.privateNetwork
+      ? Promise.resolve(url.hostname.replace(/^\[|\]$/g, ''))
+      : publicAddress(url.hostname, options.resolver ?? systemResolver);
   let server: ReturnType<typeof createServer> | undefined;
   let pending: Promise<string> | undefined;
   let disposed = false;
@@ -84,19 +96,18 @@ export function createBrowserProxy(allow: (origin: string) => boolean = () => tr
       server = createServer(async (incoming, outgoing) => {
         try {
           const url = browserUrl(incoming.url ?? '');
-          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.protocol !== 'http:') throw new Error('Invalid proxy request.');
           const headers: OutgoingHttpHeaders = { ...incoming.headers, host: url.host };
           delete headers['proxy-authorization'];
           delete headers['proxy-connection'];
           const upstream = request(
             {
-              host: url.hostname.replace(/^\[|\]$/g, ''),
+              host: await destination(url),
               port: url.port || 80,
               method: incoming.method,
               path: url.pathname + url.search,
               headers,
-              timeout: 30_000,
+              timeout: 600_000,
             },
             (response) => {
               outgoing.writeHead(response.statusCode ?? 502, response.headers);
@@ -118,14 +129,13 @@ export function createBrowserProxy(allow: (origin: string) => boolean = () => tr
       server.on('connect', async (incoming, socket, head) => {
         try {
           const url = browserUrl(`https://${incoming.url}`);
-          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.pathname !== '/' || url.search || url.hash) throw new Error();
           const upstream = connect({
-            host: url.hostname.replace(/^\[|\]$/g, ''),
+            host: await destination(url),
             port: Number(url.port || 443),
           });
           track(upstream);
-          upstream.setTimeout(60_000, () => upstream.destroy());
+          upstream.setTimeout(600_000, () => upstream.destroy());
           upstream.on('close', () => {
             if (!upstream.readableEnded) socket.destroy();
           });
@@ -143,21 +153,20 @@ export function createBrowserProxy(allow: (origin: string) => boolean = () => tr
         }
       });
       server.on('connection', track);
-      server.on('upgrade', (incoming, socket, head) => {
+      server.on('upgrade', async (incoming, socket, head) => {
         try {
           const url = browserUrl(incoming.url ?? '');
-          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.protocol !== 'http:') throw new Error();
           const headers: OutgoingHttpHeaders = { ...incoming.headers, host: url.host };
           delete headers['proxy-authorization'];
           delete headers['proxy-connection'];
           const upstream = request({
-            host: url.hostname.replace(/^\[|\]$/g, ''),
+            host: await destination(url),
             port: url.port || 80,
             method: incoming.method,
             path: url.pathname + url.search,
             headers,
-            timeout: 30_000,
+            timeout: 600_000,
           });
           upstream.on('socket', track);
           upstream.on('timeout', () => upstream.destroy());

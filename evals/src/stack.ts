@@ -7,13 +7,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import type { IntegrationProvider } from '../../src/ports/integrations.ts';
-import type { RuntimeObservation } from '../../src/ports/agent.ts';
 import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
 import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
 import { accessCookie, accessKey } from '../../src/server/access.ts';
+import { createCapture, type Observation } from './capture.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
@@ -56,6 +57,13 @@ export function selectModel(
   return { provider, name: name || agentModels[provider as 'openai' | 'anthropic'], apiKey };
 }
 
+export async function approvalOrder(pool: pg.Pool) {
+  const { rows } = await pool.query(
+    "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approvals' AND column_name='created_at'",
+  );
+  return rows.length ? 'created_at' : 'expires_at';
+}
+
 async function freePort() {
   const probe = createServer();
   await new Promise<void>((done) => probe.listen(0, '127.0.0.1', done));
@@ -80,7 +88,7 @@ export interface Stack {
   pool: pg.Pool;
   bossSchema: string;
   sessionRoot: string;
-  observations: Array<{ turnId: string; event: RuntimeObservation }>;
+  observations: Array<{ turnId: string; event: Observation }>;
   prompts: Array<{ turnId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
@@ -271,7 +279,6 @@ export async function startStack(options: {
       { activeThread, resetThread },
       { createContainerBrowserComputer },
       { createDockerWorkspace },
-      { createOpenAIRelevanceClassifier },
       { createPublicLinkPreviewProvider },
     ] = await Promise.all([
       load<typeof import('../../src/server/composition.ts')>('src/server/composition.ts'),
@@ -285,9 +292,6 @@ export async function startStack(options: {
         'src/providers/container-browser/index.ts',
       ),
       load<typeof import('../../src/providers/docker/index.ts')>('src/providers/docker/index.ts'),
-      load<typeof import('../../src/providers/openai/relevance.ts')>(
-        'src/providers/openai/relevance.ts',
-      ),
       load<typeof import('../../src/providers/public-web/link-preview.ts')>(
         'src/providers/public-web/link-preview.ts',
       ),
@@ -299,18 +303,18 @@ export async function startStack(options: {
       dataRoot: join(directory, '.local'),
       container: browserContainer,
     });
-    const observations: Stack['observations'] = [];
-    const prompts: Stack['prompts'] = [];
+    const capture = createCapture();
+    const { observations, prompts } = capture;
     application = await createApplication({
-      observe: (turnId, event) => observations.push({ turnId, event }),
-      inspectPrompt: (turnId, snapshot) =>
-        prompts.push({ turnId, instruction: snapshot.instruction }),
-      agent: createPiAgent({
-        provider: model.provider,
-        model: model.name,
-        apiKey: model.apiKey,
-        sessionRoot,
-      }),
+      observe: capture.observe,
+      agent: capture.agent(
+        createPiAgent({
+          provider: model.provider,
+          model: model.name,
+          apiKey: model.apiKey,
+          sessionRoot,
+        }),
+      ),
       computer,
       workspace: createDockerWorkspace({ container, workspaceRoot }),
       integrations: options.integrations,
@@ -343,7 +347,15 @@ export async function startStack(options: {
         },
       },
       keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-      relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+      ...(existsSync(join(appSource, 'src/providers/openai/relevance.ts'))
+        ? {
+            relevance: (
+              await load<{
+                createOpenAIRelevanceClassifier(options: { apiKey?: string }): unknown;
+              }>('src/providers/openai/relevance.ts')
+            ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+          }
+        : {}),
       memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
       onboardingCurator: createPiMemoryCurator({
         provider: model.provider,
@@ -381,11 +393,26 @@ export async function startStack(options: {
       },
       async event(summary) {
         const eventId = `eval:${randomUUID()}`;
-        await application!.triage.triageEvent(summary, eventId, 'inspect_message');
-        const result = await pool.query('SELECT turn_id FROM notifications WHERE event_id=$1', [
-          eventId,
-        ]);
-        const turnId = result.rows[0]?.turn_id as string | undefined;
+        const legacy = (
+          await pool.query("SELECT to_regclass('notifications') IS NOT NULL AS found")
+        ).rows[0].found;
+        const queued = legacy
+          ? await (
+              application!.triage.triageEvent as unknown as (
+                summary: string,
+                eventId: string,
+                intent: string,
+              ) => Promise<unknown>
+            )(summary, eventId, 'inspect_message')
+          : await application!.triage.triageEvent(summary, eventId);
+        const turnId =
+          typeof queued === 'string'
+            ? queued
+            : legacy
+              ? ((
+                  await pool.query('SELECT turn_id FROM notifications WHERE event_id=$1', [eventId])
+                ).rows[0]?.turn_id as string | undefined)
+              : undefined;
         if (!turnId) throw new Error('The incoming event did not queue a background turn.');
         return turnId;
       },

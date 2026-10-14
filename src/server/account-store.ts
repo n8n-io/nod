@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { transaction } from './transaction.ts';
 import type { AccountSettings, AccountUpdate } from '../shared/account.ts';
 
 export interface StoredAccount extends AccountSettings {
@@ -64,9 +65,7 @@ export function createAccountStore(database: Pool): AccountStore & { initialize(
     },
     async update(ownerId, input) {
       if (!input.onboardingCompleted) return save(database, ownerId, input);
-      const connection = await database.connect();
-      try {
-        await connection.query('BEGIN');
+      return transaction(async (connection) => {
         await connection.query(
           'INSERT INTO account_settings (owner_id) VALUES ($1) ON CONFLICT (owner_id) DO NOTHING',
           [ownerId],
@@ -76,17 +75,11 @@ export function createAccountStore(database: Pool): AccountStore & { initialize(
           [ownerId],
         );
         const account = await save(connection, ownerId, input);
-        await connection.query('COMMIT');
         return {
           ...account,
           onboardingCompletedNow: !previous.rows[0].onboardingCompleted,
         };
-      } catch (error) {
-        await connection.query('ROLLBACK');
-        throw error;
-      } finally {
-        connection.release();
-      }
+      }, database);
     },
   };
 }

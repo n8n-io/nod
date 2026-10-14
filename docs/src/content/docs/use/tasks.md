@@ -7,7 +7,7 @@ sidebar:
 
 The **Tasks** page shows what Otto is working on, what's scheduled and what's done.
 
-Otto adds a card when a request runs for more than 30 seconds, or when you hand it work that continues later, such as chasing a reply. Quick answers don't get a card.
+Otto adds a card when a request takes more than a few steps, or when you hand it work that continues later, such as chasing a reply. Quick answers don't get a card.
 
 ## Three views
 
@@ -30,7 +30,7 @@ Otto adds a card when a request runs for more than 30 seconds, or when you hand 
 | **Next check** | When Otto will look again                                   |
 | **Done when**  | What finished looks like                                    |
 
-Otto writes the card from your messages, its own replies and the names of the tools it used. Web pages and tool results never go into a card.
+Otto keeps the card current itself as it works, and a follow-up step, such as finishing a sign-in, continues the same card.
 
 A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
 
@@ -62,7 +62,7 @@ stateDiagram-v2
   needs --> Stopped: you move on
 ```
 
-A failed or stopped task shows **Needs you** until you write again. When your next message is about something else, Otto can close the old card as **Stopped**.
+A failed or stopped task shows **Needs you** until you write again. Tell Otto to stop a task and it closes the card as **Stopped**.
 
 ## Tasks only report
 

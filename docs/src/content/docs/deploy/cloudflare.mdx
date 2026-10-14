@@ -205,7 +205,7 @@ A reset removes every account and its data from one environment. Use it only whe
 
 1. Confirm the exact origin, database, bucket, provider projects and release. Keep the deployment, OAuth clients, provider keys, Composio auth configs and `OTTO_MASTER_KEY`.
 2. Close admission with the deployment barrier, as in a rollout. Confirm every tenant and computer generation has stopped, and keep the gateway from restarting.
-3. Remove external resources while their IDs are readable: unregister each user's Telegram webhook, delete their Composio triggers, sessions and connected accounts, and revoke direct OAuth grants.
+3. Remove external resources while their IDs are readable: unregister each user's Telegram webhook, delete their Composio triggers, sessions and connected accounts, and revoke the OAuth grants of their MCP connections and of any direct Notion or Linear connections from earlier releases.
 4. Delete R2 objects under `<environment>/<owner>/` (`artifacts/`, `sessions/`, `computers/`) and abort incomplete multipart uploads.
 5. In PostgreSQL, drop every tenant app and jobs schema and tenant role. Delete Better Auth users, accounts, sessions, verification rows and account settings. Clear the tenant registry and channel claim records, but keep the auth and control table definitions.
 6. Verify zero users, sessions, tenant schemas, roles, registry rows and owner objects. Keep a counts-only record, and never log user content or credentials.

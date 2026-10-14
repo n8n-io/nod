@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -44,7 +54,9 @@ async function createDownloadBrowser(root: string) {
       return createAgentBrowserComputer({
         dataRoot,
         browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
         headless: true,
+        evictIdleMs: 0,
       });
     },
   });
@@ -133,6 +145,9 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
     await assert.rejects(readDownload(directory, '../private'));
     await writeFile(join(directory, 'invoice.pdf'), browserDownloadPdf);
     assert.deepEqual((await readDownload(directory, 'invoice.pdf')).bytes, browserDownloadPdf);
+    await writeFile(join(directory, 'later.pdf'), browserDownloadPdf);
+    await utimes(join(directory, 'invoice.pdf'), new Date(1_000_000), new Date(1_000_000));
+    assert.equal((await completedDownloads(directory))[0], 'later.pdf');
     await writeFile(join(directory, 'large'), Buffer.alloc(browserDownloadBytes + 1));
     await assert.rejects(readDownload(directory, 'large'));
     await symlink(directory, join(root, 'alias'));
@@ -679,13 +694,6 @@ test('Composio file outputs become private bytes wherever they appear and never 
           bytes: Buffer.from('synthetic /nested'),
         },
       },
-    },
-  });
-  assert.deepEqual(await files({ file: fileObject() }, AbortSignal.timeout(1000), false), {
-    file: {
-      name: '../../invoice.pdf',
-      mimeType: 'application/pdf',
-      message: 'Files are not opened in activity checks.',
     },
   });
   assert.equal(calls.length, 5);

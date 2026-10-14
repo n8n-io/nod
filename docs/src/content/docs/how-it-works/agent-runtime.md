@@ -41,29 +41,26 @@ In both modes, when a loaded session ends with tool calls that have no result, e
 
 Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/tools.ts).
 
-| Tool                                                                | What it does                                                                          |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                           |
-| `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/).           |
-| `send_message`                                                      | Sends a message now. The only delivery in background turns.                           |
-| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                       |
-| `react_to_message`                                                  | Reacts to a message with one emoji, on web only.                                      |
-| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more. |
-| `browser_flow`                                                      | Lists, saves and runs saved browser routines.                                         |
-| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.           |
-| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                             |
-| `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                    |
-| `browser_session`                                                   | Opens or saves a signed-in browser profile for exact origins.                         |
-| `apps`                                                              | Runs an action on a connected account, after the trust check.                         |
-| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                               |
-| `manage_personal_context`                                           | Profile, schedules, notification preferences, memory, history and usage.              |
-| `task`                                                              | Keeps a progress card on the Tasks page. It schedules and grants nothing.             |
-| `share_file`                                                        | Sends a workspace file to you.                                                        |
-| `create_audio`                                                      | Turns text into speech and sends it to you.                                           |
-| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension.                               |
-| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                       |
-
-Activity checks get only `apps` for one account plus `record_activity_check`.
+| Tool                                                                | What it does                                                                                     |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                      |
+| `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/).                      |
+| `send_message`                                                      | Sends a message now. The only delivery in background turns.                                      |
+| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                  |
+| `react_to_message`                                                  | Reacts to a message with one emoji, on web only.                                                 |
+| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.            |
+| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                      |
+| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                        |
+| `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                               |
+| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in. |
+| `apps`                                                              | Runs an action on a connected account, after the trust check.                                    |
+| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                          |
+| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                  |
+| `task`                                                              | Keeps a progress card on the Tasks page. It schedules and grants nothing.                        |
+| `share_file`                                                        | Sends a workspace file to you.                                                                   |
+| `create_audio`                                                      | Turns text into speech and sends it to you.                                                      |
+| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.              |
+| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                  |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
 
@@ -75,20 +72,18 @@ Every tool call, including every call a codemode script makes, passes the same g
 flowchart TD
   call[Tool call] --> live{{Turn still<br/>running?}}
   live -- no --> refuse[Refused]:::stop
-  live -- yes --> mode{{Allowed in<br/>this turn mode?}}
-  mode -- no --> refuse
-  mode -- yes --> run[Run the tool]:::go
-  run --> scan[Tripwire scan<br/>of outside results]
-  scan --> wrap[Wrap as<br/>untrusted data]
+  live -- yes --> run[Run the tool]:::go
+  run --> wrap[Wrap outside results<br/>as untrusted data]
   wrap --> pi[Back to Pi]:::accent
 ```
 
-- **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before and after they run.
-- **Turn mode:** read-only turns can use only read tools and browser open, snapshot, scroll, screenshot and wait. Activity checks can read only the selected account.
-- **Observations:** the guard records each call, with typed text, flows and memory arguments redacted.
+- **Cancellation:** a stopped or finished turn can't start a call. Server callbacks also check `withTurnLock` before they run.
+- **Observations:** the guard reports each call to an optional observer. Only the capability evals and the voice eval script set one; the capability evals redact typed text and memory arguments.
 - **App actions:** `apps` also passes the server's [trust check](/trust/approvals/).
 
-App and memory changes run one at a time in call order, even when other calls run in parallel.
+`apps` and `manage_personal_context` calls run in parallel with each other and with subagents. The trust check covers app actions and changes to schedules and notification settings, and those checks run in parallel too. Other `manage_personal_context` operations, such as memory and reads, have no trust check and count as decided as soon as they reach the server.
+
+A call acts only once every `apps` or `manage_personal_context` call issued before it in the turn is decided, and each earlier one that asks has opened its question or failed. If one of them opened a question, the later call is refused. A turn has at most one open confirmation: while one waits for the owner, approvals refuse to open another.
 
 ## Codemode
 
@@ -100,17 +95,17 @@ Pi's `codemode` tool runs model-written JavaScript in a QuickJS sandbox with no 
 
 ## Untrusted results
 
-Results from apps, the browser, browser flows, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. A tripwire scans every untrusted result, error and block for injection patterns aimed at AI assistants. See [Untrusted content](/trust/untrusted-content/) for what a hit does.
+Results from apps, the browser, the web and codemode reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice. Workspace tool results aren't wrapped, and errors reach Pi unwrapped. See [Untrusted content](/trust/untrusted-content/).
 
 ## How the prompt is built
 
 The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/prompt.ts).
 
-| Layer         | Contains                                                                                                                                         | Sent                       |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
-| Static prompt | Otto's personality and rules, the conversation, background and activity-check rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
-| Owner context | Account details, date format, saved profile and the memory index                                                                                 | Again only when it changes |
-| Turn message  | Mode, time, channel, message ID, reply target, recent conversation, activity-check limits and the instruction                                    | Every turn                 |
+| Layer         | Contains                                                                                                                         | Sent                       |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Static prompt | Otto's personality and rules, the conversation and background rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
+| Owner context | Account details, date format and the memory index                                                                                | Again only when it changes |
+| Turn message  | Mode, time, channel, message ID, reply target, recent conversation and the instruction                                           | Every turn                 |
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.
 

@@ -18,7 +18,7 @@ export interface TrustPage {
 }
 
 export interface TrustView extends TrustPage {
-  week: { things: number; reached: number; spentUsd: number };
+  week: { things: number; actions: number; spentUsd: number };
   month: {
     start: string;
     days: number;

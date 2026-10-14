@@ -19,13 +19,11 @@ You can see everything Otto remembers, where it learned it, and change or forget
 | **Routines**    | You review invoices on Mondays               |
 | **Lessons**     | What worked or failed on an earlier task     |
 
-Your profile, with your name, location and phone, sits next to these notes.
-
 ## Where Otto learns from
 
 Otto learns only from your own messages. It never learns from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
 
-- **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves it.
+- **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 600 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Otto looks through your recent short messages for lasting facts. It skips messages with attachments.
 
 Otto saves silently. It doesn't post a notice in chat.

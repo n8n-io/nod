@@ -44,14 +44,10 @@ interface BrowserState {
   queue: Promise<unknown>;
   injecting: boolean;
   secrets: Set<string>;
-  secretsByOrigin: Map<string, Set<string>>;
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
-  protectedSelectors: Set<string>;
   privateDocument?: string;
   uploads: Set<string>;
-  origins?: Set<string>;
-  blocked: Set<string>;
   proxy?: ReturnType<typeof createBrowserProxy>;
   started: boolean;
   lastUsed: number;
@@ -111,11 +107,7 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
       if (part === null) return [null];
       return part.split(value).flatMap((section, index) => (index ? [null, section] : [section]));
     });
-  const result = parts.map((part) => part ?? '[redacted]').join('');
-  return result.replace(
-    /((?:password|card ?number|security code|cvc|cvv|csc)[^\n]*?)(?:value=|: )[^\n]*/gi,
-    '$1 [redacted]',
-  );
+  return parts.map((part) => part ?? '[redacted]').join('');
 }
 
 const browserTabList = z.array(
@@ -140,97 +132,6 @@ function browserLocale(value: string | undefined) {
   } catch {}
 }
 
-function daemonRequest(args: string[], input?: string): Record<string, unknown> | null {
-  switch (args[0]) {
-    case 'open':
-      return { action: 'navigate', url: args[1] };
-    case 'eval':
-      return { action: 'evaluate', script: input };
-    case 'get':
-      return args[1] === 'url'
-        ? { action: 'url' }
-        : args[1] === 'cdp-url'
-          ? { action: 'cdp_url' }
-          : args[1] === 'attr'
-            ? { action: 'getattribute', selector: args[2], attribute: args[3] }
-            : null;
-    case 'click':
-      return { action: 'click', selector: args[1] };
-    case 'fill':
-      return { action: 'fill', selector: args[1], value: args[2] };
-    case 'type':
-      return { action: 'type', selector: args[1], text: args[2] };
-    case 'select':
-      return { action: 'select', selector: args[1], value: args[2] };
-    case 'check':
-    case 'uncheck':
-    case 'hover':
-      return { action: args[0], selector: args[1] };
-    case 'drag':
-      return { action: 'drag', source: args[1], target: args[2] };
-    case 'upload':
-      return { action: 'upload', selector: args[1], file: args[2] };
-    case 'back':
-    case 'forward':
-    case 'reload':
-      return { action: args[0] };
-    case 'focus':
-      return { action: 'focus', selector: args[1] };
-    case 'keyboard':
-      return { action: 'keyboard', subaction: 'type', text: args[2] };
-    case 'mouse':
-      return args[1] === 'move'
-        ? { action: 'mousemove', x: Number(args[2]), y: Number(args[3]) }
-        : { action: `mouse${args[1]}`, button: 'left' };
-    case 'press':
-      return { action: 'press', key: args[1] };
-    case 'scroll':
-      return {
-        action: 'scroll',
-        direction: args[1],
-        amount: Number(args[2]),
-        ...(args[4] ? { selector: args[4] } : {}),
-      };
-    case 'screenshot':
-      return {
-        action: 'screenshot',
-        path: args[1],
-        fullPage: args.includes('--full'),
-        annotate: false,
-        ...(args.includes('jpeg') ? { format: 'jpeg', quality: 70 } : {}),
-      };
-    case 'download':
-      return { action: 'download', selector: args[1], path: args[2] };
-    case 'snapshot':
-      return { action: 'snapshot', compact: true, ...(args[3] ? { selector: args[3] } : {}) };
-    case 'close':
-      return { action: 'close' };
-    case 'tab':
-      return args[1] === 'list'
-        ? { action: 'tab_list' }
-        : args[1] === 'switch'
-          ? { action: 'tab_switch', tabId: args[2] }
-          : null;
-    case 'dialog':
-      return { action: 'dialog', response: args[1], ...(args[2] && { promptText: args[2] }) };
-    case 'wait':
-      return args[1] === '--download'
-        ? { action: 'waitfordownload' }
-        : args[1] === '--url'
-          ? { action: 'waitforurl', url: args[2], ...(args[4] && { timeout: Number(args[4]) }) }
-          : args[1] === '--load'
-            ? {
-                action: 'waitforloadstate',
-                state: args[2],
-                ...(args[4] && { timeout: Number(args[4]) }),
-              }
-            : { action: 'wait', text: args[2], ...(args[4] && { timeout: Number(args[4]) }) };
-    case 'set':
-      return { action: 'viewport', width: Number(args[2]), height: Number(args[3]) };
-  }
-  return null;
-}
-
 function visualGesture(input: BrowserAction) {
   if (input.x === undefined && input.y === undefined && input.points === undefined) {
     if (input.durationMs !== undefined) throw new Error('A pointer duration needs coordinates.');
@@ -253,20 +154,29 @@ function visualGesture(input: BrowserAction) {
   return { points, durationMs };
 }
 
-export function redactBrowserUrl(
-  value: string,
-  secrets: Iterable<string>,
-  hideQuery = false,
-): string {
+export function redactBrowserUrl(value: string, secrets: Iterable<string>): string {
   const url = new URL(value);
   url.username = '';
   url.password = '';
   const sensitive =
-    /^(?:code|state|token|accesstoken|idtoken|refreshtoken|password|otp|session|sessionid|ticket|assertion|authorization|email|username|identifier|phone|apikey|xapikey|clientsecret|signature|sig|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/i;
+    /^(?:token|accesstoken|idtoken|refreshtoken|password|otp|session|sessionid|ticket|assertion|authorization|apikey|xapikey|clientsecret|signature|sig|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/i;
+  const secret = (name: string) => sensitive.test(name.replace(/[-_]/g, ''));
   for (const name of url.searchParams.keys())
-    if (hideQuery || sensitive.test(name.replace(/[-_]/g, '')))
-      url.searchParams.set(name, '[redacted]');
-  if (url.hash.includes('=')) url.hash = '[redacted]';
+    if (secret(name)) url.searchParams.set(name, '[redacted]');
+  if (
+    url.hash
+      .slice(1)
+      .split(/[?&]/)
+      .some((part) => {
+        if (!part.includes('=')) return false;
+        try {
+          return secret(decodeURIComponent(part.split('=')[0]!));
+        } catch {
+          return true;
+        }
+      })
+  )
+    url.hash = '[redacted]';
   return redactBrowserText(url.href, secrets);
 }
 
@@ -278,18 +188,17 @@ export function createAgentBrowserComputer(options: {
   platform?: NodeJS.Platform;
   headless?: boolean;
   idleTimeoutMs?: number;
+  slotWaitMs?: number;
+  evictIdleMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
   daemonCommand?: typeof existingDaemonCommand;
+  privateNetwork?: boolean;
   onDiagnostic?(event: BrowserDiagnostic): void;
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   const discarded = new Set<string>();
-  let lastSession: { threadId: string; lastActivityAt: string } | undefined;
-  const markActivity = (id: string) => {
-    lastSession = { threadId: id, lastActivityAt: new Date().toISOString() };
-  };
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const profilePath = (state: BrowserState) =>
     resolve(runtimeRoot, 'profiles', state.saved.profileId ?? state.id);
@@ -302,6 +211,7 @@ export function createAgentBrowserComputer(options: {
   const executable =
     options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
   const run = options.run ?? runProcess;
+  const privateNetwork = options.privateNetwork;
   const requestDaemon = (...args: Parameters<typeof existingDaemonCommand>) =>
     diagnose(
       args[1].action === 'url' || args[1].action === 'screenshot' || args[1].action === 'snapshot'
@@ -316,6 +226,8 @@ export function createAgentBrowserComputer(options: {
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
+  const slotWaitMs = options.slotWaitMs ?? 2 * 60_000;
+  const evictIdleMs = options.evictIdleMs ?? 5 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
   let disposed = false;
   let activeCalls = 0;
@@ -384,9 +296,6 @@ export function createAgentBrowserComputer(options: {
         queue: Promise.resolve(),
         injecting: false,
         secrets: new Set(),
-        secretsByOrigin: new Map(),
-        protectedSelectors: new Set(),
-        blocked: new Set(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -425,39 +334,62 @@ export function createAgentBrowserComputer(options: {
     return pending;
   }
 
-  async function reserveBrowser(state: BrowserState): Promise<void> {
-    const pending = allocate(async () => {
-      if (state.started || state.saved.navigationFailed) return;
-      const occupied = () =>
-        [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
-      const attempted = new Set<string>();
-      while (occupied().length >= maxLiveSessions) {
-        const candidate = occupied()
-          .filter(
-            (entry) =>
-              entry !== state &&
-              !attempted.has(entry.id) &&
-              !entry.busy &&
-              !entry.closed &&
-              !entry.closing &&
-              !entry.injecting &&
-              entry.heldUntil <= Date.now(),
-          )
-          .sort((a, b) => a.lastUsed - b.lastUsed)[0];
-        if (!candidate)
-          throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-        attempted.add(candidate.id);
-        try {
-          await closeBrowser(candidate.id, candidate.lastUsed);
-        } catch {
-          throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-        }
-      }
-      if (disposed || state.closed || state.closing)
-        throw new Error('The browser session has expired. Open the URL again.');
-      state.started = true;
+  async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
+    const limit = AbortSignal.timeout(slotWaitMs);
+    const wait = signal ? AbortSignal.any([signal, limit]) : limit;
+    const stopped = new Promise<never>((_, reject) => {
+      if (wait.aborted) reject(wait.reason);
+      wait.addEventListener('abort', () => reject(wait.reason), { once: true });
     });
-    await pending;
+    stopped.catch(() => {});
+    const reserve = () =>
+      allocate(async () => {
+        if (state.started || state.saved.navigationFailed) return true;
+        if (wait.aborted) return false;
+        const occupied = () =>
+          [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
+        const attempted = new Set<string>();
+        while (occupied().length >= maxLiveSessions) {
+          const candidate = occupied()
+            .filter(
+              (entry) =>
+                entry !== state &&
+                !attempted.has(entry.id) &&
+                !entry.busy &&
+                !entry.closed &&
+                !entry.closing &&
+                !entry.injecting &&
+                entry.heldUntil <= Date.now() &&
+                Date.now() - entry.lastUsed >= evictIdleMs,
+            )
+            .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+          if (!candidate) return false;
+          attempted.add(candidate.id);
+          try {
+            await closeBrowser(candidate.id, candidate.lastUsed);
+          } catch {
+            throw new Error(
+              'The browser sessions are busy. Finish an open browser task and retry.',
+            );
+          }
+        }
+        if (disposed || state.closed || state.closing)
+          throw new Error('The browser session has expired. Open the URL again.');
+        if (wait.aborted) return false;
+        state.started = true;
+        return true;
+      });
+    try {
+      while (!(await Promise.race([reserve(), stopped]))) {
+        if (disposed || state.closed || state.closing)
+          throw new Error('The browser session has expired. Open the URL again.');
+        await delay(500, undefined, { signal: wait });
+      }
+    } catch (error) {
+      if (limit.aborted && !signal?.aborted)
+        throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
+      throw error;
+    }
   }
 
   function selector(value: string | undefined): string {
@@ -469,7 +401,7 @@ export function createAgentBrowserComputer(options: {
   async function closeInterruptedBrowser(state: BrowserState) {
     state.closing = true;
     try {
-      await command(state, ['close']);
+      await command(state, { action: 'close' });
       state.started = false;
       state.closed = true;
       await saveState(state);
@@ -499,17 +431,16 @@ export function createAgentBrowserComputer(options: {
 
   async function command(
     state: BrowserState,
-    args: string[],
-    options: { input?: string; signal?: AbortSignal; maxBytes?: number; timeoutMs?: number } = {},
+    request: Record<string, unknown>,
+    options: { signal?: AbortSignal; maxBytes?: number; timeoutMs?: number } = {},
   ): Promise<Record<string, unknown>> {
     options.signal?.throwIfAborted();
+    const action = String(request.action);
     if (state.socket) {
-      const request = daemonRequest(args, options.input);
-      if (!request) throw new Error('Reopen this page before continuing browser actions.');
-      const result = await drainInterruptedCommand(state, args[0], () =>
+      const result = await drainInterruptedCommand(state, action, () =>
         requestDaemon(state.socket!, request, options.signal, options.timeoutMs, options.maxBytes),
       );
-      if (args[0] === 'close') {
+      if (action === 'close') {
         const started = Date.now();
         while (await stat(state.socket!).catch(() => null)) {
           if (Date.now() - started > 5000) throw new Error('The previous browser did not stop.');
@@ -518,20 +449,17 @@ export function createAgentBrowserComputer(options: {
       }
       return result;
     }
+    if (action !== 'navigate' && action !== 'close')
+      throw new Error('Reopen this page before continuing browser actions.');
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
-    if (!state.proxy)
-      state.proxy = createBrowserProxy((origin) => {
-        if (!state.origins || state.origins.has(origin)) return true;
-        if (state.blocked.size < 20) state.blocked.add(origin);
-        return false;
-      });
+    state.proxy ??= createBrowserProxy({ privateNetwork });
     const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
     const timeZone = browserTimeZone(state.saved.timeZone);
     const locale = browserLocale(state.saved.locale);
-    const result = await drainInterruptedCommand(state, args[0], () =>
+    const result = await drainInterruptedCommand(state, action, () =>
       run(
         executable,
         [
@@ -562,7 +490,7 @@ export function createAgentBrowserComputer(options: {
           resolve(runtimeRoot, 'downloads', state.id),
           '--idle-timeout',
           `${Math.ceil((Math.max(idleTimeoutMs, 30 * 60_000) + 15 * 60_000) / 1000)}s`,
-          ...args,
+          ...(action === 'close' ? ['close'] : ['open', String(request.url)]),
         ],
         {
           cwd: runtimeRoot,
@@ -570,7 +498,6 @@ export function createAgentBrowserComputer(options: {
             ...serviceEnvironment(),
             ...(timeZone && { TZ: timeZone }),
           },
-          input: options.input,
           signal: options.signal,
           timeoutMs: options.timeoutMs ?? null,
           maxBytes: 256 * 1024,
@@ -585,30 +512,33 @@ export function createAgentBrowserComputer(options: {
         'The workspace browser could not respond. Restart its container and try again.',
       );
     }
-    if (args[0] === 'open') {
+    if (action === 'navigate') {
       await drainInterruptedCommand(state, 'connect', () => daemonSocket(state, options.signal));
       state.recovered = false;
       state.pageSize = undefined;
       if (viewport)
-        await command(state, ['set', 'viewport', String(viewport.width), String(viewport.height)], {
-          signal: options.signal,
-        });
+        await command(
+          state,
+          { action: 'viewport', width: viewport.width, height: viewport.height },
+          { signal: options.signal },
+        );
     }
     if (
-      args[0] === 'open' &&
+      action === 'navigate' &&
       response.success === false &&
       typeof response.error === 'string' &&
       /^Navigation failed: net::ERR_[A-Z_]+/.test(response.error)
     )
       throw new BrowserActionError('browser_navigation_failed');
     if (
-      args[0] === 'open' &&
+      action === 'navigate' &&
       response.success === false &&
       typeof response.error === 'string' &&
       response.error.startsWith('Operation timed out.')
     )
       throw new DaemonCommandError();
-    if (result.exitCode || response.success === false) throw new DaemonCommandError();
+    if (result.exitCode || response.success === false)
+      throw new DaemonCommandError(typeof response.error === 'string' ? response.error : undefined);
     return response.data ?? {};
   }
 
@@ -617,16 +547,16 @@ export function createAgentBrowserComputer(options: {
     script: string,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    return (await command(state, ['eval', '--stdin'], { input: script, signal })).result;
+    return (await command(state, { action: 'evaluate', script }, { signal })).result;
   }
 
   async function observationCommand(
     state: BrowserState,
-    args: string[],
+    request: Record<string, unknown>,
     options: Parameters<typeof command>[2],
   ) {
     try {
-      return await command(state, args, options);
+      return await command(state, request, options);
     } catch (error) {
       if (error instanceof DaemonCommandError)
         throw new BrowserActionError('browser_observation_failed');
@@ -635,14 +565,18 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function pendingDialog(state: BrowserState, signal?: AbortSignal) {
-    const dialog = await observationCommand(state, ['dialog', 'status'], { signal });
+    const dialog = await observationCommand(
+      state,
+      { action: 'dialog', response: 'status' },
+      { signal },
+    );
     if (dialog.hasDialog !== true) return;
-    return `A ${String(dialog.type)} dialog blocks the page: "${redactBrowserText(String(dialog.message ?? ''), state.secrets).slice(0, 1000)}". Use accept_dialog {text?} or dismiss_dialog.`;
+    return `A ${String(dialog.type)} dialog blocks the page: "${redactBrowserText(String(dialog.message ?? ''), state.secrets)}". Use accept_dialog {text?} or dismiss_dialog.`;
   }
 
   async function currentUrl(state: BrowserState, signal?: AbortSignal): Promise<string> {
     if (await pendingDialog(state, signal)) throw new BrowserActionError('browser_dialog_open');
-    const data = await observationCommand(state, ['get', 'url'], { signal });
+    const data = await observationCommand(state, { action: 'url' }, { signal });
     const url = String(data.url ?? data.value ?? '');
     const storedUrl = new URL(url);
     if (!['http:', 'https:'].includes(storedUrl.protocol)) return url;
@@ -656,7 +590,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function browserTabs(state: BrowserState, signal?: AbortSignal) {
-    const data = await command(state, ['tab', 'list'], { signal });
+    const data = await command(state, { action: 'tab_list' }, { signal });
     return browserTabList.parse(data.tabs);
   }
 
@@ -782,10 +716,8 @@ export function createAgentBrowserComputer(options: {
         await devtools?.mask(true, [], false, true);
         return await observationCommand(
           state,
-          scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'],
-          {
-            signal,
-          },
+          { action: 'snapshot', compact: true, urls: true, ...(scope ? { selector: scope } : {}) },
+          { signal },
         );
       } finally {
         await devtools?.mask(false, [], false).catch(() => {});
@@ -796,8 +728,8 @@ export function createAgentBrowserComputer(options: {
     if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     return {
-      text: `${state.blocked.size ? `Blocked network destinations: ${[...state.blocked].join(', ')}. Use browser_session use with this connection and destinations set to the required exact origins to request access.\n` : ''}Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
-      url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
+      text: `Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
+      url: redactBrowserUrl(url, state.secrets),
     };
   }
 
@@ -812,17 +744,16 @@ export function createAgentBrowserComputer(options: {
     const move = (point: { x: number; y: number }) =>
       command(
         state,
-        [
-          'mouse',
-          'move',
-          String(Math.min(Math.ceil(width) - 1, Math.round(point.x * width))),
-          String(Math.min(Math.ceil(height) - 1, Math.round(point.y * height))),
-        ],
+        {
+          action: 'mousemove',
+          x: Math.min(Math.ceil(width) - 1, Math.round(point.x * width)),
+          y: Math.min(Math.ceil(height) - 1, Math.round(point.y * height)),
+        },
         { signal },
       );
     await move(gesture.points[0]);
     try {
-      await command(state, ['mouse', 'down', 'left'], { signal });
+      await command(state, { action: 'mousedown', button: 'left' }, { signal });
       if (gesture.points.length === 1 && gesture.durationMs)
         await delay(gesture.durationMs, undefined, { signal });
       for (const point of gesture.points.slice(1)) {
@@ -833,7 +764,7 @@ export function createAgentBrowserComputer(options: {
     } finally {
       if (state.started && !state.closed && !state.closing) {
         try {
-          await command(state, ['mouse', 'up', 'left'], { timeoutMs: 5000 });
+          await command(state, { action: 'mouseup', button: 'left' }, { timeoutMs: 5000 });
         } catch (error) {
           if (!state.closing) await closeInterruptedBrowser(state);
           throw error;
@@ -864,7 +795,6 @@ export function createAgentBrowserComputer(options: {
     )
       await closeBrowser(id);
     const state = stateFor(id);
-    state.origins ??= existing?.origins;
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
       state.saved.restoreSession = savedProfile.restoreSession;
@@ -879,13 +809,6 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       if (input.action === 'open') {
-        if (
-          state.saved.profileId &&
-          (!state.origins || !state.origins.has(browserUrl(input.url ?? '').origin))
-        )
-          throw new Error(
-            'This saved session needs a grant for that destination. Use browser_session use.',
-          );
         const url = browserUrl(input.url ?? '');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -900,29 +823,33 @@ export function createAgentBrowserComputer(options: {
         if (redactBrowserText(resumeUrl.pathname, state.secrets) !== resumeUrl.pathname)
           resumeUrl.pathname = '/';
         state.saved.resumeUrl = resumeUrl.href;
-        await reserveBrowser(state);
-        markActivity(id);
+        await reserveBrowser(state, signal);
         if (!state.socket) {
           state.saved.timeZone = browserTimeZone(input.timeZone);
           state.saved.locale = browserLocale(input.locale);
         }
         try {
-          if (!state.socket && viewport) await command(state, ['open', 'about:blank'], { signal });
-          await command(state, ['open', url.href], { signal });
+          if (!state.socket && viewport)
+            await command(state, { action: 'navigate', url: 'about:blank' }, { signal });
+          await command(state, { action: 'navigate', url: url.href }, { signal });
           state.saved.navigationFailed = false;
         } catch (error) {
-          if (error instanceof DaemonCommandError && !signal?.aborted) {
+          if (
+            (error instanceof DaemonCommandError ||
+              (error instanceof BrowserActionError &&
+                error.code === 'browser_navigation_failed')) &&
+            !signal?.aborted
+          ) {
             try {
               const loaded = new URL(await currentUrl(state, signal));
-              if (
-                loaded.origin === url.origin &&
-                loaded.pathname.replace(/\/+$/, '') === url.pathname.replace(/\/+$/, '') &&
-                loaded.search === url.search
-              ) {
+              if (['http:', 'https:'].includes(loaded.protocol)) {
                 const observation = await observe(state, signal);
                 if (observation.text.slice(observation.text.indexOf('\n') + 1).trim()) {
                   state.saved.navigationFailed = false;
-                  return observation;
+                  return {
+                    ...observation,
+                    text: `Opening ${redactBrowserUrl(url.href, state.secrets)} did not finish loading. This is the page the browser shows now.\n${observation.text}`,
+                  };
                 }
               }
             } catch {}
@@ -944,14 +871,12 @@ export function createAgentBrowserComputer(options: {
         if (state.saved.navigationFailed) {
           if (input.action !== 'snapshot')
             throw new BrowserActionError('browser_navigation_failed');
-          markActivity(id);
           return {
             text: new BrowserActionError('browser_navigation_failed').message,
             url: state.saved.url,
           };
         }
         if (!state.started) throw new BrowserActionError('browser_not_open');
-        markActivity(id);
         if (input.action !== 'reload' && (await privateDocumentOpen(state, signal)))
           throw new BrowserActionError('browser_card_paused');
         if (input.action === 'tab_list') {
@@ -960,88 +885,79 @@ export function createAgentBrowserComputer(options: {
             text: tabs
               .map(
                 (tab) =>
-                  `${tab.active ? 'Active' : 'Open'} ${tab.tabId}: ${redactBrowserUrl(tab.url, state.secrets, true)}`,
+                  `${tab.active ? 'Active' : 'Open'} ${tab.tabId}: ${redactBrowserUrl(tab.url, state.secrets)}`,
               )
               .join('\n'),
-            url: redactBrowserUrl(await currentUrl(state, signal), state.secrets, true),
+            url: redactBrowserUrl(await currentUrl(state, signal), state.secrets),
           };
         }
         if (input.action === 'tab_switch') {
-          await command(state, ['tab', 'switch', input.tabId!], { signal });
+          await command(state, { action: 'tab_switch', tabId: input.tabId }, { signal });
         }
         if (input.action === 'click') {
           if (gesture) await movePointer(state, gesture, signal);
-          else await command(state, ['click', selector(input.selector)], { signal });
+          else
+            await command(
+              state,
+              { action: 'click', selector: selector(input.selector) },
+              { signal },
+            );
         }
         if (input.action === 'fill' || input.action === 'type') {
           const target = selector(input.selector);
-          const type = await command(state, ['get', 'attr', target, 'type'], { signal });
-          const autocomplete = await command(state, ['get', 'attr', target, 'autocomplete'], {
-            signal,
-          });
-          if (
-            /password|one-time-code|username/i.test([type.value, autocomplete.value].join(' ')) ||
-            state.protectedSelectors.has(target)
-          )
-            throw new Error('Use the secure credential request tool for this field.');
           const text = input.text ?? '';
-          if ([...state.secrets].some((secret) => secret && text.includes(secret)))
-            throw new Error('This field must use the secure credential flow.');
-          await command(state, [input.action, target, text], { signal });
+          await command(
+            state,
+            input.action === 'fill'
+              ? { action: 'fill', selector: target, value: text }
+              : { action: 'type', selector: target, text },
+            { signal },
+          );
         }
         if (input.action === 'scroll')
           await command(
             state,
-            input.selector
-              ? ['scroll', input.direction ?? 'down', '600', '-s', selector(input.selector)]
-              : ['scroll', input.direction ?? 'down', '600'],
+            {
+              action: 'scroll',
+              direction: input.direction ?? 'down',
+              amount: 600,
+              ...(input.selector ? { selector: selector(input.selector) } : {}),
+            },
             { signal },
           );
         if (input.action === 'press') {
           if (!input.key) throw new Error('Choose a key to press.');
-          await command(state, ['press', input.key], { signal });
+          await command(state, { action: 'press', key: input.key }, { signal });
         }
         if (input.action === 'accept_dialog' || input.action === 'dismiss_dialog') {
           const text = input.action === 'accept_dialog' ? input.text : undefined;
-          if (
-            text !== undefined &&
-            [...state.secrets].some((secret) => secret && text.includes(secret))
-          )
-            throw new Error('Answer the dialog without private details.');
           await command(
             state,
-            [
-              'dialog',
-              input.action === 'accept_dialog' ? 'accept' : 'dismiss',
-              ...(text ? [text] : []),
-            ],
+            {
+              action: 'dialog',
+              response: input.action === 'accept_dialog' ? 'accept' : 'dismiss',
+              ...(text ? { promptText: text } : {}),
+            },
             { signal },
           );
         }
         if (input.action === 'wait') {
-          const [flag, value] = input.text
-            ? ['--text', input.text]
-            : input.url
-              ? ['--url', input.url]
-              : input.load
-                ? ['--load', input.load]
-                : [];
           if (
-            !flag ||
-            !value ||
-            [input.text, input.url, input.load].filter(Boolean).length > 1 ||
-            (flag === '--load' && !['load', 'domcontentloaded', 'networkidle'].includes(value))
+            [input.text, input.url, input.load].filter(Boolean).length !== 1 ||
+            (input.load && !['load', 'domcontentloaded', 'networkidle'].includes(input.load))
           )
             throw new Error('Wait for one of text, url or load.');
           try {
             await command(
               state,
-              [
-                'wait',
-                flag,
-                value,
-                ...(input.waitMs === undefined ? [] : ['--timeout', String(input.waitMs)]),
-              ],
+              {
+                ...(input.text
+                  ? { action: 'wait', text: input.text }
+                  : input.url
+                    ? { action: 'waitforurl', url: input.url }
+                    : { action: 'waitforloadstate', state: input.load }),
+                ...(input.waitMs === undefined ? {} : { timeout: input.waitMs }),
+              },
               { signal },
             );
           } catch (error) {
@@ -1055,18 +971,29 @@ export function createAgentBrowserComputer(options: {
         }
         if (input.action === 'select') {
           const value = input.text ?? '';
-          if (!value || [...state.secrets].some((secret) => secret && value.includes(secret)))
-            throw new Error('Choose a visible option without private details.');
-          await command(state, ['select', selector(input.selector), value], { signal });
+          if (!value) throw new Error('Choose a visible option.');
+          await command(
+            state,
+            { action: 'select', selector: selector(input.selector), value },
+            { signal },
+          );
         }
         if (['check', 'uncheck', 'hover'].includes(input.action))
-          await command(state, [input.action, selector(input.selector)], { signal });
+          await command(
+            state,
+            { action: input.action, selector: selector(input.selector) },
+            { signal },
+          );
         if (input.action === 'drag') {
           if (gesture) await movePointer(state, gesture, signal);
           else
             await command(
               state,
-              ['drag', selector(input.selector), selector(input.targetSelector)],
+              {
+                action: 'drag',
+                source: selector(input.selector),
+                target: selector(input.targetSelector),
+              },
               { signal },
             );
         }
@@ -1077,7 +1004,7 @@ export function createAgentBrowserComputer(options: {
               : undefined;
           try {
             const before = await devtools?.document().catch(() => undefined);
-            const failure = await command(state, [input.action], { signal }).then(
+            const failure = await command(state, { action: input.action }, { signal }).then(
               () => undefined,
               (error: unknown) => error,
             );
@@ -1099,6 +1026,8 @@ export function createAgentBrowserComputer(options: {
           const devtools = await inspector(state);
           let read;
           try {
+            if (state.secrets.size && (await devtools.holding()))
+              throw new BrowserActionError('browser_script_paused');
             read = await devtools.readOnly(script);
             if (!read) {
               await devtools.scripted(true);
@@ -1108,15 +1037,11 @@ export function createAgentBrowserComputer(options: {
             devtools.close();
           }
           const value = read ? read.value : await evaluate(state, script, signal);
-          if (await privateDocumentOpen(state, signal))
-            throw new Error(
-              'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
-            );
           if (!read) await markScripted(state);
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
             text: `Script result (JSON):\n${result}`,
-            url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
+            url: redactBrowserUrl(url, state.secrets),
           };
         }
       }
@@ -1124,7 +1049,10 @@ export function createAgentBrowserComputer(options: {
       return observe(state, signal, input);
     }).catch((error: unknown) => {
       if (error instanceof DaemonCommandError)
-        throw new BrowserActionError('browser_action_failed');
+        throw new BrowserActionError(
+          'browser_action_failed',
+          error.detail ? redactBrowserText(error.detail, state.secrets) : undefined,
+        );
       throw error;
     });
   }
@@ -1144,13 +1072,16 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       if (await privateDocumentOpen(state, signal))
         throw new BrowserActionError('browser_card_paused');
-      markActivity(id);
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const file = resolve(directory, input.name);
       try {
         await writeFile(file, input.bytes, { mode: 0o600 });
-        await command(state, ['upload', selector(input.selector), file], { signal });
+        await command(
+          state,
+          { action: 'upload', selector: selector(input.selector), file },
+          { signal },
+        );
         state.uploads.add(directory);
         return observe(state, signal);
       } catch (error) {
@@ -1169,14 +1100,17 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
-      markActivity(id);
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
       let target = input.selector ? selector(input.selector) : undefined;
       let url = input.url;
       if (target) {
-        const href = await command(state, ['get', 'attr', target, 'href'], { signal });
+        const href = await command(
+          state,
+          { action: 'getattribute', selector: target, attribute: 'href' },
+          { signal },
+        );
         if (typeof href.value === 'string' && href.value.trim()) {
           const destination = new URL(href.value, current);
           const source = new URL(current);
@@ -1196,11 +1130,12 @@ export function createAgentBrowserComputer(options: {
         else {
           let files = await completedDownloads(directory);
           if (!files.length) {
-            await command(state, ['wait', '--download'], { signal });
+            await command(state, { action: 'waitfordownload' }, { signal });
             files = await completedDownloads(directory);
           }
-          if (files.length !== 1) throw new Error('Choose the specific download link or URL.');
-          const result = await readDownload(directory, files[0], input.name);
+          if (!files.length) throw new Error('Choose the specific download link or URL.');
+          const result = await readDownload(directory, files[0]!, input.name);
+          await rm(resolve(directory, files[0]!), { force: true });
           signal?.throwIfAborted();
           return result;
         }
@@ -1210,11 +1145,11 @@ export function createAgentBrowserComputer(options: {
         if (!url.startsWith(`blob:${new URL(current).origin}/`)) browserUrl(url);
       }
       if (url && !crossOrigin) {
-        const result = await command(state, ['eval', '--stdin'], {
-          input: fetchDownloadScript(url),
-          signal,
-          maxBytes: 17 * 1024 * 1024,
-        });
+        const result = await command(
+          state,
+          { action: 'evaluate', script: fetchDownloadScript(url) },
+          { signal, maxBytes: 17 * 1024 * 1024 },
+        );
         signal?.throwIfAborted();
         return decodeDownload(result.result, input.name);
       }
@@ -1237,9 +1172,11 @@ export function createAgentBrowserComputer(options: {
           );
           target = `#${anchor}`;
         }
-        await command(state, ['download', target!, resolve(directory, capture.file)], {
-          signal,
-        });
+        await command(
+          state,
+          { action: 'download', selector: target, path: resolve(directory, capture.file) },
+          { signal },
+        );
         signal?.throwIfAborted();
         const result = await readDownload(directory, capture.file, input.name);
         signal?.throwIfAborted();
@@ -1283,7 +1220,7 @@ export function createAgentBrowserComputer(options: {
                 (await devtools.document()) !== document
               )
                 throw new Error('The submit control is not on this page.');
-              await command(state, ['click', selector(submitSelector)]);
+              await command(state, { action: 'click', selector: selector(submitSelector) });
             }
           }
           state.privateDocument = undefined;
@@ -1303,15 +1240,13 @@ export function createAgentBrowserComputer(options: {
     if (browserUrl(input.origin).origin !== input.origin)
       throw new Error('An exact login origin is required.');
     const fields = credentialFields(input);
-    markActivity(input.threadId);
     return privateEntry(state, input.submitSelector, async (devtools, document) => {
       if (new URL(await currentUrl(state)).origin !== input.origin)
         throw new Error('The page is not on the website for this login.');
-      const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
       for (const step of fields) {
         const secret = input.kind === 'otp' ? input.code! : step.value;
-        state.secrets.add(secret);
-        secrets.add(secret);
+        const identifier = input.kind === 'identifier' || step.value === input.username;
+        if (!identifier) state.secrets.add(secret);
         const field = await focusField(state, devtools, step.selector);
         if (field.origin !== input.origin)
           throw new Error('The login field is on a different origin.');
@@ -1326,9 +1261,7 @@ export function createAgentBrowserComputer(options: {
           throw new Error(
             'The login field changed during entry. Check the result before another attempt.',
           );
-        if (!step.selector.startsWith('@')) state.protectedSelectors.add(step.selector);
       }
-      state.secretsByOrigin.set(input.origin, secrets);
       await saveState(state);
       return { status: 'submitted' as const };
     });
@@ -1366,10 +1299,10 @@ export function createAgentBrowserComputer(options: {
     const { cdpUrl } = z
       .object({ cdpUrl: z.string() })
       .passthrough()
-      .parse(await command(state, ['get', 'cdp-url'], { signal }));
+      .parse(await command(state, { action: 'cdp_url' }, { signal }));
     const tab = z
       .array(z.object({ active: z.boolean(), targetId: z.string() }).passthrough())
-      .parse((await command(state, ['tab', 'list'], { signal })).tabs)
+      .parse((await command(state, { action: 'tab_list' }, { signal })).tabs)
       .find((item) => item.active);
     if (!tab) throw new Error('The checkout tab is no longer open.');
     return openDevtools(cdpUrl, tab.targetId, signal);
@@ -1381,7 +1314,7 @@ export function createAgentBrowserComputer(options: {
     selector: string,
   ) {
     await devtools.blur();
-    await command(state, ['focus', selector]).catch(() => {
+    await command(state, { action: 'focus', selector }).catch(() => {
       throw new BrowserActionError('browser_card_field');
     });
     const field = await devtools.focused();
@@ -1439,7 +1372,14 @@ export function createAgentBrowserComputer(options: {
         await devtools.mask(true);
         await observationCommand(
           state,
-          ['screenshot', path, '--full', '--screenshot-format', 'jpeg'],
+          {
+            action: 'screenshot',
+            path,
+            fullPage: true,
+            annotate: false,
+            format: 'jpeg',
+            quality: 70,
+          },
           {},
         );
         const bytes = await readFile(path);
@@ -1493,15 +1433,13 @@ export function createAgentBrowserComputer(options: {
     for (const step of steps)
       if (!input.destinations[step.field])
         throw new Error('The approved card destinations are missing.');
-    markActivity(input.threadId);
     await privateEntry(
       state,
       input.submitSelector,
       async (devtools, document) => {
         if (document !== input.document) throw new BrowserActionError('browser_card_changed');
         for (const step of steps) {
-          const privateValue =
-            step.field === 'number' || step.field === 'securityCode' || step.field === 'name';
+          const privateValue = step.field === 'number' || step.field === 'securityCode';
           if (privateValue) for (const value of step.values) state.secrets.add(value);
           const selection = fields[step.field]!;
           const field = await focusField(
@@ -1539,7 +1477,7 @@ export function createAgentBrowserComputer(options: {
       const url = await currentUrl(state);
       return {
         origin: browserUrl(url).origin,
-        url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
+        url: redactBrowserUrl(url, state.secrets),
       };
     });
   }
@@ -1569,7 +1507,11 @@ export function createAgentBrowserComputer(options: {
     const devtools = state.secrets.size ? await inspector(state) : undefined;
     try {
       await devtools?.mask(true, [...state.secrets], false);
-      await observationCommand(state, ['screenshot', path], { signal });
+      await observationCommand(
+        state,
+        { action: 'screenshot', path, fullPage: false, annotate: false },
+        { signal },
+      );
       if (await privateDocumentOpen(state, signal)) {
         await rm(path, { force: true });
         throw new BrowserLockedError();
@@ -1600,7 +1542,6 @@ export function createAgentBrowserComputer(options: {
     const state = await recoverBrowser(id);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     if (state.injecting) throw new BrowserLockedError();
-    markActivity(id);
     await serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
@@ -1641,21 +1582,16 @@ export function createAgentBrowserComputer(options: {
         const [secret, field] = z.tuple([z.string(), z.number()]).catch(['', -1]).parse(typed);
         if (secret) {
           const origin = new URL(await currentUrl(state, signal)).origin;
-          const secrets = state.secretsByOrigin.get(origin) ?? new Set<string>();
           const earlier = state.typed;
           if (
             earlier?.fresh &&
             earlier.origin === origin &&
             earlier.field === field &&
             secret.startsWith(earlier.value)
-          ) {
+          )
             state.secrets.delete(earlier.value);
-            secrets.delete(earlier.value);
-          }
           state.typed = { value: secret, origin, field, fresh: !state.secrets.has(secret) };
           state.secrets.add(secret);
-          secrets.add(secret);
-          state.secretsByOrigin.set(origin, secrets);
           await saveState(state);
         }
       }
@@ -1747,13 +1683,11 @@ export function createAgentBrowserComputer(options: {
       if (state.started && !state.closed && !state.injecting)
         await captureScreen(state).catch(() => {});
       state.closed = true;
-      if (state.started || state.saved.navigationFailed) await command(state, ['close']);
+      if (state.started || state.saved.navigationFailed) await command(state, { action: 'close' });
       state.started = false;
       await state.proxy?.dispose();
       await saveState(state);
       state.secrets.clear();
-      state.secretsByOrigin.clear();
-      state.protectedSelectors.clear();
       for (const directory of state.uploads) await rm(directory, { recursive: true, force: true });
       state.uploads.clear();
       await rm(cachePath(state), { recursive: true, force: true });
@@ -1773,16 +1707,13 @@ export function createAgentBrowserComputer(options: {
     await pending;
   }
 
-  async function bindProfile(id: string, rawProfileId: string, origins?: string[]): Promise<void> {
+  async function bindProfile(id: string, rawProfileId: string): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
-    const granted = new Set(origins?.map((origin) => browserUrl(origin).origin));
-    if (!granted.size) throw new Error('A saved browser profile needs an exact destination grant.');
     assertNotDiscarded(id);
     await allocate(async () => {
       assertNotDiscarded(id);
       const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (previous?.saved.profileId === profileId) {
-        for (const origin of granted) (previous.origins ??= new Set()).add(origin);
         if (!previous.saved.restoreSession) {
           previous.saved.restoreSession = true;
           previous.saved.sensitive = true;
@@ -1804,7 +1735,6 @@ export function createAgentBrowserComputer(options: {
         await closeBrowser(otherId);
       }
       const state = stateFor(id);
-      state.origins = granted;
       state.saved = {
         version: 1,
         url: '',
@@ -1839,27 +1769,6 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function signOut(rawId: string): Promise<void> {
-    const id = threadIdentity(rawId);
-    assertNotDiscarded(id);
-    await allocate(async () => {
-      const state = browsers.get(id) ?? (await recoverBrowser(id, true));
-      if (state?.injecting) throw new BrowserLockedError();
-      if (state) await closeBrowser(id);
-      const fresh = stateFor(id);
-      await Promise.all([
-        rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
-        rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
-        rm(cachePath(fresh), { recursive: true, force: true }),
-      ]);
-      await screens.clearImage(id);
-      screenStatuses.delete(id);
-      fresh.saved = { version: 1, url: '', sensitive: false, active: false };
-      await saveState(fresh);
-      browsers.delete(id);
-    });
-  }
-
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
@@ -1873,12 +1782,6 @@ export function createAgentBrowserComputer(options: {
     screenStatuses.delete(id);
   }
 
-  function browserStatus(): string {
-    const count = [...browsers.values()].filter(
-      (state) => state.started || state.saved.navigationFailed,
-    ).length;
-    return `${count} task browser session${count === 1 ? '' : 's'}; workspace browser proxy enabled`;
-  }
   const cleanup = setInterval(
     () => {
       for (const state of browsers.values()) {
@@ -1905,7 +1808,6 @@ export function createAgentBrowserComputer(options: {
         )
       );
     },
-    currentSession: () => lastSession,
     bindProfile: tracked(bindProfile),
     deleteProfile: tracked(deleteProfile),
     act: tracked(browserAction),
@@ -1923,8 +1825,6 @@ export function createAgentBrowserComputer(options: {
     hold: tracked(hold),
     close: tracked(closeBrowser),
     discard: tracked(discard),
-    signOut: tracked(signOut),
-    status: browserStatus,
     dispose: async () => {
       disposed = true;
       clearInterval(cleanup);

@@ -1,3 +1,4 @@
+import { transaction as inTransaction } from './transaction.ts';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { logFailure } from './failure-log.ts';
@@ -13,13 +14,13 @@ export class VaultUseError extends Error {
 
 export async function createVaultUses(pool: Pool, ownerId: string) {
   await pool.query(`CREATE TABLE IF NOT EXISTS vault_uses (
-    id text PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
+    id text PRIMARY KEY, owner_id text NOT NULL, root_turn_id uuid,
     origin text NOT NULL, kind text NOT NULL, item_id text, status text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz
+    created_at timestamptz NOT NULL DEFAULT now()
   );
   ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS root_turn_id uuid;
-  ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS attempt_key text;
-  CREATE UNIQUE INDEX IF NOT EXISTS vault_uses_attempt ON vault_uses(owner_id,attempt_key);
+  ALTER TABLE vault_uses DROP COLUMN IF EXISTS attempt_key, DROP COLUMN IF EXISTS thread_id,
+    DROP COLUMN IF EXISTS turn_id, DROP COLUMN IF EXISTS finished_at;
   CREATE INDEX IF NOT EXISTS vault_uses_owner ON vault_uses(owner_id,created_at DESC);`);
   await pool.query(
     'CREATE INDEX IF NOT EXISTS vault_uses_root ON vault_uses(owner_id,root_turn_id,origin,kind,item_id)',
@@ -29,32 +30,16 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
     [ownerId],
   );
 
-  async function transaction<T>(work: (client: PoolClient) => Promise<T>) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await work(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
+  const transaction = <T>(work: (client: PoolClient) => Promise<T>) => inTransaction(work, pool);
 
   async function run<T>(
     use: {
       id?: string;
       ownerId: string;
-      threadId: string;
-      turnId: string;
       rootTurnId?: string;
       origin: string;
       kind: string;
       itemId?: string;
-      attemptKey?: string;
     },
     operation: {
       prepare?(client: PoolClient): Promise<void | false>;
@@ -75,19 +60,9 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       if ((await operation.prepare?.(client)) === false) return false;
       claimStarted = true;
       const claimed = await client.query(
-        `INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,item_id,attempt_key,status)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running') ON CONFLICT DO NOTHING RETURNING id`,
-        [
-          id,
-          use.ownerId,
-          use.threadId,
-          use.turnId,
-          use.rootTurnId ?? null,
-          use.origin,
-          use.kind,
-          use.itemId ?? null,
-          use.attemptKey ?? null,
-        ],
+        `INSERT INTO vault_uses(id,owner_id,root_turn_id,origin,kind,item_id,status)
+         VALUES($1,$2,$3,$4,$5,$6,'running') ON CONFLICT DO NOTHING RETURNING id`,
+        [id, use.ownerId, use.rootTurnId ?? null, use.origin, use.kind, use.itemId ?? null],
       );
       if (!claimed.rowCount)
         throw new VaultUseError(
@@ -99,7 +74,7 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       if (error instanceof VaultUseError || !claimStarted) throw error;
       try {
         const recovered = await pool.query(
-          "UPDATE vault_uses SET status='uncertain',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",
+          "UPDATE vault_uses SET status='uncertain' WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",
           [id, use.ownerId],
         );
         if (recovered.rowCount) throw uncertain();
@@ -115,18 +90,18 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
       const result = await operation.perform();
       await transaction(async (client) => {
         await operation.complete?.(client, result);
-        await client.query(
-          "UPDATE vault_uses SET status='submitted',finished_at=now() WHERE id=$1 AND owner_id=$2",
-          [id, use.ownerId],
-        );
+        await client.query("UPDATE vault_uses SET status='submitted' WHERE id=$1 AND owner_id=$2", [
+          id,
+          use.ownerId,
+        ]);
       });
       return result;
     } catch {
       await pool
-        .query(
-          "UPDATE vault_uses SET status='uncertain',finished_at=now() WHERE id=$1 AND owner_id=$2",
-          [id, use.ownerId],
-        )
+        .query("UPDATE vault_uses SET status='uncertain' WHERE id=$1 AND owner_id=$2", [
+          id,
+          use.ownerId,
+        ])
         .catch((error: unknown) => logFailure('vault_use_uncertain', error));
       throw uncertain();
     }

@@ -284,7 +284,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
             {explain && (
               <div className="ob-email-explain">
                 <p>
-                  Composio is how I sign in to apps like Gmail, Slack and Notion for you. I never
+                  Composio is how I sign in to apps like Gmail, Calendar and Slack for you. I never
                   see your passwords, and you can take away access anytime.
                 </p>
                 <p>

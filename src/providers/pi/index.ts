@@ -67,7 +67,13 @@ function resources(
 const compactAt = 256_000;
 const imageStep = 8;
 
-const webAccess = { toolActivation: 'eager', workflow: 'none', githubClone: { enabled: false } };
+const webAccess = {
+  toolActivation: 'eager',
+  workflow: 'none',
+  githubClone: { enabled: false },
+  video: { enabled: false },
+  allowBrowserCookies: false,
+};
 
 function configureWebAccess(root: string) {
   process.env.PI_CODING_AGENT_DIR = root;
@@ -130,15 +136,6 @@ export function createPiAgent(options: {
   >();
   let disposed = false;
   return {
-    nativeTools: createSandbox({
-      path: '/workspace',
-      instructions: '',
-      exec: async () => ({ exitCode: 1 }),
-    }).map(({ name, description, parameters }) => ({
-      name,
-      description,
-      parameters: structuredClone(parameters) as Record<string, unknown>,
-    })),
     async open(input) {
       if (disposed) throw new Error('The agent service has stopped.');
       const access = await options.resolve?.();
