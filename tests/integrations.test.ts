@@ -4512,7 +4512,8 @@ test(
         input: Record<string, unknown>,
         options: { signal: AbortSignal; maxRetries: number },
       ) => {
-        assert.equal(input.expected_config_version, 1);
+        if ('expected_config_version' in input)
+          throw Object.assign(new Error('Unknown field: expected_config_version'), { status: 400 });
         assert.equal(options.signal.aborted, false);
         assert.equal(options.maxRetries, 0);
         patches.push({ id, input });
@@ -4620,7 +4621,6 @@ test(
             slack: 'explicit-slack-auth',
             gmail: 'custom-gmail-auth',
           },
-          expected_config_version: 1,
         },
       },
     ]);
