@@ -78,4 +78,4 @@ Report bugs with the [bug report form](https://github.com/n8n-io/otto/issues/new
 
 ## License
 
-Copyright 2026 n8n GmbH. Otto uses the [Apache License 2.0](LICENSE), and [NOTICE](NOTICE) holds its attribution notice. Bundled third-party assets keep their own terms and are not covered by it: Inter uses the [SIL Open Font License](public/fonts/Inter-LICENSE.txt), the n8n Baumer fonts are [proprietary](public/fonts/Baumer-SOURCE.md), provider logos belong to [their owners](desktop/ui/logos/SOURCES.md), and the desktop runtime lists its components and their licenses in `licenses/COMPONENTS.md`.
+Copyright 2026 n8n GmbH. Otto uses the [Apache License 2.0](LICENSE), and [NOTICE](NOTICE) holds its attribution notice. Bundled third-party assets keep their own terms and are not covered by it: Inter and Geist use the SIL Open Font License ([Inter](public/fonts/Inter-LICENSE.txt), [Geist](public/fonts/Geist-OFL.txt)), provider logos belong to [their owners](desktop/ui/logos/SOURCES.md), and the desktop runtime lists its components and their licenses in `licenses/COMPONENTS.md`.
