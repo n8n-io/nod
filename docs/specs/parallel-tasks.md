@@ -126,12 +126,19 @@ The task prompt tells Pi to send a check-in only in these conditions:
 
 If the owner must decide, Pi asks a question instead. The progress mode governs check-ins. The free-text notification rule governs only event and schedule sessions.
 
+Rules from step 4:
+
+- A run starts when the task starts or opens again, and ends when the task closes as Done, Stopped or Failed. Answers and planned checks do not start a new run. A task that waits across many planned checks shares its 3 check-ins.
+- In a read-only task turn, `check_in` also gives `skipped`, not an error.
+- The task prompt names the owner's current progress mode, so in Quiet mode Pi does not try a check-in.
+- The docs call Otto's planned follow-up schedules "follow-ups", so the word "check-in" is used only for task replies.
+
 ### 4.5 The task preview
 
 Closed preview (in the chat and on the Tasks page):
 
 - Title, and a status pill from section 4.2.
-- One line: the current step, the question in short form, "Finished in N min", "Stopped after N min" or the error in short form.
+- One line: the current step, the question in short form, "Finished in N min", "Stopped after N min" or the error in short form. The error comes from the latest turn of a failed task (`Task.error`).
 - A step bar with one segment for each step, coloured by status, and "N of M steps" with a chevron.
 
 Open preview (a click on the closed preview):
@@ -141,17 +148,19 @@ Open preview (a click on the closed preview):
 - When done: the result text and the artifact card. The artifact opens in the side panel.
 - On the Tasks page only: the open question with its answer buttons, and **Show in chat**.
 
-In the chat, the open preview does not repeat the question, because the question is a task reply below it. The card sits inside the message bubble on the `--embed` surface with no border. The bubble keeps its radius, the inset is 6 px and the card radius is the bubble radius minus the inset.
+In the chat, the open preview does not repeat the question, because the question is a task reply below it. The card sits inside the message bubble on the `--embed` surface with no border. The bubble keeps its radius, the inset is 6 px and the card radius is the bubble radius minus the inset. The `--embed` token is in `theme.css` and uses only existing colours (light: `--surface`, dark: `--background`).
+
+Only a confirmation has Yes and No buttons. The owner answers a free-text question with a reply.
 
 The preview reads `state.tasks`, not the message row. Thus, a preview outside the 150-message window stays live.
 
 ### 4.6 Tasks strip
 
-The strip is above the composer. It shows when 2 or more tasks are open, or when one task needs the owner. Each chip shows the title and the status. A click scrolls the chat to the "On it" message and opens its preview. The strip has **Stop all**.
+The strip is above the composer. It shows when 2 or more tasks are open, or when one task needs the owner. Each chip shows the title and the status, and has a small Stop button for that task. A click on the chip scrolls the chat to the "On it" message and opens its preview. The strip has **Stop all**.
 
 ### 4.7 Tasks page
 
-The page keeps its tabs **Current**, **Scheduled** and **Previous**. **Current** groups open tasks as Needs you, Working, Waiting and Queued, in that order. **Previous** shows Done, Stopped and Failed tasks and the past schedule runs. Each task uses the same preview card as the chat. A done task keeps **Schedule task**.
+The page keeps its tabs **Current**, **Scheduled** and **Previous**. **Current** groups open tasks as Needs you, Working, Waiting and Queued, in that order. **Previous** shows Done, Stopped and Failed tasks and the past schedule runs. Each task uses the same preview card as the chat. A done task keeps **Schedule task**. **Show in chat** shows only for a task of the current thread, because a task of an archived thread has no message in the chat.
 
 ### 4.8 Artifacts
 
@@ -171,14 +180,14 @@ A deliverable result carries one artifact card inside the result bubble. On web,
 
 ### 4.10 Stop
 
-- **Stop task** (open preview, Tasks page, strip menu) stops one task session.
+- **Stop task** (open preview, Tasks page, the Stop button on a strip chip) stops one task session.
 - The composer Stop stops only the chat session.
 - **Stop all** (strip and Tasks page) stops every session, as `/api/thread/stop` does today, and closes every task as Stopped.
 - On Telegram and WhatsApp before buttons exist, a reply "stop" to a task message is routed to the task. The task prompt tells Pi to end the task as stopped.
 
 Stop declines the task's pending confirmations, supersedes its pending Vault and payment requests, discards its browser and posts the stop note.
 
-The Stop on the Browser page stops only the session that the page shows. Until WP-21 that is always the chat, so it posts `{scope:'chat'}`. After WP-21 it calls the task's stop route when it shows a task's browser.
+The Stop on the Browser page stops only the session that the page shows: the chat with `{scope:'chat'}`, a task with `POST /api/tasks/:id/stop` (WP-21). It never calls plain Stop all.
 
 ### 4.11 Limits
 
@@ -198,6 +207,12 @@ The Stop on the Browser page stops only the session that the page shows. Until W
 | Late messages | Always                   | Always                                        | Blocked after 24 h; shown only in Otto     |
 
 On WhatsApp the owner sees no progress between "On it" and a question or result in Quiet mode. Check-ins is the default for this reason.
+
+Rules from step 4 (WP-11):
+
+- `channel_outbox.provider_message_ids` (`text[]`, GIN index) keeps every provider ID of a split or attachment send. It replaces `provider_message_id`. The migration copies the old IDs into the new column, so a reply to a message sent before the upgrade still finds its target. A send that fails after some parts went out keeps the IDs of the parts that were delivered.
+- A verification code that replies to a message gets its target in `chatVerification.accept`, before an inbox row exists, so the code is never stored as plain text. Other messages get their target in `drainInbox`. A target that is gone (for example after reset) makes the message a plain message; the drain pass does not fail.
+- Only a Telegram 429 is retried. A WhatsApp rate-limit error is still marked uncertain.
 
 ## 5. Engine design
 
@@ -283,7 +298,7 @@ The `brief` of `start_task` is the model's working brief and becomes the prompt 
 - Every task question and confirmation is a reply to "On it".
 - A bare yes or no competes only with the other open task confirmations on the same channel. A text answer is bound to its channel: a reply target from another channel ends the question and goes to the task as an ordinary reply. Only an answer by approval ID works across channels.
 - A late yes to an expired task confirmation is attached to the task's waiting turn, so it is delivered on the task's channel and never counts as chat words.
-- An expired confirmation does not block `route_to_task` and is not shown in `state.tasks`.
+- An expired confirmation does not block `route_to_task`. `state.tasks` gives no approval ID for it, so it has no buttons. The task stays Needs you while its turn waits, and a reply to the task still reaches it.
 - A reply to any message of a task resolves to that task's one pending approval.
 - A button press carries the approval ID. It is owner-bound and pending-only. A stale press is a no-op and creates no turn.
 - A bare yes or no answers only when exactly one approval is pending and it is the newest message the owner saw. Otherwise, the conversation turn asks which task.
@@ -301,11 +316,21 @@ The `brief` of `start_task` is the model's working brief and becomes the prompt 
 - A reopened task gets a new browser generation. Its saved logins still work. Its old page state is gone (WP-22).
 - Only a later turn in the same session supersedes a Vault, OTP or payment-code wait. A chat message never expires a task's sign-in (WP-18).
 - The browser view and the handoff routes take a session. A waiting task can hand its browser to the owner. **Done** resumes the task (WP-21).
+- Handoff rules from step 4: the stream, input and navigate routes need a session whose latest turn waits on a question. The view and screen routes (the Browser page) check only the owner, the thread and the task, and the credential-entry pause, so the page can show a running task's browser. **Done** is an ordinary owner message that replies to the task question; there is no Done route. Only the chat and tasks hand over a browser; schedule and event sessions do not. The routes use the session ID in lowercase. The time of the last handoff action is kept in server memory for each session and is removed when the session's browser is deleted.
 - Payments stay local-only. Hosted mode refuses saved-card payments, as today.
 
 ### 5.8 Workspace
 
 Each task gets a working folder `/workspace/<threadId>/tasks/<taskId>`. Only Pi's working directory changes. `WorkspaceSession.path` stays the thread root, so the provider checks, browser flows and `.otto/outputs` keep working. Relative paths for `share_file`, publish and reads resolve against the task folder (WP-09).
+
+Rules from step 4:
+
+- The runtime makes the folder path from `WorkspaceSession.path` and gives it to Pi as `AgentSessionOptions.cwd`. The server does not know the sandbox path, so `RuntimeContext` has no cwd field.
+- The folder is made on the first workspace command of a task turn, so a turn that does not use the workspace does not wake a paused sandbox.
+- The task folder applies to every relative file path of a task: `share_file`, publish, app `workspaceFile` inputs, and the files the server writes (app results, large results, background downloads, confirmed-action results).
+- A confirmed action finds its folder from the task of its turn, the same way as the save side. Thus, a task's app action that needs the owner's yes reads the same file after the yes as before it.
+- The attachments of the owner message that starts a task are staged into the task folder at the first task turn.
+- The folder is only Pi's default working directory. It is not a boundary: every session can read and write the whole thread workspace.
 
 ### 5.9 History and context
 
@@ -318,7 +343,8 @@ Each task gets a working folder `/workspace/<threadId>/tasks/<taskId>`. Only Pi'
 
 ### 5.10 Web state and events
 
-- `/api/state` gets `state.tasks`: open tasks and recent closed tasks, keyed by `onItMessageId`, with title, status, steps, step index, now line, question, approval ID, result message ID, artifact and cost.
+- `/api/state` gets `state.tasks`: open tasks and recent closed tasks, keyed by `onItMessageId`, with title, status, steps, step index, now line, question, approval ID, result message ID, artifact, cost (`costUsd`), error, waiting for and next check. `state.tasks` stays an array, and the client indexes it by `onItMessageId`.
+- The state tells the web app if `OTTO_TASKS` is on. When it is off, the web app hides the task settings (progress mode).
 - The client no longer aborts an in-flight `/api/state`. It marks the state dirty and fetches once more. The server throttles tool-event refreshes for each session and sends a targeted `task` event for silent preview changes (WP-23).
 
 ### 5.11 Failure, restart, reset and retention
@@ -327,8 +353,9 @@ Each task gets a working folder `/workspace/<threadId>/tasks/<taskId>`. Only Pi'
 - A finishing turn closes its task as Done only when no turn is queued in the same session.
 - Reset closes every task as Stopped without a stop note, because the thread is archived and a channel reply could no longer reach the task. It deletes their saved sessions, folders, browser profiles and checkpoints.
 - Closed task transcripts and browser profiles are deleted 30 days after the task closes, by an hourly job (`task-retention`) that marks each task with `forgotten_at`. The job checks again under the task row lock that the task is still closed before it deletes anything.
-- After Stop, the cleanup of the old turn must never unpin or discard the browser of a newer turn in the same session. Cleanup is bound to the browser generation of its own turn.
-- Lookups that ask whether a session is busy use the status of its turns, not the newest turn by `created_at`, because steering moves a message to the running turn and closes the taken turn.
+- After Stop, the cleanup of the old turn must never unpin or discard the browser of a newer turn in the same session. Cleanup is bound to the browser generation of its own turn. The generation is kept in the bridge client, which is the server's only way to the browsers: every discard through the server increments the session's generation, a pin records it, and an unpin or discard from an older generation does nothing. A chat Stop does not delete the chat's browser, so the chat generation does not change. For the chat, the per-session order of turns in one server process holds the next chat turn until the old cleanup ends.
+- The retention job holds the task row lock while it deletes (up to 30 s for each task). An owner reply to that task waits until the deletion ends. This is rare and is accepted (R37).
+- Lookups that ask whether a session is busy use the status of its turns, not the newest turn by `created_at`, because steering moves a message to the running turn and closes the taken turn. A session is busy when it has a running turn, a queued turn that is due, or a waiting turn with no later started turn (`busyTurnSql`). A planned check that is not due yet does not make the session busy.
 
 ### 5.12 Waiting for other people
 
@@ -1070,13 +1097,13 @@ Follow docs/src/content/docs/contribute/write-docs.mdx (house style: 'you', cont
 
 **Leftover open review items from PR #253** · Later · size S · needs nothing
 
-Status on main: open on the merged PR.
+Status on main: open on the merged PR. Step 4 result: WP-27 made both docs changes and WP-21 made the `lastActivityAt` fix. Step 5 only checks the #253 threads again and closes what is left.
 
 **Change.** Fix the browser-sessions.md read-only statement. Fix the remaining approvals docs mismatch.
 
 **Design.**
 
-- trust/browser-sessions.md:30: read-only work stays signed out and never signs in.
+- trust/browser-sessions.md:30: read-only and onboarding turns never sign in and never use a saved session. Do not write "stays signed out": onboarding runs in the chat session, whose browser can already be signed in.
 - approvals.mdx 'newest question' changes to match the code, or to the WP-06 behaviour.
 - The lastActivityAt finding is covered by WP-21.
 
@@ -1177,6 +1204,8 @@ Risks for main as it is now (022b9960), with the work package that removes each 
 | R33 | Global .task-card CSS is shared between onboarding cards and Tasks page cards.                                                                                                                 | Wrong colours and heights on task UI.                                                                        | Low    | WP-14                         |
 | R34 | The docs and the injected AGENTS.md describe the old model.                                                                                                                                    | Wrong guidance for builders and reviewers.                                                                   | Low    | WP-27                         |
 | R35 | Removing the report cards (WP-19) removes the card for work that waits for other people.                                                                                                       | A chased reply has no status and no check.                                                                   | Medium | WP-29                         |
+| R36 | A late chat-turn cleanup in a second server process could unpin the pin of a newer chat turn, because a chat Stop does not change the chat's browser generation.                               | The newer chat turn's browser can be closed at the cap. Only multi-process deployments are affected.         | Low    | Accepted (step 4)             |
+| R37 | The retention job holds a task row lock while it deletes files (up to 30 s). A reply to that task waits under the thread lock.                                                                 | Rare stall of one owner's thread writes for up to 30 s.                                                      | Low    | Accepted (step 4)             |
 
 ## 8. Invariants to keep
 
@@ -1251,7 +1280,7 @@ Each step updates its own pages in the same change, in the house style of `write
 - docs/src/content/docs/get-started/glossary.md (Task, Turn, Session, Check-in)
 - docs/src/content/docs/get-started/first-conversation.mdx ('On it…' naming, Stop)
 - docs/src/content/docs/use/spending.md (cost per task, if shown)
-- docs/src/assets/screens/tasks-light.png and card-tasks-{light,dark}.png (retake)
+- docs/src/assets/screens/tasks-light.png and card-tasks-{light,dark}.png (retake). Add a chat screenshot with an "On it" preview card and the Tasks strip. Step 4 could not retake them, because the agents do not run the app.
 
 ## 11. Build order and gates
 
