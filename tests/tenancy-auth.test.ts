@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import test, { describe } from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 import Fastify, { type FastifyRequest, type InjectOptions } from 'fastify';
 import type { AuthenticatedSession, AuthenticationProvider } from '../src/ports/authentication.ts';
 import type { TenantRuntimeHost } from '../src/ports/tenant-runtime.ts';
@@ -200,6 +201,29 @@ describe('gateway', () => {
       assert.equal(f.calls.length, 0);
       assert.equal((await post('/api/uploads', f.headers())).statusCode, 200);
       assert.equal(f.calls.at(-1)!.body.length, big.length);
+
+      let finish!: () => void;
+      const held = new Promise<void>((resolve) => (finish = resolve));
+      f.reply(async (owner) => {
+        if (owner === f.users[0]) await held;
+        return Response.json({ owner });
+      });
+      const before = f.calls.length;
+      const first = post('/api/uploads', f.headers(0));
+      while (f.calls.length === before) await setTimeout(5);
+      const second = post('/api/uploads', f.headers(1));
+      await setTimeout(50);
+      assert.deepEqual(
+        f.calls.slice(before).map((call) => call.owner),
+        [f.users[0]],
+      );
+      finish();
+      assert.equal((await first).statusCode, 200);
+      assert.equal((await second).statusCode, 200);
+      assert.deepEqual(
+        f.calls.slice(before).map((call) => call.owner),
+        [f.users[0], f.users[1]],
+      );
     } finally {
       await f.app.close();
     }

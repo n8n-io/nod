@@ -449,12 +449,19 @@ export async function createGateway(options: {
       });
     return sendFetchResponse(reply, result);
   }
+  let uploads = Promise.resolve();
   app.post(
     '/api/uploads',
     {
       bodyLimit: fileBytes + 1024 * 1024,
       onRequest: async (request, reply) => {
         if (!(await accounts.requirePrincipal(request, reply))) return reply;
+        const previous = uploads;
+        let release!: () => void;
+        const done = new Promise<void>((resolve) => (release = resolve));
+        uploads = previous.then(() => done);
+        reply.raw.once('close', release);
+        await previous;
       },
     },
     forward,

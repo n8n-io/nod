@@ -58,6 +58,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
   const uploads = useRef(new Set<AbortController>());
+  const uploadQueue = useRef(Promise.resolve());
   const previewUrls = useRef(new Set<string>());
   const previewTrigger = useRef<AttachmentTrigger | null>(null);
   const lastText = useRef(text);
@@ -160,8 +161,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     });
     updateAttachments([...attachmentValues.current, ...items]);
     setError('');
-    await Promise.all(
-      files.map(async (file, index) => {
+    const send = async () => {
+      for (const [index, file] of files.entries()) {
         const item = items[index];
         const controller = item.controller!;
         try {
@@ -186,8 +187,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         } finally {
           uploads.current.delete(controller);
         }
-      }),
-    );
+      }
+    };
+    const queued = uploadQueue.current.then(send);
+    uploadQueue.current = queued;
+    await queued;
     if (mounted.current) {
       if (fileInput.current) fileInput.current.value = '';
       restoreFocus();
