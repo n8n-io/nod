@@ -74,6 +74,7 @@ type ConfirmAction = {
 
 export interface ThreadDependencies {
   analytics?: CaptureAnalytics;
+  present?: (threadId: string, input: { kind: 'interrupted' }) => Promise<string>;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
   writeArtifact?: (
@@ -600,9 +601,6 @@ export async function initializeThreads() {
   await boss.createQueue(queue, { retryLimit: 0, expireInSeconds: 86400 });
 }
 
-export const interruptedMessage =
-  'I was interrupted before I finished. Check anything I may have started outside before asking me to redo it, or say continue and I’ll pick up where I left off.';
-
 async function finishTurn(
   client: PoolClient,
   turnId: string,
@@ -642,27 +640,41 @@ function describeFailure(error: unknown) {
   return [...fields, ...frames].join(' | ');
 }
 
-async function interruptTurn(turnId: string) {
-  return transaction(async (client) => {
+async function interruptTurn(turnId: string, present: ThreadDependencies['present']) {
+  const turn = await transaction(async (client) => {
     await lockThread(client);
     const turn = (
-      await client.query(
+      await client.query<{ thread_id: string; background: boolean }>(
         "SELECT thread_id,background FROM turns WHERE id=$1 AND owner_id=$2 AND status='running' FOR UPDATE",
         [turnId, ownerId],
       )
     ).rows[0];
-    if (!turn) return false;
+    if (!turn) return;
     await finishTurn(client, turnId, 'failed', { error: 'Interrupted.' });
-    if (!turn.background)
+    return turn;
+  }, pool);
+  if (!turn) return false;
+  if (turn.background) return true;
+  const message = await present?.(turn.thread_id, { kind: 'interrupted' }).catch(() => undefined);
+  if (typeof message !== 'string' || !message.trim() || message.length > 12000) return true;
+  await transaction(async (client) => {
+    if ((await lockThread(client)).id !== turn.thread_id) return;
+    const current = await client.query(
+      `SELECT id FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3
+       AND status='failed' AND error='Interrupted.'
+       AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
+      [turnId, ownerId, turn.thread_id, `failure:${turnId}`],
+    );
+    if (current.rowCount)
       await insertAssistantMessage(
         client,
         { threadId: turn.thread_id, turnId },
-        interruptedMessage,
+        message.trim(),
         [],
         `failure:${turnId}`,
       );
-    return true;
   }, pool);
+  return true;
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -670,7 +682,7 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
     "SELECT id FROM turns WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
-  for (const turn of interrupted.rows) await interruptTurn(turn.id);
+  for (const turn of interrupted.rows) await interruptTurn(turn.id, dependencies.present);
   await sendDrain(undefined, (await activeThread()).id);
   const start = () =>
     boss.work<{ threadId: string }>(
@@ -1155,7 +1167,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
       );
-    else if (await interruptTurn(turnId))
+    else if (await interruptTurn(turnId, dependencies.present))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     dependencies.analytics?.({

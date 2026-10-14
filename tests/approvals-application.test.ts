@@ -57,6 +57,7 @@ test(
     const ids: string[] = [];
     const asked = new Set<string>();
     const cleared = new Set<string>();
+    const descriptions: Array<Record<string, any>> = [];
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -146,8 +147,12 @@ test(
         onboardingCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, input }) =>
-            task === 'review' && 'reply' in input
+          curate: async ({ task, input }) => {
+            if ('purpose' in input && input.purpose === 'confirmation') {
+              descriptions.push(input);
+              return { text: 'Proceed with the saved synthetic action?' };
+            }
+            return task === 'review' && 'reply' in input
               ? {
                   answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
                 }
@@ -165,7 +170,8 @@ test(
                         ),
                       ),
                   }
-                : undefined,
+                : undefined;
+          },
         },
       },
       { channels: false },
@@ -571,7 +577,9 @@ test(
             "INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone) VALUES($1,$2,'Review Northstar','Synthetic review','0 9 * * 1','UTC')",
             [schedule.id, ownerId],
           );
-          const id = await pendingPlan('schedule_cancel', { id: schedule.id });
+          const id = await propose('schedule_cancel', { id: schedule.id });
+          assert.equal(descriptions.at(-1)?.data.details.schedule.title, 'Review Northstar');
+          assert.equal(descriptions.at(-1)?.data.details.schedule.prompt, 'Synthetic review');
           const [approval] = await approvalsFor(id);
           await pool.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [
             schedule.id,

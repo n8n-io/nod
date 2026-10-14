@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
 import { createAgentSession } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
@@ -701,14 +703,24 @@ test('reconnecting an app forwards the saved account and pauses at its sign-in l
     {
       connections: async (...args) => {
         calls.push(args);
-        return { name: 'Gmail', url: '/apps/connect/fixture' };
+        return {
+          name: 'Gmail',
+          url: '/apps/connect/fixture',
+          message: 'Ligar Gmail\n\npara continuar.',
+        };
       },
     },
   );
   assert.deepEqual(calls, [['connect', 'gmail', undefined, undefined, undefined, connectionId]]);
   assert.equal(result.result.status, 'waiting_user');
   assert.equal(result.replies.length, 1);
-  assert.match(result.replies[0]!, /\[Connect Gmail\]\(\/apps\/connect\/fixture\)/);
+  const invitation = unified().use(remarkParse).parse(result.replies[0]!);
+  assert.equal(
+    invitation.children
+      .find((node) => node.type === 'paragraph')
+      ?.children.find((node) => node.type === 'link')?.url,
+    '/apps/connect/fixture',
+  );
 });
 
 test('sign-in method questions remain available without requesting credential values', async () => {
@@ -902,4 +914,21 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   );
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
+  const linked = await fixture(
+    async (tools) => {
+      await call(tools, 'pay', input);
+    },
+    {
+      requestPayment: async () => ({
+        question: 'Confirmar [a compra]?\n\nVisa ••4242, 43,20 EUR.',
+        url: '/payments/synthetic-payment',
+      }),
+    },
+  );
+  const document = unified().use(remarkParse).parse(linked.replies.join('\n'));
+  const paragraph = document.children.find((node) => node.type === 'paragraph');
+  assert.equal(
+    paragraph?.children.find((node) => node.type === 'link')?.url,
+    '/payments/synthetic-payment',
+  );
 });

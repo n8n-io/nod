@@ -18,7 +18,24 @@ import type { ChatConfirmationInput } from './approvals.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 
+export type ChannelPresentation =
+  | {
+      kind: 'delivery';
+      text: string;
+      attachments: 'none' | 'delivered' | 'linked' | 'in_otto';
+      secureAction: boolean;
+    }
+  | { kind: 'verification_refused' }
+  | { kind: 'paired'; channel: string }
+  | {
+      kind: 'command';
+      command: 'memory' | 'usage';
+      data: object;
+      attachments?: 'none' | 'delivered' | 'linked' | 'in_otto';
+    };
+
 interface ChannelOptions {
+  present?: (threadId: string | null, input: ChannelPresentation) => Promise<string>;
   admission?: WorkAdmission;
   ownerId: string;
   transport: MessagingTransport;
@@ -51,7 +68,7 @@ interface ChannelOptions {
     client: PoolClient,
     threadId: string | null,
     link: string | null,
-  ) => Promise<{ text: string; attachments: Artifact[] }>;
+  ) => Promise<{ text: string; attachments: Artifact[]; presentation?: ChannelPresentation }>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -70,6 +87,7 @@ interface OutboxRow extends ChannelIdentity {
   thread_id: string;
   text: string;
   attachments: unknown[];
+  presentation: ChannelPresentation | null;
 }
 const messageSchema = z.object({
   channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
@@ -99,47 +117,102 @@ function inboundMessageId(ownerId: string, sourceId: string) {
   return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
 }
 
-export function channelReply(
-  text: string,
-  hasAttachments = false,
-  deliversAttachments = false,
-  privateLinks: { name: string; url: string }[] = [],
-  appOrigin?: string,
-) {
-  const securePath =
-    '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault\\?add=(?:login|card)[^\\s)]*|(?:vault|credentials|payments|approvals)\\/[^\\s)]+)';
+function channelText(text: string, appOrigin?: string) {
+  let secureAction = false;
+  let artifact = false;
+  const privateUrl = (value: string) => {
+    let url: URL;
+    try {
+      url = new URL(value, 'https://otto.invalid');
+    } catch {
+      return false;
+    }
+    if (url.pathname.startsWith('/api/artifacts/')) {
+      artifact = true;
+      return true;
+    }
+    if (
+      /^\/(?:vault|credentials|payments|approvals)\//.test(url.pathname) ||
+      (url.pathname === '/vault' && url.searchParams.has('add'))
+    ) {
+      if (
+        !/^https?:\/\//.test(value) ||
+        loopbackHost(url.hostname) ||
+        (appOrigin && url.host === new URL(appOrigin).host)
+      ) {
+        secureAction = true;
+        return true;
+      }
+    }
+    return false;
+  };
   const safe = text
     .replace(
-      /\[[^\]]*\]\((?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+\)|(?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+/g,
-      deliversAttachments
-        ? 'Attached file.'
-        : privateLinks.length
-          ? 'See the file link below.'
-          : 'Open Otto to view this file.',
+      /\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
+      (match, label: string, url: string) => (privateUrl(url) ? label : match),
     )
     .replace(
-      new RegExp(`\\[[^\\]]*\\]\\((${securePath})\\)|(${securePath})`, 'g'),
-      (match, linked: string | undefined, plain: string | undefined) => {
-        try {
-          const url = new URL(linked ?? plain!);
-          if (
-            url.host !== (appOrigin ? new URL(appOrigin).host : undefined) &&
-            !loopbackHost(url.hostname)
-          )
-            return match;
-        } catch {}
-        return 'Open Otto to continue securely.';
-      },
+      /https?:\/\/[^\s)]+|\/(?:api\/artifacts|vault|credentials|payments|approvals)[^\s)]*/g,
+      (url) => (privateUrl(url) ? '' : url),
     );
-  const files = privateLinks.length
-    ? `Files:\n${privateLinks.map(({ name, url }) => `${name.replace(/[\r\n]/g, ' ')}: ${url}`).join('\n')}`
-    : hasAttachments
-      ? 'Attachments are available in Otto.'
-      : '';
-  return (
-    `${safe}${files ? `\n\n${files}` : ''}`.trim() ||
-    (deliversAttachments ? '' : 'A reply is available in Otto.')
-  );
+  return { text: safe.trim(), secureAction, artifact };
+}
+
+async function presentChannelText(
+  threadId: string | null,
+  input: ChannelPresentation,
+  present: ChannelOptions['present'],
+  appOrigin?: string,
+) {
+  if (!present) throw new Error('Channel presentation is unavailable.');
+  const text = z
+    .string()
+    .trim()
+    .min(1)
+    .max(24000)
+    .parse(await present(threadId, input));
+  if (channelText(text, appOrigin).text !== text)
+    throw new Error('Channel presentation contains a private link.');
+  return text;
+}
+
+export async function channelReply(
+  text: string,
+  options: {
+    threadId: string | null;
+    hasAttachments?: boolean;
+    deliversAttachments?: boolean;
+    privateLinks?: { name: string; url: string }[];
+    appOrigin?: string;
+    present?: ChannelOptions['present'];
+  },
+) {
+  const safe = channelText(text, options.appOrigin);
+  const privateLinks = options.privateLinks ?? [];
+  const attachments = options.deliversAttachments
+    ? 'delivered'
+    : privateLinks.length
+      ? 'linked'
+      : options.hasAttachments || safe.artifact
+        ? 'in_otto'
+        : 'none';
+  const needsPresentation =
+    safe.secureAction || attachments === 'in_otto' || (!safe.text && attachments === 'none');
+  const reply = needsPresentation
+    ? await presentChannelText(
+        options.threadId,
+        { kind: 'delivery', text: safe.text, attachments, secureAction: safe.secureAction },
+        options.present,
+        options.appOrigin,
+      )
+    : safe.text;
+  const files = privateLinks
+    .map(
+      ({ name, url }) =>
+        `${channelText(name.replace(/[\r\n]/g, ' '), options.appOrigin).text}: ${url}`,
+    )
+    .join('\n');
+  return [reply, files].filter(Boolean).join('\n\n');
 }
 
 export async function createChannels(pool: Pool, options: ChannelOptions) {
@@ -173,6 +246,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     state text NOT NULL DEFAULT 'pending', provider_message_id text, reason text,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   );
+  ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS presentation jsonb;
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
@@ -198,8 +272,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     compose: (
       threadId: string | null,
     ) =>
-      | Promise<{ text: string; attachments?: Artifact[] }>
-      | { text: string; attachments?: Artifact[] },
+      | Promise<{ text: string; attachments?: Artifact[]; presentation?: ChannelPresentation }>
+      | { text: string; attachments?: Artifact[]; presentation?: ChannelPresentation },
   ) {
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
     const receipt = await client.query(
@@ -232,10 +306,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'assistant',$3,$4,$5)",
       [replyId, ownerId, reply.text, thread, JSON.stringify(reply.attachments ?? [])],
     );
-    await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
-      replyId,
-      inbox.sourceId,
-    ]);
+    await client.query(
+      'INSERT INTO channel_outbox(message_id,source_id,presentation) VALUES($1,$2,$3)',
+      [replyId, inbox.sourceId, reply.presentation ? JSON.stringify(reply.presentation) : null],
+    );
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
   }
 
@@ -282,7 +356,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             accountId,
             senderId,
             threadId,
-            verification ? (verification.messageText ?? 'Verification code sent securely.') : text,
+            verification ? (verification.messageText ?? '') : text,
             sentAt,
             acceptedMessageId,
             verification ? 'submitted' : 'pending',
@@ -337,10 +411,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             (client) =>
               replyWithoutTurn(
                 client,
-                { ...identity, sourceId, threadId, sentAt, text: 'Code not applied.' },
-                () => ({
-                  text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
-                }),
+                { ...identity, sourceId, threadId, sentAt, text: '' },
+                () => ({ text: '', presentation: { kind: 'verification_refused' } }),
               ),
             pool,
           );
@@ -392,7 +464,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         sentAt: request.sentAt,
         text: '/start',
       },
-      () => ({ text: 'You’re connected! You can now chat with me on Telegram.' }),
+      () => ({ text: '', presentation: { kind: 'paired', channel: 'telegram' } }),
     );
     return () => {
       void drain();
@@ -462,8 +534,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         `WITH claimed AS (
         UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
           SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
-        ) RETURNING message_id,source_id
-      ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments
+        ) RETURNING message_id,source_id,presentation
+      ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,c.presentation
         FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
         [ownerId],
       );
@@ -530,6 +602,76 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           continue;
         }
       }
+      let text: string;
+      let generated: string | undefined;
+      try {
+        if (row.presentation) {
+          const input =
+            row.presentation.kind === 'command'
+              ? {
+                  ...row.presentation,
+                  attachments: attachments
+                    ? ('delivered' as const)
+                    : privateLinks.length
+                      ? ('linked' as const)
+                      : row.attachments?.length
+                        ? ('in_otto' as const)
+                        : ('none' as const),
+                }
+              : row.presentation;
+          generated = await presentChannelText(
+            row.message_thread_id,
+            input,
+            options.present,
+            options.appOrigin,
+          );
+        }
+        text = await channelReply(generated ?? row.text, {
+          threadId: row.message_thread_id,
+          hasAttachments: !row.presentation && Boolean(row.attachments?.length),
+          deliversAttachments: Boolean(attachments),
+          privateLinks,
+          appOrigin: options.appOrigin,
+          present: options.present,
+        });
+      } catch (cause) {
+        logFailure('channel_presentation_failed', cause);
+        await pool.query(
+          "UPDATE channel_outbox SET state='blocked',reason='presentation_unavailable',updated_at=now() WHERE message_id=$1",
+          [row.message_id],
+        );
+        continue;
+      }
+      if (generated && !closed && !replacing && permitted(row)) {
+        const saved = await pool.query(
+          `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3
+           AND (m.thread_id IS NULL OR EXISTS (
+             SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))`,
+          [row.message_id, generated, ownerId],
+        );
+        if (!saved.rowCount) {
+          await pool.query(
+            "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
+            [row.message_id],
+          );
+          continue;
+        }
+        options.refresh?.();
+      }
+      const current = await pool.query(
+        `SELECT 1 FROM messages m WHERE m.id=$1 AND m.owner_id=$2
+         AND m.thread_id IS NOT DISTINCT FROM $3::uuid
+         AND (m.thread_id IS NULL OR EXISTS (
+           SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$2 AND th.archived_at IS NULL))`,
+        [row.message_id, ownerId, row.message_thread_id],
+      );
+      if (!current.rowCount) {
+        await pool.query(
+          "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
+          [row.message_id],
+        );
+        continue;
+      }
       if (closed || replacing || !permitted(row)) {
         await pool.query(
           "UPDATE channel_outbox SET state='blocked',reason='channel_access_changed',updated_at=now() WHERE message_id=$1",
@@ -542,13 +684,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           channelId: row.provider,
           accountId: row.account_id,
           threadId: row.thread_id,
-          text: channelReply(
-            row.text,
-            Boolean(row.attachments?.length) && !attachments,
-            Boolean(attachments),
-            privateLinks,
-            options.appOrigin,
-          ),
+          text,
           ...(attachments ? { attachments } : {}),
         });
         await pool.query(

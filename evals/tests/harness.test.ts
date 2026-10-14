@@ -39,6 +39,7 @@ import { daysAgo, inDays, localDate, localTime, nextWeekOn } from '../src/world/
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
+import { approvalLanguageScenario } from '../src/world/approval-language.ts';
 
 const manifest: RunManifest = {
   label: 't',
@@ -600,6 +601,88 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   assert.equal(calls, 3);
   assert.equal(writes, 1);
   assert.equal(started, 1);
+});
+
+test('scripted approval replies preserve the message and stop when the script is exhausted', async () => {
+  for (const replies of [[], ['はい。ただし、内容を変更してからです。']]) {
+    const posted: unknown[] = [];
+    const confirmationId = 'synthetic-confirmation';
+    const stack = {
+      origin: 'http://localhost:4310',
+      async request(path: string, init?: RequestInit) {
+        if (path === '/api/state') return Response.json({ threadId: 'synthetic-thread' });
+        assert.equal(path, '/api/messages');
+        posted.push(JSON.parse(String(init?.body)));
+        return Response.json({});
+      },
+      pool: {
+        async query(sql: string) {
+          if (sql.includes('SELECT (SELECT count(*)')) return { rows: [{ events: 0 }] };
+          if (sql.includes("status IN ('queued','running')")) return { rowCount: 0, rows: [] };
+          if (sql.includes('SELECT id,status,waiting_reason'))
+            return {
+              rows: [{ id: 'synthetic-turn', status: 'waiting', waiting_reason: 'approval' }],
+            };
+          if (sql.includes('information_schema.columns')) return { rows: [{}] };
+          if (sql.includes('SELECT id,action,args,confirmation_message_id'))
+            return {
+              rows: [
+                {
+                  id: 'synthetic-approval',
+                  action: 'GMAIL_SEND_EMAIL',
+                  args: {},
+                  confirmation_message_id: confirmationId,
+                },
+              ],
+            };
+          if (sql.includes('SELECT text FROM messages'))
+            return { rows: [{ text: 'このメールを送信しますか？' }] };
+          throw new Error(`Unexpected fixture query: ${sql}`);
+        },
+      },
+    } as unknown as Stack;
+    const session = createSession({
+      stack,
+      user: { approve: true, approvalReplies: replies },
+      deadline: Date.now() + 1000,
+    });
+    await session.say('Prepare the synthetic email.');
+    assert.deepEqual(posted, [
+      { text: 'Prepare the synthetic email.', attachmentIds: [] },
+      ...replies.map((text) => ({ text, replyToMessageId: confirmationId })),
+    ]);
+    assert.equal(
+      session.interactions.filter((item) => item.kind === 'approval').length,
+      replies.length,
+    );
+    assert.equal(session.interactions.at(-1)?.kind, 'unanswered');
+  }
+});
+
+test('approval language grading distinguishes refusal from an unresolved decision', async () => {
+  for (const [name, expected, wrong] of [
+    ['pt-pt', 'declined', 'expired'],
+    ['es', 'expired', 'declined'],
+  ]) {
+    const definition = approvalLanguageScenario(name!);
+    const world = definition.world({ now: Date.now });
+    const state = definition.expect(world).find((item) => item.id === 'approval-answer-state')!;
+    const exercised = definition
+      .expect(world)
+      .find((item) => item.id === 'server-confirmation-and-scripted-answer-exercised')!;
+    assert.equal(state.kind, 'check');
+    assert.equal(exercised.kind, 'check');
+    if (state.kind !== 'check' || exercised.kind !== 'check') throw new Error('Missing check.');
+    const run = (status?: string) =>
+      ({
+        approvals: status ? [{ action: 'GMAIL_SEND_EMAIL', status, args: {} }] : [],
+        interactions: [],
+      }) as unknown as Run;
+    assert.equal((await state.check(run(expected))).pass, true);
+    assert.equal((await state.check(run(wrong))).pass, false);
+    assert.equal((await state.check(run())).pass, false);
+    assert.equal((await exercised.check(run(expected))).pass, false);
+  }
 });
 
 test('the stop case rejects a task that finished before Stop', async () => {

@@ -243,6 +243,10 @@ test(
     const submitted: string[] = [];
     const app = Fastify();
     const channels = await createChannels(pool, {
+      present: async (_thread, input) => {
+        assert.deepEqual(input, { kind: 'verification_refused' });
+        return 'Usa o pedido de verificação na conversa correspondente.';
+      },
       ownerId: 'local-development',
       transport: {
         channels: [
@@ -409,6 +413,11 @@ test(
       const channels = await createChannels(pool, {
         ownerId: 'fixture-owner',
         transport: transport(),
+        present: async (thread, input) => {
+          assert.equal(thread, threadId);
+          assert.deepEqual(input, { kind: 'verification_refused' });
+          return 'Usa o pedido de verificação na conversa correspondente.';
+        },
         intervalMs: 600000,
         subscribe: () => () => {},
         acceptVerification: async (text, input) => {
@@ -507,7 +516,7 @@ test(
           channelId: 'telegram',
           accountId: 'fixture-account',
           threadId: 'fixture-thread',
-          text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
+          text: 'Usa o pedido de verificação na conversa correspondente.',
         },
       ]);
       const guidance = (
@@ -516,7 +525,7 @@ test(
         )
       ).rows[0];
       assert.deepEqual(guidance, {
-        text: 'Code not applied.',
+        text: '',
         state: 'discarded',
         turn_id: null,
         role: 'assistant',
@@ -723,54 +732,93 @@ test('channels stay disabled without explicit enablement and require a single ow
   );
 });
 
-test('channel replies keep secure credential and approval links in the local app', () => {
-  const reply = channelReply(
-    'Continue [Add credentials](/credentials/secret-id?token=secret-token) and [Approve](http://localhost:4310/approvals/private-id). Read https://example.com/docs.',
-    true,
+test('channel presentation isolates private links from the model and preserves owned attachment delivery', async () => {
+  const privateFileId = '00000000-0000-4000-8000-000000000001';
+  const presentation: unknown[] = [];
+  const present = async (threadId: string | null, input: unknown) => {
+    presentation.push({ threadId, input });
+    return 'Continua na aplicação Otto.';
+  };
+  const reply = await channelReply(
+    'Continua [em segurança](/credentials/secret-id?token=secret-token) ou [aprova](http://localhost:4310/payments/private-id). Consulta https://example.com/docs.',
+    { threadId: 'owned-thread', present, appOrigin: 'https://otto.example' },
   );
-  assert.equal(reply.includes('secret-token'), false);
-  assert.equal(reply.includes('private-id'), false);
-  assert.match(reply, /https:\/\/example.com\/docs/);
-  const paymentReply = channelReply(
-    '[Approve](/payments/private-id) [Owned](https://otto.example/payments/private-id) [HTTP](http://otto.example/payments/private-id) [Invoice](https://merchant.example/payments/invoice)',
-    false,
-    false,
-    [],
-    'https://otto.example',
+  assert.equal(reply, 'Continua na aplicação Otto.');
+  assert.equal(presentation.length, 1);
+  assert.doesNotMatch(JSON.stringify(presentation), /secret-id|secret-token|private-id/);
+  assert.match(JSON.stringify(presentation), /https:\/\/example\.com\/docs/);
+  assert.deepEqual(presentation[0], {
+    threadId: 'owned-thread',
+    input: {
+      kind: 'delivery',
+      text: 'Continua em segurança ou aprova. Consulta https://example.com/docs.',
+      attachments: 'none',
+      secureAction: true,
+    },
+  });
+  const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
+  assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
+  assert.equal(presentation.length, 1);
+  const imageReply = await channelReply(
+    '[Imagem](http://localhost:4310/api/artifacts/private-file)',
+    { threadId: 'owned-thread', present, deliversAttachments: true },
   );
-  assert.equal(paymentReply.includes('private-id'), false);
-  assert.match(paymentReply, /https:\/\/merchant\.example\/payments\/invoice/);
-  const imageReply = channelReply(
-    '[Image](http://localhost:4310/api/artifacts/private-file)',
-    false,
-    true,
+  assert.equal(imageReply, 'Imagem');
+  assert.equal(presentation.length, 1);
+  assert.equal(
+    await channelReply('', { threadId: 'owned-thread', present, deliversAttachments: true }),
+    '',
   );
-  assert.equal(imageReply.includes('private-file'), false);
-  assert.match(imageReply, /Attached file/);
-  assert.equal(channelReply('', false, true), '');
-  assert.ok(channelReply('', true).trim());
-  assert.ok(channelReply('').trim());
+  const fileReply = await channelReply(
+    `Relatório pronto. [Relatório](/api/artifacts/${privateFileId})`,
+    {
+      threadId: 'owned-thread',
+      present,
+      hasAttachments: true,
+      privateLinks: [
+        { name: 'report.csv', url: `https://otto.example/api/artifacts/${privateFileId}` },
+      ],
+    },
+  );
+  assert.match(fileReply, /report\.csv/);
+  assert.equal((fileReply.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
+  assert.equal(presentation.length, 1);
+  await channelReply('Relatório pronto.', {
+    threadId: 'owned-thread',
+    present,
+    hasAttachments: true,
+  });
+  assert.equal(presentation.length, 2);
+  assert.equal(
+    (presentation[1] as { input: { attachments: string } }).input.attachments,
+    'in_otto',
+  );
 });
 
-test('text-only channel replies show verified private file links when an app address is available', () => {
-  const reply = channelReply(
-    'Research is ready. [Report](/api/artifacts/00000000-0000-4000-8000-000000000001)',
-    true,
-    false,
-    [
-      {
-        name: 'report.csv',
-        url: 'https://otto.example/api/artifacts/00000000-0000-4000-8000-000000000001',
+test('channel presentation rejects failed or unsafe generated output before provider delivery', async () => {
+  for (const generated of [
+    '',
+    'https://otto.example/credentials/secret-id',
+    '[Continua](/payments/private-id)',
+    '[Ficheiro](/api/artifacts/private-id)',
+  ]) {
+    await assert.rejects(
+      channelReply('/credentials/request-id', {
+        threadId: 'owned-thread',
+        appOrigin: 'https://otto.example',
+        present: async () => generated,
+      }),
+    );
+  }
+  await assert.rejects(
+    channelReply('/credentials/request-id', {
+      threadId: 'owned-thread',
+      present: async () => {
+        throw new Error('Synthetic generation failure');
       },
-    ],
+    }),
   );
-  assert.match(reply, /Research is ready/);
-  assert.match(reply, /report\.csv/);
-  assert.match(
-    reply,
-    /https:\/\/otto\.example\/api\/artifacts\/00000000-0000-4000-8000-000000000001/,
-  );
-  assert.equal((reply.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
+  await assert.rejects(channelReply('/credentials/request-id', { threadId: 'owned-thread' }));
 });
 
 test(
@@ -935,6 +983,11 @@ test(
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
       appOrigin: 'https://otto.example',
+      present: async (_thread, input) => {
+        assert.equal(input.kind, 'delivery');
+        assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
+        return 'Continua na aplicação Otto.';
+      },
       transport: createChatSdkTransport(pool, fixtureEnv),
       resolveAttachments: async (resolvedThreadId, ids) => {
         assert.equal(resolvedThreadId, threadId);
@@ -1160,6 +1213,11 @@ test(
       await app.close();
       const restarted = await createChannels(pool, {
         ownerId: 'local-development',
+        present: async (_thread, input) => {
+          assert.equal(input.kind, 'delivery');
+          assert.equal(input.attachments, 'in_otto');
+          return 'Consulta os ficheiros na aplicação Otto.';
+        },
         resolveAttachments: async (_threadId, ids) => {
           if (ids.length !== 1 || ids[0] !== whatsappFileId)
             throw new Error('Attachment unavailable.');
@@ -1203,7 +1261,7 @@ test(
         await restarted.drain();
         assert.equal(sent.length, attempts + 1);
         const fallbackText = JSON.stringify(sent.at(-1)?.body);
-        assert.match(fallbackText, /Attachments are available in Otto/);
+        assert.match(fallbackText, /Consulta os ficheiros na aplicação Otto/);
         assert.doesNotMatch(fallbackText, /api\/artifacts/);
       } finally {
         await restarted.close();

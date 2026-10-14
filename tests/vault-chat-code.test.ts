@@ -53,6 +53,8 @@ test(
     let hold: Promise<void> | undefined;
     let started: (() => void) | undefined;
     let throwPrivateError = false;
+    const failurePresentations: Array<{ threadId: string; input: object }> = [];
+    let presentFailure = async () => 'Synthetic verification result.';
     let beforePayment = async () => {};
     let duringPayment = async () => {};
     const { createPayments } = await import('../src/server/payments.ts');
@@ -73,6 +75,7 @@ test(
       uses: await createVaultUses(db.pool, ownerId),
       local: true,
       inOtto: async () => true,
+      present: async () => 'Synthetic private payment step.',
       page: async () => ({
         origin: 'https://shop.fixture.test',
         url: 'https://shop.fixture.test/checkout',
@@ -110,6 +113,10 @@ test(
         return payments.submitCode(turnId, code, paymentId);
       },
       refresh() {},
+      async present(threadId, input) {
+        failurePresentations.push({ threadId, input: structuredClone(input) });
+        return presentFailure();
+      },
       async submitCode(owner, turnId, code, requestId) {
         injected.push({ owner, turnId, code, requestId });
         started?.();
@@ -210,8 +217,89 @@ test(
       hold = undefined;
       started = undefined;
       throwPrivateError = false;
+      failurePresentations.length = 0;
+      presentFailure = async () => 'Synthetic verification result.';
     }
     try {
+      await t.test(
+        'failure presentation sees only the recorded outcome and never retries private entry',
+        async () => {
+          await reset();
+          const pending = await seed();
+          const clientMessageId = randomUUID();
+          throwPrivateError = true;
+          presentFailure = async () => {
+            const client = await db.pool.connect();
+            try {
+              await client.query('BEGIN');
+              await thread.lockThread(client);
+              assert.equal(
+                (await client.query('SELECT status FROM chat_verification_submissions')).rows[0]
+                  .status,
+                'unavailable',
+              );
+              await client.query('COMMIT');
+            } finally {
+              client.release();
+            }
+            return 'Synthetic verification result.';
+          };
+          const response = await send('654913', { clientMessageId });
+          assert.equal(response.statusCode, 200, response.body);
+          assert.equal(response.json().verificationStatus, 'unavailable');
+          assert.deepEqual(failurePresentations, [
+            {
+              threadId: pending.threadId,
+              input: { kind: 'verification_failure', verification: 'otp' },
+            },
+          ]);
+          const messages = await db.pool.query('SELECT text FROM messages ORDER BY created_at,id');
+          assert.ok(messages.rows.some((row) => row.text === 'Synthetic verification result.'));
+          assert.doesNotMatch(JSON.stringify(messages.rows), /654913|Untrusted website/);
+          assert.equal((await send('654913', { clientMessageId })).statusCode, 200);
+          assert.equal(injected.length, 1);
+          assert.equal(failurePresentations.length, 1);
+        },
+      );
+      await t.test(
+        'missing or late failure text does not change the submission receipt or publish after reset',
+        async () => {
+          for (const mode of ['offline', 'invalid', 'reset']) {
+            await reset();
+            const pending = await seed();
+            const clientMessageId = randomUUID();
+            outcome = 'unavailable';
+            presentFailure = async () => {
+              if (mode === 'offline') throw new Error('Synthetic model failure.');
+              if (mode === 'invalid') return ' ';
+              await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [
+                pending.threadId,
+              ]);
+              await thread.activeThread();
+              return 'Synthetic late verification result.';
+            };
+            const response = await send('654913', { clientMessageId });
+            assert.equal(response.statusCode, 200, response.body);
+            assert.equal(response.json().verificationStatus, 'unavailable');
+            assert.equal(injected.length, 1);
+            assert.equal(failurePresentations.length, 1);
+            assert.equal(
+              (await db.pool.query("SELECT id FROM messages WHERE role='assistant'")).rowCount,
+              1,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT status FROM chat_verification_submissions')).rows[0]
+                .status,
+              'unavailable',
+            );
+            if (mode !== 'reset') {
+              assert.equal((await send('654913', { clientMessageId })).statusCode, 200);
+              assert.equal(injected.length, 1);
+              assert.equal(failurePresentations.length, 1);
+            }
+          }
+        },
+      );
       await t.test(
         'Stop cancels a waiting payment before or during entry without restarting the task',
         async () => {
@@ -354,7 +442,7 @@ test(
           };
           const asked = await payments.request({ threadId, turnId }, order);
           assert.ok('question' in asked && !('paymentId' in asked));
-          assert.match(asked.question, /Reply with its security code\.$/);
+          assert.equal(asked.details.requires, 'security_code');
           const state = (await app.inject({ url: '/api/state', headers })).json();
           assert.equal(state.verificationRequests[0].kind, 'payment');
           await assert.rejects(

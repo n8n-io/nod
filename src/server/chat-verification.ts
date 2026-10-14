@@ -22,14 +22,10 @@ export const texts = {
   otp: {
     masked: 'Verification code sent securely.',
     pending: 'Verification code received securely.',
-    failed:
-      'The code could not be applied. Check the sign-in step, then send a fresh code when it is ready.',
   },
   payment: {
     masked: 'Security code sent securely.',
     pending: 'Security code received securely.',
-    failed:
-      'The payment result is not confirmed. Check the order and payment status before another attempt.',
   },
 };
 const unavailableMessage =
@@ -55,6 +51,10 @@ export async function createChatVerification(
       code: string,
       paymentId: string,
     ) => Promise<{ status: VerificationStatus }>;
+    present?: (
+      threadId: string,
+      input: { kind: 'verification_failure'; verification: 'otp' | 'payment' },
+    ) => Promise<string>;
     refresh: () => void;
   },
 ) {
@@ -299,12 +299,19 @@ export async function createChatVerification(
       [input.clientMessageId, status, texts[reserved.kind].masked],
     );
     if (status !== 'submitted') {
-      await pool.query(
-        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-         SELECT $1,$2,'assistant',$3,u.thread_id,u.id FROM turns u JOIN threads th ON th.id=u.thread_id
-         WHERE u.id=$4 AND u.owner_id=$2 AND th.archived_at IS NULL`,
-        [randomUUID(), options.ownerId, texts[reserved.kind].failed, reserved.turnId],
-      );
+      const message = await options
+        .present?.(reserved.threadId, {
+          kind: 'verification_failure',
+          verification: reserved.kind,
+        })
+        .catch(() => undefined);
+      if (typeof message === 'string' && message.trim() && message.length <= 12000)
+        await pool.query(
+          `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+           SELECT $1,$2,'assistant',$3,u.thread_id,u.id FROM turns u JOIN threads th ON th.id=u.thread_id
+           WHERE u.id=$4 AND u.owner_id=$2 AND th.owner_id=$2 AND th.id=$5 AND th.archived_at IS NULL`,
+          [randomUUID(), options.ownerId, message.trim(), reserved.turnId, reserved.threadId],
+        );
     }
     options.refresh();
     return {

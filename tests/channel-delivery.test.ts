@@ -1214,13 +1214,14 @@ test(
   },
 );
 
-async function outboxFixture(t: TestContext) {
+async function outboxFixture(t: TestContext, max?: number) {
   const schema = `test_channel_outbox_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
     options: `-c search_path=${schema}`,
+    ...(max ? { max, connectionTimeoutMillis: 1000 } : {}),
   });
   t.after(async () => {
     await pool.end();
@@ -1253,14 +1254,19 @@ async function outboxFixture(t: TestContext) {
     },
     close: async () => {},
   };
-  const receive = (senderId: string, messageId: string, chat: string) => {
+  const receive = (
+    senderId: string,
+    messageId: string,
+    chat: string,
+    text = `Fixture request ${messageId}`,
+  ) => {
     incoming.push({
       channelId: 'telegram',
       accountId: 'bot',
       senderId,
       messageId,
       threadId: chat,
-      text: `Fixture request ${messageId}`,
+      text,
       sentAt: new Date(Date.now() - 60_000 + 1000 * sequence++),
     });
   };
@@ -1349,6 +1355,246 @@ test(
       );
       assert.equal(posts.length, 5);
     } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'channel event presentation runs after its receipt commits with one database connection',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, posts, receive, create } = await outboxFixture(t, 1);
+    let presentations = 0;
+    let failPresentation = false;
+    const channels = await create({
+      present: async (_thread, input) => {
+        await pool.query('SELECT 1');
+        presentations++;
+        if (input.kind === 'command') {
+          assert.equal(input.attachments, 'none');
+          assert.deepEqual(input.data, { count: 2 });
+        }
+        if (failPresentation) throw new Error('Synthetic presenter unavailable');
+        return input.kind === 'paired' ? 'Ligação estabelecida.' : 'Usa a aplicação Otto.';
+      },
+      commandReply: async (command) => ({
+        text: '',
+        attachments: [],
+        presentation: { kind: 'command', command, data: { count: 2 } },
+      }),
+      acceptVerification: async () => {
+        throw Object.assign(new Error('Synthetic refused code'), { statusCode: 409 });
+      },
+    });
+    const pair = async (messageId: string) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const notify = await channels.announcePairing(
+          {
+            senderId: '111',
+            accountId: 'bot',
+            messageId,
+            threadId: 'chat-a1',
+            sentAt: new Date().toISOString(),
+          },
+          client,
+        );
+        await client.query('COMMIT');
+        return notify;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    };
+    try {
+      const notify = await pair('pair-1');
+      assert.equal(presentations, 0);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM channel_inbox')).rows[0].n, 1);
+      notify();
+      await channels.drain();
+      assert.equal(presentations, 1);
+      assert.equal(posts.length, 1);
+      assert.equal((await pool.query('SELECT text FROM messages')).rows[0].text, posts[0].text);
+      (await pair('pair-1'))();
+      await channels.drain();
+      assert.equal(presentations, 1);
+      assert.equal(posts.length, 1);
+      failPresentation = true;
+      (await pair('pair-2'))();
+      await channels.drain();
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM channel_inbox')).rows[0].n, 2);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT count(*)::int AS n FROM channel_outbox WHERE state='blocked' AND reason='presentation_unavailable'",
+          )
+        ).rows[0].n,
+        1,
+      );
+      assert.equal(posts.length, 1);
+      failPresentation = false;
+      receive('111', 'refused-code', 'chat-a1', '111111');
+      await channels.drain();
+      assert.equal(posts.length, 2);
+      receive('111', 'memory-command', 'chat-a1', '/memory');
+      await channels.drain();
+      assert.equal(posts.length, 3);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 0);
+      assert.doesNotMatch(
+        JSON.stringify((await pool.query('SELECT text FROM messages')).rows),
+        /111111/,
+      );
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'outbox presentation failures and revocation never send private URLs or replay a claimed reply',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const inputs: unknown[] = [];
+    let startGeneration!: () => void;
+    let releaseGeneration!: () => void;
+    const generationStarted = new Promise<void>((resolve) => {
+      startGeneration = resolve;
+    });
+    const generationReleased = new Promise<void>((resolve) => {
+      releaseGeneration = resolve;
+    });
+    let response = 'generated';
+    const channels = await create({
+      appOrigin: 'https://otto.example',
+      present: async (thread, input) => {
+        assert.equal(thread, threadId);
+        inputs.push(input);
+        assert.doesNotMatch(JSON.stringify(input), /private-token|credential-request/);
+        if (response === 'failure') throw new Error('Synthetic presentation failure');
+        if (response === 'hold') {
+          startGeneration();
+          await generationReleased;
+        }
+        return response === 'unsafe'
+          ? '/credentials/credential-request'
+          : 'Continua na aplicação Otto.';
+      },
+    });
+    const state = async (id: string) =>
+      (await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [id]))
+        .rows[0];
+    try {
+      receive('111', 'a1', 'chat-a1');
+      await channels.drain();
+      const { turn_id: turnId } = await turnOf('a1');
+      await reply(turnId, 'Resposta pronta.', randomUUID(), 0);
+      await channels.drain();
+      assert.equal(inputs.length, 0);
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'Resposta pronta.' }]);
+      const privateReply = '[Continua](/credentials/private-token)';
+      const accepted = randomUUID();
+      await reply(turnId, privateReply, accepted, 1);
+      await channels.drain();
+      assert.equal((await state(accepted)).state, 'sent');
+      assert.equal(posts.at(-1)!.text, 'Continua na aplicação Otto.');
+      for (const outcome of ['failure', 'unsafe']) {
+        response = outcome;
+        const blocked = randomUUID();
+        await reply(turnId, privateReply, blocked, 2);
+        await channels.drain();
+        assert.deepEqual(await state(blocked), {
+          state: 'blocked',
+          reason: 'presentation_unavailable',
+        });
+        const generationCount: number = inputs.length;
+        await channels.drain();
+        assert.equal(inputs.length, generationCount);
+        assert.equal(posts.length, 2);
+      }
+      response = 'hold';
+      const revoked = randomUUID();
+      await reply(turnId, privateReply, revoked, 3);
+      const draining = channels.drain();
+      await generationStarted;
+      const replacement = channels.replaceTransport({
+        channels: [],
+        receive: async () => ({ status: 200, body: {} }),
+        post: async () => {
+          throw new Error('Revoked channel cannot send');
+        },
+        close: async () => {},
+      });
+      releaseGeneration();
+      await Promise.all([draining, replacement]);
+      assert.deepEqual(await state(revoked), {
+        state: 'blocked',
+        reason: 'channel_access_changed',
+      });
+      assert.equal(posts.length, 2);
+      assert.doesNotMatch(JSON.stringify(posts), /private-token|credential-request/);
+    } finally {
+      releaseGeneration();
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'reset during ordinary channel presentation blocks the obsolete reply',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    let startGeneration!: () => void;
+    let releaseGeneration!: () => void;
+    const generationStarted = new Promise<void>((resolve) => {
+      startGeneration = resolve;
+    });
+    const generationReleased = new Promise<void>((resolve) => {
+      releaseGeneration = resolve;
+    });
+    let generations = 0;
+    const channels = await create({
+      present: async () => {
+        generations++;
+        startGeneration();
+        await generationReleased;
+        return 'Continua na aplicação Otto.';
+      },
+    });
+    try {
+      receive('111', 'before-reset', 'chat-before-reset');
+      await channels.drain();
+      const messageId = randomUUID();
+      await reply(
+        (await turnOf('before-reset')).turn_id,
+        '[Continua](/credentials/private-token)',
+        messageId,
+        0,
+      );
+      const draining = channels.drain();
+      await generationStarted;
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+      releaseGeneration();
+      await draining;
+      assert.deepEqual(posts, []);
+      assert.deepEqual(
+        (
+          await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
+            messageId,
+          ])
+        ).rows[0],
+        { state: 'blocked', reason: 'thread_changed' },
+      );
+      await channels.drain();
+      assert.equal(generations, 1);
+      assert.deepEqual(posts, []);
+    } finally {
+      releaseGeneration();
       await channels.close();
     }
   },
@@ -1484,6 +1730,11 @@ for (const username of ['fixture_owner', undefined])
       });
       channels = await createChannels(pool, {
         ownerId: 'local-development',
+        present: async (thread, input) => {
+          assert.equal(thread, threadId);
+          assert.deepEqual(input, { kind: 'paired', channel: 'telegram' });
+          return 'Ligação estabelecida.';
+        },
         transport: createChatSdkTransport(pool, await settings.environment()),
         subscribe: () => () => {},
         intervalMs: 600000,

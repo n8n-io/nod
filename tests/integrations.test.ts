@@ -1904,7 +1904,10 @@ test(
     const url = 'url' in linked ? String(linked.url) : '';
     assert.match(url, /^https:\/\/consent\.example\.test\/authorize\?state=/);
     assert.equal(
-      channelReply(`Connect Linear: ${url}`, false, false, [], 'https://otto.example'),
+      await channelReply(`Connect Linear: ${url}`, {
+        threadId: turn.threadId,
+        appOrigin: 'https://otto.example',
+      }),
       `Connect Linear: ${url}`,
     );
     const hash = createHash('sha256').update(url).digest('hex');
@@ -2046,8 +2049,16 @@ test(
       manage: async () => {
         throw new Error('Unexpected fixture management.');
       },
-      connections: (action, service, proposal, newAccount) =>
-        f.service.manageConnections(action, service, { threadId, turnId }, proposal, newAccount),
+      connections: async (action, service, proposal, newAccount) => ({
+        ...(await f.service.manageConnections(
+          action,
+          service,
+          { threadId, turnId },
+          proposal,
+          newAccount,
+        )),
+        message: 'Connect the synthetic account.',
+      }),
     });
     assert.equal(result.status, 'waiting_user');
     assert.equal(f.callbacks.length, 2);
