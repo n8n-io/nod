@@ -29,6 +29,7 @@
   --surface-overlay: var(--gray-0);
   --surface-subtle: var(--gray-15);
   --surface-inset: var(--gray-20);
+  --embed: var(--surface);
   --hover: var(--gray-20);
   --nav-hover: color-mix(in srgb, var(--accent-soft) 60%, transparent);
   --foreground: var(--black);
@@ -122,6 +123,7 @@
   --surface-overlay: var(--gray-85);
   --surface-subtle: var(--gray-90);
   --surface-inset: var(--gray-85);
+  --embed: var(--background);
   --hover: var(--gray-85);
   --foreground: var(--white);
   --text-secondary: var(--gray-30);

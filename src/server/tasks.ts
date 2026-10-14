@@ -21,6 +21,7 @@ import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 import { answered } from './trust.ts';
 import { isQuietTime, readPreferences } from './preferences.ts';
+import { taskChanged } from './events.ts';
 import type { WorkConsumers } from './work-admission.ts';
 
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
@@ -65,10 +66,18 @@ const checkPrompt =
 
 type Row = {
   id: string;
+  thread_id: string;
   title: string;
   on_it_message_id: string | null;
+  steps: string[];
+  step_index: number;
   now_text: string;
   result: string;
+  result_message_id: string | null;
+  artifact: Task['artifact'];
+  approval_id: string | null;
+  approval_message_id: string | null;
+  turn_error: string | null;
   state: 'queued' | 'open' | 'waiting' | 'done' | 'stopped' | 'failed';
   waiting_for: Task['waitingFor'];
   next_check: Date | null;
@@ -115,24 +124,34 @@ export function createTasks(options: {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
 
-  async function rows(threadId: string | null, openOnly = false) {
+  async function rows(threadId: string | null, openOnly = false, taskId: string | null = null) {
     return (
       await pool.query<Row>(
-        `SELECT t.id,t.title,t.on_it_message_id,t.now_text,COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,
+        `SELECT t.id,t.thread_id,t.title,t.on_it_message_id,t.steps,t.step_index,t.now_text,
+           COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,t.result_message_id,
+           r.attachments->0 AS artifact,
            t.state,t.waiting_for,t.next_check,t.next_check<=now() AS due,t.created_at,t.updated_at,t.closed_at,l.status AS turn_status,
-           l.finished_at AS turn_finished_at,EXISTS (SELECT 1 FROM turns w WHERE w.owner_id=t.owner_id
+           l.finished_at AS turn_finished_at,l.error AS turn_error,EXISTS (SELECT 1 FROM turns w WHERE w.owner_id=t.owner_id
              AND w.session_id=t.id AND w.status='running') AS running,
-           CASE WHEN l.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
+           CASE WHEN l.status='waiting' THEN COALESCE(p.question,(SELECT left(m.text,600) FROM messages m
              WHERE m.owner_id=t.owner_id AND m.turn_id=l.id AND m.role='assistant' AND m.text<>''
-             ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS question
+             ORDER BY m.created_at DESC,m.id DESC LIMIT 1)) END AS question,
+           p.id AS approval_id,p.message_id AS approval_message_id
          FROM tasks t
          LEFT JOIN messages r ON r.id=t.result_message_id AND r.owner_id=t.owner_id
-         LEFT JOIN LATERAL (SELECT u.id,u.status,u.finished_at FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
+         LEFT JOIN LATERAL (SELECT u.id,u.status,u.finished_at,u.error FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
            AND ${untakenTurnSql('u')} ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
+         LEFT JOIN LATERAL (SELECT a.id,a.confirmation_message_id AS message_id,left(c.text,600) AS question
+           FROM approvals a JOIN messages c ON c.id=a.confirmation_message_id AND c.owner_id=a.owner_id
+           WHERE l.status='waiting' AND a.owner_id=t.owner_id AND a.turn_id=l.id AND a.status='pending'
+             AND a.expires_at>now() AND NOT EXISTS (SELECT 1 FROM approvals o WHERE o.owner_id=a.owner_id
+               AND o.turn_id=a.turn_id AND o.status='pending' AND o.confirmation_message_id IS NOT NULL
+               AND o.id<>a.id)) p ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
            AND (NOT $3::boolean OR t.state IN ('queued','open','waiting'))
+           AND ($4::uuid IS NULL OR t.id=$4)
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
-        [ownerId, threadId, openOnly],
+        [ownerId, threadId, openOnly, taskId],
       )
     ).rows;
   }
@@ -153,25 +172,34 @@ export function createTasks(options: {
     });
   }
 
+  function view(row: Row): Task {
+    const value = status(row);
+    return {
+      id: row.id,
+      title: row.title,
+      onItMessageId: row.on_it_message_id,
+      steps: row.steps,
+      stepIndex: row.step_index,
+      now: row.now_text,
+      result: row.result,
+      resultMessageId: row.result_message_id,
+      artifact: row.artifact ?? null,
+      status: value,
+      question: value === 'needs_you' ? row.question : null,
+      approvalId: value === 'needs_you' ? row.approval_id : null,
+      approvalMessageId: value === 'needs_you' ? row.approval_message_id : null,
+      error: value === 'failed' ? row.turn_error : null,
+      waitingFor: value === 'waiting' ? row.waiting_for : [],
+      nextCheck: value === 'waiting' ? (row.next_check?.toISOString() ?? null) : null,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
+      closedAt:
+        (row.closed_at ?? (ended(value) ? row.turn_finished_at : null))?.toISOString() ?? null,
+    };
+  }
+
   async function read(threadId?: string): Promise<Task[]> {
-    return (await rows(threadId ?? null)).map((row) => {
-      const value = status(row);
-      return {
-        id: row.id,
-        title: row.title,
-        onItMessageId: row.on_it_message_id,
-        now: row.now_text,
-        result: row.result,
-        status: value,
-        question: value === 'needs_you' ? row.question : null,
-        waitingFor: value === 'waiting' ? row.waiting_for : [],
-        nextCheck: value === 'waiting' ? (row.next_check?.toISOString() ?? null) : null,
-        createdAt: row.created_at.toISOString(),
-        updatedAt: row.updated_at.toISOString(),
-        closedAt:
-          (row.closed_at ?? (ended(value) ? row.turn_finished_at : null))?.toISOString() ?? null,
-      };
-    });
+    return (await rows(threadId ?? null)).map(view);
   }
 
   async function transaction<T>(operation: (client: PoolClient) => Promise<T>) {
@@ -418,15 +446,20 @@ export function createTasks(options: {
           });
           return 'The task waits now. It continues in this session at nextCheck, or sooner when the user replies to it. End now without a final message.';
         }
-        if (input.stop === undefined) return 'Progress saved.';
+        if (input.stop === undefined) return { saved: task.id };
         await endSessionApprovals(client, [task.id], 'declined');
         await insertAssistantMessage(client, turn, input.stop, [], undefined, task.on_it);
         return 'The task is stopped. End now without a final message.';
       },
       check !== undefined,
     );
-    refresh();
-    return result;
+    if (typeof result === 'string') {
+      refresh();
+      return result;
+    }
+    const [saved] = await rows(null, false, result.saved);
+    if (saved) taskChanged({ ownerId, threadId: saved.thread_id, task: view(saved) });
+    return 'Progress saved.';
   }
 
   async function checkIn(turn: TurnRef, raw: unknown) {

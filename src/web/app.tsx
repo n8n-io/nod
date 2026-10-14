@@ -18,6 +18,9 @@ import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { sidebarItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
+import { ArtifactPanel } from './components/task-preview';
+import { ownedArtifactUrl } from './lib/attachment-url';
+import type { Artifact } from '../shared/contracts';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
 import { useSession } from './hooks/use-session';
@@ -102,6 +105,16 @@ function Workspace({
     messageId: string;
   } | null>();
   const [chatRequests, setChatRequests] = useState<Array<{ id: string; text: string }>>([]);
+  const [artifact, setArtifact] = useState<Artifact | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<Artifact | undefined>).detail;
+      if (typeof detail?.id === 'string' && ownedArtifactUrl(String(detail.url)))
+        setArtifact(detail);
+    };
+    window.addEventListener('otto:open-artifact', open);
+    return () => window.removeEventListener('otto:open-artifact', open);
+  }, []);
   const askInChat = (text: string) => {
     setChatRequests((current) => [...current, { id: crypto.randomUUID(), text }]);
     navigate('/');
@@ -255,6 +268,13 @@ function Workspace({
                 </div>
               )}
             </main>
+            {artifact && (
+              <ArtifactPanel
+                key={artifact.id}
+                artifact={artifact}
+                onClose={() => setArtifact(null)}
+              />
+            )}
           </div>
         </div>
       </SidebarToggleContext.Provider>

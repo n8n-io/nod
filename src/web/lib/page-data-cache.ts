@@ -134,8 +134,9 @@ export function createPageDataCache(
       }
       entries.clear();
     },
-    revalidateActive() {
+    revalidateActive(only?: string) {
       for (const [path, value] of entries) {
+        if (only && path !== only) continue;
         if (!value.listeners.size) {
           if (!value.visited) {
             value.generation++;

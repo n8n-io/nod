@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
-import type { AppState, MessageHistoryPage } from '../src/shared/contracts.ts';
+import type { AppState, MessageHistoryPage, Task } from '../src/shared/contracts.ts';
 import { initialStreamState, streamReducer, type StreamAction } from '../src/web/lib/streams.ts';
 import {
   latestChatReadCursor,
@@ -149,6 +149,7 @@ test(
         streamId: `rejected-stream-${index}`,
         ...routing,
       }));
+      const taskIds = { own: randomUUID(), foreign: randomUUID() };
       for (const mode of modes) {
         const id =
           mode.source === 'user'
@@ -177,6 +178,16 @@ test(
           await waitFor(() => refreshes > burst);
           events.off('event', count);
           for (const event of rejectedEvents) events.emit('event', event as never);
+          for (const [owner, taskId] of [
+            ['another-owner', taskIds.foreign],
+            ['local-development', taskIds.own],
+          ])
+            events.emit('event', {
+              type: 'task',
+              ownerId: owner,
+              threadId: context.threadId,
+              task: { id: taskId },
+            } as never);
         }
         context.delta(mode.marker, `stream-${mode.marker}`);
         await context.reply(mode.marker, `stream-${mode.marker}`);
@@ -247,6 +258,12 @@ test(
             rejectedEvents.some((rejected) => rejected.turnId === event.turnId),
           ),
           [],
+        );
+        assert.deepEqual(
+          wire.flatMap((event) =>
+            event.type === 'task' ? [(event.task as { id: string }).id] : [],
+          ),
+          [taskIds.own],
         );
       });
     } finally {
@@ -507,7 +524,7 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   assert.deepEqual(saved.at(-1)!.cursor, latestChatReadCursor([unreadMessage(2)]));
 });
 
-test('a burst of refresh events during a state request applies one newer state without aborting, and a stalled request times out', async (t) => {
+test('a burst of refresh events during a state request applies one newer state without aborting, a stalled request times out, and a task preview change needs no state request or unread message', async (t) => {
   const { JSDOM } = await import('jsdom');
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
@@ -572,10 +589,13 @@ test('a burst of refresh events during a state request applies one newer state w
   };
   const { sessionStore } = await import('../src/web/lib/session.ts');
   const { useAppState } = await import('../src/web/hooks/use-app-state.ts');
+  const { useChatUnread } = await import('../src/web/hooks/use-chat-unread.ts');
   await sessionStore.refresh();
   let result!: ReturnType<typeof useAppState>;
+  let unread!: ReturnType<typeof useChatUnread>;
   function Probe({ timeout }: { timeout?: number }) {
     result = useAppState('synthetic-owner', timeout);
+    unread = useChatUnread('synthetic-owner', result.state);
     return null;
   }
   await act(async () => root.render(createElement(Probe, {})));
@@ -624,4 +644,39 @@ test('a burst of refresh events during a state request applies one newer state w
     [unreadMessage(3).id],
   );
   assert.equal(result.error, '');
+  const task: Task = {
+    id: randomUUID(),
+    title: 'Synthetic task',
+    onItMessageId: unreadMessage(3).id,
+    steps: ['Find', 'Compare'],
+    stepIndex: 0,
+    now: 'Finding shops',
+    result: '',
+    resultMessageId: null,
+    artifact: null,
+    status: 'working',
+    question: null,
+    approvalId: null,
+    approvalMessageId: null,
+    error: null,
+    waitingFor: [],
+    nextCheck: null,
+    costUsd: 0.25,
+    createdAt: unreadMessage(3).createdAt,
+    updatedAt: unreadMessage(3).createdAt,
+    closedAt: null,
+  };
+  await act(async () => {
+    const loaded = result.refresh();
+    requests[4].resolve({ ...appState(threadId, [unreadMessage(3)]), tasks: [task] });
+    await loaded;
+    await until(() => unread.count === 1);
+  });
+  const { costUsd, ...changed } = { ...task, stepIndex: 1, now: 'Comparing two shops' };
+  await act(async () =>
+    sources.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'task', threadId, task: changed }) }),
+  );
+  assert.equal(requests.length, 5);
+  assert.deepEqual(result.state?.tasks, [{ ...changed, costUsd }]);
+  assert.equal(unread.count, 1);
 });

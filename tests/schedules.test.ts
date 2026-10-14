@@ -42,11 +42,11 @@ test('task scheduling waits for reviewed instructions and explicit timing before
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
       const { act, createElement } = await import('react');
       const { createRoot } = await import('react-dom/client');
-      const { TaskCard } = await import('./src/web/pages/tasks.tsx');
+      const { TaskPreview } = await import('./src/web/components/task-preview.tsx');
       const { setDateFormat } = await import('./src/web/lib/date-format.ts');
       const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
       setDateFormat({ timeZone: 'Europe/Lisbon', locale: 'en-GB', hourCycle: 'h23' });
-      const task = { id: crypto.randomUUID(), title: 'Synthetic report', now: 'Finished', result: 'Report ready', status: 'done', question: null, createdAt: '2035-10-25T09:00:00Z', updatedAt: '2035-10-25T09:00:00Z', closedAt: '2035-10-25T09:00:00Z' };
+      const task = { id: crypto.randomUUID(), title: 'Synthetic report', onItMessageId: crypto.randomUUID(), steps: [], stepIndex: 0, now: 'Finished', result: 'Report ready', resultMessageId: null, artifact: null, status: 'done', question: null, approvalId: null, approvalMessageId: null, error: null, waitingFor: [], nextCheck: null, createdAt: '2035-10-25T09:00:00Z', updatedAt: '2035-10-25T09:00:00Z', closedAt: '2035-10-25T09:00:00Z' };
       const original = structuredClone(task);
       const requests = [];
       const writes = [];
@@ -87,8 +87,8 @@ test('task scheduling waits for reviewed instructions and explicit timing before
       };
       try {
         await act(async () => root.render(createElement('div', null,
-          createElement(TaskCard, { task, onScheduled: () => scheduled++ }),
-          createElement(TaskCard, { task: { ...task, id: crypto.randomUUID(), status: 'stopped' }, onScheduled: () => scheduled++ }),
+          createElement(TaskPreview, { task, place: 'page', open: true, onScheduled: () => scheduled++ }),
+          createElement(TaskPreview, { task: { ...task, id: crypto.randomUUID(), status: 'stopped' }, place: 'page', open: true, onScheduled: () => scheduled++ }),
         )));
         assert.equal([...document.querySelectorAll('button')].filter(item => item.textContent.trim() === 'Schedule task').length, 1);
         await click('Schedule task');

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { AppState } from '../../shared/contracts';
+import type { AppState, Task } from '../../shared/contracts';
 import { api, errorMessage, post } from '../lib/api';
 import { initialStreamState, streamReducer } from '../lib/streams';
 import { pageDataCache } from '../lib/page-data-cache';
@@ -130,10 +130,26 @@ export function useAppState(accountId?: string, stateTimeout = 30_000) {
             text?: string;
             streamId?: string;
             done?: boolean;
+            task?: Task;
           };
           if (data.type === 'refresh') {
             pageDataCache.revalidateActive();
             void refresh();
+          }
+          const task = data.task;
+          if (data.type === 'task' && task && data.threadId === threadId.current) {
+            if (stateRequest.current) void refresh();
+            setState((current) =>
+              current && current.threadId === data.threadId
+                ? {
+                    ...current,
+                    tasks: current.tasks?.map((item) =>
+                      item.id === task.id ? { ...task, costUsd: item.costUsd } : item,
+                    ),
+                  }
+                : current,
+            );
+            pageDataCache.revalidateActive('/api/tasks');
           }
           if (
             data.type === 'delta' &&

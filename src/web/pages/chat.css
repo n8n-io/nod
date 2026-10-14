@@ -580,13 +580,32 @@
 }
 .chat-page .message .message-body {
   --message-background: var(--surface-subtle);
+  --bubble-radius: 24px;
   flex: 0 1 auto;
   max-width: min(82%, 640px);
   padding: 8px 16px;
-  border-radius: 24px;
+  border-radius: var(--bubble-radius);
   background: var(--message-background);
   color: var(--foreground);
   overflow-x: auto;
+}
+.chat-page .message .message-body-embeds {
+  --embed-inset: 6px;
+  display: grid;
+  gap: 8px;
+  width: min(452px, 100%);
+  padding: 8px var(--embed-inset) var(--embed-inset);
+}
+.chat-page .message-body-embeds > :not(.task-preview, .artifact-card) {
+  margin-inline: calc(16px - var(--embed-inset));
+}
+.chat-page .message-body-embeds > :is(.task-preview, .artifact-card) {
+  border: 0;
+  border-radius: calc(var(--bubble-radius) - var(--embed-inset));
+  background: var(--embed);
+}
+.chat-page .message-content > .task-answer {
+  margin-top: 8px;
 }
 .chat-page .message-user .message-body {
   --message-background: var(--chat-sent);
@@ -760,7 +779,7 @@
     transform: none;
   }
 }
-.task-suggestions {
+.suggestions {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -768,7 +787,7 @@
   gap: 12px;
   min-width: 0;
 }
-.task-bubble {
+.suggestion-bubble {
   max-width: min(82%, 640px);
   margin: 0;
   padding: 8px 16px;
@@ -778,24 +797,24 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-.task-planning {
+.suggestion-planning {
   align-items: flex-start;
 }
-.task-planning .assistant-mark {
+.suggestion-planning .assistant-mark {
   padding-top: 8px;
   color: var(--foreground);
 }
-.task-planning .task-bubble {
+.suggestion-planning .suggestion-bubble {
   color: var(--muted-foreground);
 }
-.task-cards {
+.suggestion-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
   width: 100%;
   max-width: 720px;
 }
-.task-card {
+.suggestion-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -806,13 +825,13 @@
   color: var(--foreground);
   --rise-from: translateY(14px) scale(0.97);
 }
-.task-card:nth-child(2) {
+.suggestion-card:nth-child(2) {
   background: var(--task-blue);
 }
-.task-card:nth-child(3) {
+.suggestion-card:nth-child(3) {
   background: var(--task-butter);
 }
-.task-source {
+.suggestion-source {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -820,18 +839,18 @@
   font-weight: 500;
   color: var(--text-secondary);
 }
-.task-source-gmail {
+.suggestion-source-gmail {
   width: 16px;
   height: 16px;
   background: url('/logos/gmail.svg') center / contain no-repeat;
 }
-.task-source-telegram {
+.suggestion-source-telegram {
   width: 12px;
   height: 12px;
   border-radius: 50%;
   background: var(--telegram);
 }
-.task-title {
+.suggestion-title {
   margin: 0;
   font-size: var(--text-body);
   font-weight: 500;
@@ -839,10 +858,10 @@
   text-wrap: pretty;
   overflow-wrap: anywhere;
 }
-.task-action {
+.suggestion-action {
   margin-top: auto;
 }
-.task-start {
+.suggestion-start {
   display: inline-flex;
   align-items: center;
   min-height: var(--control-height-sm);
@@ -859,16 +878,16 @@
     background 140ms,
     transform 140ms;
 }
-.task-start:hover {
+.suggestion-start:hover {
   background: color-mix(in srgb, var(--foreground) 86%, var(--background));
 }
-.task-start:active {
+.suggestion-start:active {
   transform: scale(0.97);
 }
-.task-start:disabled {
+.suggestion-start:disabled {
   opacity: 0.45;
 }
-.task-state {
+.suggestion-state {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -876,7 +895,7 @@
   font-size: var(--text-control);
   font-weight: 500;
 }
-.task-check {
+.suggestion-check {
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -887,11 +906,11 @@
   color: var(--background);
 }
 @media (prefers-reduced-motion: reduce) {
-  .task-card,
-  .task-start {
+  .suggestion-card,
+  .suggestion-start {
     transition: none;
   }
-  .task-planning .ob-glyph-orbit[data-phase] {
+  .suggestion-planning .ob-glyph-orbit[data-phase] {
     animation: none;
   }
 }

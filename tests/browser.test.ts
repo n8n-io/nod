@@ -73,7 +73,7 @@ import { browserFrames } from '../src/web/lib/browser-frames.ts';
 import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import { Composer } from '../src/web/components/composer.tsx';
-import type { AppState, Message } from '../src/shared/contracts.ts';
+import type { AppState, Message, Task } from '../src/shared/contracts.ts';
 import { browserHandoffInputs } from '../src/shared/browser-handoff.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
@@ -4071,6 +4071,31 @@ async function handoffView(
   };
 }
 
+function syntheticTask(task: Partial<Task>): Task {
+  return {
+    id: randomUUID(),
+    title: 'Synthetic task',
+    onItMessageId: null,
+    steps: [],
+    stepIndex: 0,
+    now: '',
+    result: '',
+    resultMessageId: null,
+    artifact: null,
+    status: 'working',
+    question: null,
+    approvalId: null,
+    approvalMessageId: null,
+    error: null,
+    waitingFor: [],
+    nextCheck: null,
+    createdAt: '2026-10-01T12:00:00.000Z',
+    updatedAt: '2026-10-01T12:01:00.000Z',
+    closedAt: null,
+    ...task,
+  };
+}
+
 function requestedChatState(): AppState {
   return {
     threadId: randomUUID(),
@@ -4523,34 +4548,14 @@ test("a task's browser handoff drives only that task's browser and Done answers 
     },
   ];
   state.tasks = [
-    {
-      id: taskId,
-      title: 'Synthetic task',
-      onItMessageId: null,
-      now: '',
-      result: '',
-      status: 'needs_you',
-      question: question.text,
-      waitingFor: [],
-      nextCheck: null,
-      createdAt: '2026-10-01T12:00:00.000Z',
-      updatedAt: '2026-10-01T12:01:00.000Z',
-      closedAt: null,
-    },
-    {
+    syntheticTask({ id: taskId, status: 'needs_you', question: question.text }),
+    syntheticTask({
       id: otherTaskId,
       title: 'Other synthetic task',
-      onItMessageId: null,
-      now: '',
-      result: '',
       status: 'needs_you',
       question: otherQuestion.text,
-      waitingFor: [],
-      nextCheck: null,
-      createdAt: '2026-10-01T12:00:00.000Z',
       updatedAt: '2026-10-01T12:01:30.000Z',
-      closedAt: null,
-    },
+    }),
   ];
   const requests: Array<[string, Record<string, unknown>]> = [];
   const view = await handoffView(
@@ -4591,6 +4596,205 @@ test("a task's browser handoff drives only that task's browser and Done answers 
     assert.equal(requests[2][1].replyToMessageId, question.id);
   } finally {
     await view.close();
+  }
+});
+
+test('task controls answer by approval ID, stop one task through its own route and stop all while only tasks run', async () => {
+  const state = requestedChatState();
+  const source = state.messages[0];
+  const onIt = (id: string, minute: number): Message => ({
+    id,
+    role: 'assistant',
+    turnId: source.turnId,
+    text: 'On it.',
+    attachments: [],
+    replyToMessageId: source.id,
+    createdAt: `2026-10-01T12:0${minute}:00.000Z`,
+  });
+  const working = syntheticTask({
+    title: 'Synthetic working task',
+    onItMessageId: randomUUID(),
+    steps: ['Find', 'Compare', 'Report'],
+    stepIndex: 1,
+  });
+  const asking = syntheticTask({
+    title: 'Synthetic asking task',
+    onItMessageId: randomUUID(),
+    status: 'needs_you',
+    approvalId: randomUUID(),
+  });
+  const waitingTurn = randomUUID();
+  const question: Message = {
+    id: randomUUID(),
+    role: 'assistant',
+    turnId: waitingTurn,
+    sessionId: asking.id,
+    text: 'Send the synthetic quote request?',
+    attachments: [],
+    replyToMessageId: asking.onItMessageId,
+    createdAt: '2026-10-01T12:03:00.000Z',
+  };
+  const report: Message = {
+    id: randomUUID(),
+    role: 'assistant',
+    turnId: waitingTurn,
+    sessionId: asking.id,
+    text: '',
+    attachments: [
+      {
+        id: randomUUID(),
+        name: 'synthetic-report.txt',
+        mimeType: 'text/plain',
+        size: 5,
+        url: '/api/artifacts/synthetic-report',
+      },
+    ],
+    replyToMessageId: asking.onItMessageId,
+    createdAt: '2026-10-01T12:04:00.000Z',
+  };
+  asking.question = question.text;
+  asking.approvalMessageId = question.id;
+  state.messages = [
+    ...state.messages,
+    onIt(working.onItMessageId!, 1),
+    onIt(asking.onItMessageId!, 2),
+    question,
+    report,
+  ];
+  state.turns = [
+    {
+      id: waitingTurn,
+      source: 'task',
+      status: 'waiting',
+      showTyping: false,
+      createdAt: '2026-10-01T12:02:00.000Z',
+    },
+  ];
+  state.tasks = [working, asking];
+  const posts: Array<[string, unknown]> = [];
+  const view = await handoffView(
+    async (path, options) => {
+      if (path === '/api/apps') return Response.json([]);
+      if (options?.method !== 'POST') return Response.json({}, { status: 404 });
+      posts.push([path, JSON.parse(String(options.body))]);
+      return Response.json({ ok: true });
+    },
+    createElement(Chat, {
+      ownerId: 'synthetic-task-owner',
+      state,
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+    }),
+  );
+  const document = view.dom.window.document;
+  const click = async (selector: string) => {
+    await act(async () => view.element<HTMLButtonElement>(selector).click());
+    await act(async () => delay(10));
+  };
+  try {
+    assert.ok(
+      view.element(`[data-message-id="${working.onItMessageId}"] .task-preview`),
+      'The working task has its preview in its On it message.',
+    );
+    assert.equal(document.querySelector('[aria-label="Stop Otto"]'), null);
+    assert.deepEqual(
+      [...document.querySelectorAll('.task-answer')].map((answer) =>
+        answer.closest('[data-message-id]')?.getAttribute('data-message-id'),
+      ),
+      [question.id],
+    );
+    await view.button('Yes');
+    await act(async () => delay(10));
+    await click(`[aria-label="Stop ${working.title}"]`);
+    await view.button('Stop all');
+    await act(async () => delay(10));
+    const chip = [...document.querySelectorAll<HTMLButtonElement>('.tasks-strip-open')].find(
+      (button) => button.textContent?.includes(working.title),
+    );
+    assert.ok(chip);
+    await act(async () => chip.click());
+    await act(async () => delay(10));
+    const preview = view.element(`[data-message-id="${working.onItMessageId}"] .task-preview`);
+    assert.equal(
+      preview.querySelector('.task-preview-head')?.getAttribute('aria-expanded'),
+      'true',
+    );
+    const stop = [...preview.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Stop task',
+    );
+    assert.ok(stop);
+    await act(async () => stop.click());
+    await act(async () => delay(10));
+    assert.deepEqual(posts, [
+      [`/api/approvals/${asking.approvalId}/answer`, { approved: true }],
+      [`/api/tasks/${working.id}/stop`, {}],
+      ['/api/thread/stop', {}],
+      [`/api/tasks/${working.id}/stop`, {}],
+    ]);
+  } finally {
+    await view.close();
+  }
+});
+
+test('the Tasks page groups open tasks, answers by approval ID and shows a task in the chat', async () => {
+  const { Tasks } = await import('../src/web/pages/tasks.tsx');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const asking = syntheticTask({
+    title: 'Synthetic asking task',
+    onItMessageId: randomUUID(),
+    status: 'needs_you',
+    question: 'Book the synthetic table?',
+    approvalId: randomUUID(),
+  });
+  const queued = syntheticTask({ title: 'Synthetic queued task', status: 'queued' });
+  const done = syntheticTask({
+    title: 'Synthetic done task',
+    status: 'done',
+    closedAt: '2026-10-01T12:05:00.000Z',
+  });
+  const posts: Array<[string, unknown]> = [];
+  const focused: unknown[] = [];
+  const view = await handoffView(async (path, options) => {
+    if (options?.method === 'POST') {
+      posts.push([path, JSON.parse(String(options.body))]);
+      return Response.json({ ok: true });
+    }
+    if (path === '/api/tasks') return Response.json([queued, done, asking]);
+    if (path.startsWith('/api/schedule-runs')) return Response.json({ runs: [], nextCursor: null });
+    return Response.json([]);
+  }, createElement('div'));
+  const document = view.dom.window.document;
+  const focus = (event: Event) => focused.push((event as CustomEvent).detail);
+  view.dom.window.addEventListener('otto:focus-message', focus);
+  try {
+    await view.render(createElement(Tasks, { onAsk: () => {} }));
+    await act(async () => delay(20));
+    assert.deepEqual(
+      [...document.querySelectorAll('.task-group')].map((group) => [
+        group.getAttribute('data-status'),
+        [...group.querySelectorAll('.task-preview-title')].map((title) => title.textContent),
+      ]),
+      [
+        ['needs_you', [asking.title]],
+        ['queued', [queued.title]],
+      ],
+    );
+    await act(async () => view.element<HTMLButtonElement>('.task-preview-head').click());
+    await view.button('Yes');
+    await act(async () => delay(10));
+    await view.button('Show in chat');
+    await view.button('Stop all');
+    await act(async () => delay(10));
+    assert.deepEqual(posts, [
+      [`/api/approvals/${asking.approvalId}/answer`, { approved: true }],
+      ['/api/thread/stop', {}],
+    ]);
+    assert.deepEqual(focused, [{ messageId: asking.onItMessageId }]);
+  } finally {
+    view.dom.window.removeEventListener('otto:focus-message', focus);
+    await view.close();
+    pageDataCache.clear();
   }
 });
 

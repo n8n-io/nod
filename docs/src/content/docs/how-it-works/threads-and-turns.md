@@ -235,12 +235,14 @@ A session opens its browser on its first browser call, so a session that never b
 
 ## How Otto web follows the work
 
-Otto web reads the thread from `/api/state` and listens to `/api/events`. A `refresh` event says something changed, and a `delta` event streams a chat reply while Otto writes it.
+Otto web reads the thread from `/api/state` and listens to `/api/events`. A `refresh` event says something changed, a `delta` event streams a chat reply while Otto writes it, and a `task` event carries one task after `task_progress` changes its steps or status line.
 
 - Otto web keeps one `/api/state` request open at a time. A refresh that arrives during a request marks the state stale, and Otto web fetches once more when the request ends.
 - Otto web cancels a `/api/state` request after 30 seconds, so a request that never finishes can't stop later updates.
 - Tool starts and finishes send at most one refresh per session each second, so parallel sessions don't flood the client. That refresh comes at the end of the second, so the latest step still shows.
-- `/api/state` also lists the thread's tasks, open ones first, each with its status, the ID of its "On it" message and the model cost of all its turns, subagents included.
+- `/api/state` also lists the thread's tasks, open ones first, each with its status, steps, current step, status line, the ID of its "On it" message and the model cost of all its turns, subagents included. A task that needs you has its question, and the ID of its confirmation while that hasn't expired. A done task has its result's message ID and the first file of its result, its document.
+- Otto web shows each task as a card in its "On it" message from this list, not from the message, so the card stays current outside the 150 messages `/api/state` returns.
+- A `task` event replaces that task in the list without a new `/api/state` request. It adds no message, so it never changes the unread count. The server sends it only to the task's owner.
 
 The client side lives in [`src/web/hooks/use-app-state.ts`](https://github.com/n8n-io/otto/blob/main/src/web/hooks/use-app-state.ts).
 

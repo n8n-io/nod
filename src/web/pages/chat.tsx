@@ -15,6 +15,7 @@ import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
+import { ArtifactCard, TaskAnswer, TaskPreview, TasksStrip } from '../components/task-preview';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-intro';
@@ -93,11 +94,11 @@ function TaskCards({
       <div className="assistant-mark" aria-hidden="true">
         <BrandMark small />
       </div>
-      <div className="task-suggestions">
-        <p className="task-bubble" data-analytics-private>
+      <div className="suggestions">
+        <p className="suggestion-bubble" data-analytics-private>
           {suggestions.intro}
         </p>
-        <div className="task-cards">
+        <div className="suggestion-cards">
           {suggestions.tasks.map((task, index) => {
             const state = status(task);
             return (
@@ -105,36 +106,36 @@ function TaskCards({
                 key={task.id}
                 show={shown}
                 index={index}
-                className="task-card"
+                className="suggestion-card"
                 data-analytics-private
               >
-                <span className="task-source">
+                <span className="suggestion-source">
                   {task.source === 'web' ? (
                     <User size={14} aria-hidden="true" />
                   ) : (
-                    <span className={`task-source-${task.source}`} aria-hidden="true" />
+                    <span className={`suggestion-source-${task.source}`} aria-hidden="true" />
                   )}
                   {taskSources[task.source]}
                 </span>
-                <p className="task-title">{task.title}</p>
-                <div className="task-action" aria-live="polite">
+                <p className="suggestion-title">{task.title}</p>
+                <div className="suggestion-action" aria-live="polite">
                   {state === 'idle' ? (
                     <button
                       type="button"
-                      className="task-start"
+                      className="suggestion-start"
                       disabled={disabled}
                       onClick={() => onStart(task)}
                     >
                       Do it
                     </button>
                   ) : state === 'working' ? (
-                    <span className="task-state">
+                    <span className="suggestion-state">
                       <LoaderCircle size={16} className="spin" aria-hidden="true" />
                       On it…
                     </span>
                   ) : (
-                    <span className="task-state">
-                      <span className="task-check" aria-hidden="true">
+                    <span className="suggestion-state">
+                      <span className="suggestion-check" aria-hidden="true">
                         <Check size={13} strokeWidth={3} />
                       </span>
                       Done
@@ -304,11 +305,57 @@ export function Chat({
   ]);
   const planning =
     state.planningTasks === true && !allMessages.some((message) => message.suggestions);
+  const tasks = state.tasks ?? [];
+  const tasksByOnIt = new Map(
+    tasks.flatMap((task) => (task.onItMessageId ? [[task.onItMessageId, task]] : [])),
+  );
+  const results = new Map(
+    tasks.flatMap((task) =>
+      task.resultMessageId && task.artifact ? [[task.resultMessageId, task.artifact]] : [],
+    ),
+  );
+  const [openPreviews, setOpenPreviews] = useState<ReadonlySet<string>>(new Set());
+  const togglePreview = (id: string) =>
+    setOpenPreviews((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  function embed(message: Message) {
+    const task = tasksByOnIt.get(message.id);
+    const artifact = results.get(message.id);
+    if (task)
+      return (
+        <TaskPreview
+          task={task}
+          place="chat"
+          open={openPreviews.has(task.id)}
+          onToggle={() => togglePreview(task.id)}
+        />
+      );
+    return artifact && <ArtifactCard artifact={artifact} />;
+  }
+  function withoutArtifact(message: Message) {
+    const artifact = results.get(message.id);
+    return artifact
+      ? { ...message, attachments: message.attachments.filter((item) => item.id !== artifact.id) }
+      : message;
+  }
   function taskStatus(task: SuggestedTask, after: number) {
     const sent = allMessages
       .slice(after + 1)
       .find((message) => message.role === 'user' && message.text === task.title);
     if (!sent) return 'idle';
+    const dispatched = allMessages.find(
+      (message) => message.replyToMessageId === sent.id && tasksByOnIt.has(message.id),
+    );
+    const started = dispatched && tasksByOnIt.get(dispatched.id);
+    if (started)
+      return started.status === 'done'
+        ? 'done'
+        : started.status === 'stopped' || started.status === 'failed'
+          ? 'idle'
+          : 'working';
     const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
     if (!turn) return persistedIds.has(sent.id) ? 'done' : 'working';
     if (turn.status === 'succeeded') return 'done';
@@ -327,10 +374,13 @@ export function Chat({
   const handoffs = new Map<string, string | undefined>();
   if (handoffMessage?.role === 'assistant' && !working && !sending)
     handoffs.set(handoffMessage.id, undefined);
-  for (const task of state.tasks ?? []) {
+  const answers = new Map<string, string>();
+  for (const task of tasks) {
+    if (task.status !== 'needs_you') continue;
     const question = visibleMessages.findLast((message) => message.sessionId === task.id);
-    if (task.status === 'needs_you' && question?.role === 'assistant')
-      handoffs.set(question.id, task.id);
+    if (question?.role === 'assistant') handoffs.set(question.id, task.id);
+    if (task.approvalId && task.approvalMessageId)
+      answers.set(task.approvalMessageId, task.approvalId);
   }
   if (returningHandoff) handoffs.set(returningHandoff.id, returningHandoff.session);
   const unseen = away
@@ -936,7 +986,16 @@ export function Chat({
                   />
                 ) : (
                   <MessageBubble
-                    message={message}
+                    message={withoutArtifact(message)}
+                    embed={embed(message)}
+                    answers={
+                      answers.has(message.id) && (
+                        <TaskAnswer
+                          key={answers.get(message.id)}
+                          approvalId={answers.get(message.id)!}
+                        />
+                      )
+                    }
                     handoffPaused={spendingPaused}
                     connectedAppIds={connectedAppIds}
                     streaming={streamIds.has(message.streamId ?? '')}
@@ -960,11 +1019,11 @@ export function Chat({
               </Fragment>
             ))}
             {planning ? (
-              <div className="thinking task-planning" role="status">
+              <div className="thinking suggestion-planning" role="status">
                 <div className="assistant-mark" aria-hidden="true">
                   <OttoGlyph size={24} mode="thinking" />
                 </div>
-                <span className="task-bubble">
+                <span className="suggestion-bubble">
                   Pulling together a few ideas from what you told me…
                 </span>
               </div>
@@ -1030,6 +1089,13 @@ export function Chat({
             <a href="/trust">Raise the limit in Settings › Trust &amp; cost</a> to resume.
           </Notice>
         )}
+        <TasksStrip
+          tasks={tasks}
+          onOpen={(task) => {
+            setOpenPreviews((current) => new Set(current).add(task.id));
+            setFocusTarget({ id: task.onItMessageId!, pages: 0 });
+          }}
+        />
         <div hidden={!state.configuration.llmReady && !working && !sending}>
           <ModelPicker />
           <Composer

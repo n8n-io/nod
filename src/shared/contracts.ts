@@ -242,10 +242,17 @@ export interface Task {
   id: string;
   title: string;
   onItMessageId: string | null;
+  steps: string[];
+  stepIndex: number;
   now: string;
   result: string;
+  resultMessageId: string | null;
+  artifact: Artifact | null;
   status: TaskStatus;
   question: string | null;
+  approvalId: string | null;
+  approvalMessageId: string | null;
+  error: string | null;
   waitingFor: TaskWait[];
   nextCheck: string | null;
   costUsd?: number | null;

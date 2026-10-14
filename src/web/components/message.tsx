@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Check, CornerUpLeft, SmilePlus, MoreHorizontal, X } from 'lucide-react';
 import Markdown from 'react-markdown';
@@ -134,6 +134,8 @@ export function MessageBubble({
   onHandoffDone,
   handoffPaused,
   handoffSession,
+  embed,
+  answers,
 }: {
   message: Message;
   connectedAppIds?: ReadonlySet<string>;
@@ -143,6 +145,8 @@ export function MessageBubble({
   onHandoffDone?(): Promise<void>;
   handoffPaused?: boolean;
   handoffSession?: string;
+  embed?: ReactNode;
+  answers?: ReactNode;
 }) {
   const dateFormat = useDateFormat();
   const smallCost =
@@ -378,7 +382,7 @@ export function MessageBubble({
       )}
       <div className="message-content">
         <div className="message-row">
-          <div className="message-body">
+          <div className={`message-body${embed ? ' message-body-embeds' : ''}`}>
             {message.replyTo && (
               <blockquote className="message-reply-quote">
                 <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
@@ -398,6 +402,7 @@ export function MessageBubble({
                 handoffSession={handoffSession}
               />
             )}
+            {embed}
           </div>
           {!streaming && (
             <div className="message-tools">
@@ -474,6 +479,7 @@ export function MessageBubble({
             </div>
           )}
         </div>
+        {answers}
         {(reaction || agentReaction) && (
           <div className="message-footer">
             <div className="message-meta">

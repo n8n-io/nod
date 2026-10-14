@@ -31,6 +31,18 @@ flowchart LR
   plain -- no --> queue[Waits for its own turn]:::muted
 ```
 
+## Follow tasks from the message box
+
+Long work, such as research in the browser or waiting for a reply, runs as a [task](/use/tasks/), so the chat stays free. Otto answers with an "On it" message that holds a card for the task, with its status, current step and steps. Select the card to open it.
+
+When two or more tasks are open, or a task needs you, the Tasks strip shows above the message box:
+
+- Each task shows its title and status. Select it to scroll to its "On it" message and open its card.
+- **Stop** next to a task stops only that task.
+- **Stop all** stops the chat, every task and the background runs that are working.
+
+When a task asks for a yes or no, select **Yes** or **No** under its question. That answers only that question.
+
 ## Answer Otto's questions
 
 When Otto needs a decision, an approval or your help in its browser, it asks and stops. Your next message is the answer, and Otto continues from there. For actions that need a yes or no, see [Approvals](/trust/approvals/).
@@ -41,7 +53,7 @@ Otto doesn't ask for passwords or card numbers in chat. It uses a saved login or
 
 To stop Otto, select **Stop** next to the send button.
 
-Stop ends the chat's running work and cancels your queued messages and the chat's open questions. It stops only the chat: tasks and background runs, such as a schedule that's running, keep going. To stop a task, see [Stop a task](/use/tasks/#stop-a-task). Stop can't undo something that already happened, such as an email that was already sent.
+Stop ends the chat's running work and cancels your queued messages and the chat's open questions. It stops only the chat: tasks and background runs, such as a schedule that's running, keep going. To stop one task, select **Stop task** in its card. To stop everything, select **Stop all** in the Tasks strip or on the Tasks page. See [Stop a task](/use/tasks/#stop-a-task). Stop can't undo something that already happened, such as an email that was already sent.
 
 Otto never repeats a task on its own. If a task fails or Otto restarts in the middle of one, it tells you. Check what happened, then say "continue" if you want it to carry on.
 

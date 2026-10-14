@@ -68,7 +68,8 @@ Reply yes to go ahead, no to skip it, or tell me what to change.
 - A reply without a reply target answers the newest question you'd seen, not one that arrived after it. If a [task](/use/tasks/#answer-a-tasks-question)'s question is also open in that conversation, a yes or no without a target answers nothing. A chat question you'd seen closes, as it does for any other new message, and Otto asks which one you mean.
 - A reply to any message of a task answers that task's question, and only that one. A message without a reply target never closes a task's question.
 - A task's question expires after 24 hours. A yes after that gets a short reply that the question expired, and nothing runs. A task that finishes or stops declines its open questions.
-- The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale".
+- For a reply you type, the checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale".
+- In Otto web, a task's confirmation has **Yes** and **No** under it and in the task's card on the Tasks page. A button answers that one confirmation by its ID, so no checker reads anything. The buttons show only while it's the task's one open confirmation and it hasn't expired. A press after the question was answered, closed or expired runs nothing. See [Answer a task's question](/use/tasks/#answer-a-tasks-question).
 - A yes with a change or condition, a question or anything else closes the question, and Otto treats your message as a new request. So does a reply to a question that was already answered, whose task has ended, or whose task still has an earlier reply of yours to read.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
 

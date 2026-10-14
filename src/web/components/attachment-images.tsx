@@ -144,7 +144,7 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
   );
 }
 
-function PreviewContent({ image }: { image: ImagePreview }) {
+export function PreviewContent({ image }: { image: ImagePreview }) {
   const [failed, setFailed] = useState(false);
   const kind = attachmentKind(image.mimeType ?? 'image/png', image.name);
   if (failed)

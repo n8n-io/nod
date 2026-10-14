@@ -654,8 +654,10 @@ test(
       ).rows[0].count,
     });
     const deltas: Array<{ turnId?: string; threadId?: string }> = [];
-    const onEvent = (event: { type: string; turnId?: string; threadId?: string }) => {
+    const taskEvents: Array<{ threadId?: string; task?: Task }> = [];
+    const onEvent = (event: { type: string; turnId?: string; threadId?: string; task?: Task }) => {
       if (event.type === 'delta') deltas.push(event);
+      if (event.type === 'task') taskEvents.push(event);
     };
     events.on('event', onEvent);
 
@@ -1907,6 +1909,19 @@ test(
             [asked.steps, asked.step_index, asked.now_text, asked.state],
             [['Find shops', 'Compare', 'Report'], 1, 'Comparing two shops', 'open'],
           );
+          assert.deepEqual(
+            taskEvents
+              .filter((event) => event.task?.id === asking.taskId)
+              .map(({ threadId, task }) => [threadId, task?.steps, task?.stepIndex, task?.now]),
+            [
+              [
+                (await thread.activeThread(db.pool)).id,
+                ['Find shops', 'Compare', 'Report'],
+                1,
+                'Comparing two shops',
+              ],
+            ],
+          );
           const untouched = await row(other.taskId);
           assert.deepEqual(
             [untouched.steps, untouched.step_index, untouched.now_text, untouched.state],
@@ -1991,6 +2006,13 @@ test(
               result.attachments.map((file: { name: string }) => file.name),
             ],
             [done.result_message_id, 'The synthetic result.', asking.onItMessageId, ['report.txt']],
+          );
+          const delivered = ((await request('GET', '/api/tasks')).json() as Task[]).find(
+            (task) => task.id === asking.taskId,
+          );
+          assert.deepEqual(
+            [delivered?.resultMessageId, delivered?.artifact?.id],
+            [result.id, result.attachments[0].id],
           );
 
           const stopping = await start('task-mode-stop');
@@ -3154,6 +3176,29 @@ test(
           const approval = (
             await db.pool.query('SELECT id FROM approvals WHERE turn_id=$1', [asking.turnId])
           ).rows[0].id as string;
+          const confirmation = (
+            await db.pool.query(
+              'SELECT m.id,m.text FROM approvals a JOIN messages m ON m.id=a.confirmation_message_id WHERE a.id=$1',
+              [approval],
+            )
+          ).rows[0];
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','A later synthetic note',$3,$4)",
+            [randomUUID(), ownerId, threadId, asking.turnId],
+          );
+          const answerable = async () => {
+            const card = ((await request('GET', '/api/tasks')).json() as Task[]).find(
+              (task) => task.id === asking.taskId,
+            );
+            return [card?.approvalId, card?.approvalMessageId, card?.question];
+          };
+          assert.deepEqual(await answerable(), [approval, confirmation.id, confirmation.text]);
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [asking.turnId]);
+          await approvals.request({ threadId, turnId: asking.turnId }, 'FIXTURE_WRITE', {
+            second: true,
+          });
+          await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [asking.turnId]);
+          assert.deepEqual((await answerable()).slice(0, 2), [null, null]);
           block('stop chat');
           const chat = await thread.submitUserMessage('stop chat', [], { channel: 'web' });
           await waitFor(() => [a.turnId, b.turnId, chat.turnId].every((id) => Boolean(ran(id))));

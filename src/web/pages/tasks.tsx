@@ -1,102 +1,22 @@
 import { useId, useState } from 'react';
-import {
-  CalendarClock,
-  ChevronDown,
-  CircleAlert,
-  CircleCheck,
-  CircleSlash,
-  Clock,
-  Hourglass,
-  LoaderCircle,
-  MessageCircle,
-} from 'lucide-react';
-import type { Schedule, ScheduleRun, Task, TaskStatus } from '../../shared/contracts';
+import { ChevronDown } from 'lucide-react';
+import type { Schedule, ScheduleRun, Task } from '../../shared/contracts';
 import { PageTitle } from '../components/page-title';
-import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
+import { NewPlan, PlanToast } from '../components/plan-controls';
+import {
+  isOpenTask,
+  openTaskOrder,
+  StopAllTasks,
+  taskLabels,
+  TaskPreview,
+} from '../components/task-preview';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
-import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
-const labels: Record<TaskStatus, string> = {
-  queued: 'Queued',
-  working: 'Working',
-  needs_you: 'Needs you',
-  waiting: 'Waiting',
-  done: 'Done',
-  stopped: 'Stopped',
-  failed: 'Failed',
-};
-const icons = {
-  queued: Hourglass,
-  working: LoaderCircle,
-  needs_you: MessageCircle,
-  waiting: CalendarClock,
-  done: CircleCheck,
-  stopped: CircleSlash,
-  failed: CircleAlert,
-};
-const order: TaskStatus[] = ['needs_you', 'working', 'waiting', 'queued'];
 const views = ['current', 'scheduled', 'previous'] as const;
 const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
-const closed = (task: Task) => !order.includes(task.status);
-
-function headline(task: Task) {
-  if (closed(task)) return task.result || task.now;
-  if (task.status === 'needs_you')
-    return task.question ?? 'Otto is waiting for your answer in chat.';
-  return task.now;
-}
-
-export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): void }) {
-  const headingId = useId();
-  const format = useDateFormat();
-  const Icon = icons[task.status];
-  return (
-    <article className="saved-plan task-card" aria-labelledby={headingId}>
-      <div className="saved-plan-title">
-        <h2 id={headingId}>{task.title}</h2>
-        <span className="task-status" data-status={task.status}>
-          <Icon
-            size={16}
-            aria-hidden="true"
-            className={task.status === 'working' ? 'spin' : undefined}
-          />
-          {labels[task.status]}
-        </span>
-      </div>
-      <p className="saved-plan-meta">
-        <Clock size={16} aria-hidden="true" />
-        <span>
-          {task.closedAt
-            ? `${task.status === 'done' ? 'Finished' : labels[task.status]} ${formatDateTime(task.closedAt, format)}`
-            : `Started ${formatDateTime(task.createdAt, format)}`}
-        </span>
-      </p>
-      <p className="task-now">{headline(task)}</p>
-      {task.status === 'waiting' && (
-        <ul className="task-facts">
-          {task.waitingFor.map((wait) => (
-            <li key={`${wait.who}:${wait.via}`}>
-              <span>Waiting on</span>
-              {wait.who} · {wait.via}
-            </li>
-          ))}
-          {task.nextCheck && (
-            <li>
-              <span>Next check</span>
-              {formatDateTime(task.nextCheck, format, { weekday: true })}
-            </li>
-          )}
-        </ul>
-      )}
-      {task.status === 'done' && task.onItMessageId !== null && (
-        <ScheduleTask taskId={task.id} onCreated={onScheduled} />
-      )}
-    </article>
-  );
-}
 
 function LoadError({
   what,
@@ -141,11 +61,8 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
   const [view, setView] = useState<(typeof views)[number]>('current');
   const tabsId = useId();
   const open = (tasks.data ?? [])
-    .filter((task) => !closed(task))
-    .sort(
-      (a, b) =>
-        order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt.localeCompare(a.updatedAt),
-    );
+    .filter(isOpenTask)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
@@ -157,7 +74,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
   const oldestRun = history.cursor ? history.runs.at(-1)?.createdAt : undefined;
   const previous: Array<{ at: string; task: Task } | { at: string; run: ScheduleRun }> = [
     ...(tasks.data ?? [])
-      .filter((task) => closed(task) && (!oldestRun || task.closedAt! >= oldestRun))
+      .filter((task) => !isOpenTask(task) && (!oldestRun || task.closedAt! >= oldestRun))
       .map((task) => ({ at: task.closedAt!, task })),
     ...history.runs
       .filter((run) => run.status !== 'queued' && run.status !== 'running')
@@ -179,6 +96,11 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
         {view === 'scheduled' && (
           <div className="secondary-heading-actions">
             <NewPlan onAsk={onAsk} />
+          </div>
+        )}
+        {view === 'current' && open.length > 0 && (
+          <div className="secondary-heading-actions">
+            <StopAllTasks />
           </div>
         )}
       </header>
@@ -242,11 +164,21 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
           !tasks.data ? (
             tasks.loading && <Pending label="Loading tasks…" />
           ) : open.length ? (
-            <div className="saved-plan-list">
-              {open.map((task) => (
-                <TaskCard key={task.id} task={task} />
-              ))}
-            </div>
+            openTaskOrder.map((status) => {
+              const group = open.filter((task) => task.status === status);
+              return (
+                group.length > 0 && (
+                  <section key={status} className="task-group" data-status={status}>
+                    <h2>{taskLabels[status]}</h2>
+                    <div className="saved-plan-list">
+                      {group.map((task) => (
+                        <TaskPreview key={task.id} task={task} place="page" />
+                      ))}
+                    </div>
+                  </section>
+                )
+              );
+            })
           ) : (
             <Empty title="Nothing in progress">
               When you hand Otto something that takes time, like getting quotes or chasing a refund,
@@ -296,9 +228,10 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
             <div className="saved-plan-list">
               {previous.map((item) =>
                 'task' in item ? (
-                  <TaskCard
+                  <TaskPreview
                     key={`task:${item.task.id}`}
                     task={item.task}
+                    place="page"
                     onScheduled={() => setView('scheduled')}
                   />
                 ) : (
