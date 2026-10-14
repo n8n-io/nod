@@ -1697,6 +1697,7 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
       'browser_session',
       'ask_user',
       'send_message',
+      'manage_apps',
     ])
       assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];

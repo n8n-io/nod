@@ -28,7 +28,14 @@ const holdMs = 30 * 60_000;
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 const imageBudget = 16 * 1024 * 1024;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
-const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'ask_user', 'send_message']);
+const parentTools = new Set([
+  'sign_in',
+  'pay',
+  'browser_session',
+  'ask_user',
+  'send_message',
+  'manage_apps',
+]);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -36,6 +43,8 @@ const parallelTools = new Set([
   'skills',
   'apps',
   'manage_personal_context',
+  'task',
+  'react_to_message',
 ]);
 const orderedTools = new Set(['apps', 'manage_personal_context']);
 const admissions = new AsyncLocalStorage<{
@@ -357,8 +366,12 @@ export function createAgentRuntime(dependencies: {
                 name,
                 params,
                 async () => {
-                  if (!Value.Check(parameters, params))
-                    throw new Error('The tool arguments do not match its schema.');
+                  if (!Value.Check(parameters, params)) {
+                    const error = Value.Errors(parameters, params).First();
+                    throw new Error(
+                      `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
+                    );
+                  }
                   if (handsOverBrowser(name, params))
                     await computer.currentPage(turn.execution.browserId).catch(() => {
                       throw new Error(
