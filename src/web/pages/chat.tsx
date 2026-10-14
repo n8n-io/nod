@@ -16,6 +16,7 @@ import { classifyVerificationReply, securityCodeIn } from '../../shared/verifica
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
 import { ArtifactCard, TaskAnswer, TaskPreview, TasksStrip } from '../components/task-preview';
+import { ownedArtifactUrl } from '../lib/attachment-url';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-intro';
@@ -321,9 +322,15 @@ export function Chat({
       if (!next.delete(id)) next.add(id);
       return next;
     });
+  function cardArtifact(message: Message) {
+    const artifact = results.get(message.id);
+    return !tasksByOnIt.has(message.id) && artifact && ownedArtifactUrl(artifact.url)
+      ? artifact
+      : undefined;
+  }
   function embed(message: Message) {
     const task = tasksByOnIt.get(message.id);
-    const artifact = results.get(message.id);
+    const artifact = cardArtifact(message);
     if (task)
       return (
         <TaskPreview
@@ -336,7 +343,7 @@ export function Chat({
     return artifact && <ArtifactCard artifact={artifact} />;
   }
   function withoutArtifact(message: Message) {
-    const artifact = results.get(message.id);
+    const artifact = cardArtifact(message);
     return artifact
       ? { ...message, attachments: message.attachments.filter((item) => item.id !== artifact.id) }
       : message;
@@ -344,9 +351,9 @@ export function Chat({
   function taskStatus(task: SuggestedTask, after: number) {
     const sent = allMessages
       .slice(after + 1)
-      .find((message) => message.role === 'user' && message.text === task.title);
+      .findLast((message) => message.role === 'user' && message.text === task.title);
     if (!sent) return 'idle';
-    const dispatched = allMessages.find(
+    const dispatched = allMessages.findLast(
       (message) => message.replyToMessageId === sent.id && tasksByOnIt.has(message.id),
     );
     const started = dispatched && tasksByOnIt.get(dispatched.id);
@@ -553,7 +560,8 @@ export function Chat({
     pendingSends.current++;
     outstandingSends.current++;
     let failed = false;
-    if (reply) setReplyTo(null);
+    const composerReply = reply && reply.id === replyTo?.id ? reply : null;
+    if (composerReply) setReplyTo(null);
     const message: Message = {
       id,
       role: 'user',
@@ -662,8 +670,8 @@ export function Chat({
     } finally {
       outstandingSends.current--;
       finished(!failed);
-      if (failed && reply && sequence === sendCount.current)
-        setReplyTo((current) => current ?? reply);
+      if (failed && composerReply && sequence === sendCount.current)
+        setReplyTo((current) => current ?? composerReply);
       if (threadRef.current === sentThread && --pendingSends.current === 0) {
         sendQueue.current = Promise.resolve(true);
         setSending(false);

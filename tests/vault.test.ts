@@ -3777,7 +3777,7 @@ async function seedCodeTurns(pool: pg.Pool) {
   const start = async (name: string, resumeOf?: string) => {
     const turn = { threadId, turnId: randomUUID() };
     await pool.query(
-      'INSERT INTO turns(id,owner_id,thread_id,source,source_id,started_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())',
+      "INSERT INTO turns(id,owner_id,thread_id,source,source_id,started_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()-interval '1 second')",
       [
         turn.turnId,
         owner,
@@ -3900,6 +3900,10 @@ test(
     const start = async (id: string, entryId = saved.id) => {
       const turn = await begin(id);
       await vault.fillSaved(turn, owner, entryId, input);
+      await pool.query(
+        "UPDATE credential_account_selections SET credential_entered_at=credential_entered_at-interval '1 second' WHERE root_turn_id=$1",
+        [turn.turnId],
+      );
     };
     const fill = (id: string) => {
       const threadId = task(id).threadId;

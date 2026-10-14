@@ -9,7 +9,7 @@ import { dataRoot, databaseUrl, ownerId, runtimeMode } from './config.ts';
 import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
-import type { Artifact, MessageReaction } from '../shared/contracts.ts';
+import type { Artifact, MessageReaction, ProgressMode } from '../shared/contracts.ts';
 import type {
   BrowserConnectionRequest,
   PromptSnapshot,
@@ -1070,10 +1070,13 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           on_it_message_id: string;
           source_message_id: string;
           read_only: boolean;
+          source_attachments: StoredAttachment[] | null;
         }>(
-          `SELECT id,title,COALESCE(instruction,'') AS instruction,on_it_message_id,source_message_id,read_only
-           FROM tasks WHERE id=$1 AND owner_id=$2 AND thread_id=$3`,
-          [turn.session_id, ownerId, threadId],
+          `SELECT t.id,t.title,COALESCE(t.instruction,'') AS instruction,t.on_it_message_id,t.source_message_id,
+             t.read_only,CASE WHEN $4 THEN s.attachments END AS source_attachments
+           FROM tasks t LEFT JOIN messages s ON s.id=t.source_message_id AND s.owner_id=t.owner_id
+           WHERE t.id=$1 AND t.owner_id=$2 AND t.thread_id=$3`,
+          [turn.session_id, ownerId, threadId, turn.source_id === `task:${turn.session_id}`],
         )
       ).rows[0]
     : undefined;
@@ -1127,7 +1130,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     ),
     pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
     pool.query(
-      'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end FROM preferences WHERE owner_id=$1',
+      'SELECT time_zone,locale,hour_cycle,notification_rule,quiet_hours_enabled,quiet_start,quiet_end,progress_mode FROM preferences WHERE owner_id=$1',
       [ownerId],
     ),
     dependencies.accountProfile?.().catch(() => undefined),
@@ -1167,9 +1170,11 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   return {
     sourceMessageId,
     task,
+    progressMode: (preference?.progress_mode ?? defaultPreferences.progressMode) as ProgressMode,
     uploads: [
       ...((message?.attachments ?? []) as StoredAttachment[]),
       ...((replyTo?.attachments ?? []) as StoredAttachment[]),
+      ...(task?.source_attachments ?? []),
     ],
     replyTo,
     history: history.rows,
@@ -1262,7 +1267,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       if (dependencies.writeArtifact)
         await dependencies.writeArtifact(threadId, path, bytes, operation);
       else {
-        await mkdir(join(workspacePath, folder), { recursive: true });
+        await mkdir(join(workspacePath, folder), { recursive: true, mode: 0o700 });
         await writeFile(join(workspacePath, path), bytes, {
           mode: 0o600,
           flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
@@ -1395,6 +1400,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       task: task && {
         title: task.title,
         request: task.instruction,
+        progressMode: loaded.progressMode,
         result: async (text) => {
           await current(async (client) => {
             const id = await insert(client, text);

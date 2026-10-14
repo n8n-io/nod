@@ -6,6 +6,7 @@ import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
+  MessagingPartialSend,
   MessagingRetryLater,
   type InboundMessage,
   type MessagingChannel,
@@ -430,7 +431,8 @@ export function createChatSdkTransport(
         }
       } catch (error) {
         const { code, retryAfter } = (error ?? {}) as { code?: unknown; retryAfter?: unknown };
-        if (!ids.length && input.channelId === 'telegram' && code === 'RATE_LIMITED')
+        if (ids.length) throw new MessagingPartialSend(ids, { cause: error });
+        if (input.channelId === 'telegram' && code === 'RATE_LIMITED')
           throw new MessagingRetryLater((typeof retryAfter === 'number' ? retryAfter : 1) * 1000);
         throw error;
       }

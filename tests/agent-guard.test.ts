@@ -1053,6 +1053,29 @@ test('a read-only turn refuses every outside action with a fixed error and still
   assert.deepEqual(result.result, { status: 'succeeded' });
 });
 
+test('a read-only task turn hands check_in to the server, which skips it, instead of refusing it', async () => {
+  const checkIns: unknown[] = [];
+  await fixture(
+    async (tools) => {
+      await call(tools, 'check_in', { text: 'Synthetic finding.' });
+    },
+    {
+      readOnly: true,
+      background: true,
+      task: {
+        title: 'Synthetic task',
+        request: 'Look over the synthetic report.',
+        result: async () => {},
+        checkIn: async (input) => {
+          checkIns.push(input);
+          return { status: 'skipped', reason: 'read_only' };
+        },
+      },
+    },
+  );
+  assert.deepEqual(checkIns, [{ text: 'Synthetic finding.' }]);
+});
+
 test('read-only turns can search memory but not change it', async () => {
   const actions: string[] = [];
   await fixture(

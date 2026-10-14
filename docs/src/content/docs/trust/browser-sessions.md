@@ -29,7 +29,7 @@ Opening a profile doesn't prove it's still signed in, so Otto checks the page. I
 | The chat                                       | Its browser stays signed in. Each new sign-in or saved-session use is checked again                                                                                                                                                       |
 | A [task](/use/tasks/)                          | Starts in its own browser, signed out. It stays signed in while the task waits for your answer. After the task closes or starts to wait for someone else, its browser is deleted, so a task you reply to signs in again, checked as usual |
 | A scheduled run, background work or a subagent | Starts in its own fresh browser, signed out. It signs in again with a saved login or session, checked as usual. Background work asks you first                                                                                            |
-| Read-only work and onboarding                  | Stays signed out and never signs in or opens a saved session                                                                                                                                                                              |
+| Read-only work and onboarding                  | Never signs in and never uses a saved session. Onboarding runs in the chat, so its browser can already be signed in                                                                                                                       |
 
 ## Sign out
 

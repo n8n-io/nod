@@ -7,6 +7,7 @@ import {
   mkdtemp,
   open,
   readdir,
+  readFile,
   realpath,
   rm,
   stat,
@@ -22,6 +23,7 @@ import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
+import { inFolder } from '../src/ports/thread-identity.ts';
 test('the confirmation question omits internal identifiers', () => {
   const question = actionConfirmation(
     'OTTO_schedule_update',
@@ -200,7 +202,8 @@ test(
     let failExecution = false;
     let rejectPreflight = false;
     let executionGate: Promise<void> | undefined;
-    let executionResult: (() => unknown) | undefined;
+    let executionResult:
+      ((context: ApprovalExecutionContext, args: Record<string, unknown>) => unknown) | undefined;
     const directories: string[] = [];
     let approvals: Awaited<ReturnType<typeof createApprovals>>;
     const headers = {
@@ -351,7 +354,7 @@ test(
           calls.push({ action, args, context });
           if (executionGate) await executionGate;
           if (failExecution) throw new Error('Fixture provider detail must not be exposed.');
-          if (executionResult) return executionResult();
+          if (executionResult) return executionResult(context, args);
           return { successful: true, id: 'fixture-provider-result' };
         },
         async () => {
@@ -1125,6 +1128,44 @@ test(
           }
         }
       });
+
+      await t.test(
+        'a confirmed task action reads its relative file from the task folder, not the workspace root',
+        async () => {
+          const workspace = await mkdtemp(join(tmpdir(), 'otto-confirmed-folder-'));
+          directories.push(workspace);
+          const started = await startTask('Email the synthetic report to the team.');
+          await mkdir(join(workspace, 'tasks', started.taskId), { recursive: true });
+          await writeFile(join(workspace, 'report.txt'), 'synthetic root file');
+          await writeFile(
+            join(workspace, 'tasks', started.taskId, 'report.txt'),
+            'synthetic task file',
+          );
+          const id = await propose(started.turn, 'GMAIL_SEND_EMAIL', {
+            ...email('team@example.test'),
+            attachment: { workspaceFile: 'report.txt' },
+          });
+          await finish(started.turn.turnId);
+          await confirm(id, true);
+          executionResult = (context, args) =>
+            readFile(
+              join(
+                workspace,
+                inFolder(
+                  context.folder,
+                  (args.attachment as { workspaceFile: string }).workspaceFile,
+                ),
+              ),
+              'utf8',
+            );
+          try {
+            await execute(id);
+            assert.equal((await stored(id)).result, 'synthetic task file');
+          } finally {
+            executionResult = undefined;
+          }
+        },
+      );
 
       await t.test(
         'a memory save the checker matches to the request runs directly once without a confirmation',

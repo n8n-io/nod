@@ -49,10 +49,10 @@ Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside 
 - Bash gets no host environment. It sets the owner's `TZ` when known.
 - No workspace file is loaded as instructions.
 
-Each task works in its own folder, `/workspace/<thread ID>/tasks/<task ID>`:
+Each task works in its own folder, `/workspace/<thread ID>/tasks/<task ID>`. The folder is only the task's default working directory, not a boundary: the chat and every task can still read and write the whole thread folder.
 
 - It's Pi's current directory, for the task and its subagents. The runtime creates it with a command inside the container when the task first uses the workspace, so a task turn that never runs a command doesn't wake the workspace.
-- Relative paths for `share_file`, browser uploads and app file inputs resolve there. Files the server copies in for the task, such as your attachments, app files and browser downloads, land there too.
+- Relative paths for `share_file`, browser uploads and app file inputs resolve there, also for an app action that runs after your yes. Files the server copies in for the task land there too: the attachments of the message that started the task, at its first turn, and of your replies to it, app files and browser downloads.
 - `WorkspaceSession.path` stays the thread folder. The provider still checks the thread against it, and `.otto/outputs` and browser flows stay shared.
 - Every path still has to stay inside `/workspace/<thread ID>`. A task ID that isn't a plain identifier is refused before it becomes a path.
 - Reset deletes a task's folder at once, and the hourly retention job deletes it 30 days after the task closes. The deletion is one `rm` limited to 30 seconds. If it fails, the workspace stays usable and the next hourly run tries again. On a Docker install, a thread folder that's gone from the data folder has nothing to delete, so the server skips it.
@@ -121,10 +121,10 @@ sequenceDiagram
 
 - In a task, the server writes the task into the link as `/browser?session=<taskId>`. In the chat, the link stays `/browser`. Otto web hands over the browser of the session that sent the question. When a link names another session, it shows no browser.
 - The view, screen, stream, input and navigate routes take that session, and the chat is the default. The server checks that the session is the chat or a task of your current thread, then forwards input only while that session's latest turn waits on a question and nothing else is queued for it. Schedule and event runs use their own browsers and never take the chat's.
-- **Done** sends "Done, I finished in the browser." For a task, it's a reply to the task's question, so it goes to that task and the task carries on. The chat isn't touched.
+- **Done** sends "Done, I finished in the browser." For a task, it's a reply to the task's question, so it goes to that task and the task carries on. The chat isn't touched, and a reply you started in the composer keeps its target.
 - One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
 - Frames pause during credential entry in that session. Passwords you type in the handoff join the known secrets.
-- The developer **Browser** page shows the chat's browser, or a task's with `?session=<taskId>`. Its **Stop** stops only that session: the chat, or that one task. Your clicks and typing in a handoff count as browser activity, so a paused view on the page tries again after you change the page.
+- The developer **Browser** page shows the chat's browser, or a task's with `?session=<taskId>`. Its **Stop** stops only that session: the chat, or that one task. Your clicks and typing in a handoff count as browser activity, so a paused view on the page tries again after you change the page. The server keeps the time of your last action in memory for each session, and forgets it when it deletes that session's browser.
 - Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.
 
 :::caution[Limits]

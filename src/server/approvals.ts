@@ -16,12 +16,14 @@ import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { sessionOfMessageSql, taskOfTurn, taskSessionSql, turnChain } from './turn-chain.ts';
+import { taskFolder } from '../ports/thread-identity.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
   sourceTurnId?: string;
+  folder?: string;
 }
 
 export interface ChatConfirmationInput {
@@ -145,11 +147,13 @@ export async function createApprovals(
         if (!source?.turn_id) throw new Error('The schedule instruction is unavailable.');
         sourceTurnId = source.turn_id;
       }
+      const task = await taskOfTurn(pool, ownerId, approval.execution_turn_id);
       const result = await execute(approval.action, approval.args, {
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
         sourceMessageId: approval.source_message_id,
         ...(sourceTurnId ? { sourceTurnId } : {}),
+        ...(task ? { folder: taskFolder(task.id) } : {}),
       });
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(

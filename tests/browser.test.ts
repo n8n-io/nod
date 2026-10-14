@@ -457,7 +457,7 @@ test(
       const asking = await task(ownerId, next.id, 'waiting');
       const working = await task(ownerId, next.id, 'running');
       const foreign = await task('other', foreignThread.id, 'waiting');
-      assert.deepEqual(await handoff(click, asking.id), [200, 200, 200]);
+      assert.deepEqual(await handoff(click, asking.id.toUpperCase()), [200, 200, 200]);
       assert.equal(viewed.at(-1), asking.id);
       assert.deepEqual(controls.slice(6), [
         [asking.id, click],
@@ -4074,6 +4074,7 @@ async function handoffView(
 function syntheticTask(task: Partial<Task>): Task {
   return {
     id: randomUUID(),
+    threadId: null,
     title: 'Synthetic task',
     onItMessageId: null,
     steps: [],
@@ -4117,6 +4118,7 @@ function requestedChatState(): AppState {
       integrationsReady: false,
       localOnly: true,
       conversationResetEnabled: false,
+      tasksEnabled: true,
     },
   };
 }
@@ -4737,17 +4739,24 @@ test('task controls answer by approval ID, stop one task through its own route a
   }
 });
 
-test('the Tasks page groups open tasks, answers by approval ID and shows a task in the chat', async () => {
+test('the Tasks page groups open tasks, answers by approval ID and shows only a task of this thread in the chat', async () => {
   const { Tasks } = await import('../src/web/pages/tasks.tsx');
   const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const threadId = randomUUID();
   const asking = syntheticTask({
+    threadId,
     title: 'Synthetic asking task',
     onItMessageId: randomUUID(),
     status: 'needs_you',
     question: 'Book the synthetic table?',
     approvalId: randomUUID(),
   });
-  const queued = syntheticTask({ title: 'Synthetic queued task', status: 'queued' });
+  const queued = syntheticTask({
+    threadId: randomUUID(),
+    title: 'Synthetic queued task',
+    onItMessageId: randomUUID(),
+    status: 'queued',
+  });
   const done = syntheticTask({
     title: 'Synthetic done task',
     status: 'done',
@@ -4768,7 +4777,7 @@ test('the Tasks page groups open tasks, answers by approval ID and shows a task 
   const focus = (event: Event) => focused.push((event as CustomEvent).detail);
   view.dom.window.addEventListener('otto:focus-message', focus);
   try {
-    await view.render(createElement(Tasks, { onAsk: () => {} }));
+    await view.render(createElement(Tasks, { onAsk: () => {}, threadId }));
     await act(async () => delay(20));
     assert.deepEqual(
       [...document.querySelectorAll('.task-group')].map((group) => [
@@ -4784,6 +4793,15 @@ test('the Tasks page groups open tasks, answers by approval ID and shows a task 
     await view.button('Yes');
     await act(async () => delay(10));
     await view.button('Show in chat');
+    await act(async () =>
+      document.querySelectorAll<HTMLButtonElement>('.task-preview-head')[1]!.click(),
+    );
+    assert.equal(
+      [...document.querySelectorAll('button')].filter(
+        (button) => button.textContent === 'Show in chat',
+      ).length,
+      1,
+    );
     await view.button('Stop all');
     await act(async () => delay(10));
     assert.deepEqual(posts, [
@@ -4901,6 +4919,7 @@ for (const failure of ['rejected', 'disconnected'] as const)
         integrationsReady: false,
         localOnly: true,
         conversationResetEnabled: false,
+        tasksEnabled: true,
       },
     };
     const view = await handoffView(
@@ -5496,6 +5515,7 @@ test('chat keeps every message across refreshes after earlier messages were load
       integrationsReady: false,
       localOnly: true,
       conversationResetEnabled: false,
+      tasksEnabled: true,
     },
   });
   const chat = (window: Message[]) =>

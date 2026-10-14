@@ -54,7 +54,7 @@ function Empty({ title, children }: { title: string; children: string }) {
   );
 }
 
-export function Tasks({ onAsk }: { onAsk(text: string): void }) {
+export function Tasks({ onAsk, threadId }: { onAsk(text: string): void; threadId?: string }) {
   const tasks = usePageData<Task[]>('/api/tasks');
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const history = useScheduleHistory();
@@ -172,7 +172,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
                     <h2>{taskLabels[status]}</h2>
                     <div className="saved-plan-list">
                       {group.map((task) => (
-                        <TaskPreview key={task.id} task={task} place="page" />
+                        <TaskPreview key={task.id} task={task} place="page" threadId={threadId} />
                       ))}
                     </div>
                   </section>
@@ -232,6 +232,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
                     key={`task:${item.task.id}`}
                     task={item.task}
                     place="page"
+                    threadId={threadId}
                     onScheduled={() => setView('scheduled')}
                   />
                 ) : (

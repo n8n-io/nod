@@ -61,9 +61,9 @@ Files Otto saves along the way stay private in the workspace until it shares the
 
 ## Files for a task
 
-Each [task](/use/tasks/) works in its own folder of the workspace, `tasks/<task ID>`. Files the task makes, files it gets from your apps or its browser, and files you attach to a reply to the task go there. Two tasks can use the same file name without overwriting each other.
+Each [task](/use/tasks/) starts in its own folder of the workspace, `tasks/<task ID>`. Files the task makes, files it gets from your apps or its browser, and files you attach to the message that starts it or to a reply to it go there. Two tasks can use the same file name without overwriting each other.
 
-Files outside a task's folder stay shared by the chat and every task, so a task can still read them.
+The folder is only where a task starts, not a wall. The chat and every task can still read and change every file in the workspace, a task's folder included.
 
 ## How long files stay
 

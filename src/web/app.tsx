@@ -252,7 +252,7 @@ function Workspace({
                 <Apps configuration={state?.configuration} onAsk={askInChat} />
               )}
               {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
-              {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+              {currentPath === '/tasks' && <Tasks onAsk={askInChat} threadId={state?.threadId} />}
               {!sidebarItems.some((item) => item.path === currentPath) && (
                 <div className="empty-state">
                   <h1>This page isn’t here.</h1>

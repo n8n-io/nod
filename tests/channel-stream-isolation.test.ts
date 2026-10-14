@@ -307,6 +307,7 @@ function appState(threadId: string, messages = [unreadMessage(1)]): AppState {
       integrationsReady: false,
       localOnly: true,
       conversationResetEnabled: false,
+      tasksEnabled: false,
     },
   };
 }
@@ -646,6 +647,7 @@ test('a burst of refresh events during a state request applies one newer state w
   assert.equal(result.error, '');
   const task: Task = {
     id: randomUUID(),
+    threadId: null,
     title: 'Synthetic task',
     onItMessageId: unreadMessage(3).id,
     steps: ['Find', 'Compare'],

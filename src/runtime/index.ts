@@ -68,6 +68,7 @@ const readOnlyTools: Record<string, true | string[]> = {
   find: true,
   ls: true,
   send_message: true,
+  check_in: true,
   apps: true,
   record_activity_check: true,
   web_search: true,

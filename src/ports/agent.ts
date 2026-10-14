@@ -5,6 +5,7 @@ import type {
   AgentReactionResult,
   Artifact,
   MessageReaction,
+  ProgressMode,
   TaskStatus,
 } from '../shared/contracts.ts';
 
@@ -78,6 +79,7 @@ export interface RuntimeContext {
   task?: {
     title: string;
     request: string;
+    progressMode?: ProgressMode;
     result(text: string): Promise<void>;
     progress?(input: unknown): Promise<unknown>;
     checkIn?(input: unknown): Promise<unknown>;

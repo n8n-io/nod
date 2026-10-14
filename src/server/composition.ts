@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { basename, join, posix } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
@@ -57,10 +57,9 @@ import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
-import { inFolder, taskFolder } from '../ports/thread-identity.ts';
-import { taskOfTurn } from './turn-chain.ts';
+import { inFolder } from '../ports/thread-identity.ts';
 import { coreSkills } from '../runtime/prompt.ts';
-import { createApp } from './app.ts';
+import { createApp, forgetHandoff } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
@@ -485,6 +484,12 @@ async function initializeApplication(
   const ledger = createLedger({ pool, ownerId });
   await ledger.initialize();
   const { computer, workspace } = adapters;
+  const discard = computer.discard?.bind(computer);
+  if (discard)
+    computer.discard = async (id, generation) => {
+      forgetHandoff(id);
+      await discard(id, generation);
+    };
   const curator = ledger.curator(memoryCurator);
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)
@@ -532,7 +537,7 @@ async function initializeApplication(
     },
   });
   await tasks.initialize();
-  const tasksEnabled = process.env.OTTO_TASKS === 'true';
+  const { tasksEnabled } = configuration();
   const triage = createTriage({
     consumers,
     classifier: adapters.relevance,
@@ -655,6 +660,7 @@ async function initializeApplication(
                     const result = await integrations.executeApproved(ownerId, action, args, {
                       threadId: provenance.threadId,
                       turnId: provenance.turnId,
+                      folder: provenance.folder,
                     });
                     await ledger.action(provenance.turnId, action, args);
                     const write = workspace.writeArtifact?.bind(workspace);
@@ -662,10 +668,9 @@ async function initializeApplication(
                       write &&
                       (async (file: { name: string; bytes: Uint8Array }) => {
                         const name = `${randomUUID()}-${basename(file.name)}`;
-                        const task = await taskOfTurn(pool, ownerId, provenance.turnId);
                         await write(
                           provenance.threadId,
-                          task ? posix.join(taskFolder(task.id), name) : name,
+                          inFolder(provenance.folder, name),
                           file.bytes,
                         );
                         return name;

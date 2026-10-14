@@ -2111,6 +2111,10 @@ test(
             await reply('check-in-reopened', limited.onItMessageId);
             assert.deepEqual(checkIns.get('check-in-reopened'), ['sent']);
             assert.equal(await counter(limited.taskId), 1);
+            await db.pool.query('UPDATE tasks SET read_only=true WHERE id=$1', [limited.taskId]);
+            await reply('check-in-read-only', limited.onItMessageId);
+            assert.deepEqual(checkIns.get('check-in-read-only'), ['read_only']);
+            await db.pool.query('UPDATE tasks SET read_only=false WHERE id=$1', [limited.taskId]);
             assert.deepEqual(
               (await replies(limited.taskId)).map((message) => [
                 message.text,
@@ -2123,6 +2127,7 @@ test(
                 'Synthetic result for check-in-limits.',
                 'Synthetic check-in for check-in-reopened.',
                 'Synthetic result for check-in-reopened.',
+                'Synthetic result for check-in-read-only.',
               ].map((text) => [text, limited.onItMessageId]),
             );
 
@@ -2154,6 +2159,13 @@ test(
               ],
             );
             assert.equal(await counter(asking.taskId), 0);
+            assert.deepEqual(
+              ['check-in-limits', 'check-in-quiet'].map(
+                (prompt) =>
+                  runs.findLast((context) => context.prompt === prompt)?.task?.progressMode,
+              ),
+              ['check_ins', 'quiet'],
+            );
           } finally {
             await preferences.update(original);
           }
@@ -2173,15 +2185,40 @@ test(
             return Buffer.from('synthetic task file');
           };
           try {
-            const chat = await thread.submitUserMessage('dispatch-status:task-folder-start', [], {
-              channel: 'web',
-            });
+            const brief = await storeArtifact(
+              Buffer.from('synthetic start attachment'),
+              'brief.txt',
+              'text/plain',
+            );
+            const chat = await thread.submitUserMessage(
+              'dispatch-status:task-folder-start',
+              [brief],
+              { channel: 'web' },
+            );
             await waitFor(() => dispatched.has(chat.turnId));
             const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
             await waitFor(() => folderRuns.has('task-folder-start'));
             const folder = `tasks/${taskId}`;
+            const workspace = join(root, 'workspaces', chat.threadId);
             assert.deepEqual(reads, [`${folder}/report.txt`, 'shared.txt', `${folder}/page.png`]);
             assert.deepEqual(folderRuns.get('task-folder-start'), { folder });
+            const first = runs.find(
+              (context) => context.sessionId === taskId && context.prompt === 'task-folder-start',
+            )!;
+            const briefFile = `${brief.id}-brief.txt`;
+            assert.deepEqual(
+              first.attachments.map((item) => item.path),
+              [join(workspace, folder, briefFile)],
+            );
+            assert.equal(
+              await readFile(join(workspace, folder, briefFile), 'utf8'),
+              'synthetic start attachment',
+            );
+            assert.deepEqual(
+              first.history.find((message) => message.text === 'dispatch-status:task-folder-start')
+                ?.attachments,
+              [{ name: 'brief.txt', mimeType: 'text/plain', workspaceFile: briefFile }],
+            );
 
             const artifact = await storeArtifact(
               Buffer.from('synthetic reply attachment'),
@@ -2195,7 +2232,6 @@ test(
             });
             await waitFor(settled(reply.turnId));
             const routed = ran(reply.turnId)!;
-            const workspace = join(root, 'workspaces', chat.threadId);
             const staged = join(workspace, folder, `${artifact.id}-notes.txt`);
             assert.equal(routed.sessionId, taskId);
             assert.deepEqual(
@@ -2216,6 +2252,53 @@ test(
             dependencies.readArtifact = previousRead;
           }
           await waitFor(settledThread);
+          await closeDispatched();
+        },
+      );
+
+      await t.test(
+        'a Done reply to a task question runs in the task session and leaves a waiting chat turn alone',
+        async () => {
+          await waitFor(settledThread);
+          const chat = await thread.submitUserMessage('dispatch-status:ask-question', [], {
+            channel: 'web',
+          });
+          await waitFor(() => dispatched.has(chat.turnId));
+          const { taskId } = dispatched.get(chat.turnId)!;
+          const asked = (await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId]))
+            .rows[0].id as string;
+          await waitFor(settled(asked));
+          const question = (
+            await db.pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'", [
+              asked,
+            ])
+          ).rows[0].id as string;
+          const waiting = await thread.submitUserMessage('ask-question', [], { channel: 'web' });
+          await waitFor(settled(waiting.turnId));
+          assert.equal(await turnStatus(waiting.turnId), 'waiting');
+          const done = await userMessages.submit('Done, I finished in the browser.', [], {
+            channel: 'web',
+            replyToMessageId: question,
+          });
+          await waitFor(settled(done.turnId));
+          assert.deepEqual(
+            (await db.pool.query('SELECT session_id,status FROM turns WHERE id=$1', [done.turnId]))
+              .rows[0],
+            { session_id: taskId, status: 'succeeded' },
+          );
+          assert.equal(await turnStatus(waiting.turnId), 'waiting');
+          assert.equal(
+            (
+              await db.pool.query(
+                'SELECT count(*)::int AS count FROM turns WHERE session_id=thread_id AND created_at>(SELECT created_at FROM turns WHERE id=$1)',
+                [waiting.turnId],
+              )
+            ).rows[0].count,
+            0,
+          );
+          await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
+            waiting.turnId,
+          ]);
           await closeDispatched();
         },
       );

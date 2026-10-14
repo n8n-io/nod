@@ -210,6 +210,7 @@ export interface Configuration {
   integrationsReady: boolean;
   localOnly: boolean;
   conversationResetEnabled: boolean;
+  tasksEnabled: boolean;
 }
 export interface AppState {
   threadId: string;
@@ -240,6 +241,7 @@ export interface TaskWait {
 }
 export interface Task {
   id: string;
+  threadId: string | null;
   title: string;
   onItMessageId: string | null;
   steps: string[];

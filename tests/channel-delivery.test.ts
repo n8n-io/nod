@@ -1235,6 +1235,7 @@ async function outboxFixture(t: TestContext) {
   const posts: { threadId: string; text: string; replyTo?: string }[] = [];
   const throttled: string[] = [];
   const targets = new Map<string, string | undefined>();
+  const gone = new Set<string>();
   let incoming: InboundMessage[] = [];
   let sequence = 0;
   const transport: MessagingTransport = {
@@ -1305,6 +1306,12 @@ async function outboxFixture(t: TestContext) {
       subscribe: () => () => {},
       intervalMs: 600000,
       submit: async (_text, sourceId, client, channel, _messageId, _answer, replyToMessageId) => {
+        if (replyToMessageId && gone.has(replyToMessageId)) {
+          await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+          throw Object.assign(new Error('The reply is unavailable in this conversation.'), {
+            statusCode: 404,
+          });
+        }
         const turnId = randomUUID();
         await client.query(
           "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
@@ -1315,7 +1322,7 @@ async function outboxFixture(t: TestContext) {
       },
       ...extra,
     });
-  return { pool, threadId, posts, throttled, targets, receive, turnOf, reply, create };
+  return { pool, threadId, posts, throttled, targets, gone, receive, turnOf, reply, create };
 }
 
 test(
@@ -1417,6 +1424,112 @@ test(
         { threadId: 'chat-a', text: 'third' },
       ]);
       assert.deepEqual(await outbox(ids[1]), { state: 'sent', reason: null });
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'provider IDs saved before the upgrade still find their message, and a target that is gone makes a plain message',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, targets, gone, receive, turnOf, create } = await outboxFixture(t);
+    await pool.query(`CREATE TABLE channel_inbox (
+      source_id text PRIMARY KEY, provider text NOT NULL, account_id text NOT NULL, sender_id text NOT NULL,
+      thread_id text NOT NULL, text text NOT NULL, received_at timestamptz NOT NULL,
+      turn_id uuid REFERENCES turns(id), state text NOT NULL DEFAULT 'pending', created_at timestamptz NOT NULL DEFAULT now(),
+      message_id uuid, owner_id text NOT NULL, channel text);
+    CREATE TABLE channel_outbox (
+      message_id uuid PRIMARY KEY, source_id text NOT NULL REFERENCES channel_inbox(source_id),
+      state text NOT NULL DEFAULT 'pending', provider_message_id text, reason text,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
+    const legacy = randomUUID();
+    await pool.query(
+      "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,'local-development','assistant','Legacy reply',$2)",
+      [legacy, threadId],
+    );
+    await pool.query(
+      `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,state,owner_id)
+       VALUES('channel:telegram:bot:a0','telegram','bot','111','chat-a','Legacy request',now(),'submitted','local-development')`,
+    );
+    await pool.query(
+      "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id) VALUES($1,'channel:telegram:bot:a0','sent','legacy-7')",
+      [legacy],
+    );
+    await (await create()).close();
+    const channels = await create();
+    try {
+      assert.deepEqual(
+        (
+          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+            legacy,
+          ])
+        ).rows[0].provider_message_ids,
+        ['legacy-7'],
+      );
+      receive('111', 'a1', 'chat-a', 'legacy-7');
+      await channels.drain();
+      assert.equal(targets.get('channel:telegram:bot:a1'), legacy);
+      gone.add(legacy);
+      receive('111', 'a2', 'chat-a', 'legacy-7');
+      await channels.drain();
+      assert.ok((await turnOf('a2')).turn_id);
+      assert.equal(targets.get('channel:telegram:bot:a2'), undefined);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'a confirmation answer that fails with another 404 stays pending instead of becoming a chat message',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, targets, receive, turnOf, create } = await outboxFixture(t);
+    t.mock.method(console, 'error', () => {});
+    const question = randomUUID();
+    await pool.query(
+      "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,'local-development','assistant','Send it?',$2)",
+      [question, threadId],
+    );
+    const answers: (string | undefined)[] = [];
+    const channels = await create({
+      answer: async (_text, _channel, replyToMessageId) => {
+        answers.push(replyToMessageId);
+        return { approvalId: randomUUID(), approved: true };
+      },
+      submit: async (_text, sourceId, client, channel, _messageId, answer, replyToMessageId) => {
+        if (answer)
+          throw Object.assign(new Error('Fixture account unavailable.'), { statusCode: 404 });
+        const turnId = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [turnId, threadId, sourceId, channel],
+        );
+        targets.set(sourceId, replyToMessageId);
+        return turnId;
+      },
+    });
+    await pool.query(
+      `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,state,owner_id,message_id)
+       VALUES('channel:telegram:bot:q0','telegram','bot','111','chat-a','Fixture question',now(),'submitted','local-development',$1)`,
+      [question],
+    );
+    try {
+      receive('111', 'a1', 'chat-a', 'q0');
+      await channels.drain();
+      assert.deepEqual(answers, [question]);
+      assert.equal(targets.has('channel:telegram:bot:a1'), false);
+      assert.equal((await turnOf('a1')).turn_id, null);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT state FROM channel_inbox WHERE source_id='channel:telegram:bot:a1'",
+          )
+        ).rows[0].state,
+        'pending',
+      );
     } finally {
       await channels.close();
     }
@@ -1907,6 +2020,12 @@ test(
     const state = async (id: string) =>
       (await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [id]))
         .rows[0];
+    const providerIds = async (id: string) =>
+      (
+        await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+          id,
+        ])
+      ).rows[0].provider_message_ids;
     try {
       assert.equal(
         (
@@ -1970,14 +2089,7 @@ test(
         ),
       );
       assert.equal((await state(reply)).state, 'sent');
-      assert.deepEqual(
-        (
-          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
-            reply,
-          ])
-        ).rows[0].provider_message_ids,
-        ['123456:101', '123456:102'],
-      );
+      assert.deepEqual(await providerIds(reply), ['123456:101', '123456:102']);
       await channels.drain();
       assert.equal(sent.length, 2);
       const repeated = await addReply(turnId, [image, image, document], '');
@@ -2012,13 +2124,17 @@ test(
       assert.equal(sent.length, attempted + 1);
       limited = ['sendDocument'];
       const halfSent = await addReply(turnId, [image, document], '');
+      let delivered = sent.length + 101;
       await channels.drain();
       assert.equal((await state(halfSent)).state, 'uncertain');
+      assert.deepEqual(await providerIds(halfSent), [`123456:${delivered}`]);
 
       failDocument = true;
       const uncertain = await addReply(turnId, [image, document]);
+      delivered = sent.length + 101;
       await channels.drain();
       assert.equal((await state(uncertain)).state, 'uncertain');
+      assert.deepEqual(await providerIds(uncertain), [`123456:${delivered}`]);
       const partialCount = sent.length;
       await channels.drain();
       assert.equal(sent.length, partialCount);

@@ -7,6 +7,7 @@ import { classifyVerificationReply, securityCodeIn } from '../shared/verificatio
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import {
+  MessagingPartialSend,
   MessagingRetryLater,
   type ChannelPairingRequest,
   type InboundMessage,
@@ -186,10 +187,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
   CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC);
+  CREATE INDEX IF NOT EXISTS channel_inbox_message ON channel_inbox(message_id);
   ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS reply_provider_id text;
-  ALTER TABLE channel_outbox DROP COLUMN IF EXISTS provider_message_id,
-    ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}',
+  ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}',
     ADD COLUMN IF NOT EXISTS retry_at timestamptz;
+  DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='channel_outbox'::regclass
+      AND attname='provider_message_id' AND NOT attisdropped) THEN
+      UPDATE channel_outbox SET provider_message_ids=ARRAY[provider_message_id]
+        WHERE provider_message_id IS NOT NULL AND provider_message_ids='{}';
+      ALTER TABLE channel_outbox DROP COLUMN provider_message_id;
+    END IF;
+  END $$;
   CREATE INDEX IF NOT EXISTS channel_outbox_provider_ids ON channel_outbox USING gin(provider_message_ids)`);
   await pool.query(
     "UPDATE channel_outbox o SET state='uncertain',reason='interrupted_send',updated_at=now() FROM channel_inbox i WHERE o.source_id=i.source_id AND i.owner_id=$1 AND o.state='sending'",
@@ -476,15 +485,20 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           );
         } else {
           const messageId = row.message_id ?? randomUUID();
-          const turnId = await options.submit(
-            row.text,
-            row.source_id,
-            client,
-            channel,
-            messageId,
-            answer,
-            replyToMessageId,
-          );
+          const submit = (target?: string, decided?: typeof answer) =>
+            options.submit(row.text, row.source_id, client, channel, messageId, decided, target);
+          await client.query('SAVEPOINT reply_target');
+          const turnId = await submit(replyToMessageId, answer).catch(async (error: unknown) => {
+            if (!replyToMessageId || (error as { statusCode?: number }).statusCode !== 404)
+              throw error;
+            await client.query('ROLLBACK TO SAVEPOINT reply_target');
+            const target = await client.query(
+              'SELECT 1 FROM messages m JOIN threads th ON th.id=m.thread_id WHERE m.id=$1 AND m.owner_id=$2 AND th.owner_id=$2 AND th.archived_at IS NULL',
+              [replyToMessageId, ownerId],
+            );
+            if (target.rowCount) throw error;
+            return submit();
+          });
           await client.query(
             "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
             [row.source_id, turnId, messageId, ownerId, channel],
@@ -637,8 +651,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         }
         logFailure('channel_send_failed', cause);
         await pool.query(
-          "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',updated_at=now() WHERE message_id=$1",
-          [row.message_id],
+          "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',provider_message_ids=$2,updated_at=now() WHERE message_id=$1",
+          [row.message_id, cause instanceof MessagingPartialSend ? cause.ids : []],
         );
       }
     }

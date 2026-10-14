@@ -17,7 +17,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import type { AccountPreferences, AccountTheme } from '../../shared/account';
-import type { HourCycle, ProgressMode } from '../../shared/contracts';
+import type { Configuration, HourCycle, ProgressMode } from '../../shared/contracts';
 import type { AccountControls, AccountTab } from './account-menu';
 import { AccountAvatar, GoogleMark } from './account-avatar';
 import {
@@ -214,6 +214,7 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
     error: loadError,
     refresh,
   } = usePageData<AccountPreferences>('/api/preferences');
+  const tasksEnabled = usePageData<Configuration>('/api/configuration').data?.tasksEnabled;
   const progressLabel = useId();
   const [draft, setDraft] = useState<AccountPreferences | null>(null);
   const [saving, setSaving] = useState(false);
@@ -289,27 +290,29 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
     <>
       <LanguageAndRegion saved={saved} onBusyChange={setRegionBusy} />
       <form onSubmit={(event) => void save(event)}>
-        <div className="account-preference-row account-clock-row">
-          <span id={progressLabel} data-analytics-public>
-            <MessageSquareText size={16} aria-hidden="true" />
-            Task updates
-          </span>
-          <div className="account-clock-options" role="group" aria-labelledby={progressLabel}>
-            {progressOptions.map((option) => (
-              <Button
-                key={option.value}
-                type="button"
-                size="sm"
-                variant={current.progressMode === option.value ? 'secondary' : 'ghost'}
-                aria-pressed={current.progressMode === option.value}
-                disabled={saving}
-                onClick={() => setDraft({ ...current, progressMode: option.value })}
-              >
-                {option.label}
-              </Button>
-            ))}
+        {tasksEnabled && (
+          <div className="account-preference-row account-clock-row">
+            <span id={progressLabel} data-analytics-public>
+              <MessageSquareText size={16} aria-hidden="true" />
+              Task updates
+            </span>
+            <div className="account-clock-options" role="group" aria-labelledby={progressLabel}>
+              {progressOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={current.progressMode === option.value ? 'secondary' : 'ghost'}
+                  aria-pressed={current.progressMode === option.value}
+                  disabled={saving}
+                  onClick={() => setDraft({ ...current, progressMode: option.value })}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <div className="account-preference-row">
           <div className="account-preference-label">
             <Moon size={16} aria-hidden="true" />

@@ -66,7 +66,7 @@ const checkPrompt =
 
 type Row = {
   id: string;
-  thread_id: string;
+  thread_id: string | null;
   title: string;
   on_it_message_id: string | null;
   steps: string[];
@@ -176,6 +176,7 @@ export function createTasks(options: {
     const value = status(row);
     return {
       id: row.id,
+      threadId: row.thread_id,
       title: row.title,
       onItMessageId: row.on_it_message_id,
       steps: row.steps,
@@ -457,8 +458,9 @@ export function createTasks(options: {
       refresh();
       return result;
     }
-    const [saved] = await rows(null, false, result.saved);
-    if (saved) taskChanged({ ownerId, threadId: saved.thread_id, task: view(saved) });
+    const [saved] = await rows(null, false, result.saved).catch(() => []);
+    if (saved?.thread_id) taskChanged({ ownerId, threadId: saved.thread_id, task: view(saved) });
+    else refresh();
     return 'Progress saved.';
   }
 
@@ -466,8 +468,14 @@ export function createTasks(options: {
     const { text } = checkInInput.parse(raw);
     const result = await withTurnLock(turn.turnId, async (client) => {
       const task = (
-        await client.query<{ id: string; on_it: string; check_ins: number; recent: boolean }>(
-          `SELECT t.id,t.on_it_message_id AS on_it,t.check_ins,
+        await client.query<{
+          id: string;
+          on_it: string;
+          check_ins: number;
+          recent: boolean;
+          read_only: boolean;
+        }>(
+          `SELECT t.id,t.on_it_message_id AS on_it,t.check_ins,t.read_only,
              COALESCE(t.last_check_in_at>now()-interval '2 minutes',false) AS recent FROM turns u
            JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
            WHERE u.id=$1 AND u.owner_id=$2 AND t.state='open' FOR NO KEY UPDATE OF t`,
@@ -477,15 +485,17 @@ export function createTasks(options: {
       if (!task) throw failure('Only an open task can check in.', 409);
       const preferences = await readPreferences(client, ownerId);
       const [reason, note] =
-        preferences.progressMode === 'quiet'
-          ? ['quiet_mode', 'The user turned check-ins off. Send no more in this run.']
-          : task.check_ins >= maxCheckIns
-            ? ['limit', `This task sent ${maxCheckIns} check-ins in this run. Send no more.`]
-            : task.recent
-              ? ['too_soon', 'The last check-in was less than 2 minutes ago.']
-              : isQuietTime(preferences)
-                ? ['quiet_hours', "It's the user's quiet hours."]
-                : [];
+        task.read_only || (await turnChain(client, ownerId, turn)).readOnly
+          ? ['read_only', 'This turn can only read, so it sends no check-ins.']
+          : preferences.progressMode === 'quiet'
+            ? ['quiet_mode', 'The user turned check-ins off. Send no more in this run.']
+            : task.check_ins >= maxCheckIns
+              ? ['limit', `This task sent ${maxCheckIns} check-ins in this run. Send no more.`]
+              : task.recent
+                ? ['too_soon', 'The last check-in was less than 2 minutes ago.']
+                : isQuietTime(preferences)
+                  ? ['quiet_hours', "It's the user's quiet hours."]
+                  : [];
       if (reason)
         return {
           status: 'skipped',

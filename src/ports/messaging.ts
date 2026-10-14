@@ -77,3 +77,12 @@ export class MessagingRetryLater extends Error {
     super('The channel declined the message for now.');
   }
 }
+
+export class MessagingPartialSend extends Error {
+  constructor(
+    readonly ids: string[],
+    options?: ErrorOptions,
+  ) {
+    super('The channel delivered only part of the message.', options);
+  }
+}

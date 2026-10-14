@@ -66,6 +66,9 @@ function messageView(
   };
 }
 
+const handoffActivity = new Map<string, Date>();
+export const forgetHandoff = (sessionId: string) => handoffActivity.delete(sessionId.toLowerCase());
+
 export interface AppDependencies {
   analytics?: CaptureAnalytics;
   admission?: WorkAdmission;
@@ -477,11 +480,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
     reply.header('Content-Length', file.size);
     return reply.send(await artifacts.readArtifact(file.id));
   });
-  const handoffActivity = new Map<string, Date>();
   async function browserSession(query: unknown) {
     const { session } = z.object({ session: z.uuid().optional() }).parse(query);
     const thread = await activeThread(pool);
-    const sessionId = session ?? thread.id;
+    const sessionId = (session ?? thread.id).toLowerCase();
     if (
       sessionId !== thread.id &&
       !(

@@ -57,6 +57,7 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
       runtimeMode === 'local' &&
       runtimeEnvironment === 'development' &&
       process.env.NODE_ENV !== 'production',
+    tasksEnabled: process.env.OTTO_TASKS === 'true',
     ...overrides,
   };
 }

@@ -98,8 +98,21 @@ function stepState(task: Task, index: number) {
   return index === task.stepIndex ? 'current' : 'todo';
 }
 
-async function stopTask(id?: string) {
-  await post(id ? `/api/tasks/${encodeURIComponent(id)}/stop` : '/api/thread/stop');
+function useStop() {
+  const [stopping, setStopping] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  async function stop(id = '') {
+    setStopping(id);
+    setError('');
+    try {
+      await post(id ? `/api/tasks/${encodeURIComponent(id)}/stop` : '/api/thread/stop');
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setStopping(null);
+    }
+  }
+  return { stopping, error, stop };
 }
 
 export function TaskAnswer({ approvalId }: { approvalId: string }) {
@@ -215,12 +228,14 @@ export function ArtifactPanel({ artifact, onClose }: { artifact: Artifact; onClo
 export function TaskPreview({
   task,
   place,
+  threadId,
   open: shown,
   onToggle,
   onScheduled,
 }: {
   task: Task;
   place: 'chat' | 'page';
+  threadId?: string;
   open?: boolean;
   onToggle?(): void;
   onScheduled?(): void;
@@ -228,23 +243,11 @@ export function TaskPreview({
   const format = useDateFormat();
   const bodyId = useId();
   const [expanded, setExpanded] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [error, setError] = useState('');
+  const { stopping, error, stop } = useStop();
   const open = shown ?? expanded;
   const done =
     task.status === 'done' ? task.steps.length : Math.min(task.stepIndex, task.steps.length);
-  async function stop() {
-    setStopping(true);
-    setError('');
-    try {
-      await stopTask(task.id);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setStopping(false);
-    }
-  }
-  const showInChat = place === 'page' && task.onItMessageId !== null;
+  const showInChat = place === 'page' && task.onItMessageId !== null && task.threadId === threadId;
   return (
     <div className="task-preview" data-status={task.status}>
       <button
@@ -351,7 +354,12 @@ export function TaskPreview({
                   </Button>
                 )}
                 {isOpenTask(task) && (
-                  <Button variant="ghost" size="sm" disabled={stopping} onClick={() => void stop()}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={stopping !== null}
+                    onClick={() => void stop(task.id)}
+                  >
                     <Square size={14} fill="currentColor" aria-hidden="true" />
                     Stop task
                   </Button>
@@ -370,22 +378,10 @@ export function TaskPreview({
 }
 
 export function StopAllTasks() {
-  const [stopping, setStopping] = useState(false);
-  const [error, setError] = useState('');
-  async function stop() {
-    setStopping(true);
-    setError('');
-    try {
-      await stopTask();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setStopping(false);
-    }
-  }
+  const { stopping, error, stop } = useStop();
   return (
     <>
-      <Button variant="ghost" size="sm" disabled={stopping} onClick={() => void stop()}>
+      <Button variant="ghost" size="sm" disabled={stopping !== null} onClick={() => void stop()}>
         <Square size={14} fill="currentColor" aria-hidden="true" />
         Stop all
       </Button>
@@ -395,23 +391,11 @@ export function StopAllTasks() {
 }
 
 export function TasksStrip({ tasks, onOpen }: { tasks: Task[]; onOpen(task: Task): void }) {
-  const [stopping, setStopping] = useState('');
-  const [error, setError] = useState('');
+  const { stopping, error, stop } = useStop();
   const open = tasks
     .filter((task) => isOpenTask(task) && task.onItMessageId)
     .sort((a, b) => openTaskOrder.indexOf(a.status) - openTaskOrder.indexOf(b.status));
   if (open.length < 2 && !open.some((task) => task.status === 'needs_you')) return null;
-  async function stop(id: string) {
-    setStopping(id);
-    setError('');
-    try {
-      await stopTask(id);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setStopping('');
-    }
-  }
   return (
     <div className="tasks-strip" role="group" aria-label="Open tasks">
       <div className="tasks-strip-items">

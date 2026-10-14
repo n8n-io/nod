@@ -67,7 +67,7 @@ To answer a task's confirmation, select **Yes** or **No** under it, or in the ta
 
 While a task works, it can send you a short check-in as a reply to "On it": a first finding that can change the plan, a change to the plan, cost or time that doesn't need your decision, or the start of a step that takes more than about two minutes. When the task needs your decision, it asks a question instead.
 
-Choose how much you hear in **Settings → Preferences → Task updates**:
+Choose how much you hear in **Settings → Preferences → Task updates**. The setting shows only when tasks are turned on:
 
 - **Check-ins**, the default, sends at most three check-ins before the task closes, at least two minutes apart.
 - **Quiet** sends none.
@@ -160,7 +160,7 @@ The Tasks page uses the same card as the chat. Select a card to open it.
 On the Tasks page, an open card also has:
 
 - The question of a task that needs you, with **Yes** and **No** when it's a confirmation.
-- **Show in chat**, which scrolls the chat to the task's "On it" message.
+- **Show in chat**, which scrolls the chat to the task's "On it" message. Only tasks of the current conversation have it, because a task from before a reset has no message in the chat.
 - **Schedule task** for a done task, which turns the same work into a [schedule](/use/schedules/). The draft starts from your message that started the task and your later replies to that task. It never takes words from the chat or from other tasks. Cards from before tasks had an "On it" message don't have it.
 
 ## Statuses
@@ -198,7 +198,7 @@ Only the task's own work, your replies to it and **Stop** change its status. A c
 
 ## How long a task keeps its work
 
-Each task works in its own folder of Otto's [workspace](/use/workspace/#files-for-a-task). The files it makes and the files you attach to a reply to the task go there, so two tasks never overwrite each other's files.
+Each task starts in its own folder of Otto's [workspace](/use/workspace/#files-for-a-task). The files it makes and the files you attach to the message that starts it or to a reply to it go there, so two tasks don't overwrite each other's files by accident. The folder isn't a wall: the chat and every task can still read and change any file in the workspace.
 
 Otto deletes a task's browser when the task closes, or when it starts to wait for someone else. It deletes the task's transcript, its record of what it read and did, and the task's folder 30 days after the task closes. You can still reply to the task after that. It then starts again from your messages and its own messages, without the tool results and files it had before.
 
