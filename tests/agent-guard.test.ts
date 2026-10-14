@@ -961,3 +961,36 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
 });
+
+test('long tool errors reach the model as a preview and a workspace file', async () => {
+  const saved: Array<{ path: string; text: string }> = [];
+  const messages: string[] = [];
+  const failure = `${'Synthetic provider detail. '.repeat(2000)}synthetic tail`;
+  await fixture(
+    async (_tools, _emit, options) => {
+      for (const detail of ['Short synthetic failure.', failure])
+        await assert.rejects(
+          options.runTool('fetch_content', { urls: [] }, async () => {
+            throw new Error(detail);
+          }),
+          (error) => {
+            messages.push((error as Error).message);
+            return true;
+          },
+        );
+    },
+    {},
+    {
+      workspace: fakeWorkspace({
+        writeArtifact: async (_threadId, path, bytes) => {
+          saved.push({ path, text: Buffer.from(bytes).toString() });
+        },
+      }),
+    },
+  );
+  assert.equal(messages[0], 'Short synthetic failure.');
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]!.text, failure);
+  assert.ok(messages[1]!.length < 2500);
+  assert.ok(messages[1]!.includes(saved[0]!.path));
+});

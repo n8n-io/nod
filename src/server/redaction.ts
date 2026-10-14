@@ -171,7 +171,7 @@ export function createRedactor(
 }
 
 export function createErrorRedactor(secrets: string[]) {
-  const redact = createRedactor(secrets, { string: 4000 });
+  const redact = createRedactor(secrets, { string: 64_000, payload: 160_000 });
   return (text: string) => {
     const safe = redact(text);
     return typeof safe === 'string' ? safe : JSON.stringify(safe);

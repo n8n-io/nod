@@ -26,6 +26,7 @@ import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
+const inlineChars = 40_000;
 const imageBudget = 16 * 1024 * 1024;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const parentTools = new Set([
@@ -230,6 +231,16 @@ export function createAgentRuntime(dependencies: {
       streamSubmitted = false;
     };
 
+    const spill = async (text: string) => {
+      if (text.length <= inlineChars) return text;
+      const name = `${randomUUID()}-error.txt`;
+      try {
+        await dependencies.workspace.writeArtifact(threadId, name, Buffer.from(text), signal);
+        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${name}. Read it there.`;
+      } catch {
+        return text.slice(0, inlineChars);
+      }
+    };
     const assertActive = () => {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
@@ -296,8 +307,10 @@ export function createAgentRuntime(dependencies: {
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'
-            : (dependencies.redactError ?? String)(
-                browserFailure ?? (error instanceof Error ? error.message : String(error)),
+            : await spill(
+                (dependencies.redactError ?? String)(
+                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
+                ),
               );
           end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
