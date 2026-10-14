@@ -210,9 +210,12 @@ describe('gateway', () => {
       });
       const before = f.calls.length;
       const first = post('/api/uploads', f.headers(0));
-      while (f.calls.length === before) await setTimeout(5);
-      const second = post('/api/uploads', f.headers(1));
-      await setTimeout(50);
+      for (let wait = 0; f.calls.length === before && wait < 200; wait++) await setTimeout(5);
+      assert.equal(f.calls.length, before + 1);
+      let admitted = false;
+      const second = post('/api/uploads', f.headers(1)).finally(() => (admitted = true));
+      for (let wait = 0; !admitted && wait < 200; wait++) await setTimeout(5);
+      assert.equal(admitted, false);
       assert.deepEqual(
         f.calls.slice(before).map((call) => call.owner),
         [f.users[0]],
