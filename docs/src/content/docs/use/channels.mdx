@@ -89,9 +89,19 @@ sequenceDiagram
   Otto-->>Chat: The result
 ```
 
-If a website sends you a one-time sign-in code, you can reply with it in the chat where Otto asked. Otto uses it for that sign-in and keeps it out of its chat history. Card security codes work only in the Otto app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
+If a website sends you a one-time sign-in code, you can reply with it in the chat where Otto asked. Otto uses it for that sign-in and keeps it out of its chat history. When more than one sign-in waits for a code, reply to the message that asked for it. Card security codes work only in the Otto app. See [Vault](/trust/vault/) and [Payments](/trust/payments/).
 
 Taking over [Otto's browser](/use/browser/) also needs the Otto app, because chat apps can't show the page.
+
+## Replies
+
+Replies work as they do in the Otto app. To reply to a message, swipe it or select **Reply** in Telegram or WhatsApp.
+
+- **Otto's replies.** Otto's "On it" message for a [task](/use/tasks/) replies to your request. The task's questions, check-ins and result reply to "On it", so each task stays in one thread of quotes.
+- **Your replies.** A reply to any message of a task goes to that task, also after it finished. A yes or no that replies to a question answers that question. A reply to any other message, or a message that isn't a reply, goes to the chat.
+- **Replies Otto can't match.** A reply to a message Otto can't find in the current conversation, such as one from before a reset, arrives as an ordinary message.
+
+If the chat app refuses the reply link, Otto sends the message without it. If Telegram asks Otto to slow down, Otto waits as long as Telegram asks and sends the message again, keeping its messages to you in order. Otto never sends a message twice when it can't tell whether the first one arrived.
 
 ## Commands
 

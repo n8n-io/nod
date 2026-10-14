@@ -212,7 +212,7 @@ test(
             },
             post: async (message) => {
               sent.push(message.text);
-              return { id: 'fixture-sent-' + sent.length };
+              return { ids: ['fixture-sent-' + sent.length] };
             },
             close: async () => {
               closed++;

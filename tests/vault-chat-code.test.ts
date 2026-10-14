@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pg from 'pg';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import type { InboundMessage } from '../src/ports/messaging.ts';
 
 test(
   'chat verification intercepts owned codes before message routing and plaintext persistence',
@@ -836,6 +837,103 @@ test(
             (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
             0,
           );
+        },
+      );
+      await t.test(
+        'a code sent as a Telegram reply to one request completes only that request',
+        async () => {
+          await reset();
+          const { createChannels } = await import('../src/server/channels.ts');
+          const threadId = (await thread.activeThread(db.pool, ownerId)).id;
+          const channel = `telegram:${createHash('sha256')
+            .update(JSON.stringify(['bot', 'sender']))
+            .digest('hex')
+            .slice(0, 32)}`;
+          const incoming: InboundMessage[] = [];
+          const posted: string[] = [];
+          const receive = (messageId: string, text: string, replyTo?: string) =>
+            incoming.push({
+              channelId: 'telegram',
+              accountId: 'bot',
+              senderId: 'sender',
+              messageId,
+              threadId: 'telegram:sender',
+              text,
+              sentAt: new Date(),
+              ...(replyTo ? { replyTo } : {}),
+            });
+          const channels = await createChannels(db.pool, {
+            ownerId,
+            transport: {
+              channels: [
+                {
+                  id: 'telegram',
+                  status: 'configured',
+                  missing: [],
+                  accountId: 'bot',
+                  allowedSenderIds: ['sender'],
+                },
+              ],
+              poll: async (accept) => {
+                for (const message of incoming.splice(0)) await accept(message);
+              },
+              receive: async () => ({ status: 200, body: {} }),
+              post: async ({ text }) => {
+                posted.push(text);
+                return { ids: [`sent-${posted.length}`] };
+              },
+              close: async () => {},
+            },
+            acceptVerification: (text, input) => verification.accept(text, input),
+            submit: async (_text, sourceId, client, turnChannel) => {
+              const turnId = randomUUID();
+              await client.query(
+                `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,status)
+                 VALUES($1,$2,$3,'user',$4,'Sign in to both',$5,'succeeded')`,
+                [turnId, ownerId, threadId, sourceId, turnChannel],
+              );
+              return turnId;
+            },
+            subscribe: () => () => {},
+            intervalMs: 600_000,
+          });
+          try {
+            receive('start', 'Sign in to both synthetic sites');
+            await channels.drain();
+            const sessionId = randomUUID();
+            const requestId = randomUUID();
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,waiting_reason,background,session_id,started_at)
+               VALUES($1,$2,$3,'event','Synthetic event',$4,'waiting','credentials',true,$1,clock_timestamp())`,
+              [sessionId, ownerId, threadId, channel],
+            );
+            await db.pool.query(
+              "INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,kind) VALUES($1,$2,$3,$4,'otp')",
+              [requestId, threadId, sessionId, ownerId],
+            );
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Reply with the code.',$3,$4)",
+              [randomUUID(), ownerId, threadId, sessionId],
+            );
+            const chat = await seed({ channel });
+            await channels.drain();
+            assert.equal(posted.length, 2);
+            receive('code', '473826', 'sent-1');
+            await channels.drain();
+            assert.deepEqual(injected, [
+              { owner: ownerId, turnId: sessionId, code: '473826', requestId },
+            ]);
+            assert.equal(
+              (
+                await db.pool.query('SELECT status FROM credential_requests WHERE id=$1', [
+                  chat.requestId,
+                ])
+              ).rows[0].status,
+              'pending',
+            );
+          } finally {
+            await channels.close();
+          }
         },
       );
     } finally {

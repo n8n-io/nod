@@ -1,15 +1,16 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Chat, ConsoleLogger } from 'chat';
+import { Chat, ConsoleLogger, parseMarkdown, type AdapterPostableMessage } from 'chat';
 import { createTelegramAdapter } from '@chat-adapter/telegram';
 import { createWhatsAppAdapter } from '@chat-adapter/whatsapp';
 import { createPostgresState } from '@chat-adapter/state-pg';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import type {
-  InboundMessage,
-  MessagingChannel,
-  MessagingTransport,
-  MessagingWebhookResult,
+import {
+  MessagingRetryLater,
+  type InboundMessage,
+  type MessagingChannel,
+  type MessagingTransport,
+  type MessagingWebhookResult,
 } from '../../ports/messaging.ts';
 
 type Environment = Record<string, string | undefined>;
@@ -30,6 +31,7 @@ const telegramMessage = z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     type: z.literal('private'),
   }),
+  reply_to_message: z.object({ message_id: z.number().int().nonnegative() }).optional(),
 });
 const whatsappMessage = z.object({
   id: z.string().min(1).max(256),
@@ -37,6 +39,7 @@ const whatsappMessage = z.object({
   timestamp: z.string().regex(/^\d{1,12}$/),
   type: z.literal('text'),
   text: z.object({ body: z.string().trim().min(1).max(24000) }),
+  context: z.object({ id: z.string().min(1).max(256).optional() }).optional(),
 });
 const whatsappEnvelope = z.object({
   object: z.literal('whatsapp_business_account'),
@@ -58,6 +61,11 @@ const whatsappEnvelope = z.object({
     )
     .max(100),
 });
+
+function declined(error: unknown) {
+  const { code, status } = (error ?? {}) as { code?: unknown; status?: unknown };
+  return code === 'VALIDATION_ERROR' || (status === 400 && code !== 'RATE_LIMITED');
+}
 
 function sameSecret(actual: string | undefined, expected: string) {
   if (!actual) return false;
@@ -292,7 +300,8 @@ export function createChatSdkTransport(
           return accepted();
         const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
         if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
-        const message = telegram.parseMessage(parsed.data);
+        const { reply_to_message: replied, ...raw } = parsed.data;
+        const message = telegram.parseMessage(raw);
         if (!env.TELEGRAM_ALLOWED_USER_ID) {
           const code = start?.[1];
           if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return accepted();
@@ -325,6 +334,7 @@ export function createChatSdkTransport(
             threadId: message.threadId,
             text: message.text,
             sentAt: message.metadata.dateSent,
+            ...(replied ? { replyTo: `${raw.chat.id}:${replied.message_id}` } : {}),
           },
         ]);
       }
@@ -351,6 +361,7 @@ export function createChatSdkTransport(
                 threadId: message.threadId,
                 text: message.text,
                 sentAt: message.metadata.dateSent,
+                ...(parsed.data.context?.id ? { replyTo: parsed.data.context.id } : {}),
               });
             }
           }
@@ -377,32 +388,53 @@ export function createChatSdkTransport(
         throw new Error('Attachments exceed the delivery limit.');
       await bot.initialize();
       const thread = bot.thread(input.threadId);
-      if (!attachments.length) return { id: (await thread.post({ markdown: input.text })).id };
       const separateText = input.text.length > 900;
-      if (separateText) await thread.post({ markdown: input.text });
-      let id = '';
-      for (const [index, file] of attachments.entries()) {
-        const sent = await thread.post({
-          markdown: index === 0 && !separateText ? input.text : '',
-          attachments: [
-            {
-              type:
-                ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
-                file.bytes.byteLength <= 10 * 1024 * 1024
-                  ? 'image'
-                  : file.mimeType === 'video/mp4'
-                    ? 'video'
-                    : 'file',
-              data: Buffer.from(file.bytes),
-              name: file.name,
-              mimeType: file.mimeType,
-              size: file.bytes.byteLength,
-            },
-          ],
-        });
-        id ||= sent.id;
+      const messages: AdapterPostableMessage[] = attachments.length
+        ? [
+            ...(separateText ? [{ markdown: input.text }] : []),
+            ...attachments.map((file, index): AdapterPostableMessage => ({
+              markdown: index === 0 && !separateText ? input.text : '',
+              attachments: [
+                {
+                  type:
+                    ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
+                    file.bytes.byteLength <= 10 * 1024 * 1024
+                      ? 'image'
+                      : file.mimeType === 'video/mp4'
+                        ? 'video'
+                        : 'file',
+                  data: Buffer.from(file.bytes),
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  size: file.bytes.byteLength,
+                },
+              ],
+            })),
+          ]
+        : input.channelId === 'whatsapp' && whatsapp
+          ? whatsapp
+              .splitMessage(whatsapp.renderFormatted(parseMarkdown(input.text)))
+              .map((raw) => ({ raw }))
+          : [{ markdown: input.text }];
+      const ids: string[] = [];
+      try {
+        for (const message of messages) {
+          const replyTo = ids.length ? undefined : input.replyTo;
+          const sent = replyTo
+            ? await thread.reply(replyTo, message).catch((error: unknown) => {
+                if (!declined(error)) throw error;
+                return thread.post(message);
+              })
+            : await thread.post(message);
+          ids.push(sent.id);
+        }
+      } catch (error) {
+        const { code, retryAfter } = (error ?? {}) as { code?: unknown; retryAfter?: unknown };
+        if (!ids.length && input.channelId === 'telegram' && code === 'RATE_LIMITED')
+          throw new MessagingRetryLater((typeof retryAfter === 'number' ? retryAfter : 1) * 1000);
+        throw error;
       }
-      return { id };
+      return { ids };
     },
     async close() {
       if (!closed) {

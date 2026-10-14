@@ -6,11 +6,12 @@ import { z } from 'zod';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
-import type {
-  ChannelPairingRequest,
-  InboundMessage,
-  MessagingAttachment,
-  MessagingTransport,
+import {
+  MessagingRetryLater,
+  type ChannelPairingRequest,
+  type InboundMessage,
+  type MessagingAttachment,
+  type MessagingTransport,
 } from '../ports/messaging.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
@@ -26,6 +27,7 @@ interface ChannelOptions {
     input: {
       clientMessageId: string;
       channel: string;
+      replyToMessageId?: string;
       persistOrdinary: (client: PoolClient) => Promise<void>;
     },
   ) => Promise<{ turnId?: string | null; messageText?: string } | undefined>;
@@ -36,8 +38,13 @@ interface ChannelOptions {
     channel: string,
     messageId: string,
     answer?: ChatConfirmationInput['answer'],
+    replyToMessageId?: string,
   ) => Promise<string>;
-  answer?: (text: string, channel: string) => Promise<ChatConfirmationInput['answer']>;
+  answer?: (
+    text: string,
+    channel: string,
+    replyToMessageId?: string,
+  ) => Promise<ChatConfirmationInput['answer']>;
   subscribe: (listener: () => void) => () => void;
   refresh?: () => void;
   intervalMs?: number;
@@ -61,6 +68,7 @@ interface InboxRow extends ChannelIdentity {
   source_id: string;
   text: string;
   message_id: string | null;
+  reply_provider_id: string | null;
 }
 interface OutboxRow extends ChannelIdentity {
   message_id: string;
@@ -69,6 +77,7 @@ interface OutboxRow extends ChannelIdentity {
   thread_id: string;
   text: string;
   attachments: unknown[];
+  reply_to: string | null;
 }
 const messageSchema = z.object({
   channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
@@ -78,6 +87,7 @@ const messageSchema = z.object({
   threadId: z.string().min(1).max(1024),
   text: z.string().trim().min(1).max(24000),
   sentAt: z.date(),
+  replyTo: z.string().min(1).max(256).optional(),
 });
 
 function conversationChannel(row: ChannelIdentity) {
@@ -169,13 +179,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   );
   CREATE TABLE IF NOT EXISTS channel_outbox (
     message_id uuid PRIMARY KEY, source_id text NOT NULL REFERENCES channel_inbox(source_id),
-    state text NOT NULL DEFAULT 'pending', provider_message_id text, reason text,
+    state text NOT NULL DEFAULT 'pending', reason text,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   );
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
-  CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC)`);
+  CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC);
+  ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS reply_provider_id text;
+  ALTER TABLE channel_outbox DROP COLUMN IF EXISTS provider_message_id,
+    ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS retry_at timestamptz;
+  CREATE INDEX IF NOT EXISTS channel_outbox_provider_ids ON channel_outbox USING gin(provider_message_ids)`);
   await pool.query(
     "UPDATE channel_outbox o SET state='uncertain',reason='interrupted_send',updated_at=now() FROM channel_inbox i WHERE o.source_id=i.source_id AND i.owner_id=$1 AND o.state='sending'",
     [ownerId],
@@ -252,6 +267,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
   }
 
+  async function replyTarget(row: ChannelIdentity, providerId: string | null | undefined) {
+    if (!providerId) return undefined;
+    const target = await pool.query<{ id: string }>(
+      `SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
+       WHERE m.owner_id=$5 AND th.owner_id=$5 AND th.archived_at IS NULL AND m.id IN (
+         SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+         WHERE o.provider_message_ids @> ARRAY[$4::text]
+           AND i.provider=$1 AND i.account_id=$2 AND i.sender_id=$3 AND i.owner_id=$5
+         UNION ALL SELECT message_id FROM channel_inbox
+         WHERE source_id='channel:'||$1||':'||$2||':'||$4 AND sender_id=$3 AND owner_id=$5)
+       LIMIT 1`,
+      [row.provider, row.account_id, row.sender_id, providerId, ownerId],
+    );
+    return target.rows[0]?.id;
+  }
+
   function permitted(row: ChannelIdentity) {
     return channels.some(
       (channel) =>
@@ -265,7 +296,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   async function accept(message: InboundMessage, channelId: string) {
     const parsed = messageSchema.safeParse(message);
     if (!parsed.success || parsed.data.channelId !== channelId) return;
-    const { accountId, senderId, messageId, threadId, text, sentAt } = parsed.data;
+    const { accountId, senderId, messageId, threadId, text, sentAt, replyTo } = parsed.data;
     const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
     if (closed || replacing || !permitted(identity) || sentAt.getTime() > Date.now() + 300000)
       return;
@@ -287,8 +318,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
         await database.query(
-          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(source_id) DO NOTHING`,
+          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel,reply_provider_id)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(source_id) DO NOTHING`,
           [
             sourceId,
             channelId,
@@ -302,6 +333,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             verification?.turnId ?? null,
             ownerId,
             conversationChannel(identity),
+            replyTo ?? null,
           ],
         );
         if (closed || replacing || !permitted(identity))
@@ -333,6 +365,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           verification = await options.acceptVerification(text, {
             clientMessageId: acceptedMessageId,
             channel: conversationChannel(identity),
+            replyToMessageId: await replyTarget(identity, replyTo),
             persistOrdinary: async (client) => {
               await persist(client);
               ordinaryPersisted = true;
@@ -419,7 +452,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       if (!pending) break;
       const channel = conversationChannel(pending);
       if (closed || replacing) break;
-      const answer = await options.answer?.(pending.text, channel).catch(() => undefined);
+      const replyToMessageId = await replyTarget(pending, pending.reply_provider_id);
+      const answer = await options
+        .answer?.(pending.text, channel, replyToMessageId)
+        .catch(() => undefined);
       const client = await pool.connect();
       let submitted = false;
       try {
@@ -447,6 +483,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             channel,
             messageId,
             answer,
+            replyToMessageId,
           );
           await client.query(
             "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
@@ -482,9 +519,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const result = await pool.query<OutboxRow>(
         `WITH claimed AS (
         UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
-          SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
+          SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id
+          WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 AND NOT EXISTS (
+            SELECT 1 FROM channel_outbox w JOIN channel_inbox v ON v.source_id=w.source_id
+            WHERE w.state='pending' AND w.retry_at>now() AND v.owner_id=$1
+              AND v.provider=i.provider AND v.account_id=i.account_id AND v.sender_id=i.sender_id)
+          ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
         ) RETURNING message_id,source_id
-      ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments
+      ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,
+        (SELECT r.id FROM (
+          SELECT o.provider_message_ids[1] AS id FROM channel_outbox o JOIN channel_inbox t ON t.source_id=o.source_id
+          WHERE o.message_id=m.reply_to_message_id AND t.provider=i.provider AND t.account_id=i.account_id
+            AND t.sender_id=i.sender_id AND t.owner_id=$1
+          UNION ALL SELECT substr(t.source_id,length('channel:'||t.provider||':'||t.account_id||':')+1) FROM channel_inbox t
+          WHERE t.message_id=m.reply_to_message_id AND t.provider=i.provider AND t.account_id=i.account_id
+            AND t.sender_id=i.sender_id AND t.owner_id=$1
+        ) r WHERE r.id IS NOT NULL LIMIT 1) AS reply_to
         FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
         [ownerId],
       );
@@ -571,12 +621,20 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             options.appOrigin,
           ),
           ...(attachments ? { attachments } : {}),
+          ...(row.reply_to ? { replyTo: row.reply_to } : {}),
         });
         await pool.query(
-          "UPDATE channel_outbox SET state='sent',provider_message_id=$2,updated_at=now() WHERE message_id=$1",
-          [row.message_id, sent.id],
+          "UPDATE channel_outbox SET state='sent',provider_message_ids=$2,reason=NULL,retry_at=NULL,updated_at=now() WHERE message_id=$1",
+          [row.message_id, sent.ids],
         );
       } catch (cause) {
+        if (cause instanceof MessagingRetryLater) {
+          await pool.query(
+            "UPDATE channel_outbox SET state='pending',reason='rate_limited',retry_at=now()+make_interval(secs=>$2),updated_at=now() WHERE message_id=$1",
+            [row.message_id, cause.retryAfterMs / 1000],
+          );
+          continue;
+        }
         logFailure('channel_send_failed', cause);
         await pool.query(
           "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',updated_at=now() WHERE message_id=$1",

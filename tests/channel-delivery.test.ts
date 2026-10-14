@@ -7,7 +7,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import type { ChannelAccountRegistry } from '../src/ports/channel-settings.ts';
-import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
+import {
+  MessagingRetryLater,
+  type InboundMessage,
+  type MessagingTransport,
+} from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createChannelAccountRegistry } from '../src/server/channel-account-registry.ts';
@@ -555,7 +559,7 @@ test(
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1152,7 +1156,7 @@ test(
       post: async () => {
         started();
         await blocked;
-        return { id: 'provider-message' };
+        return { ids: ['provider-message'] };
       },
       close: async () => {
         closed = true;
@@ -1228,7 +1232,9 @@ async function outboxFixture(t: TestContext) {
     await admin.end();
   });
   const threadId = await createFixtureTables(pool, 'local-development');
-  const posts: { threadId: string; text: string }[] = [];
+  const posts: { threadId: string; text: string; replyTo?: string }[] = [];
+  const throttled: string[] = [];
+  const targets = new Map<string, string | undefined>();
   let incoming: InboundMessage[] = [];
   let sequence = 0;
   const transport: MessagingTransport = {
@@ -1248,12 +1254,20 @@ async function outboxFixture(t: TestContext) {
     },
     receive: async () => ({ status: 200, body: {} }),
     post: async (input) => {
-      posts.push({ threadId: input.threadId, text: input.text });
-      return { id: `provider-${posts.length}` };
+      if (throttled.includes(input.text)) {
+        throttled.splice(throttled.indexOf(input.text), 1);
+        throw new MessagingRetryLater(60_000);
+      }
+      posts.push({
+        threadId: input.threadId,
+        text: input.text,
+        ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      });
+      return { ids: [`provider-${posts.length}`] };
     },
     close: async () => {},
   };
-  const receive = (senderId: string, messageId: string, chat: string) => {
+  const receive = (senderId: string, messageId: string, chat: string, replyTo?: string) => {
     incoming.push({
       channelId: 'telegram',
       accountId: 'bot',
@@ -1262,6 +1276,7 @@ async function outboxFixture(t: TestContext) {
       threadId: chat,
       text: `Fixture request ${messageId}`,
       sentAt: new Date(Date.now() - 60_000 + 1000 * sequence++),
+      ...(replyTo ? { replyTo } : {}),
     });
   };
   const turnOf = async (messageId: string) =>
@@ -1270,11 +1285,17 @@ async function outboxFixture(t: TestContext) {
         `channel:telegram:bot:${messageId}`,
       ])
     ).rows[0] as { turn_id: string; channel: string };
-  const reply = async (turnId: string, text: string, id: string, offsetSeconds: number) => {
+  const reply = async (
+    turnId: string,
+    text: string,
+    id: string,
+    offsetSeconds: number,
+    replyTo: string | null = null,
+  ) => {
     await pool.query(
-      `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at)
-       VALUES($1,'local-development','assistant',$2,$3,$4,now()+make_interval(secs=>$5))`,
-      [id, text, threadId, turnId, offsetSeconds],
+      `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at,reply_to_message_id)
+       VALUES($1,'local-development','assistant',$2,$3,$4,now()+make_interval(secs=>$5),$6)`,
+      [id, text, threadId, turnId, offsetSeconds, replyTo],
     );
   };
   const create = (extra: Partial<Parameters<typeof createChannels>[1]> = {}) =>
@@ -1283,17 +1304,18 @@ async function outboxFixture(t: TestContext) {
       transport,
       subscribe: () => () => {},
       intervalMs: 600000,
-      submit: async (_text, sourceId, client, channel) => {
+      submit: async (_text, sourceId, client, channel, _messageId, _answer, replyToMessageId) => {
         const turnId = randomUUID();
         await client.query(
           "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
           [turnId, threadId, sourceId, channel],
         );
+        targets.set(sourceId, replyToMessageId);
         return turnId;
       },
       ...extra,
     });
-  return { pool, threadId, posts, receive, turnOf, reply, create };
+  return { pool, threadId, posts, throttled, targets, receive, turnOf, reply, create };
 }
 
 test(
@@ -1348,6 +1370,53 @@ test(
         attempts,
       );
       assert.equal(posts.length, 5);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'reply targets stay with their sender and a throttled reply waits without overtaking',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, posts, throttled, targets, receive, turnOf, reply, create } =
+      await outboxFixture(t);
+    const channels = await create();
+    const ids = Array.from({ length: 4 }, () => randomUUID());
+    const outbox = async (id: string) =>
+      (await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [id]))
+        .rows[0];
+    try {
+      receive('111', 'a1', 'chat-a');
+      receive('222', 'b1', 'chat-b');
+      await channels.drain();
+      const [a1, b1] = [await turnOf('a1'), await turnOf('b1')];
+      await reply(a1.turn_id, 'first', ids[0], 1);
+      await channels.drain();
+      receive('222', 'b2', 'chat-b', 'provider-1');
+      receive('111', 'a2', 'chat-a', 'provider-1');
+      receive('111', 'a3', 'chat-a', 'provider-404');
+      await channels.drain();
+      assert.equal(targets.get('channel:telegram:bot:b2'), undefined);
+      assert.equal(targets.get('channel:telegram:bot:a2'), ids[0]);
+      assert.equal(targets.get('channel:telegram:bot:a3'), undefined);
+
+      throttled.push('second');
+      await reply(a1.turn_id, 'second', ids[1], 2, ids[0]);
+      await reply(a1.turn_id, 'third', ids[2], 3);
+      await reply(b1.turn_id, 'other', ids[3], 4, ids[0]);
+      await channels.drain();
+      assert.deepEqual(posts.slice(1), [{ threadId: 'chat-b', text: 'other' }]);
+      assert.deepEqual(await outbox(ids[1]), { state: 'pending', reason: 'rate_limited' });
+      assert.equal((await outbox(ids[2])).state, 'pending');
+      await pool.query('UPDATE channel_outbox SET retry_at=now() WHERE message_id=$1', [ids[1]]);
+      await channels.drain();
+      assert.deepEqual(posts.slice(2), [
+        { threadId: 'chat-a', text: 'second', replyTo: 'provider-1' },
+        { threadId: 'chat-a', text: 'third' },
+      ]);
+      assert.deepEqual(await outbox(ids[1]), { state: 'sent', reason: null });
     } finally {
       await channels.close();
     }
@@ -1736,6 +1805,7 @@ test(
       chat: string;
     }> = [];
     let failDocument = false;
+    let limited: string[] = [];
     t.mock.method(
       globalThis,
       'fetch',
@@ -1764,6 +1834,18 @@ test(
         });
         if (method === 'sendDocument' && failDocument)
           throw new Error('Possibly accepted by provider');
+        if (limited[0] === method) {
+          limited.shift();
+          return Response.json(
+            {
+              ok: false,
+              error_code: 429,
+              description: 'Too Many Requests: retry after 1',
+              parameters: { retry_after: 1 },
+            },
+            { status: 429 },
+          );
+        }
         return Response.json({
           ok: true,
           result: {
@@ -1888,6 +1970,14 @@ test(
         ),
       );
       assert.equal((await state(reply)).state, 'sent');
+      assert.deepEqual(
+        (
+          await pool.query('SELECT provider_message_ids FROM channel_outbox WHERE message_id=$1', [
+            reply,
+          ])
+        ).rows[0].provider_message_ids,
+        ['123456:101', '123456:102'],
+      );
       await channels.drain();
       assert.equal(sent.length, 2);
       const repeated = await addReply(turnId, [image, image, document], '');
@@ -1908,6 +1998,22 @@ test(
       assert.equal((await state(clip)).state, 'sent');
       assert.equal(sent.at(-1)!.method, 'sendVideo');
       assert.deepEqual(Buffer.from(sent.at(-1)!.file), videoBytes);
+
+      limited = ['sendDocument'];
+      const throttled = await addReply(turnId, [document], '');
+      await channels.drain();
+      assert.deepEqual(await state(throttled), { state: 'pending', reason: 'rate_limited' });
+      const attempted = sent.length;
+      await channels.drain();
+      assert.equal(sent.length, attempted);
+      await sleep(1_100);
+      await channels.drain();
+      assert.deepEqual(await state(throttled), { state: 'sent', reason: null });
+      assert.equal(sent.length, attempted + 1);
+      limited = ['sendDocument'];
+      const halfSent = await addReply(turnId, [image, document], '');
+      await channels.drain();
+      assert.equal((await state(halfSent)).state, 'uncertain');
 
       failDocument = true;
       const uncertain = await addReply(turnId, [image, document]);
@@ -1974,7 +2080,7 @@ test(
         post: async (input) => {
           assert.equal(input.attachments, undefined);
           fallback.push(input.text);
-          return { id: 'fallback-fixture' };
+          return { ids: ['fallback-fixture'] };
         },
         close: async () => {},
       });

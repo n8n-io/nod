@@ -22,6 +22,7 @@ export interface InboundMessage {
   threadId: string;
   text: string;
   sentAt: Date;
+  replyTo?: string;
 }
 
 export interface ChannelPairingRequest {
@@ -66,6 +67,13 @@ export interface MessagingTransport {
     threadId: string;
     text: string;
     attachments?: MessagingAttachment[];
-  }): Promise<{ id: string }>;
+    replyTo?: string;
+  }): Promise<{ ids: string[] }>;
   close(): Promise<void>;
+}
+
+export class MessagingRetryLater extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super('The channel declined the message for now.');
+  }
 }

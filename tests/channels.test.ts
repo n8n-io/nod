@@ -269,7 +269,7 @@ test(
             },
           ],
         }),
-        post: async () => ({ id: 'fixture-reply' }),
+        post: async () => ({ ids: ['fixture-reply'] }),
         close: async () => {},
       },
       acceptVerification: (text, input) => verification.accept(text, input),
@@ -400,7 +400,7 @@ test(
         },
         post: async (message) => {
           sent.push(message);
-          return { id: `fixture-reply-${sent.length}` };
+          return { ids: [`fixture-reply-${sent.length}`] };
         },
         close: async () => {},
       };
@@ -631,7 +631,7 @@ test(
             text: input.text,
             files: (input.attachments ?? []).map((file) => file.name),
           });
-          return { id: randomUUID() };
+          return { ids: [randomUUID()] };
         },
         close: async () => {},
       },
@@ -899,6 +899,8 @@ test(
     let providerCalls = 0;
     let failSend = false;
     let failSubmit = false;
+    const targets = new Map<string, string | undefined>();
+    const rejectedTarget = 'wamid.fixture-out-3';
     t.mock.method(
       globalThis,
       'fetch',
@@ -927,6 +929,11 @@ test(
         }
         if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/messages$/.test(url)) {
           sent.push({ provider: 'whatsapp', body });
+          if ((body.context as { message_id?: string } | undefined)?.message_id === rejectedTarget)
+            return Response.json(
+              { error: { message: 'Invalid parameter', type: 'OAuthException', code: 100 } },
+              { status: 400 },
+            );
           return Response.json({ messages: [{ id: `wamid.fixture-out-${sent.length}` }] });
         }
         throw new Error('Unexpected fixture provider call.');
@@ -945,14 +952,19 @@ test(
       },
       subscribe: () => () => {},
       intervalMs: 600000,
-      submit: async (_text, sourceId, client, channel) => {
+      submit: async (_text, sourceId, client, channel, messageId, _answer, replyToMessageId) => {
         const turnId = await fixtureTurn(client, threadId, 'local-development', channel, sourceId);
         if (failSubmit) throw new Error('Fixture turn queue unavailable.');
+        await client.query(
+          "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','user','Fixture request',$2,$3)",
+          [messageId, threadId, turnId],
+        );
+        targets.set(sourceId, replyToMessageId);
         return turnId;
       },
     });
     channels.registerRoutes(app);
-    const telegramPayload = (id: number, from = 123456, type = 'private') => ({
+    const telegramPayload = (id: number, from = 123456, type = 'private', replyTo?: number) => ({
       update_id: id,
       message: {
         message_id: id,
@@ -960,6 +972,17 @@ test(
         text: 'Help with a fixture task',
         from: { id: from, is_bot: false, first_name: 'Fixture' },
         chat: { id: from, type },
+        ...(replyTo
+          ? {
+              reply_to_message: {
+                message_id: replyTo,
+                date: Math.floor(Date.now() / 1000),
+                text: 'Fixture reply',
+                from: { id: 987, is_bot: true, first_name: 'Fixture' },
+                chat: { id: from, type },
+              },
+            }
+          : {}),
       },
     });
     const whatsappPayload = (
@@ -967,6 +990,7 @@ test(
       from = '351910000000',
       phone = '555000',
       timestamp = Math.floor(Date.now() / 1000),
+      replyTo?: string,
     ) => ({
       object: 'whatsapp_business_account',
       entry: [
@@ -983,6 +1007,7 @@ test(
                     timestamp: String(timestamp),
                     type: 'text',
                     text: { body: 'A WhatsApp fixture request' },
+                    ...(replyTo ? { context: { from: '555000', id: replyTo } } : {}),
                   },
                 ],
               },
@@ -1015,14 +1040,15 @@ test(
       sourceId: string,
       text = 'The fixture task is done.',
       attachments: { id: string }[] = [],
+      replyTo: string | null = null,
     ) => {
       const row = (
         await pool.query('SELECT turn_id FROM channel_inbox WHERE source_id=$1', [sourceId])
       ).rows[0];
       const id = randomUUID();
       await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments) VALUES($1,'local-development','assistant',$2,$3,$4,$5)",
-        [id, text, threadId, row.turn_id, JSON.stringify(attachments)],
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,'local-development','assistant',$2,$3,$4,$5,$6)",
+        [id, text, threadId, row.turn_id, JSON.stringify(attachments), replyTo],
       );
       return id;
     };
@@ -1070,7 +1096,7 @@ test(
         'channel:telegram:987:123456:10',
         'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/vault?add=card).',
       );
-      await addReply('channel:whatsapp:555000:wamid.good');
+      const whatsappReply = await addReply('channel:whatsapp:555000:wamid.good');
       await pool.query(
         "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Unrelated web-only reply',$2,$3)",
         [randomUUID(), threadId, await fixtureTurn(pool, threadId, 'local-development', 'web')],
@@ -1119,6 +1145,74 @@ test(
       await channels.drain();
       assert.equal(sent.length, 3);
 
+      const ownerMessage = (
+        await pool.query(
+          "SELECT message_id FROM channel_inbox WHERE source_id='channel:telegram:987:123456:10'",
+        )
+      ).rows[0].message_id;
+      await sendTelegram(telegramPayload(11, 123456, 'private', 101));
+      await sendTelegram(telegramPayload(12, 123456, 'private', 10));
+      await sendTelegram(telegramPayload(13, 123456, 'private', 999));
+      await sendWhatsApp(
+        whatsappPayload('wamid.reply', undefined, undefined, undefined, 'wamid.fixture-out-2'),
+      );
+      await sendWhatsApp(
+        whatsappPayload('wamid.cross', undefined, undefined, undefined, '123456:101'),
+      );
+      await channels.drain();
+      const telegramReply = (
+        await pool.query(
+          "SELECT message_id FROM channel_outbox WHERE provider_message_ids=ARRAY['123456:101']",
+        )
+      ).rows[0].message_id;
+      assert.deepEqual(Object.fromEntries(targets), {
+        'channel:telegram:987:123456:10': undefined,
+        'channel:whatsapp:555000:wamid.good': undefined,
+        'channel:telegram:987:123456:11': telegramReply,
+        'channel:telegram:987:123456:12': ownerMessage,
+        'channel:telegram:987:123456:13': undefined,
+        'channel:whatsapp:555000:wamid.reply': whatsappReply,
+        'channel:whatsapp:555000:wamid.cross': undefined,
+      });
+
+      await addReply('channel:telegram:987:123456:11', 'Threaded.', [], ownerMessage);
+      await addReply('channel:whatsapp:555000:wamid.reply', 'Threaded.', [], whatsappReply);
+      const long = await addReply(
+        'channel:whatsapp:555000:wamid.reply',
+        'Long fixture line.\n'.repeat(300),
+      );
+      await channels.drain();
+      assert.deepEqual(
+        sent.slice(3, 5).map(({ body }) => body.reply_parameters ?? body.context),
+        [
+          { message_id: 10, allow_sending_without_reply: true },
+          { message_id: 'wamid.fixture-out-2' },
+        ],
+      );
+      assert.equal(sent.length, 7);
+      await sendWhatsApp(
+        whatsappPayload('wamid.chunk', undefined, undefined, undefined, 'wamid.fixture-out-6'),
+      );
+      await channels.drain();
+      assert.equal(targets.get('channel:whatsapp:555000:wamid.chunk'), long);
+      const fallback = await addReply(
+        'channel:whatsapp:555000:wamid.chunk',
+        'Unthreaded.',
+        [],
+        fileReply,
+      );
+      await channels.drain();
+      assert.deepEqual(
+        sent.slice(7).map(({ body }) => body.context ?? null),
+        [{ message_id: rejectedTarget }, null],
+      );
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [fallback]))
+          .rows[0].state,
+        'sent',
+      );
+      const delivered = sent.length;
+
       await sendWhatsApp(
         whatsappPayload('wamid.old', undefined, undefined, Math.floor(Date.now() / 1000) - 172800),
       );
@@ -1136,7 +1230,7 @@ test(
         ).rows[0],
         { state: 'blocked', reason: 'reply_window_closed' },
       );
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, delivered);
 
       failSend = true;
       const uncertainId = await addReply('channel:telegram:987:123456:10');

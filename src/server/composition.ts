@@ -1182,7 +1182,7 @@ async function initializeApplication(
           events.off('event', onEvent);
         };
       },
-      submit: async (text, sourceId, client, channel, messageId, answer) =>
+      submit: async (text, sourceId, client, channel, messageId, answer, replyToMessageId) =>
         (
           await userMessages.submit(text, [], {
             sourceId,
@@ -1190,9 +1190,11 @@ async function initializeApplication(
             client,
             clientMessageId: messageId,
             answer,
+            replyToMessageId,
           })
         ).turnId,
-      answer: (text, channel) => userMessages.answer(text, { channel }),
+      answer: (text, channel, replyToMessageId) =>
+        userMessages.answer(text, { channel, replyToMessageId }),
     });
     channels.registerRoutes(app);
     await channelSettings?.recover();

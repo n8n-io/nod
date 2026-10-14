@@ -243,7 +243,7 @@ test(
       async post(input) {
         sent.push(input);
         if (uncertain) throw new Error('Synthetic transport failure after acceptance.');
-        return { id: randomUUID() };
+        return { ids: [randomUUID()] };
       },
       async close() {},
     };
