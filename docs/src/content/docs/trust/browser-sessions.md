@@ -24,12 +24,13 @@ Opening a profile doesn't prove it's still signed in, so Otto checks the page. I
 
 ## When the browser stays signed in
 
-| Situation                                      | What happens                                                                                                                                                                                                                              |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The chat                                       | Its browser stays signed in. Each new sign-in or saved-session use is checked again                                                                                                                                                       |
-| A [task](/use/tasks/)                          | Starts in its own browser, signed out. It stays signed in while the task waits for your answer. After the task closes or starts to wait for someone else, its browser is deleted, so a task you reply to signs in again, checked as usual |
-| A scheduled run, background work or a subagent | Starts in its own fresh browser, signed out. It signs in again with a saved login or session, checked as usual. Background work asks you first                                                                                            |
-| Read-only work and onboarding                  | Never signs in and never uses a saved session. Onboarding runs in the chat, so its browser can already be signed in                                                                                                                       |
+| Situation                          | What happens                                                                                                                                                                                                                              |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The chat                           | Its browser stays signed in. Each new sign-in or saved-session use is checked again                                                                                                                                                       |
+| A [task](/use/tasks/)              | Starts in its own browser, signed out. It stays signed in while the task waits for your answer. After the task closes or starts to wait for someone else, its browser is deleted, so a task you reply to signs in again, checked as usual |
+| A scheduled run or background work | Starts in its own fresh browser, signed out. It signs in again with a saved login or session, checked as usual. Background work asks you first                                                                                            |
+| A subagent                         | Starts in its own fresh browser and stays signed out. It can't sign in or open a saved session. The work that started it signs in, in its own browser                                                                                     |
+| Read-only work and onboarding      | Never signs in and never uses a saved session. Onboarding runs in the chat, so its browser can already be signed in                                                                                                                       |
 
 ## Sign out
 
@@ -57,7 +58,7 @@ Once signed in, Otto can act anywhere on that website. Vault doesn't review each
 
 ## Where this is enforced
 
-[`src/server/browser-connections.ts`](https://github.com/n8n-io/otto/blob/main/src/server/browser-connections.ts) (sessions) · [`src/server/vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts) (permission and sign-out for background work) · [`src/providers/agent-browser/network.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/agent-browser/network.ts) (public addresses only)
+[`src/server/browser-connections.ts`](https://github.com/n8n-io/otto/blob/main/src/server/browser-connections.ts) (sessions) · [`src/server/vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts) (permission, and no sign-in in read-only work) · [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) (no sign-in for subagents) · [`src/providers/agent-browser/network.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/agent-browser/network.ts) (public addresses only)
 
 ## Related resources
 
