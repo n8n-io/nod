@@ -631,7 +631,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   function track(
     item_type: 'login' | 'card',
     operation: 'create' | 'update' | 'delete',
-    source?: 'user' | 'import' | 'agent',
+    source?: 'user' | 'agent',
     origin?: string,
   ) {
     const domain = item_type === 'login' && origin ? analyticsDomain(origin) : undefined;

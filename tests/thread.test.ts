@@ -5604,10 +5604,11 @@ test(
       (turn) => ({ tasks: [task(turn.replyId)], frustration: null }),
       () => ({ tasks: [task(seed.messageId)], frustration: null }),
       () => ({ tasks: [{ ...task(randomUUID()), task_id: taskId }], frustration: null }),
+      () => ({ tasks: [{ ...task(seed.messageId), task_id: taskId }], frustration: null }),
       () => ({
         tasks: [
-          { ...task(seed.messageId), task_id: taskId },
-          { ...task(seed.messageId), task_id: taskId },
+          { ...task(seed.messageId), task_id: taskId, request_message_id: null },
+          { ...task(seed.messageId), task_id: taskId, request_message_id: null },
         ],
         frustration: null,
       }),
@@ -5695,32 +5696,18 @@ test(
       'UPDATE analytics_tasks SET task_type=$1,task_action=$2,task_subject=$3,task_activities=$4 WHERE id=$5',
       ['cedar_acquisition', 'ada_linden', 'cedar_acquisition', ['find:ada_linden'], taskId],
     );
-    const legacy = await f.turn({ at: baseTime + (invalid.length + 2) * 5_000 });
+    const corrupt = await f.turn({ at: baseTime + (invalid.length + 2) * 5_000 });
     answer = {
-      tasks: [
-        {
-          ...task(legacy.messageId),
-          task_id: taskId,
-          request_message_id: null,
-          task_type: 'unknown',
-          task_action: 'unknown',
-          task_subject: 'unknown',
-          task_activities: ['unknown:unknown'],
-        },
-      ],
+      tasks: [{ ...task(corrupt.messageId), task_id: taskId, request_message_id: null }],
       frustration: null,
     };
-    processor.start(legacy.id)();
+    const before = f.events.length;
+    processor.start(corrupt.id)();
     await processor.drain();
-    const unknown = f.events.filter((event) => event.event === 'otto_task_updated').at(-1)!;
-    assert.equal(unknown.properties.task_type, 'unknown');
-    assert.equal(unknown.properties.task_action, 'unknown');
-    assert.equal(unknown.properties.task_subject, 'unknown');
-    assert.deepEqual(unknown.properties.task_activities, ['unknown:unknown']);
-    assert.equal(
-      f.events.filter((event) => event.event === 'otto_task_analysis').at(-1)!.properties
-        .unknown_label_count,
-      5,
+    assert.deepEqual((classificationInput as { tasks: unknown[] }).tasks, []);
+    assert.deepEqual(
+      f.events.slice(before).map((event) => [event.event, event.properties.outcome]),
+      [['otto_task_analysis', 'invalid']],
     );
     for (const privateLabel of ['cedar_acquisition', 'ada_linden']) {
       assert.ok(!JSON.stringify(f.events).includes(privateLabel));
@@ -5733,43 +5720,95 @@ test(
   'conversation analytics reports queue overflow without classifying dropped turns',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
+    const releases: (() => void)[] = [];
+    const gate = () => {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      releases.push(release);
+      return { promise, release };
+    };
+    t.after(() => {
+      for (const release of releases) release();
     });
-    t.after(release);
     const f = await conversationAnalyticsFixture(t);
     f.analytics.setUsageData(f.ownerId, true);
-    let start!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      start = resolve;
+    let classification = gate();
+    let entered = gate();
+    let overflow = gate();
+    let overflowEntered = gate();
+    let overflowReported = gate();
+    const overflowIds = new Set<string>();
+    let overflowReads = 0;
+    const capture = f.analytics.capture.bind(f.analytics);
+    t.mock.method(f.analytics, 'capture', (...args: Parameters<typeof capture>) => {
+      capture(...args);
+      if (args[1].event === 'otto_task_analysis' && args[1].properties.outcome === 'queue_full')
+        overflowReported.release();
+    });
+    const query = f.pool.query.bind(f.pool);
+    t.mock.method(f.pool, 'query', async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith('SELECT u.* FROM turns') && overflowIds.has(String(values?.[0]))) {
+        overflowReads++;
+        overflowEntered.release();
+        await overflow.promise;
+      }
+      return query(sql, values);
     });
     let calls = 0;
     const processor = await f.processor(async () => {
       calls++;
-      start();
-      await gate;
+      entered.release();
+      await classification.promise;
       return { tasks: [], frustration: null };
     });
-    const turns = await Promise.all(
-      Array.from({ length: 33 }, (_, index) => f.turn({ at: Date.now() + index * 5_000 })),
-    );
-    for (const turn of turns) processor.start(turn.id)();
-    await entered;
-    assert.equal(calls, 1);
-    release();
-    await processor.drain();
-    assert.equal(calls, 32);
-    const health = f.events.filter((event) => event.event === 'otto_task_analysis');
-    assert.equal(health.filter((event) => event.properties.outcome === 'analyzed').length, 32);
-    const dropped = health.filter((event) => event.properties.outcome === 'queue_full');
-    assert.equal(dropped.length, 1);
-    assert.equal(dropped[0].properties.source, 'user');
-    assert.ok(!JSON.stringify(dropped).includes(turns.at(-1)!.id));
-    assert.equal(
-      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
-      32,
-    );
+    const at = Date.now();
+    for (let episode = 0; episode < 3; episode++) {
+      classification = gate();
+      entered = gate();
+      overflow = gate();
+      overflowEntered = gate();
+      overflowReported = gate();
+      const turns = await Promise.all(
+        Array.from({ length: 64 }, (_, index) =>
+          f.turn({ at: at + (episode * 64 + index) * 5_000 }),
+        ),
+      );
+      for (const turn of turns.slice(32)) overflowIds.add(turn.id);
+      for (const turn of turns) processor.start(turn.id)();
+      await Promise.all([entered.promise, overflowEntered.promise]);
+      assert.equal(calls, episode * 32 + 1);
+      assert.equal(overflowReads, episode + 1);
+      if (episode === 2) {
+        f.analytics.setUsageData(f.ownerId, false);
+        f.analytics.setUsageData(f.ownerId, true);
+      }
+      overflow.release();
+      if (episode < 2) {
+        await overflowReported.promise;
+        await delay(0);
+        for (const turn of turns.slice(32)) processor.start(turn.id)();
+        await delay(0);
+        assert.equal(overflowReads, episode + 1);
+      }
+      classification.release();
+      await processor.drain();
+      const health = f.events.filter((event) => event.event === 'otto_task_analysis');
+      assert.equal(
+        health.filter((event) => event.properties.outcome === 'analyzed').length,
+        Math.min(episode + 1, 2) * 32,
+      );
+      const dropped = health.filter((event) => event.properties.outcome === 'queue_full');
+      assert.equal(dropped.length, Math.min(episode + 1, 2));
+      assert.ok(dropped.every((event) => event.properties.source === 'user'));
+      assert.ok(turns.every((turn) => !JSON.stringify(dropped).includes(turn.id)));
+      assert.equal(
+        (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+        episode === 2 ? 0 : (episode + 1) * 32,
+      );
+    }
+    assert.equal(calls, 65);
   },
 );
 

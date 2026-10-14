@@ -157,7 +157,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       event: z.literal('otto_settings_updated'),
       properties: z
         .object({
-          section: z.enum(['account', 'preferences', 'connections', 'channels', 'models']),
+          section: z.enum(['account', 'preferences', 'channels', 'models']),
           operation: z.enum(['update', 'connect_started', 'disconnect']),
         })
         .strict(),
@@ -196,7 +196,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       event: z.literal('otto_service_used'),
       properties: connectionProperties
         .extend({
-          operation_phase: z.enum(['preparation', 'execution']).optional(),
+          operation_phase: z.literal('preparation').optional(),
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           duration_ms: duration,
           failure_reason: serviceFailureReason.optional(),
@@ -230,7 +230,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
         .object({
           item_type: z.enum(['login', 'card']),
           operation: z.enum(['create', 'update', 'delete']),
-          source: z.enum(['user', 'import', 'agent']).optional(),
+          source: z.enum(['user', 'agent']).optional(),
           domain: domain.optional(),
         })
         .strict(),

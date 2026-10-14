@@ -152,9 +152,7 @@ export async function createGateway(options: {
   const profileAccounts = new Map<string, StoredAccount>();
   const accountVersions = new Map<string, number>();
   const accountStore: AccountStore = {
-    ...(options.accounts.readConsent && {
-      readConsent: (ownerId: string) => options.accounts.readConsent!(ownerId),
-    }),
+    readConsent: (ownerId) => options.accounts.readConsent(ownerId),
     async read(ownerId) {
       const version = accountVersions.get(ownerId);
       const account = await options.accounts.read(ownerId);

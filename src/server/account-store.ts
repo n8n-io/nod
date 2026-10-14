@@ -7,7 +7,7 @@ export interface StoredAccount extends AccountSettings {
 }
 
 export interface AccountStore {
-  readConsent?(ownerId: string): Promise<{ enabled: boolean; revision: string }>;
+  readConsent(ownerId: string): Promise<{ enabled: boolean; revision: string }>;
   read(ownerId: string): Promise<StoredAccount>;
   update(
     ownerId: string,
@@ -17,7 +17,6 @@ export interface AccountStore {
 
 export function createAccountStore(database: Pool): AccountStore & {
   initialize(): Promise<void>;
-  readConsent(ownerId: string): Promise<{ enabled: boolean; revision: string }>;
 } {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
     const result = await connection.query<StoredAccount>(

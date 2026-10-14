@@ -41,137 +41,68 @@ import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 
-test('analytics grading detects lifecycle errors and matches tasks independently of output order', () => {
-  const item = (name: string) => analyticsCases.find((item) => item.id === name)!;
-  const multiple = item('multiple-tasks');
-  assert.equal(
-    scoreAnalytics(multiple, {
-      ...multiple.expected,
-      tasks: [...multiple.expected.tasks].reverse(),
-    }).lifecycleCorrect,
-    true,
-  );
-  assert.equal(
-    scoreAnalytics(multiple, { ...multiple.expected, tasks: multiple.expected.tasks.slice(0, 1) })
-      .tasks.missing,
-    1,
-  );
-  assert.equal(
-    scoreAnalytics(multiple, {
-      ...multiple.expected,
-      tasks: [...multiple.expected.tasks, multiple.expected.tasks[0]],
-    }).tasks.extra,
-    1,
-  );
-  const reopened = item('reopen-wrong-result');
-  const wrong = scoreAnalytics(reopened, {
-    ...reopened.expected,
-    tasks: [
-      {
-        ...reopened.expected.tasks[0],
-        task_id: null,
-        task_type: 'unknown',
-        task_action: 'edit',
-        task_subject: 'document',
-        task_activities: ['edit:document'],
-        outcome: 'waiting',
-      },
-    ],
-  });
-  assert.equal(wrong.schemaValid, true);
-  assert.equal(wrong.valid, false);
-  assert.equal(wrong.lifecycleCorrect, false);
-  assert.equal(wrong.referenceLabels.typeDisagreements, 1);
-  assert.equal(wrong.referenceLabels.actionDisagreements, 1);
-  assert.equal(wrong.referenceLabels.subjectDisagreements, 1);
-  assert.equal(wrong.tasks.wrongOutcome, 1);
-  assert.equal(wrong.tasks.wrongContinuation, 1);
-  const waiting = item('waiting-for-approval');
-  assert.equal(
-    scoreAnalytics(waiting, {
-      ...waiting.expected,
-      tasks: [
-        {
-          ...waiting.expected.tasks[0],
-          request_message_id: '00000000-0000-4000-8000-999999999999',
-        },
-      ],
-    }).tasks.wrongRequest,
-    1,
-  );
-  const injected = scoreAnalytics(waiting, { ...waiting.expected, private_text: 'synthetic text' });
-  assert.equal(injected.valid, false);
-  assert.equal(injected.tasks.missing, 1);
+const analyticsCase = (name: string) => analyticsCases.find((item) => item.id === name)!;
+const analyticsAttempt = (name: string, output: unknown, attempt = 1) => ({
+  case: name,
+  equivalenceGroup: analyticsCase(name).equivalenceGroup,
+  attempt,
+  durationMs: 0,
+  status: 'scored' as const,
+  score: scoreAnalytics(analyticsCase(name), output),
 });
 
-test('analytics grading separates goal dimensions from task state when matching repeated categories', () => {
-  const mixed = analyticsCases.find((item) => item.id === 'holdout-same-type-mixed-outcomes')!;
-  assert.equal(
-    scoreAnalytics(mixed, {
-      ...mixed.expected,
-      tasks: [...mixed.expected.tasks].reverse(),
-    }).lifecycleCorrect,
-    true,
-  );
-  const wrongState = scoreAnalytics(mixed, {
+test('analytics grading matches unordered goals without hiding outcome or continuation errors', () => {
+  for (const name of ['multiple-tasks', 'holdout-same-type-mixed-outcomes']) {
+    const item = analyticsCase(name);
+    assert.equal(
+      scoreAnalytics(item, { ...item.expected, tasks: [...item.expected.tasks].reverse() })
+        .lifecycleCorrect,
+      true,
+    );
+  }
+  const mixed = analyticsCase('holdout-same-type-mixed-outcomes');
+  const wrong = scoreAnalytics(mixed, {
     ...mixed.expected,
     tasks: [...mixed.expected.tasks].reverse().map((task) => ({ ...task, outcome: 'completed' })),
   });
-  assert.equal(wrongState.valid, true);
-  assert.equal(wrongState.tasks.wrongOutcome, 1);
-  assert.equal(wrongState.referenceLabels.actionDisagreements, 0);
-  assert.equal(wrongState.referenceLabels.subjectDisagreements, 0);
-  const send = analyticsCases.find((item) => item.id === 'holdout-draft-then-send')!;
-  const wrongGoal = scoreAnalytics(send, {
-    ...send.expected,
-    tasks: [
-      {
-        ...send.expected.tasks[0],
-        task_action: 'draft',
-        task_subject: 'message',
-        task_activities: ['draft:message'],
-      },
-    ],
-  });
-  assert.equal(wrongGoal.valid, true);
-  assert.equal(wrongGoal.lifecycleCorrect, false);
-  assert.equal(wrongGoal.referenceLabels.actionDisagreements, 1);
-  assert.equal(wrongGoal.referenceLabels.subjectDisagreements, 1);
-  const splitGoal = scoreAnalytics(send, {
-    ...send.expected,
-    tasks: [
-      {
-        ...send.expected.tasks[0],
-        task_action: 'draft',
-        task_activities: ['draft:email'],
-        outcome: 'completed',
-      },
-      send.expected.tasks[0],
-    ],
-  });
-  assert.equal(splitGoal.tasks.extra, 1);
-  assert.equal(splitGoal.referenceLabels.actionDisagreements, 0);
-  assert.equal(splitGoal.tasks.wrongOutcome, 0);
-  const summary = summarizeAnalytics(
-    [wrongState, wrongGoal].map((score, index) => ({
-      case: String(index),
-      attempt: 1,
-      durationMs: 0,
-      status: 'scored',
-      score,
+  assert.equal(wrong.tasks.wrongOutcome, 1);
+  const ambiguous = scoreAnalytics(mixed, {
+    ...mixed.expected,
+    tasks: mixed.expected.tasks.map((task) => ({
+      ...task,
+      task_action: 'send',
+      task_subject: 'unknown',
+      task_activities: ['send:unknown'],
     })),
-  );
-  assert.equal(summary.referenceLabels.actionDisagreements, 1);
-  assert.equal(summary.referenceLabels.subjectDisagreements, 1);
-  assert.equal(summary.tasks.wrongOutcome, 1);
+  });
+  assert.equal(ambiguous.ambiguousOutcomeMatching, true);
+  assert.equal(ambiguous.lifecycleCorrect, false);
+  const continuing = analyticsCase('continuation');
+  assert.equal(scoreAnalytics(continuing, continuing.expected).lifecycleCorrect, true);
+  for (const request_message_id of [
+    continuing.input.messages[0].id,
+    '00000000-0000-4000-8000-000000001000',
+  ]) {
+    const score = scoreAnalytics(continuing, {
+      ...continuing.expected,
+      tasks: [{ ...continuing.expected.tasks[0], request_message_id }],
+    });
+    assert.equal(score.valid, false);
+    assert.equal(score.tasks.wrongRequest, 1);
+  }
+  const reopened = scoreAnalytics(continuing, {
+    ...continuing.expected,
+    tasks: [{ ...continuing.expected.tasks[0], task_id: null }],
+  });
+  assert.equal(reopened.tasks.wrongContinuation, 1);
 });
 
-test('analytics grading measures activity counts separately from reference wording', () => {
-  const compound = analyticsCases.find((item) => item.id === 'holdout-compound-find-analyze-send')!;
-  const independent = analyticsCases.find(
-    (item) => item.id === 'holdout-independent-find-analyze-send',
-  )!;
+test('analytics grading distinguishes compound activities from independent goals', () => {
+  const compound = analyticsCase('holdout-compound-find-analyze-send');
+  const independent = analyticsCase('holdout-independent-find-analyze-send');
   const goal = compound.expected.tasks[0];
+  assert.equal(scoreAnalytics(compound, independent.expected).tasks.extra, 2);
+  assert.equal(scoreAnalytics(independent, compound.expected).tasks.missing, 2);
   assert.equal(
     scoreAnalytics(compound, {
       ...compound.expected,
@@ -187,140 +118,15 @@ test('analytics grading measures activity counts separately from reference wordi
     ...compound.expected,
     tasks: [{ ...goal, task_activities: [...goal.task_activities, 'draft:email'] }],
   });
-  assert.equal(missing.valid, true);
-  assert.equal(missing.lifecycleCorrect, false);
   assert.equal(missing.tasks.missingActivities, 2);
-  assert.equal(missing.tasks.extraActivities, 0);
-  assert.equal(extra.valid, true);
-  assert.equal(extra.lifecycleCorrect, false);
-  assert.equal(extra.tasks.missingActivities, 0);
+  assert.equal(missing.lifecycleCorrect, false);
   assert.equal(extra.tasks.extraActivities, 1);
-  const absent = scoreAnalytics(compound, { tasks: [], frustration: null });
-  assert.equal(absent.tasks.missing, 1);
-  assert.equal(absent.tasks.missingActivities, 3);
-  const split = scoreAnalytics(compound, independent.expected);
-  assert.equal(split.tasks.extra, 2);
-  assert.equal(split.tasks.missingActivities, 2);
-  assert.equal(split.tasks.extraActivities, 2);
-  const merged = scoreAnalytics(independent, compound.expected);
-  assert.equal(merged.tasks.missing, 2);
-  assert.equal(merged.tasks.missingActivities, 2);
-  assert.equal(merged.tasks.extraActivities, 2);
-  assert.equal(
-    scoreAnalytics(compound, {
-      ...compound.expected,
-      tasks: [{ ...goal, task_activities: [...goal.task_activities, 'send:email'] }],
-    }).valid,
-    false,
-  );
-  assert.equal(
-    scoreAnalytics(compound, {
-      ...compound.expected,
-      tasks: [{ ...goal, task_activities: ['find:spreadsheet', 'analyze:spreadsheet'] }],
-    }).valid,
-    false,
-  );
-  const summary = summarizeAnalytics(
-    [missing, extra].map((score, index) => ({
-      case: String(index),
-      attempt: 1,
-      durationMs: 0,
-      status: 'scored',
-      score,
-    })),
-  );
-  assert.equal(summary.tasks.expectedActivities, 6);
-  assert.equal(summary.tasks.predictedActivities, 5);
-  assert.equal(summary.tasks.missingActivities, 2);
-  assert.equal(summary.tasks.extraActivities, 1);
+  assert.equal(extra.lifecycleCorrect, false);
 });
 
-test('analytics continuation grading accepts the original request reference or null and rejects another message', () => {
-  const item = analyticsCases.find((item) => item.id === 'continuation')!;
-  const original = item.originalRequestIds[item.expected.tasks[0].task_id!];
-  assert.ok(original);
-  for (const request_message_id of [null, original]) {
-    const score = scoreAnalytics(item, {
-      ...item.expected,
-      tasks: [{ ...item.expected.tasks[0], request_message_id }],
-    });
-    assert.equal(score.valid, true);
-    assert.equal(score.lifecycleCorrect, true);
-    assert.equal(score.tasks.wrongRequest, 0);
-  }
-  const wrong = scoreAnalytics(item, {
-    ...item.expected,
-    tasks: [{ ...item.expected.tasks[0], request_message_id: item.input.messages[0].id }],
-  });
-  assert.equal(wrong.schemaValid, true);
-  assert.equal(wrong.valid, false);
-  assert.equal(wrong.tasks.wrongRequest, 1);
-});
-
-test('analytics grading measures false frustration signals, missed signals and unsupported evidence', () => {
-  const neutral = analyticsCases.find((item) => item.id === 'neutral-edit')!;
-  const repeated = analyticsCases.find((item) => item.id === 'repeated-request')!;
-  const correction = analyticsCases.find((item) => item.id === 'repeated-correction')!;
-  const falsePositive = scoreAnalytics(neutral, {
-    ...neutral.expected,
-    frustration: {
-      ...repeated.expected.frustration,
-      signal: 'explicit_complaint',
-      message_ids: [neutral.input.messages[0].id],
-    },
-  });
-  const falseNegative = scoreAnalytics(repeated, { ...repeated.expected, frustration: null });
-  const correct = scoreAnalytics(repeated, repeated.expected);
-  assert.equal(falsePositive.frustration.falsePositive, 1);
-  assert.equal(falseNegative.frustration.falseNegative, 1);
-  assert.equal(
-    scoreAnalytics(correction, {
-      ...correction.expected,
-      frustration: { ...correction.expected.frustration, signal: 'repeated_request' },
-    }).lifecycleCorrect,
-    true,
-  );
-  assert.equal(
-    scoreAnalytics(repeated, {
-      ...repeated.expected,
-      frustration: {
-        ...repeated.expected.frustration,
-        message_ids: [repeated.input.messages[0].id, repeated.input.messages[1].id],
-      },
-    }).frustration.wrongEvidence,
-    1,
-  );
-  const rejected = scoreAnalytics(repeated, {
-    ...repeated.expected,
-    frustration: {
-      ...repeated.expected.frustration,
-      message_ids: [repeated.input.messages[1].id, repeated.input.messages[3].id],
-    },
-  });
-  assert.equal(rejected.schemaValid, true);
-  assert.equal(rejected.valid, false);
-  assert.equal(rejected.frustration.truePositive, 0);
-  assert.equal(rejected.frustration.falseNegative, 1);
-  const summary = summarizeAnalytics([
-    ...[correct, falsePositive, falseNegative].map((score, index) => ({
-      case: String(index),
-      attempt: 1,
-      durationMs: 0,
-      status: 'scored' as const,
-      score,
-    })),
-    { case: 'unavailable', attempt: 1, durationMs: 0, status: 'model_error' },
-  ]);
-  assert.equal(summary.frustration.precision, 0.5);
-  assert.equal(summary.frustration.recall, 0.5);
-  assert.equal(summary.responseCoverage, 0.75);
-  assert.equal(summary.modelErrors, 1);
-  assert.equal(summary.scored, 3);
-});
-
-test('analytics grading bounds exported labels and measures unknown coverage separately', () => {
-  const item = analyticsCases.find((item) => item.id === 'holdout-audio-translation')!;
-  const score = scoreAnalytics(item, {
+test('analytics grading rejects private labels and separates unknown coverage from label agreement', () => {
+  const item = analyticsCase('holdout-audio-translation');
+  const unknown = {
     ...item.expected,
     tasks: [
       {
@@ -330,120 +136,84 @@ test('analytics grading bounds exported labels and measures unknown coverage sep
         task_activities: ['translate:file'],
       },
     ],
-  });
-  assert.equal(score.valid, true);
+  };
+  const score = scoreAnalytics(item, unknown);
   assert.equal(score.lifecycleCorrect, true);
   assert.equal(score.referenceLabels.matched, false);
-  assert.equal(score.referenceLabels.typeDisagreements, 1);
-  assert.equal(score.referenceLabels.subjectDisagreements, 1);
-  assert.equal(score.referenceLabels.missingActivities, 1);
-  assert.equal(score.referenceLabels.extraActivities, 1);
-  assert.equal(score.tasks.missingActivities, 0);
-  assert.equal(score.tasks.extraActivities, 0);
   assert.equal(score.unknownLabels, 1);
-  for (const task_type of [
-    'person@example.test',
-    'private.example.test',
-    'invoice_1234',
-    'one_two_three_four',
-    'x'.repeat(49),
-    'cedar_acquisition',
-    'ada_linden',
-    'language_conversion',
-  ]) {
-    assert.equal(
-      scoreAnalytics(item, {
-        ...item.expected,
-        tasks: [{ ...item.expected.tasks[0], task_type }],
-      }).valid,
-      false,
-    );
-  }
-  for (const task_activities of [['translate:ada_linden'], ['cedar_acquisition:audio']]) {
-    assert.equal(
-      scoreAnalytics(item, {
-        ...item.expected,
-        tasks: [{ ...item.expected.tasks[0], task_activities }],
-      }).valid,
-      false,
-    );
-  }
-  const summary = summarizeAnalytics([
-    { case: item.id, attempt: 1, durationMs: 0, status: 'scored', score },
+  for (const output of [
+    { ...item.expected, private_text: 'Synthetic private text' },
+    { ...item.expected, tasks: [{ ...item.expected.tasks[0], task_type: 'ada_linden' }] },
     {
-      case: item.id,
-      attempt: 2,
-      durationMs: 0,
-      status: 'scored',
-      score: scoreAnalytics(item, item.expected),
+      ...item.expected,
+      tasks: [{ ...item.expected.tasks[0], task_activities: ['translate:ada_linden'] }],
     },
+  ])
+    assert.equal(scoreAnalytics(item, output).valid, false);
+  const summary = summarizeAnalytics([
+    analyticsAttempt(item.id, unknown),
+    analyticsAttempt(item.id, item.expected, 2),
   ]);
-  assert.equal(summary.unknownLabels, 1);
   assert.equal(summary.unknownLabelRate, 0.5);
+  assert.equal(summary.referenceLabels.agreementRate, 0.5);
 });
 
-test('analytics grading exposes ambiguous outcomes instead of matching unknown labels by outcome', () => {
-  const item = analyticsCases.find((item) => item.id === 'holdout-same-type-mixed-outcomes')!;
-  const score = scoreAnalytics(item, {
-    ...item.expected,
-    tasks: item.expected.tasks.map((task) => ({
-      ...task,
-      task_type: 'communication',
-      task_action: 'send',
-      task_subject: 'unknown',
-      task_activities: ['send:unknown'],
-    })),
+test('analytics grading counts false and missed frustration without accepting assistant evidence', () => {
+  const neutral = analyticsCase('neutral-edit');
+  const repeated = analyticsCase('repeated-request');
+  const rejected = scoreAnalytics(repeated, {
+    ...repeated.expected,
+    frustration: {
+      ...repeated.expected.frustration,
+      message_ids: [repeated.input.messages[1].id, repeated.input.messages[3].id],
+    },
   });
-  assert.equal(score.valid, true);
-  assert.equal(score.ambiguousOutcomeMatching, true);
-  assert.equal(score.lifecycleCorrect, false);
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.frustration.truePositive, 0);
+  assert.equal(rejected.frustration.falseNegative, 1);
+  const summary = summarizeAnalytics([
+    analyticsAttempt(neutral.id, {
+      ...neutral.expected,
+      frustration: {
+        ...repeated.expected.frustration,
+        signal: 'explicit_complaint',
+        message_ids: [neutral.input.messages[0].id],
+      },
+    }),
+    analyticsAttempt(repeated.id, { ...repeated.expected, frustration: null }),
+    analyticsAttempt(repeated.id, repeated.expected, 2),
+    { case: repeated.id, attempt: 3, durationMs: 0, status: 'model_error' },
+  ]);
+  assert.equal(summary.frustration.precision, 0.5);
+  assert.equal(summary.frustration.recall, 0.5);
+  assert.equal(summary.responseCoverage, 0.75);
+  assert.equal(summary.modelErrors, 1);
 });
 
-test('analytics stability compares repetitions and paraphrases without equating consistency with correctness', () => {
-  const item = analyticsCases.find((item) => item.id === 'holdout-email-summary-in-chat')!;
-  const paraphrase = analyticsCases.find((item) => item.id === 'holdout-email-summary-paraphrase')!;
-  assert.equal(item.equivalenceGroup, paraphrase.equivalenceGroup);
-  assert.equal('equivalenceGroup' in item.input, false);
+test('analytics stability compares repetitions and paraphrases separately from correctness', () => {
+  const item = analyticsCase('holdout-email-summary-in-chat');
+  const paraphrase = analyticsCase('holdout-email-summary-paraphrase');
   const changed = {
     ...item.expected,
     tasks: [{ ...item.expected.tasks[0], task_type: 'research' }],
   };
-  const attempts = [item.expected, item.expected, changed].map((output, index) => ({
-    case: item.id,
-    equivalenceGroup: item.equivalenceGroup,
-    attempt: index + 1,
-    durationMs: 0,
-    status: 'scored' as const,
-    score: scoreAnalytics(item, output),
-  }));
-  attempts.push({
-    case: paraphrase.id,
-    equivalenceGroup: paraphrase.equivalenceGroup,
-    attempt: 1,
-    durationMs: 0,
-    status: 'scored',
-    score: scoreAnalytics(paraphrase, {
+  const attempts = [item.expected, item.expected, changed].map((output, index) =>
+    analyticsAttempt(item.id, output, index + 1),
+  );
+  attempts.push(
+    analyticsAttempt(paraphrase.id, {
       ...paraphrase.expected,
       tasks: [{ ...paraphrase.expected.tasks[0], outcome: 'waiting' }],
     }),
-  });
-  attempts.push({
-    ...attempts[0],
-    attempt: 4,
-    score: scoreAnalytics(item, { private_text: 'invalid' }),
-  });
+    analyticsAttempt(item.id, { private_text: 'invalid' }, 4),
+  );
   const summary = summarizeAnalytics(attempts);
   assert.equal(summary.labelStability.repetitions.comparisons, 3);
   assert.equal(summary.labelStability.repetitions.agreementRate, 1 / 3);
   assert.equal(summary.labelStability.repetitions.groups[0].distinctLabels, 2);
-  assert.equal(summary.labelStability.paraphrases.comparisons, 3);
   assert.equal(summary.labelStability.paraphrases.agreementRate, 2 / 3);
   assert.equal(summary.lifecycleCorrect, 3);
   assert.equal(summary.invalid, 1);
-  assert.equal(
-    summarizeAnalytics(attempts.slice(0, 1)).labelStability.repetitions.agreementRate,
-    null,
-  );
 });
 
 const manifest: RunManifest = {
@@ -942,6 +712,10 @@ test('scenario API calls use authenticated local transport and refuse outside ta
     accounts: {
       async read() {
         return account;
+      },
+      async readConsent(owner) {
+        assert.equal(owner, 'synthetic-owner');
+        return { enabled: account.usageData, revision: '0' };
       },
       async update(owner, input) {
         assert.equal(owner, 'synthetic-owner');

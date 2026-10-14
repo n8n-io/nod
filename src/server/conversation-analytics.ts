@@ -94,7 +94,8 @@ export function createConversationAnalytics(options: {
   let serial = Promise.resolve();
   let consentWrites = Promise.resolve();
   let queued = 0;
-  const dropped = new Set<Promise<void>>();
+  let overflowReported = false;
+  let overflow: Promise<void> | undefined;
   let unsubscribe = () => {};
 
   function text(value: string) {
@@ -131,7 +132,6 @@ export function createConversationAnalytics(options: {
   async function initialize() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS analytics_consent(owner_id text PRIMARY KEY, epoch uuid NOT NULL, enabled boolean NOT NULL, revision text);
-      ALTER TABLE analytics_consent ADD COLUMN IF NOT EXISTS revision text;
       CREATE TABLE IF NOT EXISTS analytics_tasks(
         id uuid PRIMARY KEY, owner_id text NOT NULL, epoch uuid NOT NULL,
         thread_id uuid NOT NULL REFERENCES threads(id) ON DELETE CASCADE, session_id uuid NOT NULL,
@@ -141,9 +141,6 @@ export function createConversationAnalytics(options: {
         outcome text NOT NULL, requested_at timestamptz NOT NULL,
         updated_at timestamptz NOT NULL, turn_count integer NOT NULL
       );
-      ALTER TABLE analytics_tasks ADD COLUMN IF NOT EXISTS task_action text NOT NULL DEFAULT 'unknown';
-      ALTER TABLE analytics_tasks ADD COLUMN IF NOT EXISTS task_subject text NOT NULL DEFAULT 'unknown';
-      ALTER TABLE analytics_tasks ADD COLUMN IF NOT EXISTS task_activities text[] NOT NULL DEFAULT '{}';
       CREATE INDEX IF NOT EXISTS analytics_tasks_owner_session ON analytics_tasks(owner_id,session_id,updated_at);
       CREATE TABLE IF NOT EXISTS analytics_turns(
         turn_id uuid PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
@@ -246,24 +243,15 @@ export function createConversationAnalytics(options: {
         current: m.turn_id === turnId,
       }))
       .filter((m) => m.text);
-    const knownTasks = known.rows.map((task) => {
-      const action = taskAction.safeParse(task.task_action).data ?? 'unknown';
-      const subject = taskSubject.safeParse(task.task_subject).data ?? 'unknown';
-      return {
-        ...task,
-        task_type: taskType.safeParse(task.task_type).data ?? 'unknown',
-        task_action: action,
-        task_subject: subject,
-        task_activities: [
-          ...new Set([
-            `${action}:${subject}`,
-            ...(task.task_activities as string[]).filter(
-              (activity) => taskActivities.safeParse([activity]).success,
-            ),
-          ]),
-        ].slice(0, 8),
-      };
-    });
+    const knownTasks = known.rows.filter(
+      (task) =>
+        taskType.safeParse(task.task_type).success &&
+        taskAction.safeParse(task.task_action).success &&
+        taskSubject.safeParse(task.task_subject).success &&
+        taskActivities.safeParse(task.task_activities).success &&
+        taskOutcome.safeParse(task.outcome).success &&
+        task.task_activities.includes(`${task.task_action}:${task.task_subject}`),
+    );
     if (!current() || !(await analytics.permitted(ownerId)) || !current()) return;
     let result: z.infer<typeof conversationAnalyticsClassification>;
     try {
@@ -310,9 +298,7 @@ export function createConversationAnalytics(options: {
       new Set(referenced).size !== referenced.length ||
       result.tasks.some((task) =>
         task.task_id
-          ? !existing.has(task.task_id) ||
-            (task.request_message_id !== null &&
-              task.request_message_id !== existing.get(task.task_id)?.request_message_id)
+          ? !existing.has(task.task_id) || task.request_message_id !== null
           : turn.source === 'schedule'
             ? task.request_message_id !== null
             : !task.request_message_id || !currentUsers.has(task.request_message_id),
@@ -475,10 +461,14 @@ export function createConversationAnalytics(options: {
       finished = true;
       if (consent.signal.aborted || closing.signal.aborted) return;
       if (queued >= 32) {
-        const pending = analyze(turnId, consent, runId, true)
-          .catch(() => {})
-          .finally(() => dropped.delete(pending));
-        dropped.add(pending);
+        if (!overflowReported && !overflow) {
+          overflowReported = true;
+          overflow = analyze(turnId, consent, runId, true)
+            .catch(() => {})
+            .finally(() => {
+              overflow = undefined;
+            });
+        }
         return;
       }
       queued++;
@@ -487,6 +477,7 @@ export function createConversationAnalytics(options: {
         .catch(() => {})
         .finally(() => {
           queued--;
+          overflowReported = false;
         });
     };
   }
@@ -505,13 +496,13 @@ export function createConversationAnalytics(options: {
     },
     async drain() {
       await serial;
-      await Promise.all(dropped);
+      await overflow;
     },
     async close() {
       unsubscribe();
       closing.abort();
       await serial;
-      await Promise.all(dropped);
+      await overflow;
       await consentWrites;
     },
   };

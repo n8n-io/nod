@@ -1294,6 +1294,7 @@ test(
       f.service.execute(owner, 'GITHUB_LIST_REPOSITORIES', {
         connectionId: connected.connectionId,
       }),
+      { statusCode: 502 },
     );
     assert.equal(captured.at(-1)?.properties.app, 'github');
     assert.equal(captured.at(-1)?.properties.failure_reason, 'permission');
@@ -1307,6 +1308,10 @@ test(
     assert.equal(JSON.stringify(captured).includes(String(connected.connectionId)), false);
     assert.equal(JSON.stringify(captured).includes('current-session'), false);
     assert.equal(JSON.stringify(captured).includes('consent.example.com'), false);
+    const prepared = await f.service.prepare(owner, 'GITHUB_LIST_REPOSITORIES', {
+      connectionId: connected.connectionId,
+    });
+    const executions = f.executed.length;
     await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
       connected.connectionId,
     ]);
@@ -1315,10 +1320,50 @@ test(
       f.service.execute(owner, 'GITHUB_LIST_REPOSITORIES', {
         connectionId: connected.connectionId,
       }),
+      { statusCode: 404 },
     );
     assert.equal(captured.length, 1);
     assert.equal(captured[0].properties.operation_phase, 'preparation');
     assert.equal(captured[0].properties.failure_reason, 'invalid_request');
+    captured.length = 0;
+    await assert.rejects(f.service.executeApproved(owner, 'GITHUB_LIST_REPOSITORIES', prepared), {
+      statusCode: 404,
+      message: 'This connected account is unavailable.',
+    });
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].properties.app, 'github');
+    assert.equal(captured[0].properties.outcome, 'failed');
+    assert.equal(captured[0].properties.failure_reason, 'invalid_request');
+    await assert.rejects(f.service.executeApproved(owner, 'GITHUB_LIST_REPOSITORIES', {}), {
+      statusCode: 409,
+      message: 'Choose a connected account for this action.',
+    });
+    assert.equal(captured.length, 1);
+    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
+      connected.connectionId,
+    ]);
+    f.provider.createSession = async (...args) => {
+      const session = await createSession(...args);
+      await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
+        connected.connectionId,
+      ]);
+      return session;
+    };
+    captured.length = 0;
+    await assert.rejects(f.service.executeApproved(owner, 'GITHUB_LIST_REPOSITORIES', prepared), {
+      statusCode: 404,
+      message: 'This connected account is unavailable.',
+    });
+    assert.equal(f.executed.length, executions);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].properties.app, 'github');
+    assert.equal(captured[0].properties.failure_reason, 'invalid_request');
+    assert.equal(JSON.stringify(captured).includes(String(connected.accountId)), false);
+    assert.equal(JSON.stringify(captured).includes(String(connected.connectionId)), false);
+    assert.equal(
+      JSON.stringify(captured).includes('This connected account is unavailable.'),
+      false,
+    );
   },
 );
 
@@ -6419,6 +6464,7 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
         { app: 'gmail', publicApp: true, connection_method: 'managed_app' },
         () => session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'),
       ),
+      (error) => error === failure,
     );
   }
   assert.deepEqual(

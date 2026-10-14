@@ -63,11 +63,10 @@ export function createAccountSession(options: {
       await accountUpdates.get(owner)?.catch(() => {});
       const version = accountVersions.get(owner);
       const account = await options.accounts.read(owner);
-      const consent = await options.accounts.readConsent?.(owner);
+      const consent = await options.accounts.readConsent(owner);
       if (accountVersions.get(owner) !== version || accountUpdates.has(owner)) continue;
-      const enabled = consent?.enabled ?? account.usageData;
-      options.analytics?.setUsageData(owner, enabled, consent?.revision);
-      return { ...account, usageData: enabled };
+      options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+      return { ...account, usageData: consent.enabled };
     }
   }
   async function updateAccount(session: AuthenticatedSession, input: AccountUpdate) {
@@ -79,11 +78,10 @@ export function createAccountSession(options: {
       .catch(() => {})
       .then(async () => {
         const account = await options.accounts.update(owner, input);
-        const consent = await options.accounts.readConsent?.(owner);
-        const enabled = consent?.enabled ?? account.usageData;
+        const consent = await options.accounts.readConsent(owner);
         if (accountVersions.get(owner) === version)
-          options.analytics?.setUsageData(owner, enabled, consent?.revision);
-        return { ...account, usageData: enabled };
+          options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+        return { ...account, usageData: consent.enabled };
       });
     accountUpdates.set(owner, update);
     const account = await update.finally(() => {

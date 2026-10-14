@@ -111,6 +111,7 @@ describe('gateway', () => {
       developerIds: new Set([users[0]]),
       sessionCheckIntervalMs: 10,
       accounts: {
+        readConsent: async () => ({ enabled: false, revision: '0' }),
         async read() {
           return {
             theme: 'system',

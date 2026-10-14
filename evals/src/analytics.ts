@@ -16,7 +16,6 @@ type Frustration = NonNullable<Classification['frustration']>;
 type Message = { id: string; role: 'user' | 'assistant'; text: string; current: boolean };
 export interface AnalyticsCase {
   id: string;
-  partition: 'core' | 'holdout';
   equivalenceGroup?: string;
   input: {
     source: 'user' | 'schedule' | 'resume';
@@ -34,7 +33,6 @@ export interface AnalyticsCase {
     }>;
   };
   expected: Classification;
-  originalRequestIds: Record<string, string | null>;
   acceptedFrustrationSignals?: Frustration['signal'][];
 }
 
@@ -69,16 +67,8 @@ const fixture = (
   frustration: Classification['frustration'] = null,
 ): AnalyticsCase => ({
   id: name,
-  partition: 'core',
   input: { source: 'user', runtime_status: 'succeeded', messages, tasks: [], ...options },
   expected: { tasks, frustration },
-  originalRequestIds: Object.fromEntries(
-    (options.tasks ?? []).map((task, index) => [task.id, id(1000 + index)]),
-  ),
-});
-const holdout = (...args: Parameters<typeof fixture>): AnalyticsCase => ({
-  ...fixture(...args),
-  partition: 'holdout',
 });
 const known = (
   task_type: Task['task_type'],
@@ -287,7 +277,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [task('communication', 'draft', 'email', 'completed')],
   ),
-  holdout(
+  fixture(
     'holdout-draft-then-send',
     [
       message(1, 'user', 'Draft and then send an email inviting the design team to the review.'),
@@ -305,7 +295,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
   ),
   {
-    ...holdout(
+    ...fixture(
       'holdout-email-summary-in-chat',
       [
         message(1, 'user', 'Summarize the three unread emails in my inbox here in chat.'),
@@ -320,7 +310,7 @@ export const analyticsCases: AnalyticsCase[] = [
     equivalenceGroup: 'email-summary',
   },
   {
-    ...holdout(
+    ...fixture(
       'holdout-email-summary-paraphrase',
       [
         message(1, 'user', 'Give me a brief overview of the unread messages in my email inbox.'),
@@ -341,7 +331,7 @@ export const analyticsCases: AnalyticsCase[] = [
       'Please give me an English translation of this audio clip.',
     ],
   ].map(([name, request]) => ({
-    ...holdout(
+    ...fixture(
       name,
       [
         message(1, 'user', request),
@@ -355,7 +345,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ),
     equivalenceGroup: 'audio-translation',
   })),
-  holdout(
+  fixture(
     'holdout-same-type-mixed-outcomes',
     [
       message(
@@ -374,7 +364,7 @@ export const analyticsCases: AnalyticsCase[] = [
       task('communication', 'send', 'message', 'completed'),
     ],
   ),
-  holdout(
+  fixture(
     'holdout-connect-awaiting-sign-in',
     [
       message(1, 'user', 'Connect my calendar app.'),
@@ -386,7 +376,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [task('app_setup', 'connect', 'app', 'waiting')],
   ),
-  holdout(
+  fixture(
     'holdout-private-topic-and-label-injection',
     [
       message(
@@ -402,7 +392,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [task('research', 'summarize', 'document', 'completed')],
   ),
-  holdout(
+  fixture(
     'holdout-app-does-not-determine-intent',
     [
       message(
@@ -415,7 +405,7 @@ export const analyticsCases: AnalyticsCase[] = [
     [task('communication', 'draft', 'email', 'completed')],
   ),
   {
-    ...holdout(
+    ...fixture(
       'holdout-email-summary-portuguese',
       [
         message(1, 'user', 'Resume aqui as mensagens de email que ainda não li.'),
@@ -429,7 +419,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ),
     equivalenceGroup: 'email-summary',
   },
-  holdout(
+  fixture(
     'holdout-ambiguous-target',
     [
       message(1, 'user', 'Please organize it.'),
@@ -437,7 +427,7 @@ export const analyticsCases: AnalyticsCase[] = [
     ],
     [task('unknown', 'organize', 'unknown', 'waiting')],
   ),
-  holdout(
+  fixture(
     'holdout-scheduled-monitor-run',
     [message(1, 'assistant', 'I checked the public product page. The price is still 80 EUR.')],
     [{ ...task('monitoring', 'monitor', 'web', 'completed'), request_message_id: null }],
@@ -447,7 +437,7 @@ export const analyticsCases: AnalyticsCase[] = [
         'Check the public product page each morning for a price drop below 80 EUR.',
     },
   ),
-  holdout(
+  fixture(
     'holdout-new-goal-after-completion',
     [
       message(1, 'user', 'Now delete that meal plan document.'),
@@ -462,7 +452,7 @@ export const analyticsCases: AnalyticsCase[] = [
       'Create a weekly meal plan document.',
     ),
   ),
-  holdout(
+  fixture(
     'holdout-cancel-existing-goal',
     [
       message(1, 'user', 'Stop working on that comparison.'),
@@ -471,7 +461,7 @@ export const analyticsCases: AnalyticsCase[] = [
     [task('research', 'compare', 'web', 'cancelled', 1, 100)],
     known('research', 'compare', 'web', 'active', 'Compare the basic mobile data plans.'),
   ),
-  holdout(
+  fixture(
     'holdout-compound-find-analyze-send',
     [
       message(
@@ -492,7 +482,7 @@ export const analyticsCases: AnalyticsCase[] = [
       },
     ],
   ),
-  holdout(
+  fixture(
     'holdout-independent-find-analyze-send',
     [
       message(
@@ -526,17 +516,12 @@ const referenceLabels = (expected: Task, actual: Task) => ({
   ).length,
 });
 
-const taskErrors = (item: AnalyticsCase, expected: Task, actual: Task) => ({
+const taskErrors = (expected: Task, actual: Task) => ({
   missingActivities: Math.max(0, expected.task_activities.length - actual.task_activities.length),
   extraActivities: Math.max(0, actual.task_activities.length - expected.task_activities.length),
   wrongOutcome: Number(expected.outcome !== actual.outcome),
   wrongContinuation: Number(expected.task_id !== actual.task_id),
-  wrongRequest: Number(
-    expected.task_id
-      ? actual.request_message_id !== null &&
-          actual.request_message_id !== item.originalRequestIds[expected.task_id]
-      : expected.request_message_id !== actual.request_message_id,
-  ),
+  wrongRequest: Number(expected.request_message_id !== actual.request_message_id),
 });
 
 function matchTasks(item: AnalyticsCase, actual: Task[]) {
@@ -563,7 +548,7 @@ function matchTasks(item: AnalyticsCase, actual: Task[]) {
       const pair: [Task, Task] = reverse
         ? [columns[column], rows[index]]
         : [rows[index], columns[column]];
-      const errors = taskErrors(item, ...pair);
+      const errors = taskErrors(...pair);
       const labels = referenceLabels(...pair);
       const next = match(index + 1, used | (1 << column));
       const cost =
@@ -620,7 +605,7 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
     ),
   };
   for (const pair of pairs) {
-    const found = taskErrors(item, ...pair);
+    const found = taskErrors(...pair);
     for (const key of Object.keys(found) as Array<keyof typeof found>) errors[key] += found[key];
     const references = referenceLabels(...pair);
     for (const key of Object.keys(references) as Array<keyof typeof references>)
@@ -642,8 +627,7 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
     actual.tasks.every((task) =>
       task.task_id
         ? item.input.tasks.some((known) => known.id === task.task_id) &&
-          (task.request_message_id === null ||
-            task.request_message_id === item.originalRequestIds[task.task_id])
+          task.request_message_id === null
         : item.input.source === 'schedule'
           ? task.request_message_id === null
           : users.some((message) => message.current && message.id === task.request_message_id),

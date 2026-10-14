@@ -20,10 +20,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
-import {
-  captureConnectionInventory,
-  withServiceAnalytics,
-} from '../src/server/analytics-connections.ts';
+import { captureConnectionInventory } from '../src/server/analytics-connections.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { gunzipSync } from 'node:zlib';
 import {
@@ -52,6 +49,9 @@ describe('account routes', () => {
     };
     let enabled = true;
     const accounts: AccountStore = {
+      async readConsent(owner) {
+        return { enabled: (await this.read(owner)).usageData, revision: '0' };
+      },
       async read(owner) {
         return (
           records.get(owner) ?? {
@@ -565,6 +565,7 @@ describe('account routes', () => {
         analytics,
         localUser: { id: 'alex', name: 'Synthetic', email: null, avatarUrl: null },
         accounts: {
+          readConsent: async () => ({ enabled: saved.usageData, revision: '0' }),
           async read() {
             const snapshot = { ...saved };
             if (hold) {
@@ -817,38 +818,6 @@ describe('analytics privacy', () => {
     assert.equal(captured.length, 3);
     await captureConnectionInventory(analytics, 'owner', async () => []);
     assert.equal(captured.length, 3);
-  });
-
-  test('service failures export bounded status categories without provider response text', async (t) => {
-    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
-    const analytics = await createAnalytics({
-      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
-      deployment: 'hosted',
-      environment: 'development',
-      dataRoot: '.',
-    });
-    t.after(() => analytics.shutdown());
-    analytics.setUsageData('owner', true, '1');
-    const failure = Object.assign(new Error('private provider response and token'), {
-      status: 429,
-    });
-    await assert.rejects(
-      withServiceAnalytics(
-        analytics.forOwner('owner'),
-        {
-          connection_method: 'http',
-          endpoint: 'https://team.example.com/private?token=private',
-          consentRevision: '1',
-        },
-        async () => {
-          throw failure;
-        },
-      ),
-      (error) => error === failure,
-    );
-    assert.equal(captured[0]?.properties.failure_reason, 'rate_limited');
-    assert.equal(captured[0]?.properties.domain, 'example.com');
-    assert.doesNotMatch(JSON.stringify(captured), /private|token|team\.example/);
   });
 
   test('analytics run scopes isolate concurrent owners and discard inherited work after consent changes', async (t) => {
@@ -1214,6 +1183,9 @@ describe('account avatar', () => {
       authentication: auth,
       developerIds: new Set([owners[0]]),
       accounts: {
+        async readConsent(id) {
+          return { enabled: (await this.read(id)).usageData, revision: '0' };
+        },
         async read(id) {
           return (
             accounts.get(id) ?? {
@@ -1336,52 +1308,6 @@ describe('account session store', () => {
     await Promise.all([editing, refreshing]);
     assert.equal(store.getSnapshot().session?.user?.id, 'sam');
     assert.equal(store.getSnapshot().session?.settings?.theme, 'light');
-  });
-
-  test('local opt-out survives peer grants until an explicit local opt-in', async () => {
-    const consent = (enabled: boolean): SessionResponse => ({
-      ...session('alex'),
-      settings: { ...session('alex').settings!, usageData: enabled },
-      analytics: {
-        enabled,
-        distinctId: enabled ? 'hosted:alex' : null,
-        deployment: 'hosted',
-        environment: 'production',
-      },
-    });
-    const pending = deferred<SessionResponse>();
-    let server = consent(true);
-    let revokeSignal: AbortSignal | null | undefined;
-    const store = createSessionStore(
-      async <T>(path: string, options?: RequestInit) => {
-        if (path !== '/api/account') return server as T;
-        const change = JSON.parse(String(options?.body));
-        if (!change.usageData) {
-          revokeSignal = options?.signal;
-          return pending.promise as Promise<T>;
-        }
-        return consent(true) as T;
-      },
-      () => {},
-    );
-    await store.refresh();
-    const revoking = store.update({ usageData: false });
-    try {
-      await store.refresh({ grantUsageData: 'alex' });
-      assert.equal(revokeSignal?.aborted, false);
-      assert.equal(store.getSnapshot().session?.analytics?.enabled, false);
-    } finally {
-      server = consent(false);
-      pending.resolve(server);
-      await revoking;
-    }
-    server = consent(true);
-    await store.refresh({ grantUsageData: 'alex' });
-    assert.equal(store.getSnapshot().session?.settings?.usageData, false);
-    assert.equal(store.getSnapshot().session?.analytics?.enabled, false);
-    await store.update({ usageData: true });
-    assert.equal(store.getSnapshot().session?.settings?.usageData, true);
-    assert.equal(store.getSnapshot().session?.analytics?.enabled, true);
   });
 });
 

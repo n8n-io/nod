@@ -11,7 +11,7 @@ export type ServiceFailureReason = NonNullable<
 export type AnalyticsConnection = {
   app?: string;
   publicApp?: boolean;
-  operation_phase?: 'preparation' | 'execution';
+  operation_phase?: 'preparation';
   connection_method: ConnectionProperties['connection_method'];
   endpoint?: string;
   consentRevision?: string;

@@ -1122,6 +1122,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         signal,
       );
     } catch (error) {
+      if (error instanceof IntegrationError) throw error;
       throw new IntegrationError(failure('The app request failed', error), 502);
     }
   }
