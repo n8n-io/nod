@@ -65,12 +65,13 @@ export function BrowserHandoff({
       while (pending.current.length) {
         const inputs: BrowserHandoffInput[] = [];
         let bytes = 0;
-        while (pending.current.length) {
-          const size = encoder.encode(JSON.stringify(pending.current[0])).length;
+        for (const input of pending.current) {
+          const size = encoder.encode(JSON.stringify(input)).length;
           if (inputs.length && bytes + size > batchBytes) break;
-          inputs.push(pending.current.shift()!);
+          inputs.push(input);
           bytes += size;
         }
+        pending.current.splice(0, inputs.length);
         try {
           await post('/api/browser-handoff', { turnId, inputs });
           setError('');

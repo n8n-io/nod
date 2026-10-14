@@ -3775,7 +3775,16 @@ test('a long paste in a browser handoff arrives whole in requests under the body
     await act(async () => {
       view.element('.browser-handoff-screen').dispatchEvent(paste);
     });
-    await act(async () => delay(100));
+    for (
+      let attempt = 0;
+      attempt < 100 &&
+      bodies
+        .flatMap((body) => JSON.parse(body).inputs)
+        .map((input: { text: string }) => input.text)
+        .join('') !== text;
+      attempt++
+    )
+      await act(async () => delay(10));
     assert.ok(bodies.length > 1);
     assert.ok(bodies.every((body) => Buffer.byteLength(body) < 256 * 1024));
     assert.equal(
