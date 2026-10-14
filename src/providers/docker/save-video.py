@@ -90,17 +90,15 @@ def normalize(path, full):
         and (not audio or audio["codec_name"] == "aac")
     )
     note = None
-    if compatible and (full or os.path.getsize(path) <= BUDGET):
-        ffmpeg(path, temporary, ["-c", "copy"])
-    elif full:
-        ffmpeg(
-            path,
-            temporary,
-            [
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ac", "2",
-            ],
-        )
+    if full or (compatible and os.path.getsize(path) <= BUDGET):
+        try:
+            ffmpeg(path, temporary, ["-c", "copy"])
+        except subprocess.CalledProcessError:
+            if not full:
+                raise
+            if os.path.exists(temporary):
+                os.remove(temporary)
+            return path, video, duration, None
     else:
         for factor in (1, 0.8, 0.6):
             side = min(short_side(kbps * factor), smallest)
