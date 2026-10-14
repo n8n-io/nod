@@ -36,16 +36,24 @@ export const MessageText = memo(function MessageText({
   connectedAppIds,
   onHandoffDone,
   handoffPaused,
+  handoffSession,
 }: {
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
   onHandoffDone?: () => Promise<void>;
   handoffPaused?: boolean;
+  handoffSession?: string;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
   const actions = messageSetupLinks(text, origin);
+  const handoff = actions.some(
+    (action) =>
+      action.setup === 'browser' &&
+      (new URL(action.href, origin).searchParams.get('session') ?? handoffSession) ===
+        handoffSession,
+  );
   const connected = (href: string) =>
     href.startsWith('/apps?connect=') &&
     Boolean(connectedAppIds?.has(href.slice('/apps?connect='.length)));
@@ -100,8 +108,8 @@ export const MessageText = memo(function MessageText({
             (action) => action.setup !== 'browser' && !connected(action.href),
           )}
         />
-        {onHandoffDone && actions.some((action) => action.setup === 'browser') && (
-          <BrowserHandoff onDone={onHandoffDone} paused={handoffPaused} />
+        {onHandoffDone && handoff && (
+          <BrowserHandoff onDone={onHandoffDone} paused={handoffPaused} session={handoffSession} />
         )}
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
@@ -125,6 +133,7 @@ export function MessageBubble({
   onReply,
   onHandoffDone,
   handoffPaused,
+  handoffSession,
 }: {
   message: Message;
   connectedAppIds?: ReadonlySet<string>;
@@ -133,6 +142,7 @@ export function MessageBubble({
   onReply?(): void;
   onHandoffDone?(): Promise<void>;
   handoffPaused?: boolean;
+  handoffSession?: string;
 }) {
   const dateFormat = useDateFormat();
   const smallCost =
@@ -385,6 +395,7 @@ export function MessageBubble({
                 connectedAppIds={connectedAppIds}
                 onHandoffDone={streaming ? undefined : onHandoffDone}
                 handoffPaused={handoffPaused}
+                handoffSession={handoffSession}
               />
             )}
           </div>

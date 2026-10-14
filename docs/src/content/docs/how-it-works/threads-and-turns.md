@@ -219,7 +219,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 A session opens its browser on its first browser call, so a session that never browses never starts one. No session waits for another session's browser.
 
-- The chat's browser is the one Otto hands to you, and the browser page shows it.
+- The chat or a task hands its own browser to you while its latest turn waits on your answer. A task's **Open browser** link names the task, and **Done** replies to the task's question, so it resumes the task, not the chat. The browser page shows the chat's browser, or a task's with `?session=<taskId>`, and its **Stop** stops only that session.
 - A background session's browser is deleted when the session ends without waiting, also when its turn fails before it starts or Otto restarts during it, or when **Stop** or reset cancels it. Otto can't tell whether a turn that a restart ended had browsed, so deleting its browser can start the browser container once when Otto starts.
 - A task that opens again after it closed gets a new browser. Its saved logins and saved browser sessions still work, but its old pages, cookies and downloads are gone. A browser call that started before the deletion is refused, so it can't reopen the old browser or take a saved browser session.
 - The browser container keeps at most four session browsers live at once: enough for the chat and three other sessions. Subagent browsers don't count toward the four. They have two slots of their own, so up to six browsers can be live.

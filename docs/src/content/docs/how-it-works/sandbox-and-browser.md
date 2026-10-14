@@ -102,7 +102,7 @@ Known secret values (passwords, codes, card numbers and security codes) are remo
 
 ## Browser handoff
 
-When Pi needs you in the browser, it asks with an **Open browser** link. Otto web shows the live tab in chat.
+When Pi needs you in the browser, it asks with an **Open browser** link. Otto web shows the live tab in chat, under the question. The chat and each task hand over their own browser.
 
 ```mermaid
 sequenceDiagram
@@ -113,14 +113,17 @@ sequenceDiagram
   Pi->>You: Question with an Open browser link
   Browser-->>You: Live JPEG frames
   You->>Server: Clicks, typing and scrolling
-  Server->>Browser: Forwarded while the chat turn waits
-  You->>Server: Done
-  Note over Pi: Next turn takes a fresh snapshot
+  Server->>Browser: Forwarded while the session that asked waits
+  You->>Server: Done, as a reply to a task's question
+  Note over Pi: The session that asked takes a fresh snapshot
 ```
 
-- The handoff shows the chat's browser. Input is forwarded only while the latest chat turn waits on a question. Background sessions use their own browsers, so they never take it.
+- In a task, the server writes the task into the link as `/browser?session=<taskId>`. In the chat, the link stays `/browser`. Otto web hands over the browser of the session that sent the question. When a link names another session, it shows no browser.
+- The view, screen, stream, input and navigate routes take that session, and the chat is the default. The server checks that the session is the chat or a task of your current thread, then forwards input only while that session's latest turn waits on a question and nothing else is queued for it. Schedule and event runs use their own browsers and never take the chat's.
+- **Done** sends "Done, I finished in the browser." For a task, it's a reply to the task's question, so it goes to that task and the task carries on. The chat isn't touched.
 - One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
-- Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
+- Frames pause during credential entry in that session. Passwords you type in the handoff join the known secrets.
+- The developer **Browser** page shows the chat's browser, or a task's with `?session=<taskId>`. Its **Stop** stops only that session: the chat, or that one task. Your clicks and typing in a handoff count as browser activity, so a paused view on the page tries again after you change the page.
 - Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.
 
 :::caution[Limits]

@@ -227,6 +227,7 @@ export interface MessageHistoryPage {
 }
 export interface CurrentBrowser {
   threadId: string;
+  sessionId: string;
   title: string;
   status: string;
   lastActivityAt: string;

@@ -4,7 +4,7 @@ import { api, errorMessage } from '../lib/api';
 
 type BrowserState = { currentBrowser: CurrentBrowser | null };
 
-export function useBrowserState() {
+export function useBrowserState(session?: string) {
   const [data, setData] = useState<BrowserState | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -12,7 +12,10 @@ export function useBrowserState() {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const next = await api<BrowserState>('/api/browser', { signal: controller.signal });
+        const next = await api<BrowserState>(
+          `/api/browser${session ? `?session=${encodeURIComponent(session)}` : ''}`,
+          { signal: controller.signal },
+        );
         if (!controller.signal.aborted) {
           setData(next);
           setError('');
@@ -31,10 +34,10 @@ export function useBrowserState() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, []);
-  function browserStopped(threadId: string) {
+  }, [session]);
+  function browserStopped(sessionId: string) {
     setData((current) =>
-      current?.currentBrowser?.threadId === threadId
+      current?.currentBrowser?.sessionId === sessionId
         ? { currentBrowser: { ...current.currentBrowser, status: 'cancelled' } }
         : current,
     );

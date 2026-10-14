@@ -34,6 +34,7 @@ To answer a task's confirmation, reply yes or no to the confirmation or to any o
 - A message you send without a reply never cancels a task's question.
 - A task's confirmation stays open for 24 hours. A yes after that gets a short reply that the question expired, and nothing runs. Reply to the task again to pick it up.
 - When a task finishes or stops, its open confirmations close without running.
+- When a task needs you on a website, its question has an **Open browser** link to that task's own browser. Select **Done** when you're finished. Otto sends it as a reply to the question, so the task carries on. See [Take over the browser](/use/browser/#take-over-the-browser).
 
 ## When a task waits for someone else
 

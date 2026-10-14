@@ -475,47 +475,73 @@ export async function createApp(dependencies: AppDependencies = {}) {
     reply.header('Content-Length', file.size);
     return reply.send(await artifacts.readArtifact(file.id));
   });
-  async function readCurrentBrowser() {
+  const handoffActivity = new Map<string, Date>();
+  async function browserSession(query: unknown) {
+    const { session } = z.object({ session: z.uuid().optional() }).parse(query);
     const thread = await activeThread(pool);
+    const sessionId = session ?? thread.id;
+    if (
+      sessionId !== thread.id &&
+      !(
+        await pool.query('SELECT 1 FROM tasks WHERE id=$1 AND owner_id=$2 AND thread_id=$3', [
+          sessionId,
+          ownerId,
+          thread.id,
+        ])
+      ).rowCount
+    )
+      throw Object.assign(new Error('Task not found.'), { statusCode: 404 });
+    return { threadId: thread.id, sessionId };
+  }
+  type BrowserSession = Awaited<ReturnType<typeof browserSession>>;
+  async function readCurrentBrowser({ threadId, sessionId }: BrowserSession) {
     const latest = await pool.query(
       `SELECT left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
        LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND summary='browser' ORDER BY created_at DESC LIMIT 1) e ON true
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND e.created_at IS NOT NULL
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$3 AND e.created_at IS NOT NULL
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
-      [ownerId, thread.id],
+      [ownerId, threadId, sessionId],
     );
     const row = latest.rows[0];
     if (!row) return undefined;
+    const handedOver = handoffActivity.get(sessionId);
     return {
-      threadId: thread.id,
+      threadId,
+      sessionId,
       title: row.title,
       status: row.status,
-      lastActivityAt: row.lastActivityAt,
+      lastActivityAt:
+        handedOver && handedOver > row.lastActivityAt ? handedOver : row.lastActivityAt,
     };
   }
-  app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));
-  async function chatWaits(threadId: string, reason: 'credentials' | 'question') {
+  app.get('/api/browser', async (request) => ({
+    currentBrowser: (await readCurrentBrowser(await browserSession(request.query))) ?? null,
+  }));
+  async function sessionWaits(
+    { threadId, sessionId }: BrowserSession,
+    reason: 'credentials' | 'question',
+  ) {
     const queued = `NOT EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=u.owner_id
       AND q.session_id=u.session_id AND q.status='queued')`;
     const waiting = await pool.query(
-      `SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2
+      `SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$3
          AND ${waitingTurnSql('u', reason)}${reason === 'question' ? ` AND ${queued}` : ''} LIMIT 1`,
-      [ownerId, threadId],
+      [ownerId, threadId, sessionId],
     );
     return Boolean(waiting.rowCount);
   }
-  const credentialEntryOpen = (threadId: string) => chatWaits(threadId, 'credentials');
-  const handoffOpen = (threadId: string) => chatWaits(threadId, 'question');
+  const credentialEntryOpen = (session: BrowserSession) => sessionWaits(session, 'credentials');
+  const handoffOpen = (session: BrowserSession) => sessionWaits(session, 'question');
   const handoffClosed = 'The browser opens here when Otto hands it to you.';
-  async function readBrowserScreen(reply: FastifyReply) {
-    const thread = await activeThread(pool);
-    const blocked = () => credentialEntryOpen(thread.id);
+  async function readBrowserScreen(query: unknown, reply: FastifyReply) {
+    const session = await browserSession(query);
+    const blocked = () => credentialEntryOpen(session);
     const paused = 'Browser observations are paused during credential entry.';
     if (await blocked()) return reply.code(423).send({ error: paused });
     let screen: Buffer | null | undefined;
     try {
-      screen = await dependencies.computer?.screenshot(thread.id);
+      screen = await dependencies.computer?.screenshot(session.sessionId);
     } catch (error) {
       const message =
         error instanceof BrowserActionError ? browserErrorMessage(error.code) : undefined;
@@ -524,30 +550,30 @@ export async function createApp(dependencies: AppDependencies = {}) {
       throw error;
     }
     const current = await activeThread(pool);
-    if (current.id !== thread.id)
+    if (current.id !== session.threadId)
       return reply.code(409).send({ error: 'The browser session changed. Request a new view.' });
     if (await blocked()) return reply.code(423).send({ error: paused });
     if (!screen) return reply.code(404).send({ error: 'There is no browser screen yet.' });
-    const screenStatus = dependencies.computer?.screenStatus?.(thread.id);
+    const screenStatus = dependencies.computer?.screenStatus?.(session.sessionId);
     reply.header('X-Screen-State', screenStatus?.state ?? 'live');
     if (screenStatus?.capturedAt) reply.header('X-Screen-Captured-At', screenStatus.capturedAt);
     return reply.type('image/png').send(screen);
   }
-  app.get('/api/browser/screen', (_request, reply) => readBrowserScreen(reply));
-  app.get('/api/browser-handoff/stream', async (_request, reply) => {
+  app.get('/api/browser/screen', (request, reply) => readBrowserScreen(request.query, reply));
+  app.get('/api/browser-handoff/stream', async (request, reply) => {
     const view = dependencies.computer?.view;
     if (!view) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const thread = await activeThread(pool);
-    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const session = await browserSession(request.query);
+    if (!(await handoffOpen(session))) return reply.code(423).send({ error: handoffClosed });
     const controller = new AbortController();
     reply.raw.on('close', () => controller.abort());
-    const open = () => view(thread.id, controller.signal)[Symbol.asyncIterator]();
+    const open = () => view(session.sessionId, controller.signal)[Symbol.asyncIterator]();
     let frames = open();
     let closed = false;
     let timedOut = false;
     const check = setInterval(
       () =>
-        void handoffOpen(thread.id).then(
+        void handoffOpen(session).then(
           (open) => {
             if (open) return;
             closed = true;
@@ -586,7 +612,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
             ? 'The browser view did not start. Try opening it again.'
             : "Otto's browser is not showing a page.",
         });
-      if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+      if (!(await handoffOpen(session))) return reply.code(423).send({ error: handoffClosed });
       if (controller.signal.aborted) return;
       reply.hijack();
       streams.add(reply.raw);
@@ -627,15 +653,17 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reply.code(400).send({ error: 'Send pointer, wheel, key or text input.' });
     const control = dependencies.computer?.control;
     if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const thread = await activeThread(pool);
-    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const session = await browserSession(request.query);
+    if (!(await handoffOpen(session))) return reply.code(423).send({ error: handoffClosed });
     try {
-      for (const input of body.data.inputs) await control(thread.id, input);
+      for (const input of body.data.inputs) await control(session.sessionId, input);
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply
         .code(409)
         .send({ error: browserErrorMessage(code) ?? 'The browser did not take that input.' });
+    } finally {
+      handoffActivity.set(session.sessionId, new Date());
     }
     return { ok: true };
   });
@@ -647,15 +675,17 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!body.success) return reply.code(400).send({ error: 'Choose back or reload.' });
     const act = dependencies.computer?.act;
     if (!act) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const thread = await activeThread(pool);
-    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const session = await browserSession(request.query);
+    if (!(await handoffOpen(session))) return reply.code(423).send({ error: handoffClosed });
     try {
-      await act(thread.id, { action: body.data.action });
+      await act(session.sessionId, { action: body.data.action });
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply
         .code(409)
         .send({ error: browserErrorMessage(code) ?? 'The page did not finish loading.' });
+    } finally {
+      handoffActivity.set(session.sessionId, new Date());
     }
     return { ok: true };
   });

@@ -46,9 +46,10 @@ const parallelTools = new Set([
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
 const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
+const browserLink = /\]\(\/browser(?:\?session=[^)\s]*)?\)/g;
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
-  /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
+  String((params as { question?: unknown } | null)?.question).search(browserLink) >= 0;
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const delimitedTools = new Set([
   'apps',
@@ -601,6 +602,14 @@ export function createAgentRuntime(dependencies: {
                     );
                   await computer.currentPage(turn.browserId).catch(() => {
                     throw new Error('Open the page in your browser before handing it to the user.');
+                  });
+                  const { question } = params as { question: string };
+                  return execute({
+                    ...params,
+                    question: question.replace(
+                      browserLink,
+                      context.task ? `](/browser?session=${sessionId})` : '](/browser)',
+                    ),
                   });
                 }
                 return execute(params);

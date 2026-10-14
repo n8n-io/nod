@@ -118,6 +118,7 @@ test(
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
+    const viewed: string[] = [];
     const app = await createApp({
       configuration: () => configuration(),
       runtime: {
@@ -141,7 +142,8 @@ test(
           controls.push([id, input]);
           return { text: 'Synthetic page', url: 'https://example.test/' };
         },
-        view: async function* (_id, signal) {
+        view: async function* (id, signal) {
+          viewed.push(id);
           if (!pageShown) return;
           if (onView) {
             yield* onView(signal);
@@ -177,6 +179,7 @@ test(
       assert.deepEqual(metadata.json(), {
         currentBrowser: {
           threadId: thread.id,
+          sessionId: thread.id,
           title: 'Synthetic browser',
           status: 'running',
           lastActivityAt: capturedAt,
@@ -267,10 +270,11 @@ test(
       const frames: Buffer[] = [];
       const post = (url: string, payload: object) =>
         app.inject({ method: 'POST', url, payload, headers });
-      const handoff = async (input: unknown = click) => {
+      const handoff = async (input: unknown = click, session?: string) => {
+        const scope = session ? `?session=${session}` : '';
         const controller = new AbortController();
         const stream = await app.inject({
-          url: '/api/browser-handoff/stream',
+          url: `/api/browser-handoff/stream${scope}`,
           headers,
           payloadAsStream: true,
           signal: controller.signal,
@@ -288,8 +292,8 @@ test(
         controller.abort();
         return [
           stream.statusCode,
-          (await post('/api/browser-handoff', { inputs: [input] })).statusCode,
-          (await post('/api/browser-handoff/navigate', { action: 'back' })).statusCode,
+          (await post(`/api/browser-handoff${scope}`, { inputs: [input] })).statusCode,
+          (await post(`/api/browser-handoff/navigate${scope}`, { action: 'back' })).statusCode,
         ];
       };
       assert.deepEqual(await handoff(), [423, 423, 423]);
@@ -429,6 +433,54 @@ test(
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
       assert.equal(controls.length, 6);
+
+      const { createTasks } = await import('../src/server/tasks.ts');
+      await createTasks({ pool: db.pool, ownerId }).initialize();
+      const task = async (owner: string, threadId: string, status: 'running' | 'waiting') => {
+        const id = randomUUID();
+        const turnId = randomUUID();
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,thread_id,title) VALUES($1,$2,$3,'Synthetic task')",
+          [id, owner, threadId],
+        );
+        await db.pool.query(
+          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,waiting_reason,background,session_id)
+           VALUES($1,$2,$3,'task','Synthetic task',$4,$5,true,$6)`,
+          [turnId, owner, threadId, status, status === 'waiting' ? 'question' : null, id],
+        );
+        await db.pool.query(
+          "INSERT INTO turn_events(id,turn_id,type,summary,created_at) VALUES($1,$2,'tool_start','browser',$3)",
+          [randomUUID(), turnId, capturedAt],
+        );
+        return { id, turnId };
+      };
+      const asking = await task(ownerId, next.id, 'waiting');
+      const working = await task(ownerId, next.id, 'running');
+      const foreign = await task('other', foreignThread.id, 'waiting');
+      assert.deepEqual(await handoff(click, asking.id), [200, 200, 200]);
+      assert.equal(viewed.at(-1), asking.id);
+      assert.deepEqual(controls.slice(6), [
+        [asking.id, click],
+        [asking.id, { action: 'back' }],
+      ]);
+      assert.deepEqual(await handoff(click, working.id), [423, 423, 423]);
+      assert.deepEqual(await handoff(click, foreign.id), [404, 404, 404]);
+      assert.deepEqual(await handoff(), [423, 423, 423]);
+      assert.equal(controls.length, 8);
+      const taskBrowser = (await request(`/api/browser?session=${asking.id}`)).json();
+      assert.equal(taskBrowser.currentBrowser.sessionId, asking.id);
+      assert.ok(Date.parse(taskBrowser.currentBrowser.lastActivityAt) > Date.parse(capturedAt));
+      assert.equal((await request(`/api/browser?session=${foreign.id}`)).statusCode, 404);
+      assert.equal((await request(`/api/browser/screen?session=${asking.id}`)).statusCode, 200);
+      assert.equal(captures.at(-1), asking.id);
+      await db.pool.query("UPDATE turns SET waiting_reason='credentials' WHERE id=$1", [
+        asking.turnId,
+      ]);
+      const captured = captures.length;
+      assert.equal((await request(`/api/browser/screen?session=${asking.id}`)).statusCode, 423);
+      assert.equal(captures.length, captured);
+      assert.equal((await request('/api/browser/screen')).statusCode, 200);
+      assert.equal(captures.at(-1), next.id);
     } finally {
       await app.close();
       await db.pool.end();
@@ -1930,18 +1982,20 @@ test('a session that needs a saved profile a running session holds waits for it 
   }
 });
 
-test('a browser handoff needs an open page, so Pi reopens it instead of handing over nothing', async () => {
+test('a browser handoff needs an open page and its link names the task whose browser it hands over', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-page-'));
   const replies: string[] = [];
-  let failure = '';
+  const failures: string[] = [];
+  let page = false;
+  let question = '';
   const runtime = createAgentRuntime({
     agent: {
       open: async ({ tools }) => ({
         resumed: false,
         prompt: async () => {
           const ask = tools.find((tool) => tool.name === 'ask_user')!;
-          await ask.execute({ question: 'Sign in in [Open browser](/browser).' }).catch((error) => {
-            failure = String(error);
+          await ask.execute({ question }).catch((error) => {
+            failures.push(String(error));
           });
         },
         abort() {},
@@ -1951,13 +2005,14 @@ test('a browser handoff needs an open page, so Pi reopens it instead of handing 
     },
     computer: fakeComputer({
       currentPage: async () => {
-        throw new Error('Open the login page in this task browser first.');
+        if (!page) throw new Error('Open the login page in this task browser first.');
+        return { origin: 'https://example.com', url: 'https://example.com' };
       },
     }),
     workspace: fakeWorkspace(),
   });
-  try {
-    const result = await runtime.runTurn({
+  const turn = (fields: Partial<RuntimeContext> = {}) =>
+    runtime.runTurn({
       threadId: randomUUID(),
       turnId: randomUUID(),
       prompt: 'Hand me the browser.',
@@ -1976,10 +2031,28 @@ test('a browser handoff needs an open page, so Pi reopens it instead of handing 
       requestCredential: async () => ({ filled: true }),
       integration: async () => ({}),
       manage: async () => ({}),
+      ...fields,
     });
-    assert.equal(result.status, 'succeeded');
-    assert.match(failure, /Open the page in your browser before handing it to the user/);
+  try {
+    question = 'Sign in in [Open browser](/browser).';
+    assert.equal((await turn()).status, 'succeeded');
+    assert.match(failures[0], /Open the page in your browser before handing it to the user/);
     assert.deepEqual(replies, []);
+    page = true;
+    const taskId = randomUUID();
+    question = `Sign in in [Open browser](/browser?session=${randomUUID()}).`;
+    const task = await turn({
+      sessionId: taskId,
+      background: true,
+      task: { title: 'Synthetic task', request: 'Sign in.', result: async () => {} },
+    });
+    assert.equal(task.status, 'waiting_user');
+    assert.equal((await turn()).status, 'waiting_user');
+    assert.deepEqual(replies, [
+      `Sign in in [Open browser](/browser?session=${taskId}).`,
+      'Sign in in [Open browser](/browser).',
+    ]);
+    assert.equal(failures.length, 1);
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -4370,34 +4443,152 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
   }
 });
 
-test('Stop on the Browser page stops only the chat it shows, never every session', async () => {
+test('Stop on the Browser page stops only the session it shows, never every session', async () => {
   const threadId = randomUUID();
+  const taskId = randomUUID();
   const stops: unknown[] = [];
   const stopped: string[] = [];
-  const view = await handoffView(
-    async (path, options) => {
-      if (path.startsWith('/api/browser/screen')) return new Response(null, { status: 404 });
-      assert.equal(path, '/api/thread/stop');
-      stops.push(JSON.parse(String(options?.body)));
-      return Response.json({ ok: true });
-    },
+  const screen = (sessionId: string) =>
     createElement(BrowserScreen, {
       data: {
         currentBrowser: {
           threadId,
-          title: 'Synthetic chat',
+          sessionId,
+          title: 'Synthetic browser',
           status: 'running',
           lastActivityAt: '2026-10-14T12:00:00.000Z',
         },
       },
       onStopped: (id) => stopped.push(id),
-    }),
-  );
+    });
+  const view = await handoffView(async (path, options) => {
+    if (path.startsWith('/api/browser/screen')) return new Response(null, { status: 404 });
+    stops.push([path, JSON.parse(String(options?.body))]);
+    return Response.json({ ok: true });
+  }, screen(threadId));
   try {
     await view.button('Stop');
     await act(async () => delay(10));
-    assert.deepEqual(stops, [{ scope: 'chat' }]);
-    assert.deepEqual(stopped, [threadId]);
+    await view.render(screen(taskId));
+    await view.button('Stop');
+    await act(async () => delay(10));
+    assert.deepEqual(stops, [
+      ['/api/thread/stop', { scope: 'chat' }],
+      [`/api/tasks/${taskId}/stop`, {}],
+    ]);
+    assert.deepEqual(stopped, [threadId, taskId]);
+  } finally {
+    await view.close();
+  }
+});
+
+test("a task's browser handoff drives only that task's browser and Done answers the task, not the chat", async () => {
+  const state = requestedChatState();
+  const taskId = randomUUID();
+  const otherTaskId = randomUUID();
+  const turnId = randomUUID();
+  const question: Message = {
+    id: randomUUID(),
+    role: 'assistant',
+    turnId,
+    sessionId: taskId,
+    text: 'Sign in on the page in [Open browser][page].\n\n[page]: /browser',
+    attachments: [],
+    createdAt: '2026-10-01T12:01:00.000Z',
+  };
+  const otherQuestion: Message = {
+    id: randomUUID(),
+    role: 'assistant',
+    turnId: randomUUID(),
+    sessionId: otherTaskId,
+    text: `Approve it in [Open browser](http://localhost/browser?session=${state.threadId}).`,
+    attachments: [],
+    createdAt: '2026-10-01T12:01:30.000Z',
+  };
+  state.messages = [...state.messages, question, otherQuestion];
+  state.turns = [
+    {
+      id: turnId,
+      source: 'task',
+      status: 'waiting',
+      showTyping: false,
+      createdAt: '2026-10-01T12:01:00.000Z',
+    },
+    {
+      id: randomUUID(),
+      source: 'user',
+      status: 'running',
+      showTyping: true,
+      createdAt: '2026-10-01T12:02:00.000Z',
+    },
+  ];
+  state.tasks = [
+    {
+      id: taskId,
+      title: 'Synthetic task',
+      onItMessageId: null,
+      now: '',
+      result: '',
+      status: 'needs_you',
+      question: question.text,
+      waitingFor: [],
+      nextCheck: null,
+      createdAt: '2026-10-01T12:00:00.000Z',
+      updatedAt: '2026-10-01T12:01:00.000Z',
+      closedAt: null,
+    },
+    {
+      id: otherTaskId,
+      title: 'Other synthetic task',
+      onItMessageId: null,
+      now: '',
+      result: '',
+      status: 'needs_you',
+      question: otherQuestion.text,
+      waitingFor: [],
+      nextCheck: null,
+      createdAt: '2026-10-01T12:00:00.000Z',
+      updatedAt: '2026-10-01T12:01:30.000Z',
+      closedAt: null,
+    },
+  ];
+  const requests: Array<[string, Record<string, unknown>]> = [];
+  const view = await handoffView(
+    async (path, options) => {
+      if (path === '/api/apps') return Response.json([]);
+      const body = JSON.parse(String(options?.body));
+      requests.push([path, body]);
+      if (path !== '/api/messages') return Response.json({ ok: true });
+      return Response.json({
+        threadId: state.threadId,
+        turnId: randomUUID(),
+        messageId: body.clientMessageId,
+      });
+    },
+    createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
+      state,
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+    }),
+  );
+  try {
+    assert.equal(view.dom.window.document.querySelectorAll('.browser-handoff').length, 1);
+    assert.ok(view.streams.length > 0);
+    assert.ok(view.streams.every((stream) => stream.path.endsWith(`&session=${taskId}`)));
+    await view.clickImage();
+    await view.button('Done');
+    await act(async () => delay(10));
+    assert.deepEqual(
+      requests.map(([path]) => path),
+      [
+        `/api/browser-handoff?session=${taskId}`,
+        `/api/browser-handoff?session=${taskId}`,
+        '/api/messages',
+      ],
+    );
+    assert.equal(requests[2][1].replyToMessageId, question.id);
   } finally {
     await view.close();
   }

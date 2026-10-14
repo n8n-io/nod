@@ -200,7 +200,10 @@ export function Chat({
   );
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [returningHandoff, setReturningHandoff] = useState<string | null>(null);
+  const [returningHandoff, setReturningHandoff] = useState<{
+    id: string;
+    session?: string;
+  } | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -321,6 +324,15 @@ export function Chat({
         )
       : undefined
     : visibleMessages.at(-1);
+  const handoffs = new Map<string, string | undefined>();
+  if (handoffMessage?.role === 'assistant' && !working && !sending)
+    handoffs.set(handoffMessage.id, undefined);
+  for (const task of state.tasks ?? []) {
+    const question = visibleMessages.findLast((message) => message.sessionId === task.id);
+    if (task.status === 'needs_you' && question?.role === 'assistant')
+      handoffs.set(question.id, task.id);
+  }
+  if (returningHandoff) handoffs.set(returningHandoff.id, returningHandoff.session);
   const unseen = away
     ? persistedMessages.filter(
         (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
@@ -638,11 +650,11 @@ export function Chat({
       composer.current?.focus();
     });
   }, [requestedMessage, state.configuration.llmReady, resetting, welcoming]);
-  async function finishHandoff(messageId: string) {
+  async function finishHandoff(message: Message, session?: string) {
     const sentThread = threadId;
-    setReturningHandoff(messageId);
+    setReturningHandoff({ id: message.id, session });
     try {
-      const result = await send('Done, I finished in the browser.', []);
+      const result = await send('Done, I finished in the browser.', [], session ? message : null);
       if (!result.sent) throw new Error('Could not hand control back. Try Done again.');
     } finally {
       if (threadRef.current === sentThread) setReturningHandoff(null);
@@ -929,13 +941,10 @@ export function Chat({
                     connectedAppIds={connectedAppIds}
                     streaming={streamIds.has(message.streamId ?? '')}
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                    handoffSession={handoffs.get(message.id)}
                     onHandoffDone={
-                      message.id === returningHandoff ||
-                      (message.id === handoffMessage?.id &&
-                        message.role === 'assistant' &&
-                        !working &&
-                        !sending)
-                        ? () => finishHandoff(message.id)
+                      handoffs.has(message.id)
+                        ? () => finishHandoff(message, handoffs.get(message.id))
                         : undefined
                     }
                     onReply={

@@ -21,13 +21,13 @@ The browser runs on Otto's computer, separate from your own browser. It doesn't 
 
 ## Take over the browser
 
-When Otto needs you on a page, it asks in chat with an **Open browser** link.
+When Otto needs you on a page, it asks in chat with an **Open browser** link. When a [task](/use/tasks/) asks, the link is in the task's question and shows that task's browser.
 
 <Steps>
 
 1. Open Otto on the desktop or the web. The live page appears under Otto's message.
 2. Click, type and scroll on the page. Use **Back** and **Reload** if you need them, or **Enlarge browser** for a bigger view.
-3. When you're finished, select **Done**. Otto looks at the page again and carries on.
+3. When you're finished, select **Done**. Otto looks at the page again and carries on. For a task, **Done** replies to the task's question, so the task carries on and the chat stays free.
 
 </Steps>
 
@@ -48,19 +48,21 @@ Solving a challenge is up to the model. Some challenges block automated browsers
 
 ## A browser for each job
 
-The chat, every scheduled or background run and every subagent have their own browser, so none of them waits for another's browser. Each opens one only when it needs it.
+The chat, every task, every scheduled or background run and every subagent have their own browser, so none of them waits for another's browser. Each opens one only when it needs it.
 
 ```mermaid
 flowchart LR
   chat[Chat]:::accent --> b1[Chat browser]
+  task[Task] --> b4[Task browser]
   sub[Subagents] --> b2[A browser each]
   run[Scheduled run] --> b3[Its own browser]
   b1 -- Open browser --> you([You]):::accent
+  b4 -- Open browser --> you
 ```
 
 When you ask for several independent things, such as prices from three shops, Otto can split the work between subagents that browse at the same time, then combine what they found.
 
-The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends. Up to four browsers for the chat, tasks and scheduled runs work at once, plus two for subagents. A subagent never waits for the browser of the work that started it. An idle browser closes to make room and opens again when it's needed. When every open browser in its group is working or waiting for you, a new one waits up to two minutes for a slot to free.
+The chat and a task that needs you hand you their own browser. Every browser except the chat's is deleted when its work ends. Up to four browsers for the chat, tasks and scheduled runs work at once, plus two for subagents. A subagent never waits for the browser of the work that started it. An idle browser closes to make room and opens again when it's needed. When every open browser in its group is working or waiting for you, a new one waits up to two minutes for a slot to free.
 
 ## Saved routines
 

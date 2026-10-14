@@ -4,7 +4,9 @@ import { Loading, Notice } from '../components/ui';
 import { useBrowserState } from '../hooks/use-browser-state';
 
 export function BrowserWindow() {
-  const { data, error, browserStopped } = useBrowserState();
+  const { data, error, browserStopped } = useBrowserState(
+    new URLSearchParams(window.location.search).get('session') ?? undefined,
+  );
   return (
     <main className="browser-window">
       <header className="browser-window-heading">

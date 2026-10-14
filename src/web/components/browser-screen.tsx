@@ -11,9 +11,10 @@ export function BrowserScreen({
   onStopped,
 }: {
   data: { currentBrowser?: CurrentBrowser | null } | null;
-  onStopped(threadId: string): void;
+  onStopped(sessionId: string): void;
 }) {
-  const browserId = data?.currentBrowser?.threadId;
+  const browserId = data?.currentBrowser?.sessionId;
+  const chat = browserId === data?.currentBrowser?.threadId;
   const activity = useRef(data?.currentBrowser?.lastActivityAt);
   activity.current = data?.currentBrowser?.lastActivityAt;
   const [error, setError] = useState('');
@@ -57,7 +58,7 @@ export function BrowserScreen({
       const requestedActivity = activity.current ?? '';
       try {
         const response = await apiResponse(
-          `/api/browser/screen?threadId=${encodeURIComponent(browserId)}`,
+          `/api/browser/screen?session=${encodeURIComponent(browserId)}`,
           {
             cache: 'no-store',
             credentials: 'same-origin',
@@ -144,29 +145,31 @@ export function BrowserScreen({
                 Retry view
               </Button>
             )}
-            {browserId &&
-              data?.currentBrowser?.threadId === browserId &&
-              data.currentBrowser.status === 'running' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={stoppingBrowser === browserId}
-                  aria-label="Stop Otto"
-                  onClick={() => {
-                    const id = browserId;
-                    setStoppingBrowser(id);
-                    void post('/api/thread/stop', { scope: 'chat' })
-                      .then(() => {
-                        setError('');
-                        onStopped(id);
-                      })
-                      .catch((cause) => setError(errorMessage(cause)))
-                      .finally(() => setStoppingBrowser(undefined));
-                  }}
-                >
-                  Stop
-                </Button>
-              )}
+            {browserId && data?.currentBrowser?.status === 'running' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={stoppingBrowser === browserId}
+                aria-label="Stop Otto"
+                onClick={() => {
+                  const id = browserId;
+                  setStoppingBrowser(id);
+                  void (
+                    chat
+                      ? post('/api/thread/stop', { scope: 'chat' })
+                      : post(`/api/tasks/${encodeURIComponent(id)}/stop`)
+                  )
+                    .then(() => {
+                      setError('');
+                      onStopped(id);
+                    })
+                    .catch((cause) => setError(errorMessage(cause)))
+                    .finally(() => setStoppingBrowser(undefined));
+                }}
+              >
+                Stop
+              </Button>
+            )}
           </div>
           {currentScreen ? (
             <button

@@ -24,6 +24,8 @@ const navigationPaths = new Set([
 ]);
 const connectionPath =
   /^\/apps\?connect=[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const browserPath =
+  /^\/browser(?:\?session=[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?$/i;
 const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath =
@@ -59,7 +61,7 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     !navigationPaths.has(value) &&
     value !== '/vault?add=login' &&
     value !== '/vault?add=card' &&
-    value !== '/browser' &&
+    !browserPath.test(value) &&
     !connectionPath.test(value) &&
     !e2eConsentPath.test(value)
   )
@@ -83,8 +85,12 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
         return ['?add=login', '?add=card'].includes(url.search) && !url.hash
           ? { href: `/vault${url.search}`, kind: 'setup', setup: 'vault' }
           : null;
-      if (url.origin === base.origin && url.pathname === '/browser' && !url.search && !url.hash)
-        return { href: '/browser', kind: 'setup', setup: 'browser' };
+      if (
+        url.origin === base.origin &&
+        !url.hash &&
+        browserPath.test(`${url.pathname}${url.search}`)
+      )
+        return { href: `${url.pathname}${url.search}`, kind: 'setup', setup: 'browser' };
       if (
         url.origin === base.origin &&
         !url.hash &&

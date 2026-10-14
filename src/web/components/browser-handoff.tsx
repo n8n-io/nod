@@ -28,10 +28,13 @@ const clamp = (value: number) => Math.max(-2000, Math.min(2000, Math.round(value
 export function BrowserHandoff({
   onDone,
   paused = false,
+  session,
 }: {
   onDone: () => Promise<void>;
   paused?: boolean;
+  session?: string;
 }) {
+  const scope = session ? `session=${encodeURIComponent(session)}` : '';
   const screen = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const pending = useRef<BrowserHandoffInput[]>([]);
@@ -61,7 +64,7 @@ export function BrowserHandoff({
       while (pending.current.length) {
         const inputs = pending.current.splice(0, 100);
         try {
-          await post('/api/browser-handoff', { inputs });
+          await post(`/api/browser-handoff${scope && `?${scope}`}`, { inputs });
           setError('');
         } catch (reason) {
           setError(errorMessage(reason));
@@ -175,7 +178,7 @@ export function BrowserHandoff({
     setLoading(action);
     try {
       await flush();
-      await post('/api/browser-handoff/navigate', { action });
+      await post(`/api/browser-handoff/navigate${scope && `?${scope}`}`, { action });
       setError('');
     } catch (reason) {
       setError(errorMessage(reason));
@@ -218,7 +221,7 @@ export function BrowserHandoff({
     setShown(false);
     setFrame('');
     void apiStream(
-      `/api/browser-handoff/stream?view=${view.current}-${attempt}`,
+      `/api/browser-handoff/stream?view=${view.current}-${attempt}${scope && `&${scope}`}`,
       { signal: controller.signal },
       (body, signal) => {
         activeSignal = signal;
