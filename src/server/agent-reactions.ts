@@ -22,6 +22,7 @@ export function createAgentReactionService(dependencies: {
     input.signal?.throwIfAborted();
     if (input.reaction !== null && !isMessageReaction(input.reaction))
       throw new Error('Choose one emoji reaction.');
+    let removed: string | null = null;
     let result = await transaction(async (client): Promise<AgentReactionResult> => {
       let result: AgentReactionResult;
       const thread = await lockThread(client, dependencies.ownerId);
@@ -58,6 +59,7 @@ export function createAgentReactionService(dependencies: {
           await client.query('UPDATE messages SET assistant_reaction=NULL WHERE id=$1', [
             input.messageId,
           ]);
+          removed = message.assistant_reaction;
           result = { status: 'updated' };
         } else if (message.assistant_reacted_at || message.assistant_reaction) {
           result = { status: 'skipped', reason: 'already_reacted' };
@@ -91,6 +93,12 @@ export function createAgentReactionService(dependencies: {
         await dependencies.pool.query(
           'UPDATE messages SET assistant_reaction=NULL,assistant_reacted_at=NULL WHERE id=$1 AND owner_id=$3 AND assistant_reaction=$2',
           [input.messageId, shown, dependencies.ownerId],
+        );
+        result = { status: 'skipped', reason: 'unsupported' };
+      } else if (delivered === 'unsupported' && removed) {
+        await dependencies.pool.query(
+          'UPDATE messages SET assistant_reaction=$2 WHERE id=$1 AND owner_id=$3 AND assistant_reaction IS NULL',
+          [input.messageId, removed, dependencies.ownerId],
         );
         result = { status: 'skipped', reason: 'unsupported' };
       }

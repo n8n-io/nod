@@ -160,7 +160,7 @@ export const toolDefinitions = {
   follow_up: defineTool(
     'follow_up',
     'Queue one short line that goes out as its own message right after your result, like a second text. Use it for an offer to keep doing a job, in your first response as soon as you know the job will come up again. Never repeat it in your reply.',
-    Type.Object({ text: Type.String({ minLength: 1, maxLength: 300 }) }),
+    Type.Object({ text: Type.String({ minLength: 1, maxLength: 300, pattern: '\\S' }) }),
   ),
   delegate: defineTool(
     'delegate',

@@ -794,8 +794,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
-       SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
-       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
+       SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen,turn_id AS "turnId" FROM (
+       SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,m.turn_id,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id

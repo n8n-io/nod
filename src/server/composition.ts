@@ -590,6 +590,7 @@ async function initializeApplication(
     },
     (reply) => trust.answer(reply),
   );
+  let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   const reactions = createAgentReactionService({
     pool,
     ownerId,
@@ -975,7 +976,6 @@ async function initializeApplication(
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
-  let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;
   if (options.channels !== false && (adapters.messaging || adapters.messagingSetup)) {
     const setup = adapters.messagingSetup;

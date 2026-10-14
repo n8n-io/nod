@@ -904,7 +904,7 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   assert.ok(JSON.stringify(coded.replies).includes(question));
 });
 
-test('a queued follow-up goes out once as its own message after the reply, never from a background or waiting turn', async () => {
+test('a queued follow-up goes out once as its own message after the reply, never from a background, delegated or waiting turn', async () => {
   const offer = 'Want this every Monday morning?';
   const done = await fixture(async (tools, emit) => {
     assert.match(JSON.stringify(await call(tools, 'follow_up', { text: offer })), /Queued/);
@@ -924,6 +924,18 @@ test('a queued follow-up goes out once as its own message after the reply, never
     { background: true },
   );
   assert.deepEqual(background.replies, []);
+
+  let childTools: string[] = [];
+  const delegated = await fixture(async (tools, _emit, options) => {
+    if (options.background) {
+      childTools = [...tools.keys()];
+      return;
+    }
+    await call(tools, 'delegate', { title: 'Forum lookup', instruction: 'Find the posts.' });
+  });
+  assert.ok(childTools.length > 0);
+  assert.equal(childTools.includes('follow_up'), false);
+  assert.deepEqual(delegated.replies, []);
 
   const waiting = await fixture(async (tools) => {
     await call(tools, 'follow_up', { text: offer });

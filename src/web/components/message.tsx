@@ -282,12 +282,14 @@ export function MessageBubble({
   async function leave(value: string) {
     if (reacting || leaving) return;
     setLeaving(true);
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-      await new Promise((done) => setTimeout(done, 180));
-    await react(value);
+    await react(
+      value,
+      reactionName(value),
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
+    );
     setLeaving(false);
   }
-  async function react(value: string, name = reactionName(value)) {
+  async function react(value: string, name = reactionName(value), delay = 0) {
     if (reacting) return;
     const next = nextReaction(reaction, value);
     setReacting(true);
@@ -295,6 +297,7 @@ export function MessageBubble({
     if (pickingReaction) closePicker();
     setError('');
     try {
+      if (delay) await new Promise((done) => setTimeout(done, delay));
       await post(`/api/messages/${message.id}/reaction`, { reaction: next });
       setReaction(next);
       setSelectedName(next ? name : '');

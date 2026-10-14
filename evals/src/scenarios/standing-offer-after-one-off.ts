@@ -79,16 +79,20 @@ export default scenario({
   expect() {
     return [
       check(
-        'drafts-for-both-clients',
+        'drafts-reply-in-thread-with-the-promised-dates',
         (run) => {
-          const recipients = (run.apps?.gmail?.drafts() ?? []).map((draft) =>
-            draft.to.toLowerCase(),
-          );
+          const drafts = run.apps?.gmail?.drafts() ?? [];
+          const forSam = drafts.find((draft) => draft.to.toLowerCase().includes(sam));
+          const forLena = drafts.find((draft) => draft.to.toLowerCase().includes(lena));
           return {
             pass:
-              recipients.some((to) => to.includes(sam)) &&
-              recipients.some((to) => to.includes(lena)),
-            evidence: `drafted for ${recipients.join(', ') || 'nobody'}`,
+              forSam?.threadId === 'thread-sam' &&
+              /thursday/i.test(forSam.body) &&
+              forLena?.threadId === 'thread-lena' &&
+              /friday/i.test(forLena.body),
+            evidence: JSON.stringify(
+              drafts.map(({ to, threadId, body }) => ({ to, threadId, body: body.slice(0, 200) })),
+            ),
           };
         },
         { failure: 'incomplete' },

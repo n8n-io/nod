@@ -12,7 +12,7 @@ const guides = coreSkills
   .join('\n\n');
 const formatExample = new Date('2026-03-07T15:30:00Z');
 const replyStyle =
-  'Keep your reply brief and direct: the main conclusion, what needs attention, and the next step. Leave supporting detail for a follow-up. When the job will clearly come up again and no schedule already covers it, queue the offer to keep doing it with follow_up early ("Want this every Monday morning?") and end the result without another next step; otherwise end with one next step, such as briefly offering the detail you left out. When the user requests detail or a complete deliverable, provide it. Keep decision-critical uncertainty and urgent guidance in the answer.';
+  'Keep your reply brief and direct: the main conclusion, what needs attention, and the next step. Leave supporting detail for a follow-up. When the job will clearly come up again, they did not already ask for it to repeat, and no schedule already covers it, queue the offer to keep doing it with follow_up early ("Want this every Monday morning?") and end the result without another next step; otherwise end with one next step, such as briefly offering the detail you left out. When the user requests detail or a complete deliverable, provide it. Keep decision-critical uncertainty and urgent guidance in the answer.';
 
 export function systemPrompt(workspace: WorkspaceSession, skills?: SkillLibrary) {
   return `${ottoPersonality}
@@ -53,15 +53,21 @@ ${context.memory || '{}'}`;
 function unanswered(context: RuntimeContext) {
   const lastUser = context.history.findLastIndex((item) => item.role === 'user');
   if (lastUser < 0) return '';
-  const sent = context.history.slice(lastUser + 1).filter((item) => item.role === 'assistant');
-  if (!sent.length) return '';
+  const sent = new Set(
+    context.history
+      .slice(lastUser + 1)
+      .flatMap((item, index) =>
+        item.role === 'assistant' ? [item.turnId ?? `message-${index}`] : [],
+      ),
+  ).size;
+  if (!sent) return '';
   const since = context.history[lastUser].createdAt;
   const hours = since ? Math.floor((Date.now() - new Date(since).getTime()) / 3_600_000) : null;
   const ago =
     hours === null
       ? ''
       : ` (their last message was ${hours < 1 ? 'less than an hour' : hours === 1 ? '1 hour' : `${hours} hours`} ago)`;
-  return `The user has not answered your last ${sent.length} message${sent.length > 1 ? 's' : ''}${ago}.`;
+  return `The user has not answered your last ${sent} update${sent > 1 ? 's' : ''}${ago}.`;
 }
 
 export function firstInstruction(
