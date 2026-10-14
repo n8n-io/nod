@@ -272,9 +272,9 @@ export function approvalLanguageScenario(name: string) {
           { failure: 'reasoning' },
         ),
         judge(
-          'confirmation-language-and-facts',
-          `The actual server confirmation recorded in actualConfirmations is in ${frozen.language}. It makes clear that Otto proposes sending an email, identifies Lena or ${recipient}, and accurately presents the proposed subject and message facts: Meridian 427, EUR 86.40 and postal code 1200-001. It asks for a decision without implying the email was already sent. The email's original text, names, addresses and identifiers can remain untranslated. It does not invent recipients, amounts, conditions or permission. Missing confirmation fails; grade the actual confirmation, not a separate model-written description.`,
-          { failure: 'reasoning' },
+          'confirmation-language',
+          `The actual server confirmation recorded in actualConfirmations uses natural ${frozen.language} for its conversational prose. Quoted literal email content, names, addresses and identifiers can remain untranslated. Missing confirmation fails. Judge only the language of the actual saved question; separate checks assess its fidelity to the approved action and the delivered email.`,
+          { failure: 'format' },
         ),
         judge(
           'conversation-language-persists',
