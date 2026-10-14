@@ -36,7 +36,7 @@ import { createCloudflareAdapters } from '../src/providers/cloudflare-computer/i
 import { launchCloudflareCommand } from '../src/providers/cloudflare-computer/transport.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
-import { workspaceCommandProgram } from '../src/providers/docker/command.ts';
+import { connectedUser, workspaceCommandProgram } from '../src/providers/docker/command.ts';
 import { createE2BAllocation } from '../src/providers/e2b/allocation.ts';
 import {
   createE2BClient,
@@ -375,7 +375,7 @@ function allocationStore() {
 
 async function sealedCli(home: string) {
   const cli = { id: randomUUID(), command: 'fixturecli', source: { npm: 'fixturecli' } };
-  const prefix = join(home, 'cli', cli.id);
+  const prefix = join(home, `otto-cli-${cli.id}`);
   await mkdir(join(prefix, 'bin'), { recursive: true });
   await writeFile(join(prefix, 'bin', 'fixturecli'), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
   await writeFile(join(prefix, '.installed'), '');
@@ -637,7 +637,10 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
     assert.ok(
       owned.some(
         (request) =>
-          request.role === 'connected' && request.command.includes('cd /home/otto-connected'),
+          request.role === 'connected' &&
+          request.command.startsWith(
+            `cd /var/tmp && exec /usr/bin/setpriv --reuid=${connectedUser(cli)} --regid=1002 `,
+          ),
       ),
     );
     assert.equal(
@@ -939,7 +942,7 @@ async function cloudflareFixture() {
     role: string;
     generation: string;
     threadId?: string;
-    connected?: boolean;
+    connected?: number;
     session?: boolean;
     frames: string[];
   }> = [];
@@ -1151,8 +1154,9 @@ test('Cloudflare connected CLI commands use the connected path with one secret a
       workspacePath: join(f.root, 'roots', ownerA, 'same-task'),
       signal: new AbortController().signal,
     });
+    const cli = await sealedCli(join(f.root, 'workspaces', ownerA, 'same-task'));
     const result = await session.runConnectedCli!(
-      await sealedCli(join(f.root, 'workspaces', ownerA, 'same-task')),
+      cli,
       [
         'sh',
         '-c',
@@ -1166,7 +1170,7 @@ test('Cloudflare connected CLI commands use the connected path with one secret a
     assert.deepEqual(
       f.launches.map((launch) => [launch.connected, launch.session]),
       [
-        [true, undefined],
+        [connectedUser(cli), undefined],
         [undefined, undefined],
       ],
     );

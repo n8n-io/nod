@@ -4,7 +4,7 @@ import type { ComputerAllocationStore } from '../../ports/computer-allocation.ts
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createBridgeComputer } from '../container-browser/client.ts';
 import { createCommandWorkspace } from '../docker/index.ts';
-import { runSupervisedCommand } from '../docker/command.ts';
+import { connectedUser, runSupervisedCommand } from '../docker/command.ts';
 import { createE2BAllocation } from './allocation.ts';
 import { createE2BClient, type E2BClient } from './client.ts';
 import { launchE2BCommand } from './transport.ts';
@@ -96,7 +96,7 @@ export function createE2BAdapters(options: {
           launchE2BCommand(
             allocation,
             'connected',
-            'cd /home/otto-connected && exec /usr/bin/setpriv --no-new-privs /usr/bin/python3 -I -u /opt/otto/workspace-command.py',
+            `cd /var/tmp && exec /usr/bin/setpriv --reuid=${connectedUser(input.cli)} --regid=1002 --clear-groups --no-new-privs /usr/bin/python3 -I -u /opt/otto/workspace-command.py`,
           ),
       });
     },

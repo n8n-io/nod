@@ -38,13 +38,13 @@ The setup page shows that source next to the token field, so you can check it be
 ```mermaid
 flowchart LR
   source[Declared source<br/>npm · PyPI · HTTPS] -- installs --> sealed[(Sealed install)]
-  sealed --> runner[Runs as<br/>otto-connected]:::go
+  sealed --> runner[Runs as<br/>its own user]:::go
   token[(Token in Vault)]:::accent -- one variable --> runner
   files[Workspace files]:::muted -. as arguments .-> runner
   runner -- text output --> otto[Otto]
 ```
 
-Otto installs the tool as a separate user, `otto-connected`, in a folder the workspace user can't write. Each run gets an environment built from scratch: a `PATH` with the sealed tool and system folders, a private temporary home and the one token variable.
+Otto installs each tool as its own Linux user, in a folder only that user can open, so neither the workspace user nor another connected tool can change it or read its token. Each run gets an environment built from scratch: a `PATH` with the sealed tool and system folders, a private temporary home and the one token variable.
 
 Nothing comes from the workspace user's files or settings. A program that the model writes or replaces in the workspace never receives the token. You can still pass workspace files as arguments, and the CLI returns text.
 

@@ -25,7 +25,7 @@ export type ComputerCommand = {
   id: string;
   generation: string;
   threadId?: string;
-  connected?: boolean;
+  connected?: number;
   session?: boolean;
 };
 

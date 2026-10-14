@@ -64,7 +64,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 ### Isolation
 
 - The workspace runs as an unprivileged user with no host home folder, Docker socket, provider keys, access key or browser profiles.
-- A connected command-line tool's token reaches only a sealed install of its declared source, run as a separate user with a clean environment.
+- A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
 - Every query and route is scoped to one owner.
 
 ### Local access and hosted mode
