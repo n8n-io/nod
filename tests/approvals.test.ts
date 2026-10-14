@@ -2537,6 +2537,26 @@ test(
             await personal.manage('history_search', { query: 'BoundarySecretKeyword' }),
             { turns: [], messages: [] },
           );
+          const ownThread = await thread.activeThread(db.pool, ownerId);
+          const tied = new Date('2026-01-01T10:00:00.123456Z');
+          const pageIds = Array.from({ length: 17 }, () => randomUUID());
+          for (const id of pageIds)
+            await db.pool.query(
+              'INSERT INTO messages(id,owner_id,role,text,thread_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+              [id, ownerId, 'user', 'PagedHistoryKeyword', ownThread.id, tied],
+            );
+          const first = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+          })) as { messages: Array<{ id: string }> };
+          const second = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+            before: first.messages.at(-1)!.id,
+          })) as { messages: Array<{ id: string }> };
+          assert.deepEqual(
+            [...first.messages, ...second.messages].map((row) => row.id).sort(),
+            [...pageIds].sort(),
+          );
+          await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [pageIds]);
 
           const job = async (id: string) =>
             (
