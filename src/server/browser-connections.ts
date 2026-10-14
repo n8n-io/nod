@@ -7,7 +7,7 @@ import type { Computer } from '../ports/computer.ts';
 import type { BrowserConnectionRequest } from '../ports/agent.ts';
 import type { Connection, VaultSession } from '../shared/contracts.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf, untakenTurnSql } from './turn-chain.ts';
+import { browserOf, busyTurnSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 
 const idSchema = z.uuid();
@@ -274,14 +274,12 @@ export async function createBrowserConnections(
   }
 
   async function inUse(browserId: string) {
-    const latest = await pool.query<{ status: string }>(
-      `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-       WHERE u.session_id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL AND ${untakenTurnSql('u')}
-         AND (u.not_before IS NULL OR u.not_before<=now())
-       ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
+    const busy = await pool.query(
+      `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE u.session_id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL AND ${busyTurnSql('u')} LIMIT 1`,
       [browserId, options.ownerId],
     );
-    return ['queued', 'running', 'waiting'].includes(latest.rows[0]?.status ?? '');
+    return Boolean(busy.rowCount);
   }
 
   async function list(): Promise<Connection[]> {

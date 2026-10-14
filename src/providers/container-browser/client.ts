@@ -50,6 +50,9 @@ export function createBridgeComputer(options: {
   const cancellations = new Map<() => void, string>();
   const views = new Map<string, Set<(input: unknown) => void>>();
   const pins = new Map<string, Promise<boolean> | undefined>();
+  const pinGenerations = new Map<string, number>();
+  const generations = new Map<string, number>();
+  const generationOf = (threadId: string) => generations.get(threadId) ?? 0;
   let live = false;
   let unpinned: Promise<void> | undefined;
   let disposing: Promise<void> | undefined;
@@ -480,22 +483,30 @@ export function createBridgeComputer(options: {
     },
     pin: async (id) => {
       const threadId = threadIdentity(id);
-      if (pins.has(threadId)) return;
+      const generation = generationOf(threadId);
+      pinGenerations.set(threadId, generation);
+      if (pins.has(threadId)) return generation;
       pins.set(threadId, undefined);
       if (live) await sendPin(threadId);
+      return generation;
     },
-    unpin: async (id) => {
+    unpin: async (id, generation) => {
       const threadId = threadIdentity(id);
+      if (generation !== undefined && pinGenerations.get(threadId) !== generation) return;
       const sent = pins.get(threadId);
       pins.delete(threadId);
+      pinGenerations.delete(threadId);
       if (await sent) await call({ method: 'unpin', threadId });
     },
     close: async (id) => {
       await call({ method: 'close', threadId: threadIdentity(id) });
     },
-    discard: async (id) => {
-      await call({ method: 'discard', threadId: threadIdentity(id) });
-      screens.delete(threadIdentity(id));
+    discard: async (id, generation) => {
+      const threadId = threadIdentity(id);
+      if (generation !== undefined && generation !== generationOf(threadId)) return;
+      generations.set(threadId, generationOf(threadId) + 1);
+      await call({ method: 'discard', threadId });
+      screens.delete(threadId);
     },
     dispose: () => {
       disposing ??= (async () => {
@@ -505,6 +516,7 @@ export function createBridgeComputer(options: {
         await call({ method: 'dispose' });
         screens.clear();
         pins.clear();
+        pinGenerations.clear();
         status = 'Workspace browser is stopped.';
       })().catch((error) => {
         disposing = undefined;

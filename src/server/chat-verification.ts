@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
-import { lockThread } from './thread.ts';
+import { lockThread, noteStream } from './thread.ts';
 import { waitingTurnSql } from './vault.ts';
 import { sessionOfMessageSql } from './turn-chain.ts';
 
@@ -307,10 +307,12 @@ export async function createChatVerification(
     );
     if (status !== 'submitted') {
       await pool.query(
-        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-         SELECT $1,$2,'assistant',$3,u.thread_id,u.id FROM turns u JOIN threads th ON th.id=u.thread_id
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id,stream_id)
+         SELECT $1,$2,'assistant',$3,u.thread_id,u.id,t.on_it_message_id,CASE WHEN t.id IS NOT NULL THEN $5 END
+         FROM turns u JOIN threads th ON th.id=u.thread_id
+         LEFT JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.on_it_message_id IS NOT NULL
          WHERE u.id=$4 AND u.owner_id=$2 AND th.archived_at IS NULL`,
-        [randomUUID(), options.ownerId, texts[reserved.kind].failed, reserved.turnId],
+        [randomUUID(), options.ownerId, texts[reserved.kind].failed, reserved.turnId, noteStream()],
       );
     }
     options.refresh();

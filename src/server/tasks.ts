@@ -91,14 +91,17 @@ function failure(message: string, statusCode = 400) {
 }
 
 function status(row: Row): TaskStatus {
-  if (row.state === 'waiting') return row.due ? 'queued' : 'waiting';
-  if (row.state !== 'queued' && row.state !== 'open') return row.state;
+  if (row.state === 'done' || row.state === 'stopped' || row.state === 'failed') return row.state;
   if (row.running) return 'working';
+  if (row.state === 'waiting') return row.due ? 'queued' : 'waiting';
   return latest[row.turn_status ?? ''] ?? (row.state === 'queued' ? 'queued' : 'working');
 }
 
 const ended = (value: TaskStatus) => value === 'failed' || value === 'stopped';
 const retention = 'task-retention';
+const forgettable = `t.state IN ('done','stopped','failed')
+  AND (t.closed_at<now()-interval '30 days' OR th.archived_at IS NOT NULL)
+  AND (t.forgotten_at IS NULL OR t.forgotten_at<t.closed_at)`;
 
 export function createTasks(options: {
   pool: Pool;
@@ -307,7 +310,7 @@ export function createTasks(options: {
       if (!task) throw failure('Task not found.', 404);
       const confirming = await client.query(
         `SELECT 1 FROM approvals a JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
-         WHERE a.owner_id=$1 AND a.status='pending' AND u.session_id=$2 LIMIT 1`,
+         WHERE a.owner_id=$1 AND a.status='pending' AND a.expires_at>now() AND u.session_id=$2 LIMIT 1`,
         [ownerId, task.id],
       );
       if (confirming.rowCount)
@@ -521,11 +524,19 @@ export function createTasks(options: {
     const failures: unknown[] = [];
     for (const id of ids) {
       try {
-        await options.forgetSession?.(id);
-        await pool.query('UPDATE tasks SET forgotten_at=now() WHERE id=$1 AND owner_id=$2', [
-          id,
-          ownerId,
-        ]);
+        await transaction(async (client) => {
+          const closed = await client.query(
+            `SELECT 1 FROM tasks t LEFT JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
+             WHERE t.id=$1 AND t.owner_id=$2 AND ${forgettable} FOR NO KEY UPDATE OF t`,
+            [id, ownerId],
+          );
+          if (!closed.rowCount) return;
+          await options.forgetSession?.(id);
+          await client.query('UPDATE tasks SET forgotten_at=now() WHERE id=$1 AND owner_id=$2', [
+            id,
+            ownerId,
+          ]);
+        });
       } catch (error) {
         failures.push(error);
       }
@@ -536,10 +547,7 @@ export function createTasks(options: {
   async function expire() {
     const expired = await pool.query<{ id: string }>(
       `SELECT t.id FROM tasks t LEFT JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
-       WHERE t.owner_id=$1 AND t.state IN ('done','stopped','failed')
-         AND (t.closed_at<now()-interval '30 days' OR th.archived_at IS NOT NULL)
-         AND (t.forgotten_at IS NULL OR t.forgotten_at<t.closed_at)
-       ORDER BY t.closed_at,t.id`,
+       WHERE t.owner_id=$1 AND ${forgettable} ORDER BY t.closed_at,t.id`,
       [ownerId],
     );
     await forget(expired.rows.map((row) => row.id));

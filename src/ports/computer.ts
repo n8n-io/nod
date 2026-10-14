@@ -151,11 +151,11 @@ export interface Computer {
   checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
-  pin?(threadId: string): Promise<void>;
-  unpin?(threadId: string): Promise<void>;
+  pin?(threadId: string): Promise<number | void>;
+  unpin?(threadId: string, generation?: number): Promise<void>;
   unpinAll?(): Promise<void>;
   close(threadId: string): Promise<void>;
-  discard?(threadId: string): Promise<void>;
+  discard?(threadId: string, generation?: number): Promise<void>;
   dispose(): Promise<void>;
   status(): string;
 }

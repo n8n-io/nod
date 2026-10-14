@@ -47,6 +47,7 @@ import type { WorkAdmission } from './work-admission.ts';
 import type { TenantDrain } from '../ports/deployment.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 import { sessionOfMessageSql } from './turn-chain.ts';
+import { waitingTurnSql } from './vault.ts';
 
 const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",${sessionOfMessageSql('m')} AS "sessionId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',left(target.text,1000)) END AS "replyTo"`;
@@ -494,23 +495,18 @@ export async function createApp(dependencies: AppDependencies = {}) {
     };
   }
   app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));
-  async function credentialEntryOpen(threadId: string) {
-    const latest = await pool.query(
-      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND session_id=$2 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
+  async function chatWaits(threadId: string, reason: 'credentials' | 'question') {
+    const queued = `NOT EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=u.owner_id
+      AND q.session_id=u.session_id AND q.status='queued')`;
+    const waiting = await pool.query(
+      `SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2
+         AND ${waitingTurnSql('u', reason)}${reason === 'question' ? ` AND ${queued}` : ''} LIMIT 1`,
       [ownerId, threadId],
     );
-    return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'credentials';
+    return Boolean(waiting.rowCount);
   }
-  async function handoffOpen(threadId: string) {
-    const latest = await pool.query(
-      `SELECT u.status,u.waiting_reason FROM turns u
-       JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND th.archived_at IS NULL
-       ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
-      [ownerId, threadId],
-    );
-    return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'question';
-  }
+  const credentialEntryOpen = (threadId: string) => chatWaits(threadId, 'credentials');
+  const handoffOpen = (threadId: string) => chatWaits(threadId, 'question');
   const handoffClosed = 'The browser opens here when Otto hands it to you.';
   async function readBrowserScreen(reply: FastifyReply) {
     const thread = await activeThread(pool);

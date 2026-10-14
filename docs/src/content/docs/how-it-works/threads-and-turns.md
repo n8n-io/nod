@@ -71,6 +71,8 @@ stateDiagram-v2
 
 The composer never blocks. After each Pi step, a running chat or task turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close. A turn takes messages only from its own session, so a chat message never steers a task and a reply to a task never steers the chat.
 
+A closed turn like this is newer than the turn that took its message. So when the server checks whether a session is busy or waits for you, it reads the status of the session's turns, not which turn is newest. A session with a queued, running or waiting turn keeps its saved browser session, and the turn that took your message can still pay, pause the browser view for a secure form and hand its browser to you.
+
 A message with attachments or from another channel stops the take. It and every message after it stay queued and run as their own turns. In the chat, a reply target stops the take too. In a task it doesn't, because your messages reach a task as replies to it or as messages the chat moved there. A task turn reads them as corrections or additions to the task. Schedule, event and read-only turns never take queued messages.
 
 Steering reaches only the turn's own Pi session, never a running subagent. A subagent finishes its part without your message, and the turn reads the message at its next step, after the subagents of that step return.
@@ -106,9 +108,9 @@ Every turn of a task acts on your message that started it. A turn that holds a m
 - A Vault yes in a task covers every later turn of that task, but not the chat or another task.
 - A task can remember a profile detail only from that message, quoted in full, and can forget a note only when the trust check finds that your words ask for it.
 
-The Tasks page reads each task's status from its row and the turns of its session. A closed task shows **Done**, **Stopped** or **Failed** from its row. An open task shows:
+The Tasks page reads each task's status from its row and the turns of its session. A closed task shows **Done**, **Stopped** or **Failed** from its row, even while the turn that closed it still runs. An open task shows:
 
-- **Working** while one of its turns runs.
+- **Working** while one of its turns runs, also after that turn has set it to wait for other people.
 - **Queued** while its latest turn waits for a free place, as a new task does while three other tasks run. A resume after your answer waits the same way.
 - **Needs you** while its latest turn waits for you.
 - **Waiting** while it waits for other people until its planned check. Once the check is due, it shows **Queued** until the check starts.
@@ -130,9 +132,9 @@ A task turn runs in task mode, which replaces the rules of a background session:
 
 A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
 
-The notes the server posts to a task aren't in its transcript: the stop note, the failure note and the reply to an expired question. So the task's next turn gets every note posted since its previous turn started, in its first instruction.
+The notes the server posts to a task aren't in its transcript: the stop note, the failure note, the reply to an expired question and the message that a code you sent in the chat couldn't be used. Each replies to the task's "On it" message. So the task's next turn gets every note posted since its previous turn started, in its first instruction.
 
-An hourly job deletes a closed task's saved Pi session and its browser profile 30 days after the task closes. A reset deletes them at once. A reply after that still opens the task, but in a new Pi session that starts from your message that started the task and the task's own messages. The server records the deletion only after both are gone, so the next hourly run tries again after a failure or a restart, also for a reset's tasks.
+An hourly job deletes a closed task's saved Pi session and its browser profile 30 days after the task closes. A reset deletes them at once. Before it deletes anything, the job locks the task's row and checks again that the task is still closed, so a task your reply just opened again keeps its session. A reply that arrives during the deletion waits for it to finish. A reply after that still opens the task, but in a new Pi session that starts from your message that started the task and the task's own messages. The server records the deletion only after both are gone, so the next hourly run tries again after a failure or a restart, also for a reset's tasks.
 
 The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its ID, title, status and the ID of its "On it" message, so Otto knows what's running. The list is in the turn message, not the system prompt, so a status change doesn't change the chat's prompt.
 
@@ -172,7 +174,7 @@ The server binds each answer to one approval, never to "the newest question" acr
 
 A task's confirmation expires 24 hours after Otto asks. A yes or no to it after that gets a short reply that the question expired, in the task's session and on its channel, and nothing runs. Chat, schedule and event confirmations stay open while their turn waits.
 
-The chat can also hand your message to a task. When your message answers, corrects or adds to an open task, Otto calls `route_to_task {taskId}`. The server moves your message itself, with its text and ID, into the task's session as your reply, and the chat writes nothing more about it. Otto never writes your words for a task, so the trust check sees exactly what you sent. A message the chat moved answers no Otto message, so a moved "yes" can't approve what the task proposed. The server refuses to move a message into a task that waits for your yes or no to a confirmation, so Otto asks you to reply to that confirmation. When a bare yes or no could answer more than one task, Otto asks which one.
+The chat can also hand your message to a task. When your message answers, corrects or adds to an open task, Otto calls `route_to_task {taskId}`. The server moves your message itself, with its text and ID, into the task's session as your reply, and the chat writes nothing more about it. Otto never writes your words for a task, so the trust check sees exactly what you sent. A message the chat moved answers no Otto message, so a moved "yes" can't approve what the task proposed. The server refuses to move a message into a task that waits for your yes or no to a confirmation, so Otto asks you to reply to that confirmation. An expired confirmation doesn't block the move. When a bare yes or no could answer more than one task, Otto asks which one.
 
 ## Sessions
 
@@ -247,11 +249,11 @@ Stop works on one session or on all of them:
 | One task      | `POST /api/tasks/<id>/stop`             |
 | Every session | `POST /api/thread/stop`                 |
 
-**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** on the **Browser** page stops every session.
+**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** on the **Browser** page stops only the session whose browser it shows. That's always the chat for now, so it stops the chat and never a task.
 
 Stop locks the thread, then cancels the queued, running and waiting turns in its scope and aborts the running ones. In the same transaction, for each session it cancelled, it declines the open confirmations, closes the secure forms, verification code and payment requests, and closes the task as **Stopped** with a short note that replies to its "On it" message. Then it deletes the browser of each background session it cancelled.
 
-A task ID that belongs to another owner or an earlier thread returns `404`. A task with nothing queued, running or waiting has nothing to stop, so its row stays as it is. A reply to a stopped task opens it again. A session's next turn starts only after its stopped turn has finished in the server, so the old turn's cleanup can't close the new turn's browser. Stop can't undo an external action that already started. Ordinary turns have no time limit.
+A task ID that belongs to another owner or an earlier thread returns `404`. A task with nothing queued, running or waiting has nothing to stop, so its row stays as it is. A reply to a stopped task opens it again. A session's next turn starts only after its stopped turn has finished in the server, so the old turn's cleanup can't close the new turn's browser. The cleanup is also bound to the browser generation the turn pinned when it started. Once Stop has deleted that browser, the old turn's cleanup neither unpins nor deletes the session's browser, so a newer turn keeps its browser even when the old cleanup runs late. Stop can't undo an external action that already started. Ordinary turns have no time limit.
 
 Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
 

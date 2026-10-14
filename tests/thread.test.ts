@@ -129,6 +129,7 @@ test(
     const discardedBrowsers: string[] = [];
     const forgottenSessions: string[] = [];
     const failingForgets = new Set<string>();
+    const forgetHooks = new Map<string, () => Promise<void>>();
     const planInputs: Array<{ owner: string; input: object }> = [];
     let planAnswer: (owner: string) => unknown = () => null;
     let planGate: Promise<void> | undefined;
@@ -179,6 +180,7 @@ test(
       ownerId,
       forgetSession: async (id) => {
         if (failingForgets.has(id)) throw new Error('Synthetic forget failure');
+        await forgetHooks.get(id)?.();
         forgottenSessions.push(id);
       },
     });
@@ -447,6 +449,7 @@ test(
             waitingFor: [{ who: 'Synthetic Hotel', via: 'email' }],
             nextCheck: new Date(Date.now() + 3_600_000).toISOString(),
           });
+          await sessionGates.get(`${context.prompt}:planned`);
           if (context.prompt === 'task-wait-fail')
             throw new Error('Synthetic failure after waiting');
           return { status: 'succeeded' };
@@ -2049,7 +2052,23 @@ test(
             await waitFor(settled(id));
           };
 
-          const waiting = await start();
+          const cardStatus = async (id: string) =>
+            ((await request('GET', '/api/tasks')).json() as Task[]).find((task) => task.id === id)
+              ?.status;
+          let finishPlanning = () => {};
+          sessionGates.set(
+            'task-wait:planned',
+            new Promise<void>((resolve) => {
+              finishPlanning = resolve;
+            }),
+          );
+          const waiting = await dispatch('task-wait');
+          await waitFor(async () => (await state(waiting.taskId)) === 'waiting');
+          assert.equal(await cardStatus(waiting.taskId), 'working');
+          finishPlanning();
+          sessionGates.delete('task-wait:planned');
+          await waitFor(settled(waiting.turnId));
+          assert.equal(await cardStatus(waiting.taskId), 'waiting');
           const [planned] = await checks(waiting.taskId);
           const at = planned.not_before.toISOString();
           assert.deepEqual(
@@ -2534,6 +2553,32 @@ test(
             ['user', behind.taskId],
           );
           assert.equal(executed, executedBefore);
+
+          const lapsed = await start('ask-question');
+          await waitFor(settled(lapsed.turnId));
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [lapsed.turnId]);
+          await approvals.request({ threadId, turnId: lapsed.turnId }, 'FIXTURE_WRITE', {});
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='approval' WHERE id=$1",
+            [lapsed.turnId],
+          );
+          await db.pool.query(
+            "UPDATE approvals SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
+            [lapsed.turnId],
+          );
+          routeTarget = lapsed.taskId;
+          let afterLapse: { turnId: string; messageId: string };
+          try {
+            afterLapse = await reply('routed-by-chat: after the question lapsed');
+            await waitFor(settled(afterLapse.turnId));
+          } finally {
+            routeTarget = undefined;
+          }
+          assert.doesNotMatch(String(routeResults.get(afterLapse.turnId)), /confirmation/);
+          const lapsedReply = (
+            await db.pool.query('SELECT turn_id FROM messages WHERE id=$1', [afterLapse.messageId])
+          ).rows[0].turn_id as string;
+          assert.equal((await turnRow(lapsedReply)).session_id, lapsed.taskId);
           await waitFor(settledThread);
           await closeDispatched();
         },
@@ -2544,13 +2589,29 @@ test(
         async () => {
           await waitFor(settledThread);
           const { createTrust } = await import('../src/server/trust.ts');
+          const { createBrowserConnections } = await import('../src/server/browser-connections.ts');
           const threadId = (await thread.activeThread(db.pool)).id;
           const provenance = new Map<string, string | null>();
           const manage = dependencies.manage;
+          let heldTurn: string | undefined;
+          let tookReplies = () => {};
+          let finishTask = () => {};
+          const afterTake = new Promise<void>((resolve) => {
+            finishTask = resolve;
+          });
           dependencies.manage = async (turn, _action, _args, source) => {
             provenance.set(turn.turnId, source.sourceMessageId);
+            if (turn.turnId === heldTurn) {
+              tookReplies();
+              await afterTake;
+            }
             return {};
           };
+          const connections = await createBrowserConnections(db.pool, {
+            ownerId,
+            computer: fakeComputer(),
+          });
+          const connectionId = randomUUID();
           const send = (text: string, replyToMessageId?: string) =>
             thread.submitUserMessage(text, [], { channel: 'web', replyToMessageId });
           try {
@@ -2596,7 +2657,21 @@ test(
             ]);
             for (const id of routed) assert.equal(await turnStatus(id), 'queued');
 
+            await db.pool.query(
+              `INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state,browser_id)
+               VALUES($1,$2,'https://example.test','https://example.test/','Synthetic account',$3,'saved',$4)`,
+              [connectionId, ownerId, randomUUID(), taskId],
+            );
+            heldTurn = taskTurn;
+            const took = new Promise<void>((resolve) => {
+              tookReplies = resolve;
+            });
             release('steer-ask-question');
+            await took;
+            assert.equal(await turnStatus(taskTurn), 'running');
+            for (const id of routed) assert.equal(await turnStatus(id), 'succeeded');
+            await assert.rejects(connections.disconnect(connectionId), /Stop the active work/);
+            finishTask();
             await waitFor(settled(taskTurn));
             assert.equal(await turnStatus(taskTurn), 'waiting');
             assert.deepEqual(taken.get(taskTurn), [
@@ -2656,7 +2731,9 @@ test(
           } finally {
             release('steer-chat');
             release('steer-ask-question');
+            finishTask();
             dependencies.manage = manage;
+            await db.pool.query('DELETE FROM browser_connections WHERE id=$1', [connectionId]);
           }
           await waitFor(settledThread);
           await closeDispatched();
@@ -3717,14 +3794,17 @@ test(
       );
 
       await t.test('closed tasks lose their saved sessions 30 days after closing', async (t) => {
-        t.after(() => failingForgets.clear());
+        t.after(() => {
+          failingForgets.clear();
+          forgetHooks.clear();
+        });
         const archived = randomUUID();
         await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
           archived,
           ownerId,
         ]);
-        const ids: string[] = Array.from({ length: 8 }, () => randomUUID());
-        const [old, , , reclosed, , , reset, failing] = ids;
+        const ids: string[] = Array.from({ length: 9 }, () => randomUUID());
+        const [old, , , reclosed, , , reset, failing, reopened] = ids;
         await db.pool.query(
           `INSERT INTO tasks(id,owner_id,thread_id,title,state,closed_at,forgotten_at) VALUES
            ($1,$9,NULL,'Old synthetic task','done',now()-interval '31 days',NULL),
@@ -3734,8 +3814,9 @@ test(
            ($5,$9,NULL,'Open synthetic task','open',NULL,NULL),
            ($6,'synthetic-other-owner',NULL,'Foreign synthetic task','done',now()-interval '31 days',NULL),
            ($7,$9,$10,'Reset synthetic task','stopped',now()-interval '1 day',NULL),
-           ($8,$9,NULL,'Failing synthetic task','stopped',now()-interval '32 days',NULL)`,
-          [...ids, ownerId, archived],
+           ($8,$9,NULL,'Failing synthetic task','stopped',now()-interval '32 days',NULL),
+           ($11,$9,NULL,'Reopened synthetic task','done',now()-interval '30 days 12 hours',NULL)`,
+          [...ids.slice(0, 8), ownerId, archived, reopened],
         );
         const erased = (from: number) =>
           forgottenSessions
@@ -3751,6 +3832,12 @@ test(
             )
           ).rows.map((row) => row.title);
         failingForgets.add(failing);
+        forgetHooks.set(old, async () => {
+          await db.pool.query(
+            "UPDATE tasks SET state='queued',closed_at=NULL,updated_at=now() WHERE id=$1",
+            [reopened],
+          );
+        });
         const first = forgottenSessions.length;
         await assert.rejects(tasks.expire(), /Synthetic forget failure/);
         assert.deepEqual(erased(first), [old, reclosed, reset].sort());

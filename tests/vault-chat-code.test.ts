@@ -26,7 +26,8 @@ test(
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
     process.env.OTTO_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
-    const { createChatVerification } = await import('../src/server/chat-verification.ts');
+    const { createChatVerification, texts: codeTexts } =
+      await import('../src/server/chat-verification.ts');
     const thread = await import('../src/server/thread.ts');
     t.after(async () => {
       await thread.boss.stop();
@@ -349,6 +350,11 @@ test(
              VALUES($1,$2,$3,'user','Buy the hinges','web','waiting','credentials',clock_timestamp())`,
             [turnId, ownerId, threadId],
           );
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,finished_at)
+             VALUES($1,$2,$3,'user','Use the studio card','web','succeeded',clock_timestamp())`,
+            [randomUUID(), ownerId, threadId],
+          );
           const order = {
             amount: '43.20',
             currency: 'EUR',
@@ -559,15 +565,29 @@ test(
           );
           assert.equal((await send('473826')).statusCode, 409);
           assert.equal(injected.length, 0);
+          outcome = 'unavailable';
+          const failed = await send('582937', { replyToMessageId: onItMessageId });
+          assert.equal(failed.json().verificationStatus, 'unavailable');
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                "SELECT turn_id,reply_to_message_id,stream_id LIKE 'note:%' AS note FROM messages WHERE text=$1",
+                [codeTexts.otp.failed],
+              )
+            ).rows,
+            [{ turn_id: taskTurnId, reply_to_message_id: onItMessageId, note: true }],
+          );
+          outcome = 'submitted';
           const response = await send('473826', { replyToMessageId: onItMessageId });
           assert.equal(response.statusCode, 200, response.body);
           assert.equal(response.json().verificationStatus, 'submitted');
           assert.deepEqual(injected, [
+            { owner: ownerId, turnId: taskTurnId, code: '582937', requestId: taskRequestId },
             { owner: ownerId, turnId: taskTurnId, code: '473826', requestId: taskRequestId },
           ]);
           assert.deepEqual(ordinary, []);
           const persisted = await db.pool.query('SELECT row_to_json(m) AS row FROM messages m');
-          assert.doesNotMatch(JSON.stringify(persisted.rows), /473826/);
+          assert.doesNotMatch(JSON.stringify(persisted.rows), /473826|582937/);
         },
       );
       await t.test(

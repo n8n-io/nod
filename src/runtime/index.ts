@@ -227,6 +227,7 @@ export function createAgentRuntime(dependencies: {
       finished = resolve;
     });
     let browsed = false;
+    let generation: number | undefined;
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingForUser = false;
@@ -533,8 +534,9 @@ export function createAgentRuntime(dependencies: {
       return pending;
     };
     try {
+      const pinned = await computer.pin?.(sessionId).catch(() => undefined);
+      if (typeof pinned === 'number') generation = pinned;
       signal.throwIfAborted();
-      await computer.pin?.(sessionId).catch(() => {});
       await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
       const workspace = dependencies.workspace.open(context);
       const browser: Computer = {
@@ -822,9 +824,9 @@ export function createAgentRuntime(dependencies: {
         await Promise.allSettled([...activeToolCalls]);
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
-        await computer.unpin?.(sessionId).catch(() => {});
+        await computer.unpin?.(sessionId, generation).catch(() => {});
         if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
-          await computer.discard?.(sessionId).catch(() => {});
+          await computer.discard?.(sessionId, generation).catch(() => {});
         finished();
       }
     }

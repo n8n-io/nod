@@ -12,7 +12,7 @@ import type {
 import { logFailure } from './failure-log.ts';
 import { type createVaultUses, VaultUseError } from './vault-use.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf } from './turn-chain.ts';
+import { browserOf, untakenTurnSql } from './turn-chain.ts';
 import type { PaymentPolicy } from './trust.ts';
 import { credentialOrigin } from './vault.ts';
 
@@ -77,7 +77,7 @@ const currencies = new Set(Intl.supportedValuesOf('currency'));
 const currentTurnSql = `u.status IN ('running','waiting') AND NOT EXISTS(
   SELECT 1 FROM turns newer WHERE newer.owner_id=u.owner_id AND newer.thread_id=u.thread_id
     AND newer.id<>u.id AND newer.session_id=u.session_id AND newer.source='user'
-    AND newer.created_at>=u.created_at)`;
+    AND newer.created_at>=u.created_at AND ${untakenTurnSql('newer')})`;
 
 function digits(currency: string) {
   if (!currencies.has(currency))

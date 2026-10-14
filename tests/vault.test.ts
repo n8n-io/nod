@@ -2858,7 +2858,7 @@ test(
     try {
       await pool.query(`
         CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
-        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),session_id uuid NOT NULL,source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),session_id uuid NOT NULL,source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,started_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
       `);
       const vault = await createVault(pool, {

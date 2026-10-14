@@ -24,6 +24,13 @@ export function untakenTurnSql(alias = 'u') {
   return `(${alias}.started_at IS NOT NULL OR ${alias}.status<>'succeeded')`;
 }
 
+export function busyTurnSql(alias = 'u') {
+  return `(${alias}.status='running'
+    OR (${alias}.status='queued' AND (${alias}.not_before IS NULL OR ${alias}.not_before<=now()))
+    OR (${alias}.status='waiting' AND NOT EXISTS (SELECT 1 FROM turns b WHERE b.owner_id=${alias}.owner_id
+      AND b.session_id=${alias}.session_id AND b.id<>${alias}.id AND b.started_at>=${alias}.started_at)))`;
+}
+
 export function sessionOfMessageSql(alias = 'm') {
   return `COALESCE((SELECT t.id FROM tasks t WHERE t.on_it_message_id=${alias}.id AND t.owner_id=${alias}.owner_id),
     (SELECT u.session_id FROM turns u WHERE u.id=${alias}.turn_id AND u.owner_id=${alias}.owner_id))`;

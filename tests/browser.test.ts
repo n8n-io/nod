@@ -68,6 +68,7 @@ import { createBrowserFixture, fakeDevtools, type DevtoolsModel } from './browse
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
+import { BrowserScreen } from '../src/web/components/browser-screen.tsx';
 import { browserFrames } from '../src/web/lib/browser-frames.ts';
 import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
@@ -189,6 +190,10 @@ test(
       assert.equal(frame.headers['x-screen-state'], 'live');
       assert.equal(frame.body, 'synthetic-public-browser-frame');
       assert.deepEqual(captures, [thread.id]);
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,finished_at) VALUES($1,$2,$3,'user','Steered follow-up','succeeded',now())",
+        [randomUUID(), ownerId, thread.id],
+      );
       await db.pool.query(
         "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
         [turnId],
@@ -2423,6 +2428,109 @@ test('a restarted server clears the pins an earlier server left before it browse
   }
 });
 
+test("a stopped turn's late cleanup never unpins or deletes the browser of the turn that reopened its task", async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-late-cleanup-'));
+  const browser = stagedLoginBrowser();
+  const fixture = await harness({
+    computer: createBrowserFixture({
+      dataRoot: directory,
+      run: browser.run,
+      maxLiveSessions: 1,
+      slotWaitMs: 100,
+    }),
+  });
+  const computer = fixture.client('/synthetic/late-cleanup');
+  const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async ({ turnId, tools }) => ({
+        resumed: true,
+        prompt: async () => {
+          await scripts.get(turnId)!(new Map(tools.map((tool) => [tool.name, tool])));
+        },
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    },
+    computer,
+    workspace: fakeWorkspace(),
+  });
+  const threadId = randomUUID();
+  const taskId = randomUUID();
+  const turn = (
+    signal: AbortSignal,
+    script: (tools: Map<string, AgentTool>) => Promise<unknown>,
+  ) => {
+    const turnId = randomUUID();
+    scripts.set(turnId, script);
+    return runtime.runTurn({
+      threadId,
+      turnId,
+      sessionId: taskId,
+      background: true,
+      resumed: true,
+      prompt: 'Use the browser.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal,
+      emit: async () => {},
+      reply: async () => {},
+      delta() {},
+      publish: async () => {
+        throw new Error('unused');
+      },
+      requestCredential: async () => ({ filled: true }),
+      integration: async () => ({}),
+      manage: async () => ({}),
+    });
+  };
+  const browse = (tools: Map<string, AgentTool>, action: BrowserAction) =>
+    tools.get('browser')!.execute({ ...action });
+  const login = { action: 'open', url: 'https://1.1.1.1/login' } as const;
+  const [oldOpened, oldCleanup, newOpened, newSnapshot] = [
+    deferred(),
+    deferred(),
+    deferred(),
+    deferred(),
+  ];
+  try {
+    const stop = new AbortController();
+    const old = turn(stop.signal, async (tools) => {
+      await browse(tools, login);
+      oldOpened.resolve();
+      await oldCleanup.promise;
+    });
+    await oldOpened.promise;
+    stop.abort();
+    await computer.discard!(taskId);
+    let snapshot: AgentToolResult | undefined;
+    const reopened = turn(new AbortController().signal, async (tools) => {
+      await browse(tools, login);
+      newOpened.resolve();
+      await newSnapshot.promise;
+      snapshot = await browse(tools, { action: 'snapshot' });
+    });
+    await newOpened.promise;
+    const page = browser.pages.get(taskId)!;
+    oldCleanup.resolve();
+    await assert.rejects(old);
+    await assert.rejects(computer.act('other', login));
+    assert.equal(page.closed, false);
+    newSnapshot.resolve();
+    assert.equal((await reopened).status, 'succeeded');
+    assert.ok(snapshot);
+    assert.equal(page.closed, true);
+  } finally {
+    oldCleanup.resolve();
+    newSnapshot.resolve();
+    await runtime.dispose();
+    await fixture.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('card destinations, the checkout image and the approved destinations cross the browser bridge intact', async () => {
   const fixture = await harness();
   try {
@@ -4259,6 +4367,39 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
     } finally {
       await view.close();
     }
+  }
+});
+
+test('Stop on the Browser page stops only the chat it shows, never every session', async () => {
+  const threadId = randomUUID();
+  const stops: unknown[] = [];
+  const stopped: string[] = [];
+  const view = await handoffView(
+    async (path, options) => {
+      if (path.startsWith('/api/browser/screen')) return new Response(null, { status: 404 });
+      assert.equal(path, '/api/thread/stop');
+      stops.push(JSON.parse(String(options?.body)));
+      return Response.json({ ok: true });
+    },
+    createElement(BrowserScreen, {
+      data: {
+        currentBrowser: {
+          threadId,
+          title: 'Synthetic chat',
+          status: 'running',
+          lastActivityAt: '2026-10-14T12:00:00.000Z',
+        },
+      },
+      onStopped: (id) => stopped.push(id),
+    }),
+  );
+  try {
+    await view.button('Stop');
+    await act(async () => delay(10));
+    assert.deepEqual(stops, [{ scope: 'chat' }]);
+    assert.deepEqual(stopped, [threadId]);
+  } finally {
+    await view.close();
   }
 });
 

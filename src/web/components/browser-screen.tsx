@@ -155,7 +155,7 @@ export function BrowserScreen({
                   onClick={() => {
                     const id = browserId;
                     setStoppingBrowser(id);
-                    void post('/api/thread/stop')
+                    void post('/api/thread/stop', { scope: 'chat' })
                       .then(() => {
                         setError('');
                         onStopped(id);
