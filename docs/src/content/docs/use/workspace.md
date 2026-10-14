@@ -11,13 +11,13 @@ The workspace is separate from your computer. Otto can write documents, convert 
 
 ## What Otto can use
 
-| For                     | The workspace has                                                    |
-| ----------------------- | -------------------------------------------------------------------- |
-| Office files            | LibreOffice, to convert, render and recalculate documents and sheets |
-| PDFs                    | qpdf, Ghostscript and pypdf, to fill forms and repair files          |
-| Text in any language    | Noto fonts for other scripts and emoji                               |
-| Video from a link       | `save-video`, which saves a video as an MP4 of 15 MB or less to send |
-| Anything else in Python | `pip install`, which adds libraries to `~/.local`                    |
+| For                     | The workspace has                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| Office files            | LibreOffice, to convert, render and recalculate documents and sheets                                  |
+| PDFs                    | qpdf, Ghostscript and pypdf, to fill forms and repair files                                           |
+| Text in any language    | Noto fonts for other scripts and emoji                                                                |
+| Video from a link       | `save-video`, which saves a video as an MP4 of 50 MB or less to send, or the full video with `--full` |
+| Anything else in Python | `pip install`, which adds libraries to `~/.local`                                                     |
 
 `save-video` refuses live streams and videos too long to fit at a watchable quality. `save-video --full` keeps the whole video at full quality in the workspace instead, for example to transcribe or cut it.
 

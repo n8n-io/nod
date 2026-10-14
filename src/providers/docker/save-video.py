@@ -8,7 +8,7 @@ import sys
 import yt_dlp
 
 
-LIMIT = 15 * 1024 * 1024
+LIMIT = 50 * 1024 * 1024
 BUDGET = int(LIMIT * 0.94)
 SECTION = 'Download a section with --download-sections "*START-END", or keep it in the workspace with --full.'
 
@@ -122,9 +122,9 @@ def normalize(path, full):
         else:
             os.remove(temporary)
             os.remove(path)
-            raise Failure(f"The video does not fit the 15 MB file limit. {SECTION}")
+            raise Failure(f"The video does not fit the 50 MB limit for sending. {SECTION}")
         if side < smallest:
-            note = f"compressed to {side}p to fit the 15 MB file limit"
+            note = f"compressed to {side}p to fit the 50 MB limit for sending"
     os.replace(temporary, target)
     if path != target:
         os.remove(path)
@@ -166,7 +166,7 @@ def save(url, options, sections, full):
         duration = max((entry.get("duration") or 0 for entry in entries), default=0)
         if not full and not sections and duration > BUDGET * 8 / 1000 / 200:
             minutes = round(duration / 60)
-            raise Failure(f"The video is {minutes} minutes long, too long for the 15 MB file limit. {SECTION}")
+            raise Failure(f"The video is {minutes} minutes long, too long for the 50 MB limit for sending. {SECTION}")
         if not full and not sections and not duration and any(e.get("live_status") == "was_live" for e in entries):
             raise Failure(f"This is a recorded live broadcast of unknown length. {SECTION}")
         chosen = not options.get("format") and not options.get("format_sort")
@@ -207,9 +207,9 @@ def main():
     if not arguments or arguments[0] in ("-h", "--help"):
         print(
             "usage: save-video [--full] URL [yt-dlp options]\n"
-            "Saves the video as an H.264/AAC MP4 under 15 MB in the current folder "
+            "Saves the video as an H.264/AAC MP4 under 50 MB in the current folder "
             "and prints one JSON line per file. --full keeps the full length and "
-            "quality in the workspace, without the 15 MB limit."
+            "quality in the workspace, without the 50 MB limit."
         )
         return 0
     parsed = yt_dlp.parse_options(arguments)
