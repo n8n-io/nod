@@ -96,6 +96,7 @@ try:
   install=float(r['installTimeoutMs'])/1000
   if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install<=3600: raise ValueError()
   prefix=sealed('.')+'/otto-cli-'+cli['id']
+  os.close(os.open(prefix+'.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600))
   home=tempfile.mkdtemp(prefix='otto-cli-')
   system='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   base={'HOME':home,'XDG_CONFIG_HOME':home+'/.config','LANG':'C.UTF-8'}

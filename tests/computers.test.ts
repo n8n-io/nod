@@ -638,7 +638,9 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
       owned.some(
         (request) =>
           request.role === 'connected' &&
-          request.command.startsWith('cd /var/tmp && exec /usr/bin/setpriv --reuid='),
+          request.command.startsWith(
+            `cd /var/tmp && exec /usr/bin/setpriv --reuid=${connectedUser(cli)} --regid=1002 `,
+          ),
       ),
     );
     assert.equal(

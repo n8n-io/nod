@@ -112,7 +112,7 @@ def main():
             require(as_user(1001, ["python3", "-c", probe]).returncode == 0, f"browser-network-{index}")
             require(as_user(1000, ["python3", "-c", probe]).returncode != 0, f"workspace-network-{index}")
             require(as_user(1002, ["python3", "-c", probe]).returncode != 0, f"connected-network-{index}")
-            require(as_user(cli_user, ["python3", "-c", probe], gid=1002).returncode != 0, f"connected-network-{index}")
+            require(as_user(cli_user, ["python3", "-c", probe], gid=1002).returncode != 0, f"connected-cli-network-{index}")
         checks = [
             "from pathlib import Path; Path('/data/boundary-private').read_bytes()",
             "from pathlib import Path; Path('/data/boundary-profile').iterdir().__next__()",
