@@ -469,7 +469,7 @@ export const toolDefinitions = {
   ),
   share_file: defineTool(
     'share_file',
-    'Send a workspace file to the user as an attachment. Check the file first; a successful call already delivers it.',
+    'Send a workspace file to the user as an attachment. Check the file first; a successful call already delivers it. In a task, it goes out with the result, and sharing a file with the same name again replaces the earlier copy.',
     Type.Object({
       path: Type.String(),
       name: Type.Optional(Type.String({ maxLength: 200 })),

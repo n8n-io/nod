@@ -1545,8 +1545,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           );
           if (task)
             await client.query(
-              'UPDATE tasks SET shared_files=shared_files||$3::jsonb WHERE id=$1 AND owner_id=$2',
-              [task.id, ownerId, JSON.stringify([artifact])],
+              `UPDATE tasks SET shared_files=COALESCE((SELECT jsonb_agg(f) FROM jsonb_array_elements(shared_files) f
+                 WHERE f->>'name' IS DISTINCT FROM $4),'[]'::jsonb)||$3::jsonb WHERE id=$1 AND owner_id=$2`,
+              [task.id, ownerId, JSON.stringify([artifact]), artifact.name],
             );
           return artifact;
         });

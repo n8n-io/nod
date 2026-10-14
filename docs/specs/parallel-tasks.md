@@ -193,7 +193,14 @@ The page keeps its tabs **Current**, **Scheduled** and **Previous**. **Current**
 
 ### 4.8 Artifacts
 
-A deliverable result carries one artifact card inside the result bubble. The task makes a document when the owner will keep, read later or share the result: a research write-up, a comparison of several options, a plan or a draft (D15). The result message then keeps the conclusion and two or three key points. Quick facts and short results stay plain text (WP-32). On web, the card opens the side panel (`<aside>` in `.workspace-body`). Documents (Markdown, PDF, images) render in the panel. HTML pages render later, in a sandboxed frame. On Telegram, document artifacts go as a PDF file that replies to the result. On WhatsApp, Otto sends no files: the result text tells the owner to open the artifact in Otto.
+A deliverable result carries one artifact card inside the result bubble. The task makes a document when the owner will keep, read later or share the result: a research write-up, a comparison of several options, a plan or a draft (D15). The result message then keeps the conclusion and two or three key points. Quick facts and short results stay plain text (WP-32).
+
+Rules from step 7 (WP-32):
+
+- The files that a task shares wait on the task row and go out only with the result, never with a check-in or a question. A file shared before a question goes out with the result of a later turn.
+- A file shared again with the same name replaces the earlier copy.
+- When a turn closes the task as Done with no final text, the waiting files go out alone as the result. A stopped or failed task keeps its files for the result after a reply opens it again.
+- Known limits: a draft that the owner must see to answer a question reaches them only with the result, so the question text must carry what they need. Audio from `create_audio` still goes out at once. A result with more than 10 files is refused by the chat apps. On web, the card opens the side panel (`<aside>` in `.workspace-body`). Documents (Markdown, PDF, images) render in the panel. HTML pages render later, in a sandboxed frame. On Telegram, document artifacts go as a PDF file that replies to the result. On WhatsApp, Otto sends no files: the result text tells the owner to open the artifact in Otto.
 
 Rules from step 5 (WP-26):
 
@@ -290,23 +297,24 @@ Task sessions keep `background = true`. Thus, chat-only staleness rules and chat
 
 The `tasks` table becomes the task record (WP-01, WP-19). `tasks.id` is the session ID.
 
-| Column                                  | Meaning                                                               |
-| --------------------------------------- | --------------------------------------------------------------------- |
-| `id`                                    | Task ID and session ID                                                |
-| `owner_id`, `thread_id`                 | Owner and thread scope                                                |
-| `title`                                 | At most 120 characters                                                |
-| `instruction`                           | Frozen copy of the owner words that started the task (task authority) |
-| `source_message_id`                     | The owner message that started the task (can be a steered message)    |
-| `on_it_message_id`                      | The "On it" message                                                   |
-| `result_message_id`                     | The latest result message                                             |
-| `channel`, `channel_source_id`          | Delivery route, copied like `schedules.deliveryRoute`                 |
-| `read_only`                             | Copied from the dispatching chain                                     |
-| `steps`, `step_index`                   | Step list (2 to 8 items) and the current step                         |
-| `now_text`                              | The current step line, written by `task_progress`                     |
-| `waiting_for`, `next_check`             | Who the task waits for, and the planned check (WP-29)                 |
-| `check_ins`, `last_check_in_at`         | Check-in counter for the current run                                  |
-| `state`                                 | `queued`, `open`, `waiting`, `done`, `stopped` or `failed`            |
-| `created_at`, `updated_at`, `closed_at` | Times                                                                 |
+| Column                                  | Meaning                                                                                                     |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `id`                                    | Task ID and session ID                                                                                      |
+| `owner_id`, `thread_id`                 | Owner and thread scope                                                                                      |
+| `title`                                 | At most 120 characters                                                                                      |
+| `instruction`                           | Frozen copy of the owner words that started the task (task authority)                                       |
+| `source_message_id`                     | The owner message that started the task (can be a steered message)                                          |
+| `on_it_message_id`                      | The "On it" message                                                                                         |
+| `result_message_id`                     | The latest result message                                                                                   |
+| `channel`, `channel_source_id`          | Delivery route, copied like `schedules.deliveryRoute`                                                       |
+| `read_only`                             | Copied from the dispatching chain                                                                           |
+| `steps`, `step_index`                   | Step list (2 to 8 items) and the current step                                                               |
+| `now_text`                              | The current step line, written by `task_progress`                                                           |
+| `waiting_for`, `next_check`             | Who the task waits for, and the planned check (WP-29)                                                       |
+| `check_ins`, `last_check_in_at`         | Check-in counter for the current run                                                                        |
+| `shared_files`                          | Files the task shared that wait for the result (WP-32). A file with the same name replaces the earlier copy |
+| `state`                                 | `queued`, `open`, `waiting`, `done`, `stopped` or `failed`                                                  |
+| `created_at`, `updated_at`, `closed_at` | Times                                                                                                       |
 
 The old columns `auto`, `turn_id`, `done_when` and `turns.task_id` go (WP-19). A migration closes open auto cards first.
 
