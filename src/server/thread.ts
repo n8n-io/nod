@@ -1290,7 +1290,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation.throwIfAborted();
       return value;
     };
-    const shared: Artifact[] = [];
     const insert = (
       client: PoolClient,
       text: string,
@@ -1302,10 +1301,23 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         client,
         ref,
         text,
-        [...shared.splice(0), ...attachments],
+        attachments,
         streamId,
         replyToMessageId ?? task?.on_it_message_id,
       );
+    const deliver = async (client: PoolClient, text: string) => {
+      const files = (
+        await client.query('SELECT shared_files FROM tasks WHERE id=$1 AND owner_id=$2', [
+          task!.id,
+          ownerId,
+        ])
+      ).rows[0].shared_files;
+      const id = await insert(client, text, files);
+      await client.query(
+        "UPDATE tasks SET result_message_id=$1,shared_files='[]',updated_at=now() WHERE id=$2 AND owner_id=$3",
+        [id, task!.id, ownerId],
+      );
+    };
     const post = async (
       text: string,
       attachments: Artifact[] = [],
@@ -1402,13 +1414,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         request: task.instruction,
         progressMode: loaded.progressMode,
         result: async (text) => {
-          await current(async (client) => {
-            const id = await insert(client, text);
-            await client.query(
-              'UPDATE tasks SET result_message_id=$1,updated_at=now() WHERE id=$2 AND owner_id=$3',
-              [id, task.id, ownerId],
-            );
-          });
+          await current((client) => deliver(client, text));
           refresh();
         },
         progress:
@@ -1530,11 +1536,21 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       publish: async (path, name) => {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
-        const artifact = await current(() =>
-          artifacts.publishArtifact(threadId, inFolder(folder, path), name, read),
-        );
-        if (task) shared.push(artifact);
-        else await post('', [artifact]);
+        const artifact = await current(async (client) => {
+          const artifact = await artifacts.publishArtifact(
+            threadId,
+            inFolder(folder, path),
+            name,
+            read,
+          );
+          if (task)
+            await client.query(
+              'UPDATE tasks SET shared_files=shared_files||$3::jsonb WHERE id=$1 AND owner_id=$2',
+              [task.id, ownerId, JSON.stringify([artifact])],
+            );
+          return artifact;
+        });
+        if (!task) await post('', [artifact]);
         return artifact;
       },
       readWorkspaceFile:
@@ -1554,7 +1570,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
     await current(async (client) => {
-      if (shared.length) await insert(client, '');
       if (result.status !== 'succeeded')
         return finishTurn(client, turnId, 'waiting', {
           waitingReason:
@@ -1570,10 +1585,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ]);
       const done = await client.query(
         `UPDATE tasks SET state='done',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'
-         AND NOT EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=$2 AND q.session_id=$1 AND q.status='queued')`,
+         AND NOT EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=$2 AND q.session_id=$1 AND q.status='queued')
+         RETURNING shared_files<>'[]' AS files`,
         [task.id, ownerId],
       );
-      if (done.rowCount) await endSessionApprovals(client, [task.id], 'declined');
+      if (!done.rowCount) return;
+      await endSessionApprovals(client, [task.id], 'declined');
+      if (done.rows[0].files) await deliver(client, '');
     }).catch((error) => {
       if (!signal.aborted) throw error;
     });

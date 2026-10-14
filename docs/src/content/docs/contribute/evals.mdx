@@ -149,7 +149,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 61 cases: 57 controlled cases, three live web cases and the harness canary.
+The suite has 62 cases: 58 controlled cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -161,7 +161,7 @@ The suite has 61 cases: 57 controlled cases, three live web cases and the harnes
 
 Payment cases use a synthetic merchant and never a real card. They measure task results, not issuer settlement or payment compliance.
 
-**Task** cases (`answer-the-right-task`, `continue-a-done-task` and `two-tasks-at-once`) run Otto with [`OTTO_TASKS`](/deploy/configuration/#server-and-data) on, so the chat can hand work to [tasks](/use/tasks/). Run them with `--capability tasks`. Every other case runs with it off.
+**Task** cases (`answer-the-right-task`, `continue-a-done-task`, `research-as-a-document` and `two-tasks-at-once`) run Otto with [`OTTO_TASKS`](/deploy/configuration/#server-and-data) on, so the chat can hand work to [tasks](/use/tasks/). Run them with `--capability tasks`. Every other case runs with it off.
 
 | Scenario                                | What it checks                                                                | Capabilities                             | Status      |
 | --------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
@@ -214,6 +214,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
 | `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
 | `reply-drafts`                          | Draft replies in my voice to the emails that need one                         | apps, memory, approvals                  | scored      |
+| `research-as-a-document`                | Research a company's go-to-market and get a document with a short result      | tasks, research, files                   | calibrating |
 | `saved-card-checkout`                   | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | calibrating |
 | `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
 | `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |

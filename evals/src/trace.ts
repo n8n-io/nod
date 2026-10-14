@@ -23,6 +23,7 @@ export interface ChatMessage {
   at: number;
   turnId: string | null;
   replyToMessageId: string | null;
+  attachments: Array<{ name: string; mimeType: string }>;
 }
 
 export interface TaskRecord {
@@ -278,7 +279,7 @@ export async function collect(options: {
   }
   const messages = (
     await stack.pool.query(
-      `SELECT id,role,text,turn_id,created_at,to_jsonb(messages)->>'reply_to_message_id' AS reply_to
+      `SELECT id,role,text,turn_id,created_at,attachments,to_jsonb(messages)->>'reply_to_message_id' AS reply_to
        FROM messages ORDER BY created_at, id`,
     )
   ).rows.map((row): ChatMessage => ({
@@ -288,6 +289,10 @@ export async function collect(options: {
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
     replyToMessageId: row.reply_to,
+    attachments: (row.attachments ?? []).map((file: { name: string; mimeType: string }) => ({
+      name: file.name,
+      mimeType: file.mimeType,
+    })),
   }));
   const tasks = (
     await stack.pool.query(

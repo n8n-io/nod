@@ -64,7 +64,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `route_to_task`                                                     | Moves your current message, word for word, into an open task. Only chat turns get it.               |
 | `task_progress`                                                     | Changes a task's own steps and status line, plans its next check or stops it. Task turns only.      |
 | `check_in`                                                          | Sends a short check-in as a reply to "On it", within the server's limits. Task turns only.          |
-| `share_file`                                                        | Sends a workspace file to you.                                                                      |
+| `share_file`                                                        | Sends a workspace file to you. In a task, it goes with the task's result.                           |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                         |
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                 |
 | `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                     |

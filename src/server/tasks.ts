@@ -581,7 +581,8 @@ export function createTasks(options: {
         END IF;
       END $$;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS waiting_for jsonb NOT NULL DEFAULT '[]',
-        ADD COLUMN IF NOT EXISTS next_check timestamptz;
+        ADD COLUMN IF NOT EXISTS next_check timestamptz,
+        ADD COLUMN IF NOT EXISTS shared_files jsonb NOT NULL DEFAULT '[]';
       ALTER TABLE turns DROP COLUMN IF EXISTS task_id;
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       CREATE INDEX IF NOT EXISTS tasks_on_it ON tasks(on_it_message_id);

@@ -1330,6 +1330,7 @@ test('background calendar checks reject leaked context and repeated outside effe
     text: 'Moved the planning block.',
     at: 80,
     replyToMessageId: null,
+    attachments: [],
   });
   assert.equal(await verdict('background-did-not-answer-the-chat-request'), false);
   run.turns[1].startedAt = 120;

@@ -461,6 +461,8 @@ test(
           return { status: 'succeeded' };
         }
         if (context.prompt.startsWith('check-in-')) {
+          if (['check-in-limits', 'check-in-question'].includes(context.prompt))
+            await context.publish(`${context.prompt}.md`);
           const send = async (text: string, aged = true) => {
             if (aged)
               await db.pool.query(
@@ -2072,7 +2074,7 @@ test(
       });
 
       await t.test(
-        'check-ins follow the progress mode and server limits, while questions and results still go out',
+        'check-ins follow the progress mode and server limits, questions and results still go out, and shared files wait for the result',
         async () => {
           await waitFor(settledThread);
           const preferences = createPreferencesStore(db.pool, ownerId);
@@ -2095,15 +2097,23 @@ test(
           const replies = async (taskId: string) =>
             (
               await db.pool.query(
-                `SELECT m.id,m.text,m.reply_to_message_id FROM messages m JOIN turns u ON u.id=m.turn_id
+                `SELECT m.id,m.text,m.reply_to_message_id,m.attachments FROM messages m JOIN turns u ON u.id=m.turn_id
                  WHERE u.session_id=$1 AND m.role='assistant' ORDER BY m.created_at,m.id`,
                 [taskId],
               )
             ).rows;
+          const delivered = async (taskId: string) =>
+            (await replies(taskId)).map((message) => [
+              message.text,
+              message.reply_to_message_id,
+              message.attachments.map((file: { name: string }) => file.name),
+            ]);
+          const previousRead = dependencies.readArtifact;
           const counter = async (taskId: string) =>
             (await db.pool.query('SELECT check_ins FROM tasks WHERE id=$1', [taskId])).rows[0]
               .check_ins;
           try {
+            dependencies.readArtifact = async () => Buffer.from('synthetic findings');
             await preferences.update({ progressMode: 'check_ins', quietHoursEnabled: false });
             const limited = await start('check-in-limits');
             assert.deepEqual(checkIns.get('check-in-limits'), [
@@ -2122,19 +2132,16 @@ test(
             assert.deepEqual(checkIns.get('check-in-read-only'), ['read_only']);
             await db.pool.query('UPDATE tasks SET read_only=false WHERE id=$1', [limited.taskId]);
             assert.deepEqual(
-              (await replies(limited.taskId)).map((message) => [
-                message.text,
-                message.reply_to_message_id,
-              ]),
+              await delivered(limited.taskId),
               [
-                'First synthetic finding.',
-                'Second synthetic finding.',
-                'Third synthetic finding.',
-                'Synthetic result for check-in-limits.',
-                'Synthetic check-in for check-in-reopened.',
-                'Synthetic result for check-in-reopened.',
-                'Synthetic result for check-in-read-only.',
-              ].map((text) => [text, limited.onItMessageId]),
+                ['First synthetic finding.', []],
+                ['Second synthetic finding.', []],
+                ['Third synthetic finding.', []],
+                ['Synthetic result for check-in-limits.', ['check-in-limits.md']],
+                ['Synthetic check-in for check-in-reopened.', []],
+                ['Synthetic result for check-in-reopened.', []],
+                ['Synthetic result for check-in-read-only.', []],
+              ].map(([text, files]) => [text, limited.onItMessageId, files]),
             );
 
             const hour = new Date().getUTCHours();
@@ -2148,22 +2155,20 @@ test(
             assert.deepEqual(checkIns.get('check-in-question'), ['quiet_hours']);
             const [question] = await replies(asking.taskId);
             assert.deepEqual(
-              [question.text, question.reply_to_message_id],
-              ['Which synthetic supplier should I use?', asking.onItMessageId],
+              [question.text, question.reply_to_message_id, question.attachments],
+              ['Which synthetic supplier should I use?', asking.onItMessageId, []],
             );
             await preferences.update({ quietHoursEnabled: false, progressMode: 'quiet' });
             await reply('check-in-quiet', question.id);
             assert.deepEqual(checkIns.get('check-in-quiet'), ['quiet_mode']);
-            assert.deepEqual(
-              (await replies(asking.taskId)).map((message) => [
-                message.text,
-                message.reply_to_message_id,
-              ]),
+            assert.deepEqual(await delivered(asking.taskId), [
+              ['Which synthetic supplier should I use?', asking.onItMessageId, []],
               [
-                ['Which synthetic supplier should I use?', asking.onItMessageId],
-                ['Synthetic result for check-in-quiet.', asking.onItMessageId],
+                'Synthetic result for check-in-quiet.',
+                asking.onItMessageId,
+                ['check-in-question.md'],
               ],
-            );
+            ]);
             assert.equal(await counter(asking.taskId), 0);
             assert.deepEqual(
               ['check-in-limits', 'check-in-quiet'].map(
@@ -2173,6 +2178,7 @@ test(
               ['check_ins', 'quiet'],
             );
           } finally {
+            dependencies.readArtifact = previousRead;
             await preferences.update(original);
           }
           await waitFor(settledThread);

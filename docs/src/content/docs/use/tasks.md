@@ -26,7 +26,7 @@ flowchart TD
   work --> result[The result replies to On it]:::go
 ```
 
-Everything a task sends replies to its "On it" message: its questions, the [trust check](/trust/approvals/)'s confirmations, sign-in and payment links, check-ins, files and the result. So each task stays together, even while you chat about something else. In the Otto app, these messages show the task's title above them. Select it to scroll to "On it" and open the task's card.
+Everything a task sends replies to its "On it" message: its questions, the [trust check](/trust/approvals/)'s confirmations, sign-in and payment links, check-ins and the result. The files a task makes for you come with its result, never with a question or a check-in. So each task stays together, even while you chat about something else. In the Otto app, these messages show the task's title above them. Select it to scroll to "On it" and open the task's card.
 
 A task acts on your message that started it and on your replies to it. A chat message about something else never changes what a task may do, and each action a task takes still goes through the [trust check](/trust/approvals/#what-the-checker-sees).
 
@@ -118,7 +118,9 @@ Otto never runs a failed task again on its own, because it may have started some
 
 ## Open a task's document
 
-When a task's result is a document, such as a report, the result's message carries a card for the document. Select the card to open the document in a panel next to the chat. Documents such as Markdown, PDF, text, spreadsheets and images show in the panel. Other files, web pages included, download. Select **Close**, or press Escape, to close the panel.
+When the result is something you'll keep, read later or share, such as a research write-up, a comparison of several options, a plan or a draft, the task writes it as a Markdown document with its sources. The result's message then gives the conclusion and two or three key points, and the document has the rest. Quick facts and short results stay plain text in the message.
+
+The result's message carries a card for the document. Select the card to open the document in a panel next to the chat. Documents such as Markdown, PDF, text, spreadsheets and images show in the panel. Other files, web pages included, download. Select **Close**, or press Escape, to close the panel.
 
 ## Tasks in Telegram and WhatsApp
 
