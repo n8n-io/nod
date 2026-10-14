@@ -36,7 +36,7 @@ flowchart TD
 | `BrowserComputerContainer`   | `otto-<environment>-browser:<SHA>`   | `standard-4`  | 8               | 100            |
 | `WorkspaceComputerContainer` | `otto-<environment>-workspace:<SHA>` | `standard-2`  | 8               | 100            |
 
-`OTTO_MAX_USERS` caps admission: 8 by default, 100 in production, 400 at most. Raise it together with the container limits, database connections and budget.
+`OTTO_MAX_USERS` caps admission: 8 by default and 100 in production. Raise it together with the container limits, database connections and budget.
 
 ## Check a change
 
