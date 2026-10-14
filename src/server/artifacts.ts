@@ -78,7 +78,7 @@ export function createArtifactService(options: {
     throw new Error('Private file storage is unavailable.');
   const location = (id: string) =>
     options.localRoot ? join(options.localRoot, 'artifacts', id) : `object:artifacts/${id}`;
-  async function readRow(row: Record<string, any>) {
+  function checkRow(row: Record<string, any>) {
     z.uuid().parse(row.id);
     if (
       row.storage_path !== location(row.id) ||
@@ -87,6 +87,9 @@ export function createArtifactService(options: {
       row.size > fileBytes
     )
       throw new Error('An attachment is unavailable.');
+  }
+  async function readRow(row: Record<string, any>) {
+    checkRow(row);
     const object = options.store
       ? await options.store.read(`artifacts/${row.id}`, row.size)
       : { bytes: await readLocal(location(row.id), row.size) };
@@ -192,18 +195,16 @@ export function createArtifactService(options: {
       )
     ).rows;
     if (rows.length !== unique.length) throw new Error('An attachment is unavailable.');
-    const result: MessagingAttachment[] = [];
-    for (const id of unique) {
+    return unique.map((id) => {
       const row = rows.find((item) => item.id === id)!;
-      await readRow(row);
-      result.push({
+      checkRow(row);
+      return {
         name: row.name,
         mimeType: row.mime_type,
         size: row.size,
         read: () => readRow(row),
-      });
-    }
-    return result;
+      };
+    });
   }
   return { storeArtifact, publishArtifact, readArtifact, readThreadArtifacts };
 }

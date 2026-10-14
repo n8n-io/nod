@@ -1956,7 +1956,7 @@ test(
       await pool.query('UPDATE artifacts SET storage_path=$2 WHERE id=$1', [image.id, imagePath]);
       await rm(imagePath);
       await symlink(outside, imagePath);
-      await assert.rejects(readThreadArtifacts(threadId, [image.id]));
+      await assert.rejects((await readThreadArtifacts(threadId, [image.id]))[0].read());
       await rm(imagePath);
       await writeFile(imagePath, imageBytes);
       await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, files.fileBytes + 1]);
