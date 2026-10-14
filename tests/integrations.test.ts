@@ -4834,7 +4834,7 @@ test(
           },
         },
         oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
-        runCli: async (_thread, cli, _argv, _envName, _token, _timeout, signal) => {
+        runCli: async (_thread, cli, _argv, _environment, _timeout, signal) => {
           cliCalls++;
           cliRuns.push(cli);
           await waitForAbort('cli', signal);
@@ -4844,7 +4844,7 @@ test(
       const cliProposal = (source?: unknown) => ({
         service: 'fixture-app',
         name: 'Fixture app',
-        paths: [{ kind: 'cli', command: 'fixturecli', envName: 'FIXTURE_API_KEY', source }],
+        paths: [{ kind: 'cli', command: 'fixturecli', env: ['FIXTURE_API_KEY'], source }],
       });
       for (const source of [
         undefined,
@@ -4892,7 +4892,7 @@ test(
           kind: 'cli',
           command: 'fixturecli',
           auth: 'env',
-          envName: 'FIXTURE_API_KEY',
+          env: ['FIXTURE_API_KEY'],
           source: { npm: '@fixture/cli@1.2.3' },
         },
       ];
@@ -5154,6 +5154,103 @@ test(
       assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
       assert.notEqual(await account(), replacedAccount);
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'a connected CLI receives each named setting and never shows their values',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_discovered_cli_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    try {
+      const owner = 'fixture-owner';
+      const key = randomBytes(32);
+      const grantVault = await createAppGrantVault(pool, {
+        ownerId: owner,
+        keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      });
+      const environments: Array<Record<string, string>> = [];
+      const discovered = await createDiscoveredConnections(pool, {
+        ownerId: owner,
+        baseUrl: 'http://localhost:4310',
+        grantVault,
+        transport: {} as Parameters<typeof createDiscoveredConnections>[1]['transport'],
+        oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
+        runCli: async (_thread, _cli, _argv, environment) => {
+          environments.push(environment);
+          return {
+            exitCode: 0,
+            output: `signed in as ${Object.values(environment).join(' and ')}`,
+          };
+        },
+      });
+      discovered.registerRoutes(app);
+      const cli = {
+        kind: 'cli',
+        command: 'fixturecli',
+        env: ['FIXTURE_ACCESS_KEY_ID', 'FIXTURE_SECRET_ACCESS_KEY'],
+        source: { npm: '@fixture/cli@1.2.3' },
+      };
+      await assert.rejects(
+        discovered.propose({
+          service: 'fixture-cloud',
+          name: 'Fixture cloud',
+          paths: [cli, { kind: 'http', endpoint: 'https://fixture.example/api', testPath: 'me' }],
+        }),
+        /its own connection/,
+      );
+      await assert.rejects(
+        discovered.propose({
+          service: 'fixture-cloud',
+          name: 'Fixture cloud',
+          paths: [{ ...cli, env: ['LD_PRELOAD'] }],
+        }),
+        { name: 'ZodError' },
+      );
+      const proposal = await discovered.propose({
+        service: 'fixture-cloud',
+        name: 'Fixture cloud',
+        paths: [cli],
+      });
+      const id = new URL(proposal.url, 'http://localhost:4310').searchParams.get('connect');
+      const complete = (token: unknown) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/apps/discovery/${id}/complete`,
+          payload: { token, accountName: 'Fixture account' },
+        });
+      assert.equal((await complete('synthetic-single-token')).statusCode, 400);
+      assert.equal((await complete({ FIXTURE_ACCESS_KEY_ID: 'synthetic-key-id' })).statusCode, 400);
+      const values = {
+        FIXTURE_ACCESS_KEY_ID: 'synthetic-key-id',
+        FIXTURE_SECRET_ACCESS_KEY: 'synthetic-secret-key',
+      };
+      assert.equal((await complete(values)).statusCode, 200);
+      const saved = await pool.query<{ id: string; paths: Array<{ id: string }> }>(
+        'SELECT id,paths FROM discovered_connections WHERE owner_id=$1',
+        [owner],
+      );
+      const result = await discovered.execute(
+        'CONNECTED_CLI',
+        { connectionId: saved.rows[0].id, pathId: saved.rows[0].paths[0].id, argv: ['whoami'] },
+        { threadId: randomUUID(), turnId: randomUUID() },
+        new AbortController().signal,
+      );
+      assert.deepEqual(environments, [values]);
+      assert.equal(JSON.stringify(result).includes('synthetic-'), false);
     } finally {
       await app.close();
       await pool.end();

@@ -485,14 +485,14 @@ async function initializeApplication(
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
     runCli: workspace.connectedCliAvailable
-      ? async (threadId, cli, args, envName, token, timeoutSeconds, signal) => {
+      ? async (threadId, cli, args, environment, timeoutSeconds, signal) => {
           const session = workspace.open({
             threadId,
             workspacePath: join(dataRoot, 'workspaces', threadId),
             signal: signal ?? new AbortController().signal,
           });
           if (!session.runConnectedCli) throw new Error('Connected CLI commands are unavailable.');
-          return session.runConnectedCli(cli, args, { [envName]: token }, timeoutSeconds);
+          return session.runConnectedCli(cli, args, environment, timeoutSeconds);
         }
       : undefined,
     resumeConnection: resumeAfterConnection,
