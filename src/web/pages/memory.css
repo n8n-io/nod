@@ -109,12 +109,6 @@
 .memory-row:hover {
   background: var(--nav-hover);
 }
-.memory-row.is-static {
-  cursor: default;
-}
-.memory-row.is-static:hover {
-  background: transparent;
-}
 .memory-row[aria-current='true'] {
   background: var(--accent-soft);
 }

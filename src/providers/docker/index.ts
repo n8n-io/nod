@@ -97,7 +97,6 @@ export function createDockerWorkspace(options: {
 }): Workspace {
   return createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
-    status: `${options.container}; Linux · internet enabled`,
     instructions:
       'Your Linux workspace uses Docker networking without an Otto egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: Otto installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
     runCommand: (id, args, input) =>
@@ -132,7 +131,6 @@ type CommandResult = { stdout: Buffer; stderr: Buffer; exitCode: number };
 
 export function createCommandWorkspace(options: {
   workspaceRoot: string;
-  status: string;
   instructions: string;
   runCommand(id: string, args: string[], input: CommandInput): Promise<CommandResult>;
   runConnectedCommand?(
@@ -178,7 +176,6 @@ export function createCommandWorkspace(options: {
   }
   return {
     connectedCliAvailable: Boolean(options.runConnectedCommand),
-    status: () => (unavailable ? 'Workspace needs a restart.' : options.status),
     dispose: async () => {
       disposed = true;
       lifecycle.abort();

@@ -69,26 +69,11 @@ export interface AppDependencies {
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
-  computer?: Pick<
-    Computer,
-    | 'act'
-    | 'screenshot'
-    | 'control'
-    | 'view'
-    | 'status'
-    | 'screenStatus'
-    | 'currentSession'
-    | 'discard'
-  >;
-  runtime?: {
-    status(): { browser: string; workspace: string; activeTurns?: number };
-    holdBrowserForUser?(threadId: string): boolean;
-  };
+  computer?: Pick<Computer, 'act' | 'screenshot' | 'control' | 'view' | 'screenStatus' | 'discard'>;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
   planningTasks?: () => boolean;
-  browserInput?: (threadId: string, apply: () => Promise<void>) => Promise<void>;
   messageCosts?: (
     turnIds: string[],
   ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
@@ -267,28 +252,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!configuration().conversationResetEnabled)
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
-    const { previousThreadId, ...reset } = await resetThread(threadId);
-    void dependencies.computer?.discard?.(previousThreadId).catch(() => {});
+    const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
+    for (const id of [previousThreadId, ...browsers])
+      void dependencies.computer?.discard(id).catch(() => {});
     return reset;
-  });
-  app.post('/api/onboarding', async (request) => {
-    const { timeZone, threadId } = z
-      .object({
-        timeZone: z.string().max(100).optional(),
-        threadId: z.uuid().optional(),
-      })
-      .strict()
-      .parse(request.body);
-    if (timeZone) {
-      try {
-        new Intl.DateTimeFormat('en', { timeZone });
-      } catch {
-        throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
-      }
-    }
-    if (!dependencies.onboard)
-      throw Object.assign(new Error('Setup is unavailable.'), { statusCode: 503 });
-    return dependencies.onboard(timeZone, threadId);
   });
   app.post('/api/onboarding/start', async (request) => {
     const { name } = z
@@ -353,7 +320,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
   });
   app.post('/api/thread/stop', async () => {
-    await stopThread();
+    const { browsers } = await stopThread();
+    for (const id of browsers) void dependencies.computer?.discard(id).catch(() => {});
     return { ok: true };
   });
   app.get('/api/events', async (request, reply) => {
@@ -443,13 +411,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   async function readCurrentBrowser() {
     const thread = await activeThread(pool);
-    const activeBrowser = dependencies.computer?.currentSession?.();
-    if (activeBrowser && activeBrowser.threadId !== thread.id) return undefined;
     const latest = await pool.query(
       `SELECT left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
        LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND summary='browser' ORDER BY created_at DESC LIMIT 1) e ON true
-       WHERE u.owner_id=$1 AND u.thread_id=$2 ${activeBrowser ? '' : 'AND e.created_at IS NOT NULL'}
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND e.created_at IS NOT NULL
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
       [ownerId, thread.id],
     );
@@ -459,13 +425,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       title: row.title,
       status: row.status,
-      lastActivityAt: activeBrowser?.lastActivityAt ?? row.lastActivityAt,
+      lastActivityAt: row.lastActivityAt,
     };
   }
   app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));
   async function credentialEntryOpen(threadId: string) {
     const latest = await pool.query(
-      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
+      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND session_id=$2 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
       [ownerId, threadId],
     );
     return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'credentials';
@@ -474,15 +440,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const latest = await pool.query(
       `SELECT u.status,u.waiting_reason FROM turns u
        JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND NOT u.background AND th.archived_at IS NULL
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND th.archived_at IS NULL
        ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
       [ownerId, threadId],
     );
-    return (
-      latest.rows[0]?.status === 'waiting' &&
-      latest.rows[0].waiting_reason === 'question' &&
-      (dependencies.runtime?.holdBrowserForUser?.(threadId) ?? true)
-    );
+    return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'question';
   }
   const handoffClosed = 'The browser opens here when Otto hands it to you.';
   async function readBrowserScreen(reply: FastifyReply) {
@@ -505,7 +467,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reply.code(409).send({ error: 'The browser session changed. Request a new view.' });
     if (await blocked()) return reply.code(423).send({ error: paused });
     if (!screen) return reply.code(404).send({ error: 'There is no browser screen yet.' });
-    const screenStatus = dependencies.computer?.screenStatus?.(thread.id);
+    const screenStatus = dependencies.computer?.screenStatus(thread.id);
     reply.header('X-Screen-State', screenStatus?.state ?? 'live');
     if (screenStatus?.capturedAt) reply.header('X-Screen-Captured-At', screenStatus.capturedAt);
     return reply.type('image/png').send(screen);
@@ -606,15 +568,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
-    const acting = body.data.inputs.some(
-      (input) => input.type !== 'wheel' && (input.type !== 'mouse' || input.event !== 'move'),
-    );
-    const apply = async () => {
-      for (const input of body.data.inputs) await control(thread.id, input);
-    };
     try {
-      if (acting && dependencies.browserInput) await dependencies.browserInput(thread.id, apply);
-      else await apply();
+      for (const input of body.data.inputs) await control(thread.id, input);
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply
@@ -634,11 +589,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
     try {
-      const apply = async () => {
-        await act(thread.id, { action: body.data.action });
-      };
-      if (dependencies.browserInput) await dependencies.browserInput(thread.id, apply);
-      else await apply();
+      await act(thread.id, { action: body.data.action });
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply

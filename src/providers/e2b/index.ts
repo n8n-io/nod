@@ -70,7 +70,6 @@ export function createE2BAdapters(options: {
   });
   const workspace = createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
-    status: 'Remote Linux workspace is ready.',
     instructions:
       'Your remote Linux workspace cannot access protected browser profiles or controls. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>. A connected app CLI never runs from here: Otto installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
     runCommand: (id, args, input) => {
@@ -136,7 +135,6 @@ export function createE2BAdapters(options: {
   return {
     computer: {
       ...browserComputer,
-      status: () => (browserDisposed ? 'Workspace browser is stopped.' : computer.status()),
       dispose: disposeComputer,
     },
     workspace: {

@@ -12,6 +12,8 @@ const browserErrors = {
     'The browser could not read the updated page. Take a fresh screenshot before requesting another snapshot. Keep the current page open and check its state before repeating any click or submission.',
   browser_card_paused:
     'A private entry document is still open. Reload it before Pi reads or controls it. Check the result before another attempt.',
+  browser_script_paused:
+    'A field Otto filled privately still holds its value, so page scripts are paused. Use snapshot or screenshot, or continue once the page moves on.',
   browser_card_reload:
     'A script ran on this document, so Otto will not enter a saved value on it. Reload the page and take a fresh snapshot before a new private operation.',
   browser_card_field:

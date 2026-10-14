@@ -53,8 +53,8 @@ Each run appears in **Tasks → Previous**.
 
 You don't need a schedule for Otto to keep an eye on things.
 
-- **Gmail.** Otto checks for new inbox mail every five minutes. It reads a new message and decides whether there's useful work, such as preparing a reply.
-- **Other connected apps.** Otto reacts to their updates. For an app without updates, it runs a short read-only check, at most every 30 minutes per account.
+- **Gmail.** Otto checks for new inbox mail every five minutes. When you've told Otto what's worth interrupting you for, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Without that, Otto only saves the message.
+- **Other connected apps.** Each update works the same way. For an app without updates, once you've said what's worth interrupting you for, Otto checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
 
 Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. Tell Otto what's worth interrupting you for, and it follows that.
 
@@ -62,7 +62,7 @@ Work Otto starts on its own only reads and drafts. Sending, deleting or anything
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Preferences → Quiet hours**.
 
-During quiet hours, Otto saves new mail and app activity for later instead of acting on it, and pauses its activity checks. Schedules you created still run on time.
+During quiet hours, Otto keeps working on new mail and app activity, but messages you only for something that can't wait until they end. Schedules you created still run and deliver on time.
 
 ## Keep Otto running
 

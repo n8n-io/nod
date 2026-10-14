@@ -1,6 +1,11 @@
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { DiscoveredOAuth, DiscoveredOAuthState } from '../../ports/discovered.ts';
+import { OAuthError, ServerError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import {
+  DiscoveredSignInRequired,
+  type DiscoveredOAuth,
+  type DiscoveredOAuthState,
+} from '../../ports/discovered.ts';
 import { publicUrl } from '../agent-browser/network.ts';
 import { safeRemoteFetch } from './remote.ts';
 
@@ -73,7 +78,7 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
         ...(scope ? { scope } : {}),
         ...(clientId ? { clientInformation: { client_id: clientId } } : {}),
       };
-      const result = await run(endpoint, saved, { state });
+      const result = await run(endpoint, saved, { state }, AbortSignal.timeout(30_000));
       if (result.result !== 'REDIRECT' || !result.url)
         throw new Error('The service did not provide a sign-in link.');
       const destination = await publicUrl(result.url);
@@ -82,16 +87,20 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
       return { url: destination.url.href, saved };
     },
     async finish(endpoint, saved, code) {
-      const result = await run(endpoint, saved, { code });
+      const result = await run(endpoint, saved, { code }, AbortSignal.timeout(30_000));
       if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
         throw new Error('The service did not complete sign-in.');
       return saved;
     },
     async refresh(endpoint, saved, signal) {
-      if (!saved.tokens?.refresh_token) throw new Error('Connect this account again.');
-      const result = await run(endpoint, saved, {}, signal);
+      if (!saved.tokens?.refresh_token) throw new DiscoveredSignInRequired();
+      const result = await run(endpoint, saved, {}, signal).catch((cause: unknown) => {
+        throw cause instanceof OAuthError && !(cause instanceof ServerError)
+          ? new DiscoveredSignInRequired()
+          : cause;
+      });
       if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
-        throw new Error('Connect this account again.');
+        throw new DiscoveredSignInRequired();
       return saved;
     },
   };

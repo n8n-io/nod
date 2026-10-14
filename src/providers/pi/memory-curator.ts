@@ -75,25 +75,38 @@ export function createPiMemoryCurator(options: {
         throw error;
       });
       const { runtime, model, effort, subscription } = await loaded;
-      const reply = await runtime.completeSimple(
-        model,
-        {
-          systemPrompt: instructions,
-          messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
-        },
-        {
-          signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
-          maxTokens: 2048,
-          maxRetries: 0,
-          reasoning: effort === 'off' ? undefined : effort,
-        },
-      );
-      if (reply.usage?.totalTokens)
-        report?.({
-          model: model.id,
-          costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
-        });
-      if (reply.stopReason === 'error' || reply.stopReason === 'aborted')
+      const complete = async () => {
+        const reply = await runtime.completeSimple(
+          model,
+          {
+            systemPrompt: instructions,
+            messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
+          },
+          {
+            signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
+            maxTokens: 8192,
+            reasoning: effort === 'off' ? undefined : effort,
+          },
+        );
+        if (reply.usage?.totalTokens)
+          report?.({
+            model: model.id,
+            costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
+          });
+        return reply;
+      };
+      let reply = await complete();
+      for (
+        let attempt = 0;
+        attempt < 2 && reply.stopReason === 'error' && !signal?.aborted;
+        attempt++
+      )
+        reply = await complete();
+      if (
+        reply.stopReason === 'error' ||
+        reply.stopReason === 'aborted' ||
+        reply.stopReason === 'length'
+      )
         throw new Error('The memory model is unavailable.');
       return json(
         reply.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),

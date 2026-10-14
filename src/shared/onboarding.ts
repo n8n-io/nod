@@ -1,4 +1,5 @@
 export const onboardingSteps = ['welcome', 'brain', 'email', 'about', 'telegram', 'open'] as const;
+export const onboardingVersion = 1;
 export type OnboardingStep = (typeof onboardingSteps)[number];
 export const interviewLabels = ['Working on', 'Aiming for', 'Take off your plate'] as const;
 export const lastQuestion =

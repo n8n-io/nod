@@ -10,6 +10,7 @@ import { safeRemoteFetch } from '../discovered/remote.ts';
 import {
   IntegrationAuthConfigurationError,
   IntegrationCatalogAccessDenied,
+  IntegrationConnectionError,
   IntegrationInboxCursorExpired,
   type IntegrationProvider,
   type IntegrationService,
@@ -23,7 +24,6 @@ const toolkitVersions = {
   googlesheets: '20260915_00',
   googledocs: '20260826_00',
   slack: '20260915_00',
-  notion: '20260915_00',
 };
 const toolkits = Object.keys(toolkitVersions);
 const googleOAuthToolkits = new Set([
@@ -43,9 +43,8 @@ const subscriptions = {
     config: { interval: 15, calendarId: 'primary', showDeleted: true },
   },
   slack: { trigger: 'SLACK_DIRECT_MESSAGE_RECEIVED', config: {} },
-  notion: { trigger: 'NOTION_PAGE_CONTENT_UPDATED', config: {} },
 } as const;
-type ManagedSession = Awaited<ReturnType<Composio['sessions']['use']>> &
+type ManagedSession = Awaited<ReturnType<Composio['sessions']['create']>> &
   Pick<InstanceType<typeof ToolRouterSession>, 'search' | 'execute' | 'update' | 'authorize'>;
 type AccountIdentity = { expiresAt: number; accountName?: string; accountEmail?: string };
 const toolSlug = z
@@ -160,7 +159,6 @@ const toolSchemasResponse = z.object({
 const identityTools = {
   gmail: { action: 'GMAIL_GET_PROFILE', args: { user_id: 'me' } },
   slack: { action: 'SLACK_WHO_AM_I', args: {} },
-  notion: { action: 'NOTION_WHO_AM_I', args: {} },
   sentry: { action: 'SENTRY_VALIDATE_CREDENTIAL', args: {} },
   googlecalendar: { action: 'GOOGLECALENDAR_GET_CURRENT_USER', args: {} },
   googledrive: {
@@ -191,13 +189,6 @@ function identityFields(
       };
       break;
     }
-    if (
-      service === 'notion' &&
-      (typeof data.workspace_name === 'string' || typeof data.owner_email === 'string')
-    ) {
-      data = { name: data.workspace_name ?? data.name, email: data.owner_email };
-      break;
-    }
     if (data.user && typeof data.user === 'object') {
       data = z.record(z.string(), z.unknown()).parse(data.user);
       break;
@@ -216,6 +207,46 @@ function identityFields(
     ...(email.success ? { accountEmail: email.data } : {}),
     ...(name.success ? { accountName: name.data } : {}),
   };
+}
+
+function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: AbortSignal) {
+  return (error: unknown): never => {
+    const status =
+      error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+    const kind = error instanceof Error ? error.constructor.name : '';
+    const reason =
+      status === 401
+        ? 'authorization'
+        : status === 403
+          ? 'permission'
+          : status === 429
+            ? 'rate_limit'
+            : status === 408 ||
+                status === 504 ||
+                kind === 'APIConnectionTimeoutError' ||
+                (signal?.aborted && signal.reason?.name === 'TimeoutError')
+              ? 'timeout'
+              : (typeof status === 'number' && status >= 500 && status <= 599) ||
+                  kind === 'APIConnectionError'
+                ? 'unavailable'
+                : undefined;
+    if (reason) throw new IntegrationConnectionError(reason, phase);
+    throw error;
+  };
+}
+
+function signInUrl(value: unknown) {
+  const url = z.url().safeParse(value);
+  if (url.success) {
+    const parsed = new URL(url.data);
+    if (
+      ['https://connect.composio.dev', 'https://app.composio.dev'].includes(parsed.origin) &&
+      !parsed.username &&
+      !parsed.password
+    )
+      return parsed.href;
+  }
+  throw new Error('The connection sign-in address is invalid.');
 }
 
 export function createComposioProvider(options: {
@@ -283,7 +314,7 @@ export function createComposioProvider(options: {
   }
   async function ownedAccount(sdk: Composio, id: string, ownerId: string, signal: AbortSignal) {
     const account = accountRouting.parse(
-      await sdk.getClient().connectedAccounts.retrieve(id, { signal, maxRetries: 0 }),
+      await sdk.getClient().connectedAccounts.retrieve(id, { signal }),
     );
     if (sdk !== client) throw new Error('The connection provider changed. Try again.');
     if (account.id !== id || account.user_id !== userId(ownerId))
@@ -300,20 +331,22 @@ export function createComposioProvider(options: {
       let result;
       try {
         result = authConfigPage.parse(
-          await sdk.getClient().authConfigs.list(
-            {
-              toolkit_slug: slug,
-              is_composio_managed: false,
-              show_disabled: false,
-              limit: 200,
-              ...(cursor ? { cursor } : {}),
-            },
-            { signal, maxRetries: 0 },
-          ),
+          await sdk
+            .getClient()
+            .authConfigs.list(
+              {
+                toolkit_slug: slug,
+                is_composio_managed: false,
+                show_disabled: false,
+                limit: 200,
+                ...(cursor ? { cursor } : {}),
+              },
+              { signal },
+            )
+            .catch(connectionFailure('auth_config', signal)),
         );
       } catch (error) {
-        if (error && typeof error === 'object' && 'status' in error && error.status === 403)
-          throw new IntegrationAuthConfigurationError('permission');
+        if (error instanceof IntegrationConnectionError) throw error;
         throw new Error('The project sign-in configuration could not be loaded.');
       }
       if (sdk !== client) throw new Error('The connection provider changed. Try again.');
@@ -366,7 +399,7 @@ export function createComposioProvider(options: {
               limit: 1000,
               ...(cursor ? { cursor } : {}),
             },
-            { signal: operation, maxRetries: 0 },
+            { signal: operation },
           ),
         );
         for (const entry of page.items) {
@@ -542,19 +575,10 @@ export function createComposioProvider(options: {
   }
   function session(
     value: ManagedSession,
-    selectedToolkits?: string[],
-    sdk = required(),
+    selectedToolkits: string[],
+    sdk: Composio,
   ): IntegrationSession {
-    const savedToolkits = value.config?.toolkits;
-    const enabled = new Set(
-      selectedToolkits ??
-        (savedToolkits && 'enabled' in savedToolkits
-          ? savedToolkits.enabled
-          : [
-              ...legacyServices().map((service) => service.slug),
-              ...Object.keys(value.config?.connected_accounts ?? {}),
-            ].filter((slug) => !savedToolkits?.disabled.includes(slug))),
-    );
+    const enabled = new Set(selectedToolkits);
     function actionToolkit(action: string) {
       toolSlug.parse(action);
       const toolkit = [...enabled]
@@ -577,27 +601,27 @@ export function createComposioProvider(options: {
           throw new Error('This app is not available for connection.');
         if (options.proxy) return options.proxy.authorize(slug, callbackUrl);
         const signal = AbortSignal.timeout(15_000);
+        const requestOptions = { signal, maxRetries: 0 };
         if (googleOAuthToolkits.has(slug) && !authConfigs[slug]) {
           const id = await projectAuthConfig(sdk, slug, signal);
           if (sdk !== client) throw new Error('The connection provider changed. Try again.');
           if (id)
-            await value.update(
-              {
-                authConfigs: { ...value.config?.auth_configs, ...authConfigs, [slug]: id },
-                expectedConfigVersion: value.configVersion,
-              },
-              { signal },
-            );
+            await value
+              .update(
+                {
+                  authConfigs: { ...value.config?.auth_configs, ...authConfigs, [slug]: id },
+                  expectedConfigVersion: value.configVersion,
+                },
+                requestOptions,
+              )
+              .catch(connectionFailure('session', signal));
         }
         if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-        const result = await value.authorize(service, { callbackUrl }, { signal });
+        const result = await value
+          .authorize(service, { callbackUrl }, requestOptions)
+          .catch(connectionFailure('link', signal));
         if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-        if (
-          !result.redirectUrl ||
-          new URL(result.redirectUrl).origin !== 'https://connect.composio.dev'
-        )
-          throw new Error('The connection sign-in address is invalid.');
-        return { accountId: result.id, url: result.redirectUrl };
+        return { accountId: result.id, url: signInUrl(result.redirectUrl) };
       },
       async search(query, signal) {
         try {
@@ -623,7 +647,6 @@ export function createComposioProvider(options: {
             ([, tool]) =>
               tool.hasFullSchema === false || !schemaFields.safeParse(tool.inputSchema).success,
           );
-          if (missing.length > 20) throw new Error();
           for (const [slug, tool] of missing) {
             const reference = tool.schemaRef;
             const slugs = reference?.args.toolSlugs;
@@ -639,7 +662,8 @@ export function createComposioProvider(options: {
           const tools = Object.fromEntries(
             entries.map(([slug, { schemaRef: _, ...tool }]) => [slug, tool]),
           );
-          if (missing.length) {
+          for (let start = 0; start < missing.length; start += 20) {
+            const batch = missing.slice(start, start + 20);
             const operation = signal
               ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
               : AbortSignal.timeout(15_000);
@@ -650,18 +674,18 @@ export function createComposioProvider(options: {
                 {
                   slug: 'COMPOSIO_GET_TOOL_SCHEMAS',
                   arguments: {
-                    tool_slugs: missing.map(([slug]) => slug),
+                    tool_slugs: batch.map(([slug]) => slug),
                     include: ['input_schema'],
                   },
                 },
-                { signal: operation, maxRetries: 0 },
+                { signal: operation },
               );
             operation.throwIfAborted();
             const envelope = toolSchemasResponse.parse(response).data;
             const schemas =
               'tool_schemas' in envelope ? envelope.tool_schemas : envelope.data.tool_schemas;
-            if (Object.keys(schemas).length !== missing.length) throw new Error();
-            for (const [slug, tool] of missing) {
+            if (Object.keys(schemas).length !== batch.length) throw new Error();
+            for (const [slug, tool] of batch) {
               const schema = schemas[slug];
               if (!schema || schema.tool_slug !== slug || schema.toolkit !== tool.toolkit)
                 throw new Error();
@@ -688,14 +712,14 @@ export function createComposioProvider(options: {
           throw new Error(`The app tool schemas could not be loaded: ${errorText(error)}`);
         }
       },
-      async execute(action, args, accountId, signal, options) {
+      async execute(action, args, accountId, signal) {
         signal?.throwIfAborted();
         actionToolkit(action);
         const result = await value.execute(
           action,
           args,
           accountId ? { account: accountId } : undefined,
-          { signal },
+          { signal, maxRetries: 0 } as Parameters<typeof value.execute>[3],
         );
         signal?.throwIfAborted();
         if (
@@ -707,7 +731,7 @@ export function createComposioProvider(options: {
             result.data.successful === false)
         )
           throw new Error(providerFailure(action, result as Record<string, unknown>));
-        return files(result, signal ?? new AbortController().signal, options?.files !== false);
+        return files(result, signal ?? new AbortController().signal);
       },
       async upload(action, file, signal, accountId) {
         if (options.proxy) {
@@ -800,7 +824,7 @@ export function createComposioProvider(options: {
     get webhooksConfigured() {
       return Boolean(client && options.webhookSecret);
     },
-    supportsSubscriptions: options.proxy ? [] : ['gmail', 'googlecalendar', 'slack', 'notion'],
+    supportsSubscriptions: options.proxy ? [] : ['gmail', 'googlecalendar', 'slack'],
     authorize: options.proxy
       ? async (ownerId, service, callbackUrl) => {
           userId(ownerId);
@@ -1077,7 +1101,8 @@ export function createComposioProvider(options: {
       }
     },
     async createSession(ownerId, accounts, signal) {
-      signal?.throwIfAborted();
+      signal ??= AbortSignal.timeout(15_000);
+      signal.throwIfAborted();
       const sdk = required();
       const connectedAccounts = Object.fromEntries(
         Object.entries(accounts).filter(
@@ -1092,23 +1117,26 @@ export function createComposioProvider(options: {
       ];
       signal?.throwIfAborted();
       if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-      const value = await sdk.sessions.create(
-        userId(ownerId),
-        {
-          toolkits: selectedToolkits,
-          connectedAccounts,
-          multiAccount: {
-            enable: true,
-            maxAccountsPerToolkit: 10,
-            requireExplicitSelection: true,
+      const requestOptions = { signal, maxRetries: 0 };
+      const value = await sdk.sessions
+        .create(
+          userId(ownerId),
+          {
+            toolkits: selectedToolkits,
+            connectedAccounts,
+            multiAccount: {
+              enable: true,
+              maxAccountsPerToolkit: 10,
+              requireExplicitSelection: true,
+            },
+            ...(Object.keys(authConfigs).length ? { authConfigs } : {}),
+            manageConnections: false,
+            sandbox: { enable: false },
+            premiumUsage: false,
           },
-          ...(Object.keys(authConfigs).length ? { authConfigs } : {}),
-          manageConnections: false,
-          sandbox: { enable: false },
-          premiumUsage: false,
-        },
-        { signal },
-      );
+          requestOptions,
+        )
+        .catch(connectionFailure('session', signal));
       if (sdk !== client) {
         await sdk.sessions
           .delete(value.sessionId, { signal: AbortSignal.timeout(5_000) })
@@ -1116,13 +1144,6 @@ export function createComposioProvider(options: {
         throw new Error('The connection provider changed. Try again.');
       }
       return session(value, selectedToolkits, sdk);
-    },
-    async restoreSession(id, signal) {
-      signal?.throwIfAborted();
-      const sdk = required();
-      const value = await sdk.sessions.use(id, undefined, { signal });
-      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-      return session(value, undefined, sdk);
     },
     async deleteSession(id) {
       await required().sessions.delete(id, { signal: AbortSignal.timeout(5_000) });
@@ -1139,35 +1160,35 @@ export function createComposioProvider(options: {
           ...(await options.proxy.authorize(slug, callbackUrl, original.auth_config.id)),
           authConfigId: original.auth_config.id,
         };
-      const value = await sdk.sessions.create(
-        userId(ownerId),
-        {
-          toolkits: [slug],
-          authConfigs: { [slug]: original.auth_config.id },
-          multiAccount: {
-            enable: true,
-            maxAccountsPerToolkit: 10,
-            requireExplicitSelection: true,
+      const requestOptions = { signal, maxRetries: 0 };
+      const value = await sdk.sessions
+        .create(
+          userId(ownerId),
+          {
+            toolkits: [slug],
+            authConfigs: { [slug]: original.auth_config.id },
+            multiAccount: {
+              enable: true,
+              maxAccountsPerToolkit: 10,
+              requireExplicitSelection: true,
+            },
+            connectedAccounts: {},
+            manageConnections: false,
+            sandbox: { enable: false },
+            premiumUsage: false,
           },
-          connectedAccounts: {},
-          manageConnections: false,
-          sandbox: { enable: false },
-          premiumUsage: false,
-        },
-        { signal },
-      );
+          requestOptions,
+        )
+        .catch(connectionFailure('session', signal));
       try {
         if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-        const result = await (value as ManagedSession).authorize(slug, { callbackUrl }, { signal });
+        const result = await (value as ManagedSession)
+          .authorize(slug, { callbackUrl }, requestOptions)
+          .catch(connectionFailure('link', signal));
         if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-        if (
-          !result.redirectUrl ||
-          new URL(result.redirectUrl).origin !== 'https://connect.composio.dev'
-        )
-          throw new Error('The connection sign-in address is invalid.');
         return {
           accountId: result.id,
-          url: result.redirectUrl,
+          url: signInUrl(result.redirectUrl),
           authConfigId: original.auth_config.id,
         };
       } finally {

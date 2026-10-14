@@ -17,16 +17,12 @@ export function classifyVerificationReply(text: string): VerificationReply {
 
 export function securityCodeIn(text: string) {
   const bare = /^\s*(\d{3,4})\s*[.!]?\s*$/.exec(text)?.[1];
-  const explicit =
-    /^\s*(?:(?:the|my)\s+)?(?:security\s+code|cvv|cvc)(?:\s+is)?(?:\s*[:=]\s*|\s+)(\d{3,4})[.!]?\s*$/i.exec(
-      text,
-    )?.[1];
+  const labeled = [
+    ...text.matchAll(/\b(?:security\s+code|cvv|cvc)(?:\s+is)?(?:\s*[:=]\s*|\s+)(\d{3,4})(?!\d)/gi),
+  ].map((match) => match[1]);
+  const explicit = labeled.length === 1 ? labeled[0] : undefined;
   const reply = classifyVerificationReply(text);
   return (
     bare ?? explicit ?? (reply.kind === 'code' && reply.code.length === 4 ? reply.code : undefined)
   );
-}
-
-export function mayHoldSecurityCode(text: string) {
-  return /(?<!\d)\d{3,4}(?!\d)/.test(text);
 }

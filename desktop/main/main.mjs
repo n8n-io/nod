@@ -651,6 +651,7 @@ function baseEnvironment() {
       'LOCALAPPDATA',
       'TEMP',
       'TMP',
+      ...(developmentDataRoot ? ['OTTO_DESKTOP_USER_DATA', 'OTTO_COMPOSIO_PROXY_URL'] : []),
     ]
       .filter((key) => process.env[key])
       .map((key) => [key, process.env[key]]),

@@ -10,7 +10,7 @@ import { createChannelSettings } from '../src/server/channel-settings.ts';
 import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
-import { fakeComputer } from './runtime-fixtures.ts';
+import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { PostHog } from 'posthog-node';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -107,7 +107,17 @@ test(
     let failClose = false;
     let agentDisposed = false;
     let analyticsClosed = 0;
+    const replies: object[] = [];
     const adapters: ApplicationAdapters = {
+      onboardingCurator: {
+        id: 'fixture',
+        configured: true,
+        curate: async ({ task, input }) => {
+          if (task !== 'review' || !('reply' in input)) return undefined;
+          replies.push(input);
+          return { answer: input.reply === 'sure, go ahead' ? 'yes' : 'other' };
+        },
+      },
       analytics: {
         capture() {},
         async shutdown() {
@@ -125,13 +135,11 @@ test(
       },
       computer: fakeComputer(),
       objectStore: createFilesystemObjectStore(objects),
-      workspace: {
-        status: () => '',
+      workspace: fakeWorkspace({
         open: () => {
           throw new Error('No workspace in fixture');
         },
-        dispose: () => {},
-      },
+      }),
       speech: {
         id: 'fixture',
         configured: false,
@@ -142,7 +150,6 @@ test(
         }),
       },
       keyStore,
-      relevance: { id: 'fixture', configured: false, classify: async () => 'ignore' },
       model: { provider: 'fixture', name: 'fixture', configured: false },
       integrations: {
         id: 'fixture',
@@ -150,9 +157,6 @@ test(
         webhooksConfigured: false,
         supportsSubscriptions: [],
         createSession: async () => {
-          throw new Error('No integration');
-        },
-        restoreSession: async () => {
           throw new Error('No integration');
         },
         deleteSession: async () => {},
@@ -300,21 +304,12 @@ test(
           turns[1].id,
         ])
       ).rows[0];
-      for (const [action, args] of [
-        ['profile_learn', { field: 'location', value: 'Lisbon', quote: 'I live in Lisbon' }],
-        ['memory_learn', { area: 'about', quote: 'I live in Lisbon' }],
-      ] as const) {
-        await application.personal.manage(action, args, {
-          sourceMessageId: source.id,
-          turnId: turns[1].id,
-        });
-        await application.channels!.drain();
-      }
-      assert.equal(
-        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [source.owner_id])).rows[0]
-          .data.location,
-        'Lisbon',
+      await application.personal.manage(
+        'memory_learn',
+        { area: 'about', quote: 'I live in Lisbon' },
+        { sourceMessageId: source.id, turnId: turns[1].id },
       );
+      await application.channels!.drain();
       const remembered = JSON.parse(await readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8'));
       assert.equal(remembered.entries.length, 1);
       assert.equal(remembered.entries[0].text, 'I live in Lisbon');
@@ -336,6 +331,42 @@ test(
           )
         ).rowCount,
         0,
+      );
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='question',finished_at=now() WHERE id=$1",
+        [turns[1].id],
+      );
+      const questionId = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Update your preferences? Reply yes or no.',$3,$4)",
+        [questionId, source.owner_id, first.thread_id, turns[1].id],
+      );
+      const approvalId = randomUUID();
+      await pool.query(
+        `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,confirmation_message_id)
+         VALUES($1,$2,$3,$4,'OTTO_notification_preferences_update',$5,$6)`,
+        [
+          approvalId,
+          source.owner_id,
+          first.thread_id,
+          turns[1].id,
+          { notificationRule: 'Channel fixture' },
+          questionId,
+        ],
+      );
+      await application.channels!.drain();
+      assert.equal((await send(10, 'sure, go ahead')).statusCode, 200);
+      await application.channels!.drain();
+      const confirmed = (await pool.query('SELECT status FROM approvals WHERE id=$1', [approvalId]))
+        .rows[0];
+      assert.ok(['confirmed', 'executing', 'completed'].includes(confirmed.status));
+      assert.deepEqual(replies, [{ reply: 'sure, go ahead' }]);
+      assert.equal((await send(11, 'sure, go ahead')).statusCode, 200);
+      await application.channels!.drain();
+      assert.equal(
+        (await pool.query('SELECT state FROM channel_inbox WHERE source_id LIKE $1', ['%:11']))
+          .rows[0].state,
+        'submitted',
       );
       const disabled = await application.app.inject({
         method: 'DELETE',

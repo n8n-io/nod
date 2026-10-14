@@ -9,11 +9,11 @@ import { Steps } from '@astrojs/starlight/components';
 
 Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Otto uses [Composio](https://composio.dev) for these connections.
 
-Choose **Easy Connect** and sign in with an allowed Google account, or [use your own Composio key](#use-your-own-composio-project). Both choices work in the desktop app and the web app, during setup and in **Settings → App connections**. Easy Connect uses n8n's hosted service and doesn't need your own Composio account.
+Choose **Easy Connect** and sign in with an allowed Google account, or [use your own Composio key](#use-your-own-composio-project). Both choices work in the desktop app and personal web installs, during setup and in **Settings → App connections**. Hosted web installations use the connection configured by their operator and do not offer this choice. Easy Connect uses n8n's hosted service and doesn't need your own Composio account.
 
 Google sign-in enables Easy Connect only. It doesn't give Otto access to Gmail or another app. You connect each app separately and choose its permissions. Only explicitly allowed email addresses can use Easy Connect. If yours isn't enabled, you can use a personal key; there is no waitlist.
 
-Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
@@ -86,16 +86,22 @@ On a source/server install you can instead set `COMPOSIO_API_KEY` in the server 
 | Permission area        | Access         | Otto uses it to                                                     |
 | ---------------------- | -------------- | ------------------------------------------------------------------- |
 | Connected accounts     | Read and write | Check connections and disconnect accounts                           |
-| Session management     | Read and write | Create, restore and delete sessions, and open sign-in links         |
+| Session management     | Read and write | Create and delete sessions, and open sign-in links                  |
 | Session tool execution | Write only     | Find app actions, load their details and run them                   |
 | Toolkits               | Read only      | List the apps you can connect                                       |
-| Auth configs           | Read only      | Pick your custom Google sign-in setup                               |
+| Auth configs           | Read only      | Check and select your Google sign-in setup                          |
 | Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and fetch sign-in emails |
 
 If you set `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**.
 
+See Composio's [project key permissions](https://docs.composio.dev/reference/authenticating-to-composio/project-api-key-permissions) for the API operations each permission allows.
+
 :::caution[You can't edit a key's permissions]
 If a permission is missing, create a new key. A valid key with missing permissions can show an "Invalid API key" error.
+:::
+
+:::caution[A saved key can still lack sign-in access]
+The setup check doesn't test every permission needed to connect Gmail. Grant **Auth configs → Read only** and **Session management → Read and write**, along with the other permissions above.
 :::
 
 Keep using a key from the same project. Your connected accounts belong to that project, so a key from another project can't use them.
@@ -117,7 +123,7 @@ If you use your own Composio project, two things control access:
 
 To narrow an app's scopes, change them in its auth config, then reconnect the account. Changing the key doesn't change what you agreed to on the consent screen. See Composio's [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
 
-To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change Otto's connection or the direct Notion and Linear MCP connections.
+To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change Otto's connection or the Notion and Linear MCP connections.
 
 <details>
 <summary>How Otto picks a Google auth config</summary>

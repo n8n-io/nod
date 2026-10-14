@@ -77,7 +77,11 @@ ChatGPT sign-in receives its callback on port 1455. Another Otto app or another 
 
 ### Composio says "Invalid API key"
 
-If you use your own Composio key, a valid key without the right permissions can show this error. Create a new key with the permissions in [Apps](/connect/apps/), then save it in **Apps** in place of the old one. If your server sets `COMPOSIO_API_KEY`, replace the environment value and restart Otto. Keep using the same Composio project, because connected accounts belong to it.
+If you use your own Composio key, a valid key without the right permissions can show this error. Composio's [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions) explains why. Saving a key in Otto doesn't verify every permission needed to connect Gmail.
+
+For Gmail sign-in, check **Auth configs → Read only** and **Session management → Read and write**. Keep the other permissions listed in [Apps](/connect/apps/), including **Connected accounts** and **Session tool execution**.
+
+You can't edit a key's permissions. Create a replacement in the same Composio project and save it in **Settings → App connections → My Composio key**. If your server sets `COMPOSIO_API_KEY`, replace the environment value and restart Otto. Then select **Connect Gmail** again. Your existing connected accounts belong to that project.
 
 Otto's connection doesn't need a personal Composio key. If the error persists there, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
 

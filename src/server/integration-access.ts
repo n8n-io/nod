@@ -37,7 +37,7 @@ let popup, key, attempt, timer, stopped=false, proved=false;
 const request=async(path,body)=>{const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'same-origin',headers:{'X-Otto-Bridge':bridgeKey,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});if(!response.ok)throw new Error('Sign-in is unavailable. Return to Otto and try again.');return response.json();};
 const stop=(message)=>{stopped=true;clearTimeout(timer);status.textContent=message;button.disabled=true;};
 window.addEventListener('message',async(event)=>{const value=event.data;if(stopped||proved||event.source!==popup||event.origin!==brokerOrigin||!attempt||Date.now()>=attempt.expiresAt||!key||!value||value.type!=='otto:proxy-access:challenge'||value.id!==attempt.id||typeof value.challenge!=='string'||value.challenge.length>512||!value.challenge.startsWith('otto-proxy-access-v1\n'+attempt.id+'\n'+location.origin+'\n')||value.challenge.length<=('otto-proxy-access-v1\n'+attempt.id+'\n'+location.origin+'\n').length)return;proved=true;try{const signature=new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new TextEncoder().encode(value.challenge)));if(stopped||Date.now()>=attempt.expiresAt||signature.length!==64)return;popup.postMessage({type:'otto:proxy-access:proof',id:attempt.id,signature:btoa(String.fromCharCode(...signature)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')},brokerOrigin);}catch{stop('Sign-in could not be verified. Return to Otto and try again.');}});
-const poll=async()=>{if(stopped)return;try{const result=await request('/status');if(stopped)return;if(result.status==='authorized'||result.status==='completed'){stop('You’re signed in. Return to Otto to continue.');return;}if(result.status==='denied'||result.status==='cancelled'){stop('Sign-in was not completed. Return to Otto to try again.');return;}timer=setTimeout(poll,1000);}catch{stop('Return to Otto to check your connection.');}};
+const poll=async()=>{if(stopped)return;try{const result=await request('/status');if(stopped)return;if(result.status==='completed'){stop('You’re signed in. Return to Otto to continue.');return;}if(result.status==='denied'||result.status==='cancelled'){stop('Sign-in was not completed. Return to Otto to try again.');return;}timer=setTimeout(poll,1000);}catch{stop('Return to Otto to check your connection.');}};
 button.addEventListener('click',async()=>{if(button.disabled)return;popup=window.open('','_blank','popup,width=520,height=720');if(!popup){status.textContent='Allow pop-ups, then continue with Google.';return;}button.disabled=true;try{key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);const browserKey=await crypto.subtle.exportKey('jwk',key.publicKey);attempt=await request('/start',{browserKey});if(stopped)return;const target=new URL(attempt.url);if(target.origin!==brokerOrigin||target.pathname!=='/api/auth/enroll'||target.searchParams.get('id')!==attempt.id)throw new Error('Invalid sign-in address.');popup.location.href=target.href;status.textContent='Finish signing in with Google in the other window.';void poll();}catch{popup?.close();stop('Sign-in is unavailable. Return to Otto and try again.');}});
 window.addEventListener('pagehide',()=>{stopped=true;clearTimeout(timer);});
 </script></body></html>`;
@@ -57,6 +57,7 @@ export function createIntegrationAccess(options: {
     controller: AbortController;
     timer: ReturnType<typeof setTimeout>;
     bridge?: Server;
+    bridgeExpiresAt?: number;
     completing?: Promise<IntegrationManagedAccess>;
   };
   const attempts = new Map<string, Attempt>();
@@ -74,15 +75,28 @@ export function createIntegrationAccess(options: {
     !attempt.controller.signal.aborted &&
     attempt.expiresAt > Date.now() &&
     ['pending', 'authorized'].includes(attempt.status);
+  function closeBridge(attempt: Attempt) {
+    clearTimeout(attempt.timer);
+    attempt.bridge?.close();
+    attempt.bridge?.closeAllConnections();
+    attempt.bridge = undefined;
+    attempt.bridgeExpiresAt = undefined;
+  }
   function stop(attempt: Attempt, status: Attempt['status']) {
     attempt.status = status;
     attempt.controller.abort();
     clearTimeout(attempt.timer);
-    attempt.bridge?.close();
-    attempt.bridge?.closeAllConnections();
+    if (attempt.bridge && ['completed', 'denied'].includes(status)) {
+      attempt.bridgeExpiresAt = Date.now() + 5000;
+      attempt.timer = setTimeout(() => closeBridge(attempt), 5000);
+      attempt.timer.unref();
+    } else closeBridge(attempt);
   }
   async function cancelAttempt(attempt: Attempt) {
-    if (['cancelled', 'completed', 'denied'].includes(attempt.status)) return;
+    if (['cancelled', 'completed', 'denied'].includes(attempt.status)) {
+      closeBridge(attempt);
+      return;
+    }
     stop(attempt, 'cancelled');
     if (attempt.brokerId) await options.proxy.cancelAccess(attempt.brokerId).catch(() => {});
   }
@@ -183,14 +197,24 @@ export function createIntegrationAccess(options: {
         response.writeHead(code, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(value));
       };
+      const terminal = () =>
+        !closed &&
+        current === attempt &&
+        (attempt.bridgeExpiresAt ?? 0) > Date.now() &&
+        ['completed', 'denied'].includes(attempt.status);
       try {
         if (
-          !live(attempt) ||
+          (!live(attempt) && !terminal()) ||
           request.headers.host !== new URL(origin).host ||
           (request.headers.origin !== undefined && request.headers.origin !== origin)
         )
           return send(403, { error: 'This sign-in attempt is unavailable.' });
-        if (request.method === 'GET' && request.url === `/${capability}` && !bootstrapped) {
+        if (
+          live(attempt) &&
+          request.method === 'GET' &&
+          request.url === `/${capability}` &&
+          !bootstrapped
+        ) {
           bootstrapped = true;
           response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           response.end(renderIntegrationAccessBridge(options.proxy.origin, nonce, bridgeKey));
@@ -203,7 +227,14 @@ export function createIntegrationAccess(options: {
         )
           return send(403, { error: 'This sign-in attempt is unavailable.' });
         if (request.method === 'GET' && request.url === '/status')
-          return send(200, await status(attempt.id));
+          return send(
+            200,
+            await status(attempt.id).catch((error: unknown) => {
+              if (terminal()) return { status: attempt.status };
+              throw error;
+            }),
+          );
+        if (!live(attempt)) return send(403, { error: 'This sign-in attempt is unavailable.' });
         if (
           request.method === 'POST' &&
           request.url === '/start' &&

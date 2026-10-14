@@ -487,7 +487,7 @@ try {
       if (managed && input.phase === 'restart')
         assert.ok(
           calls.some(
-            (call) => call.method === 'GET' && call.path.includes('/tool_router/session/'),
+            (call) => call.method === 'POST' && call.path === '/api/v3.1/tool_router/session',
           ),
         );
     }
@@ -516,11 +516,6 @@ try {
       1,
     );
     const session = await provider.createSession(ownerId, { gmail: ['ca_retained'] });
-    await pool.query(
-      `INSERT INTO integration_sessions(owner_id,provider_id,session_id,configuration_id,configuration_version)
-       VALUES($1,'composio',$2,$3,3) ON CONFLICT(owner_id) DO UPDATE SET session_id=$2,configuration_id=$3`,
-      [ownerId, session.id, provider.configurationId],
-    );
     await pool.query(
       `INSERT INTO integration_events(id,owner_id,provider_id,summary,state,poll_connection_id)
        VALUES('processing-event',$1,'composio','Synthetic processing event','processing',$2)`,
@@ -582,11 +577,6 @@ try {
       savedRows.filter((row) =>
         [foreignId, otherConfigurationId, otherProviderId].includes(row.id),
       ),
-    );
-    assert.equal(
-      (await pool.query('SELECT * FROM integration_sessions WHERE owner_id=$1', [ownerId]))
-        .rowCount,
-      0,
     );
     assert.deepEqual(
       (await pool.query('SELECT id,state FROM integration_events ORDER BY id')).rows,

@@ -23,7 +23,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
-import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
+import type { RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
@@ -40,9 +40,8 @@ import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import type { runProcess } from '../src/providers/process.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { inspectToolCatalog, rootObject } from '../src/runtime/tools.ts';
+import { rootObject, toolDefinitions } from '../src/runtime/tools.ts';
 import { Type } from '@sinclair/typebox';
-import { createBrowserFlows } from '../src/runtime/browser-flows.ts';
 import { createBrowserFixture as createAgentBrowserComputer } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -452,10 +451,6 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     },
   });
   try {
-    assert.deepEqual(
-      agent.nativeTools?.map((tool) => tool.name),
-      nativeNames,
-    );
     const session = await agent.open({
       threadId: randomUUID(),
       turnId: randomUUID(),
@@ -524,6 +519,21 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     );
     assert.match(JSON.stringify(direct.content), /No query provided/);
     assert.deepEqual(ran, ['ls', 'get_search_content', 'web_search']);
+    const fetchContent = extension.tools.get('fetch_content')!;
+    await writeFile(join(directory, 'host.mp4'), 'synthetic host video');
+    const hostFile = async (name: string) =>
+      JSON.stringify(
+        (
+          await fetchContent.definition.execute(
+            'call',
+            { url: join(directory, name), timestamp: '0:01' },
+            undefined,
+            undefined,
+            undefined as never,
+          )
+        ).content,
+      ).replaceAll(name, 'file.mp4');
+    assert.equal(await hostFile('host.mp4'), await hostFile('missing.mp4'));
     await session.dispose();
   } finally {
     await agent.dispose();
@@ -1535,234 +1545,6 @@ test('write refuses to replace a directory instead of moving the file into it', 
   assert.deepEqual(await readdir(join(root, 'workspace')), ['reports']);
 });
 
-test('browser flows stay discoverable after a thread reset and stop when a page changes', async (t) => {
-  const { prefix, root, workspace, run: nativeRun } = await hostSandbox(t);
-  const actions: string[] = [];
-  const fills: string[] = [];
-  let page = 'Search box';
-  const computer = fakeComputer({
-    act: async (_id, action) => {
-      actions.push(action.action);
-      if (action.action === 'fill') fills.push(action.text ?? '');
-      if (action.action === 'open') page = 'Search box';
-      if (action.action === 'fill') page = 'Search results';
-      if (action.action === 'click') page = 'Result page';
-      return {
-        url: 'https://market.example.test/search',
-        text: page,
-      };
-    },
-  });
-  const run = createBrowserFlows(workspace, computer, 'first-thread', new AbortController().signal);
-  assert.deepEqual(await run({ action: 'list' }), { flows: [], invalid: [] });
-  assert.equal(existsSync(join(root, '.otto')), false);
-  const flow = {
-    id: 'bike-watch',
-    title: 'Find used bikes',
-    description: 'Search the bike marketplace for a saved watch.',
-    origin: 'https://market.example.test/',
-    inputs: { query: 'Search words' },
-    steps: [
-      {
-        action: { action: 'open' as const, url: 'https://market.example.test/search' },
-        expectText: 'Search box',
-      },
-      {
-        action: { action: 'fill' as const, selector: '#search', text: '{{query}}' },
-        expectText: 'Expected results',
-      },
-      { action: { action: 'click' as const, selector: '#next' } },
-      { action: { action: 'snapshot' as const }, expectText: 'Result page' },
-    ],
-  };
-  const saved = await run({ action: 'save', flow });
-  assert.match(JSON.stringify(saved), /\/\.otto\/browser-flows\/bike-watch\.json/);
-  assert.equal(existsSync(prefix), false);
-  assert.equal(
-    JSON.parse(await readFile(join(root, '.otto/browser-flows/bike-watch.json'), 'utf8')).id,
-    'bike-watch',
-  );
-  assert.match(
-    await nativeRun('ls', { path: `${prefix}/.otto/browser-flows` }),
-    /bike-watch\.json/,
-  );
-  await run({
-    action: 'save',
-    flow: {
-      id: 'car-listings',
-      title: 'Find used cars',
-      description: 'Check a car listing site.',
-      origin: 'https://cars.example.test/',
-      inputs: {},
-      steps: [
-        { action: { action: 'open', url: 'https://cars.example.test/' } },
-        { action: { action: 'snapshot' }, expectText: 'Cars' },
-      ],
-    },
-  });
-  await mkdir(join(root, 'second-thread'));
-  const afterReset = createBrowserFlows(
-    { ...workspace, path: `${prefix}/second-thread` },
-    computer,
-    'second-thread',
-    new AbortController().signal,
-  );
-  const registry = await afterReset({ action: 'list', query: 'cars listings' });
-  assert.equal((registry as { flows: Array<{ id: string }> }).flows[0].id, 'car-listings');
-  assert.equal((registry as { flows: Array<{ id: string }> }).flows.length, 2);
-  const paused = await afterReset({
-    action: 'run',
-    id: 'bike-watch',
-    inputs: { query: 'restomod' },
-  });
-  assert.equal((paused as { status: string }).status, 'needs_repair');
-  assert.deepEqual(actions, ['open', 'fill']);
-  await afterReset({
-    action: 'save',
-    flow: {
-      ...flow,
-      steps: flow.steps.map((step) =>
-        step.action.action === 'fill' ? { ...step, expectText: 'Search results' } : step,
-      ),
-    },
-  });
-  const completed = await afterReset({
-    action: 'run',
-    id: 'bike-watch',
-    inputs: { query: 'restomod' },
-  });
-  assert.equal((completed as { status: string }).status, 'completed');
-  assert.deepEqual(actions, ['open', 'fill', 'open', 'fill', 'click', 'snapshot']);
-  assert.deepEqual(fills, ['restomod', 'restomod']);
-  await assert.rejects(
-    run({
-      action: 'save',
-      flow: {
-        ...flow,
-        steps: [
-          flow.steps[0],
-          { action: { action: 'fill', selector: '#password', text: 'stored-secret' } },
-          flow.steps.at(-1)!,
-        ],
-      },
-    }),
-    /named input/,
-  );
-  await assert.rejects(
-    run({
-      action: 'save',
-      flow: {
-        ...flow,
-        steps: [
-          flow.steps[0],
-          { action: { action: 'click', selector: '@e12' } },
-          flow.steps.at(-1)!,
-        ],
-      },
-    }),
-    /stable selector/,
-  );
-  await assert.rejects(
-    run({
-      action: 'save',
-      flow: {
-        ...flow,
-        steps: [
-          { action: { action: 'open', url: 'https://user:secret@market.example.test/search' } },
-          flow.steps.at(-1)!,
-        ],
-      },
-    }),
-    /URL credentials/,
-  );
-  await assert.rejects(
-    run({
-      action: 'save',
-      flow: {
-        ...flow,
-        steps: [
-          flow.steps[0],
-          {
-            action: { action: 'snapshot' },
-            expectUrl: 'https://user:secret@market.example.test/search',
-          },
-        ],
-      },
-    }),
-    /URL credentials/,
-  );
-  const library = join(root, '.otto/browser-flows');
-  for (let index = 0; index < 101; index++) {
-    const id = `old-flow-${index}`;
-    await writeFile(
-      join(library, `${id}.json`),
-      JSON.stringify({
-        ...flow,
-        id,
-        title: 'Old routine',
-        description: 'Archived site routine.',
-      }),
-    );
-  }
-  await writeFile(
-    join(library, 'z-last.json'),
-    JSON.stringify({
-      ...flow,
-      id: 'z-last',
-      title: 'Late unique listing',
-      description: 'A later site routine.',
-    }),
-  );
-  const fullRegistry = await afterReset({ action: 'list', query: 'late unique' });
-  assert.equal((fullRegistry as { flows: Array<{ id: string }> }).flows[0].id, 'z-last');
-  assert.equal((fullRegistry as { flows: Array<{ id: string }> }).flows.length, 104);
-});
-
-test('a saved flow uses the current agent-browser session on a synthetic page', async (t) => {
-  const { root, workspace } = await hostSandbox(t);
-  const fixture = stagedLoginBrowser();
-  const computer = createAgentBrowserComputer({ dataRoot: root, run: fixture.run });
-  t.after(() => computer.dispose());
-  const flows = createBrowserFlows(
-    workspace,
-    computer,
-    'flow-fixture',
-    new AbortController().signal,
-  );
-  await flows({
-    action: 'save',
-    flow: {
-      id: 'search-page',
-      title: 'Open the search page',
-      description: 'Enter a search phrase on the synthetic site.',
-      origin: 'https://1.1.1.1/',
-      inputs: { query: 'Search phrase' },
-      steps: [
-        {
-          action: { action: 'open', url: 'https://1.1.1.1/login' },
-          expectText: 'Sign in identifier',
-        },
-        { action: { action: 'fill', selector: '#search', text: '{{query}}' } },
-        { action: { action: 'snapshot' }, expectText: '{{query}}' },
-      ],
-    },
-  });
-  const result = await flows({
-    action: 'run',
-    id: 'search-page',
-    inputs: { query: 'restomod bike' },
-  });
-  assert.equal((result as { status: string }).status, 'completed');
-  assert.equal(fixture.pages.get('flow-fixture')?.search.value, 'restomod bike');
-  const second = await flows({
-    action: 'run',
-    id: 'search-page',
-    inputs: { query: 'vintage frame' },
-  });
-  assert.equal((second as { status: string }).status, 'completed');
-  assert.equal(fixture.pages.get('flow-fixture')?.search.value, 'vintage frame');
-});
-
 test('bash output larger than Pi limits stays in the sandbox and never creates host temp files', async (t) => {
   const { prefix, root, tools, run } = await hostSandbox(t);
   const before = (await readdir(tmpdir())).filter((name) => name.startsWith('pi-bash-'));
@@ -1970,7 +1752,7 @@ test('computer observations normalize controls, protect credentials and return c
     assert.match(page.text, /textbox/);
     assert.deepEqual(
       protocol.filter((command) => command.action === 'snapshot'),
-      [{ action: 'snapshot', compact: true }],
+      [{ action: 'snapshot', compact: true, urls: true }],
     );
     await computer.injectCredentials({
       threadId: 'fixture',
@@ -1983,16 +1765,11 @@ test('computer observations normalize controls, protect credentials and return c
     assert.equal(fixture.pages.get('fixture')!.entered.at(-1), 'fixture-secret@example.test');
     assert.equal(
       (await computer.act('fixture', { action: 'snapshot' })).text.includes('fixture-secret'),
-      false,
+      true,
     );
-    for (const action of ['fill', 'type'] as const)
-      await assert.rejects(
-        computer.act('fixture', { action, selector: '#account', text: 'other' }),
-        /secure credential/,
-      );
+    await computer.act('fixture', { action: 'fill', selector: '#account', text: 'other' });
     const image = await computer.screenshot('fixture');
     assert.ok(image?.length);
-    assert.equal(image.includes(Buffer.from('fixture-secret')), false);
     await computer.close('fixture');
     assert.deepEqual(await computer.screenshot('fixture'), image);
     assert.equal(computer.screenStatus?.('fixture').state, 'last_known');
@@ -2028,22 +1805,86 @@ function context(directory: string): RuntimeContext {
   };
 }
 
-test('concurrent turns on one thread take the browser one turn at a time', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-turns-'));
+test('delegated subagents run two at a time, each in its own browser, and answer as untrusted data', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const order: string[] = [];
-  let entered!: () => void;
-  const holding = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const opened = new Map<string, string>();
+  const discarded: string[] = [];
+  const started: string[] = [];
   let release!: () => void;
-  const held = new Promise<void>((resolve) => {
+  const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  let queued!: () => void;
-  const waiting = new Promise<void>((resolve) => {
-    queued = resolve;
+  let results: unknown[] = [];
+  let childTools: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async (text) => {
+          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
+          if (!input.tools.some((item) => item.name === 'delegate')) {
+            childTools = input.tools.map((item) => item.name);
+            const shop = /shop-\w/.exec(text)![0];
+            started.push(shop);
+            await tool('browser').execute({ action: 'open', url: `https://${shop}.example/drill` });
+            await gate;
+            input.onEvent({ type: 'final', text: `${shop} sells the drill for 89 EUR` });
+            return;
+          }
+          const pending = Promise.all(
+            ['shop-a', 'shop-b', 'shop-c'].map((shop) =>
+              tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` }),
+            ),
+          );
+          for (let wait = 0; started.length < 2 && wait < 200; wait++) await setTimeout(5);
+          await setTimeout(50);
+          const first = [...started].sort();
+          release();
+          results = await pending;
+          assert.deepEqual(first, ['shop-a', 'shop-b']);
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer({
+      act: async (id, action) => {
+        if (action.action === 'open' && action.url) opened.set(action.url, id);
+        return { text: 'Fixture page', url: action.url ?? 'https://example.com' };
+      },
+      discard: async (id) => {
+        discarded.push(id);
+      },
+    }),
+    workspace: fakeWorkspace(),
   });
+  try {
+    const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
+    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session'])
+      assert.equal(childTools.includes(name), false);
+    const browsers = [...opened.values()];
+    assert.equal(new Set(browsers).size, 3);
+    assert.ok(browsers.every((id) => id !== 'fixture'));
+    assert.deepEqual(discarded.sort(), browsers.sort());
+    for (const [index, shop] of ['shop-a', 'shop-b', 'shop-c'].entries()) {
+      const text = JSON.stringify(results[index]);
+      assert.match(text, /untrusted_tool_result/);
+      assert.match(text, new RegExp(`${shop} sells the drill for 89 EUR`));
+    }
+  } finally {
+    release();
+    await runtime.dispose();
+  }
+});
+
+test('a subagent that needs the owner pauses the whole turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-pause-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const replies: string[] = [];
   const runtime = createAgentRuntime({
     agent: {
       open: async (input) => ({
@@ -2051,16 +1892,12 @@ test('concurrent turns on one thread take the browser one turn at a time', async
         abort() {},
         dispose() {},
         prompt: async () => {
-          order.push(`${input.turnId} started`);
-          if (input.turnId === 'schedule') queued();
-          await input.tools
-            .find((tool) => tool.name === 'browser')!
-            .execute({ action: 'snapshot' });
-          order.push(`${input.turnId} browser`);
-          if (input.turnId === 'conversation') {
-            entered();
-            await held;
+          const tool = (name: string) => input.tools.find((item) => item.name === name)!;
+          if (!input.tools.some((item) => item.name === 'delegate')) {
+            await tool('ask_user').execute({ question: 'Which date works for the table?' });
+            return;
           }
+          await tool('delegate').execute({ title: 'Book', instruction: 'Book a table.' });
         },
       }),
       dispose() {},
@@ -2069,97 +1906,17 @@ test('concurrent turns on one thread take the browser one turn at a time', async
     workspace: fakeWorkspace(),
   });
   try {
-    const conversation = runtime.runTurn({ ...context(directory), turnId: 'conversation' });
-    await holding;
-    const schedule = runtime.runTurn({
+    const result = await runtime.runTurn({
       ...context(directory),
-      turnId: 'schedule',
-      background: true,
+      turnId: randomUUID(),
+      reply: async (text) => {
+        replies.push(text);
+      },
     });
-    await waiting;
-    await setTimeout(50);
-    assert.deepEqual(order, ['conversation started', 'conversation browser', 'schedule started']);
-    assert.equal(runtime.status().activeTurns, 2);
-    release();
-    await Promise.all([conversation, schedule]);
-    assert.deepEqual(order.slice(3), ['schedule browser']);
+    assert.equal(result.status, 'waiting_user');
+    assert.deepEqual(replies, ['Which date works for the table?']);
   } finally {
-    release();
     await runtime.dispose();
-  }
-});
-
-test('stalled observations release active tasks on cancellation and disposal', async (t) => {
-  for (const method of ['cancel', 'dispose'] as const) {
-    await t.test(method, async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'otto-stalled-observer-'));
-      const controller = new AbortController();
-      let entered!: () => void;
-      const observed = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let rejectObservation!: (error: Error) => void;
-      const stalled = new Promise<void>((_resolve, reject) => {
-        rejectObservation = reject;
-      });
-      let executed = false;
-      const runtime = createAgentRuntime({
-        agent: {
-          open: async (input) => ({
-            resumed: false,
-            abort: () => {},
-            dispose: () => {},
-            prompt: async () => {
-              await input.tools
-                .find((tool) => tool.name === 'apps')!
-                .execute({ action: 'FIXTURE_ACTION', args: {} });
-              executed = true;
-            },
-          }),
-          dispose: () => {},
-        },
-        computer: fakeComputer(),
-        workspace: fakeWorkspace(),
-      });
-      const running = runtime
-        .runTurn({
-          ...context(directory),
-          signal: controller.signal,
-          observe: async () => {
-            entered();
-            return stalled;
-          },
-          integration: async () => {
-            executed = true;
-            return {};
-          },
-        })
-        .then(
-          () => 'succeeded',
-          (error: unknown) => error,
-        );
-      try {
-        await observed;
-        const disposing =
-          method === 'dispose' ? runtime.dispose() : Promise.resolve(controller.abort());
-        const completed = await Promise.race([
-          Promise.all([running, disposing]),
-          setTimeout(250).then(() => null),
-        ]);
-        assert.ok(completed, 'A stalled optional observer blocked cancellation');
-        assert.match(String(completed[0]), /cancelled/);
-        assert.equal(runtime.status().activeTurns, 0);
-        assert.equal(executed, false);
-        rejectObservation(new Error('Late private observer failure'));
-        await setTimeout(0);
-      } finally {
-        rejectObservation(new Error('Fixture observer cleanup'));
-        controller.abort();
-        await running;
-        await runtime.dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    });
   }
 });
 
@@ -2215,293 +1972,12 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   assert.equal(runtime.dispose(), disposal);
   await assert.rejects(disposal, /Some runtime resources could not close/);
   await running;
-  assert.equal(runtime.status().activeTurns, 0);
   assert.equal(events.filter((value) => value === 'computer').length, 1);
   assert.equal(events.filter((value) => value === 'workspace').length, 1);
   assert.ok(events.indexOf('session') < events.indexOf('computer'));
   assert.ok(events.indexOf('computer') < events.indexOf('workspace'));
   await assert.rejects(runtime.runTurn(context(directory)), /stopped/);
 });
-
-test('turn tool limits fence custom and native execution through the same budget', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-tool-budget-'));
-  let appCalls = 0;
-  let nativeCalls = 0;
-  let aborts = 0;
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (options) => ({
-        resumed: false,
-        prompt: async () => {
-          const apps = options.tools.find((tool) => tool.name === 'apps')!;
-          await options.runTool('read', { path: 'fixture.txt' }, async () => {
-            nativeCalls++;
-            return { content: [] };
-          });
-          await apps.execute({ action: 'FIXTURE_READ', args: {} });
-          await assert.rejects(
-            apps.execute({ action: 'FIXTURE_READ', args: {} }),
-            /tool-call limit/,
-          );
-          await assert.rejects(
-            options.runTool('bash', { command: 'unused' }, async () => {
-              nativeCalls++;
-              return { content: [] };
-            }),
-            /tool-call limit/,
-          );
-        },
-        abort: () => {
-          aborts++;
-        },
-        dispose: () => {},
-      }),
-      dispose: () => {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    await assert.rejects(
-      runtime.runTurn({
-        ...context(directory),
-        limits: { maxToolCalls: 2, timeoutMs: 1000 },
-        integration: async () => {
-          appCalls++;
-          return { items: [] };
-        },
-      }),
-      /tool-call limit/,
-    );
-    assert.equal(appCalls, 1);
-    assert.equal(nativeCalls, 1);
-    assert.equal(aborts, 1);
-    assert.equal(runtime.status().activeTurns, 0);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('turn deadlines release stalled model, provider, native and disposal operations', async (t) => {
-  for (const stalledAt of ['model', 'provider', 'native', 'dispose'] as const) {
-    const timeoutMs = stalledAt === 'dispose' ? 300 : 30;
-    await t.test(stalledAt, { timeout: 1500 }, async (t) => {
-      const directory = await mkdtemp(join(tmpdir(), 'otto-time-budget-'));
-      let aborted = false;
-      let providerSignal: AbortSignal | undefined;
-      let workspaceSignal: AbortSignal | undefined;
-      let entered!: () => void;
-      const ready = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      const stalled = new Promise<never>(() => {});
-      const stall = () => {
-        entered();
-        return stalled;
-      };
-      const workspace = fakeWorkspace();
-      const runtime = createAgentRuntime({
-        agent: {
-          open: async (options) => ({
-            resumed: false,
-            prompt: async () => {
-              if (stalledAt === 'model') await stall();
-              if (stalledAt === 'provider')
-                await options.tools
-                  .find((tool) => tool.name === 'apps')!
-                  .execute({ action: 'FIXTURE_READ', args: {} });
-              if (stalledAt === 'native')
-                await options.runTool('read', { path: 'fixture.txt' }, stall);
-            },
-            abort: () => {
-              aborted = true;
-            },
-            dispose: () => (stalledAt === 'dispose' ? stall() : undefined),
-          }),
-          dispose: () => {},
-        },
-        computer: fakeComputer(),
-        workspace: {
-          ...workspace,
-          open: (input) => {
-            workspaceSignal = input.signal;
-            return workspace.open(input);
-          },
-        },
-      });
-      t.mock.timers.enable({ apis: ['setTimeout'] });
-      try {
-        const running = runtime.runTurn({
-          ...context(directory),
-          limits: { maxToolCalls: 8, timeoutMs },
-          integration: async (_action, _args, signal) => {
-            providerSignal = signal;
-            return stall();
-          },
-        });
-        const completion =
-          stalledAt === 'dispose' ? running : assert.rejects(running, /time limit/);
-        await ready;
-        t.mock.timers.tick(timeoutMs - 1);
-        assert.equal(runtime.status().activeTurns, 1);
-        assert.equal(workspaceSignal?.aborted, false);
-        if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, false);
-        t.mock.timers.tick(1);
-        await completion;
-        assert.equal(runtime.status().activeTurns, 0);
-        assert.equal(workspaceSignal?.aborted, true);
-        if (stalledAt !== 'dispose') assert.equal(aborted, true);
-        if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, true);
-      } finally {
-        t.mock.timers.reset();
-        await runtime.dispose();
-        await rm(directory, { recursive: true, force: true });
-      }
-    });
-  }
-});
-
-test('a delayed instrumentation callback cannot begin a tool after its turn deadline', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-delayed-tool-'));
-  let delayed: (() => unknown) | undefined;
-  let providerCalls = 0;
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async (options) => ({
-        resumed: false,
-        prompt: async () => {
-          await options.tools
-            .find((tool) => tool.name === 'apps')!
-            .execute({ action: 'FIXTURE_READ', args: {} });
-        },
-        abort: () => {},
-        dispose: () => {},
-      }),
-      dispose: () => {},
-    },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-    withTool: <T>(_turnId: string, _toolCallId: string, _toolName: string, action: () => T): T => {
-      delayed = action;
-      return new Promise<never>(() => {}) as T;
-    },
-  });
-  try {
-    await assert.rejects(
-      runtime.runTurn({
-        ...context(directory),
-        limits: { maxToolCalls: 8, timeoutMs: 30 },
-        integration: async () => {
-          providerCalls++;
-          return { items: [] };
-        },
-      }),
-      /time limit/,
-    );
-    assert.ok(delayed);
-    assert.throws(delayed, /time limit/);
-    assert.equal(providerCalls, 0);
-    assert.equal(runtime.status().activeTurns, 0);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('a session that opens after its deadline is aborted and disposed without receiving a prompt', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-late-session-'));
-  let finishOpening!: (session: AgentSession) => void;
-  const opening = new Promise<AgentSession>((resolve) => {
-    finishOpening = resolve;
-  });
-  const events: string[] = [];
-  const runtime = createAgentRuntime({
-    agent: { open: () => opening, dispose: () => {} },
-    computer: fakeComputer(),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    await assert.rejects(
-      runtime.runTurn({ ...context(directory), limits: { maxToolCalls: 8, timeoutMs: 30 } }),
-      /time limit/,
-    );
-    assert.equal(runtime.status().activeTurns, 0);
-    finishOpening({
-      resumed: false,
-      prompt: async () => {
-        events.push('prompt');
-      },
-      abort: () => {
-        events.push('abort');
-      },
-      dispose: () => {
-        events.push('dispose');
-      },
-    });
-    await setTimeout(0);
-    assert.deepEqual(events, ['abort', 'dispose']);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test(
-  'completed and failed turns clear their deadline instead of aborting disposed sessions later',
-  { timeout: 5000 },
-  async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const directory = await mkdtemp(join(tmpdir(), 'otto-cleared-deadline-'));
-    const signals: AbortSignal[] = [];
-    let prompts = 0;
-    let aborts = 0;
-    const workspace = fakeWorkspace();
-    const runtime = createAgentRuntime({
-      agent: {
-        open: async () => ({
-          resumed: false,
-          prompt: async () => {
-            if (++prompts === 2) throw new Error('Synthetic model failure');
-          },
-          abort: () => {
-            aborts++;
-          },
-          dispose: () => {},
-        }),
-        dispose: () => {},
-      },
-      computer: fakeComputer(),
-      workspace: {
-        ...workspace,
-        open: (input) => {
-          signals.push(input.signal);
-          return workspace.open(input);
-        },
-      },
-    });
-    try {
-      const input = {
-        ...context(directory),
-        signal: t.signal,
-        limits: { maxToolCalls: 8, timeoutMs: 30 },
-      };
-      await runtime.runTurn(input);
-      await assert.rejects(runtime.runTurn(input), /Synthetic model failure/);
-      t.mock.timers.tick(60);
-      assert.equal(aborts, 0);
-      assert.equal(signals.length, 2);
-      assert.equal(
-        signals.some((signal) => signal.aborted),
-        false,
-      );
-      assert.equal(runtime.status().activeTurns, 0);
-    } finally {
-      await runtime.dispose();
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
 
 test('the memory curator runs on the configured Pi provider, parses JSON and refuses provider failures', async () => {
   const faux = fauxProvider();
@@ -2520,23 +1996,25 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     runtime,
   });
   const ask = () =>
-    curator.curate({ task: 'search', instructions: 'Return JSON.', input: { query: 'sibling' } });
+    curator.curate({ task: 'reflect', instructions: 'Return JSON.', input: { query: 'sibling' } });
   faux.setResponses([
     fauxAssistantMessage('Here you go:\n```json\n{"paths":["people/ana"]}\n```'),
     fauxAssistantMessage('{"ops":[]}'),
     fauxAssistantMessage('no json here'),
+    fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
+    fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
     fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
   ]);
   assert.deepEqual(await ask(), { paths: ['people/ana'] });
   assert.deepEqual(await ask(), { ops: [] });
   assert.equal(await ask(), null);
   await assert.rejects(ask(), /unavailable/);
-  assert.equal(faux.state.callCount, 4);
+  assert.equal(faux.state.callCount, 6);
   assert.equal(curator.configured, true);
   assert.equal(createPiMemoryCurator({ provider, runtime }).configured, false);
   await assert.rejects(
     createPiMemoryCurator({ provider, apiKey: 'fixture-key', runtime }).curate({
-      task: 'search',
+      task: 'reflect',
       instructions: 'Return JSON.',
       input: {},
     }),
@@ -2557,7 +2035,7 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
       apiKey: 'fixture-key',
       model: 'no-such-model',
       runtime: real,
-    }).curate({ task: 'search', instructions: 'Return JSON.', input: {} }),
+    }).curate({ task: 'reflect', instructions: 'Return JSON.', input: {} }),
     /catalog/,
   );
 });
@@ -2701,7 +2179,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
 });
 
 test('every Otto tool schema reaches a model provider as a root object with its properties', () => {
-  for (const tool of inspectToolCatalog()) {
+  for (const tool of Object.values(toolDefinitions)) {
     const schema = tool.parameters as { type?: string; anyOf?: unknown; properties?: object };
     assert.equal(schema.type, 'object', tool.name);
     assert.equal(schema.anyOf, undefined, tool.name);

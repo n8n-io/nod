@@ -26,7 +26,7 @@ test(
         'CREATE TABLE threads (id uuid PRIMARY KEY,owner_id text,status text,archived_at timestamptz)',
       );
       await pool.query(
-        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text)',
+        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)',
       );
       const first = { threadId: randomUUID(), turnId: randomUUID() };
       const second = { threadId: randomUUID(), turnId: randomUUID() };
@@ -41,10 +41,12 @@ test(
       }
       let cancelTurnId: string | undefined;
       let changeOrigin = false;
+      let held = false;
       const bindings: string[] = [];
       const removed: string[] = [];
       const computer = {
         async bindProfile(_threadId: string, profileId: string) {
+          if (held) throw Object.assign(new Error('Synthetic held profile'), { statusCode: 423 });
           bindings.push(profileId);
         },
         async act() {
@@ -77,7 +79,6 @@ test(
           account: 'example.test',
           kind: 'session',
           itemId: connectionId,
-          destinations: [],
         },
       );
       assert.equal(
@@ -139,6 +140,14 @@ test(
         [connectionId],
       );
       const checkedAt = (await service.list())[0].checkedAt;
+      assert.deepEqual(
+        await service.request(
+          { action: 'use', url: 'https://example.test/account', connectionId },
+          second,
+        ),
+        { status: 'rejected', code: 'browser_connection_unavailable' },
+      );
+      await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.turnId]);
       const priorBindings = bindings.length;
       cancelTurnId = second.turnId;
       await assert.rejects(
@@ -153,6 +162,15 @@ test(
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [second.turnId]);
       cancelTurnId = undefined;
       page();
+      held = true;
+      assert.deepEqual(
+        await service.request(
+          { action: 'use', url: 'https://example.test/account', connectionId },
+          second,
+        ),
+        { status: 'rejected', code: 'browser_connection_busy' },
+      );
+      held = false;
       assert.equal(
         (
           await service.request(
@@ -215,7 +233,6 @@ test(
           account: (await service.sessions())[0]!.label,
           kind: 'session',
           itemId: connectionId,
-          destinations: [],
         },
       );
       assert.equal(

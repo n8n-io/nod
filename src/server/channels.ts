@@ -3,7 +3,8 @@ import type { Artifact } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { classifyVerificationReply, mayHoldSecurityCode } from '../shared/verification-code.ts';
+import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
+import { transaction } from './transaction.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
@@ -12,6 +13,8 @@ import type {
   MessagingAttachment,
   MessagingTransport,
 } from '../ports/messaging.ts';
+import { loopbackHost } from '../shared/loopback.ts';
+import type { ChatConfirmationInput } from './approvals.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 
@@ -33,7 +36,9 @@ interface ChannelOptions {
     client: PoolClient,
     channel: string,
     messageId: string,
+    answer?: ChatConfirmationInput['answer'],
   ) => Promise<string>;
+  answer?: (text: string, channel: string) => Promise<ChatConfirmationInput['answer']>;
   subscribe: (listener: () => void) => () => void;
   refresh?: () => void;
   intervalMs?: number;
@@ -119,7 +124,7 @@ export function channelReply(
           const url = new URL(linked ?? plain!);
           if (
             url.host !== (appOrigin ? new URL(appOrigin).host : undefined) &&
-            !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+            !loopbackHost(url.hostname)
           )
             return match;
         } catch {}
@@ -234,20 +239,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
   }
 
-  async function inTransaction(operation: (client: PoolClient) => Promise<void>) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await operation(client);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
   function permitted(row: ChannelIdentity) {
     return channels.some(
       (channel) =>
@@ -307,22 +298,24 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const command = replyCommand.exec(text.trim())?.[1]?.toLowerCase();
       if (command && commandReply) {
         const name = command === 'usage' ? 'usage' : 'memory';
-        await inTransaction((client) =>
-          replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, (thread) =>
-            commandReply(
-              name,
-              client,
-              thread,
-              appOrigin ? `${appOrigin}/${name === 'usage' ? 'trust' : 'memory'}` : null,
+        await transaction(
+          (client) =>
+            replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, (thread) =>
+              commandReply(
+                name,
+                client,
+                thread,
+                appOrigin ? `${appOrigin}/${name === 'usage' ? 'trust' : 'memory'}` : null,
+              ),
             ),
-          ),
+          pool,
         );
         options.refresh?.();
         void drain();
         return;
       }
       if (
-        (classifyVerificationReply(text).kind !== 'ordinary' || mayHoldSecurityCode(text)) &&
+        (classifyVerificationReply(text).kind !== 'ordinary' || securityCodeIn(text)) &&
         options.acceptVerification
       ) {
         try {
@@ -340,19 +333,21 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           const conflict =
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
           if (!conflict) throw cause;
-          await inTransaction((client) =>
-            replyWithoutTurn(
-              client,
-              { ...identity, sourceId, threadId, sentAt, text: 'Code not applied.' },
-              () => ({
-                text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
-              }),
-            ),
+          await transaction(
+            (client) =>
+              replyWithoutTurn(
+                client,
+                { ...identity, sourceId, threadId, sentAt, text: 'Code not applied.' },
+                () => ({
+                  text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
+                }),
+              ),
+            pool,
           );
           return;
         }
       }
-      if (!ordinaryPersisted) await inTransaction(persist);
+      if (!ordinaryPersisted) await transaction(persist, pool);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
@@ -415,40 +410,36 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       if (!pending) break;
       const channel = conversationChannel(pending);
       if (closed || replacing) break;
-      const client = await pool.connect();
-      let submitted = false;
-      try {
-        await client.query('BEGIN');
+      const answer = await options.answer?.(pending.text, channel).catch(() => undefined);
+      const submitted = await transaction(async (client) => {
         const result = await client.query<InboxRow>(
           "SELECT * FROM channel_inbox WHERE state='pending' AND source_id=$1 AND owner_id=$2 FOR UPDATE SKIP LOCKED",
           [pending.source_id, ownerId],
         );
         const row = result.rows[0];
-        if (!row) {
-          await client.query('COMMIT');
-          continue;
-        }
+        if (!row) return false;
         if (!permitted(row)) {
           await client.query(
             "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
             [row.source_id, ownerId],
           );
-        } else {
-          const messageId = row.message_id ?? randomUUID();
-          const turnId = await options.submit(row.text, row.source_id, client, channel, messageId);
-          await client.query(
-            "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
-            [row.source_id, turnId, messageId, ownerId, channel],
-          );
-          submitted = true;
+          return false;
         }
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+        const messageId = row.message_id ?? randomUUID();
+        const turnId = await options.submit(
+          row.text,
+          row.source_id,
+          client,
+          channel,
+          messageId,
+          answer,
+        );
+        await client.query(
+          "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
+          [row.source_id, turnId, messageId, ownerId, channel],
+        );
+        return true;
+      }, pool);
       if (submitted) options.refresh?.();
     }
   }

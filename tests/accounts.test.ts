@@ -23,6 +23,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -1165,6 +1166,67 @@ describe('keychain', () => {
 });
 
 describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
+  test('new nested roots withhold their key until ancestor entries persist across readers and retries', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-vault-ancestors-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const dataRoot = join(root, 'new', 'nested', 'profile');
+    const ancestor = await lstat(root);
+    const handle = await open(root, 'r');
+    const prototype = Object.getPrototypeOf(handle);
+    const sync = prototype.sync;
+    await handle.close();
+    let fail = true;
+    t.mock.method(prototype, 'sync', async function (this: typeof handle) {
+      const metadata = await this.stat();
+      if (fail && metadata.dev === ancestor.dev && metadata.ino === ancestor.ino)
+        throw Object.assign(new Error('Synthetic ancestor persistence failure'), { code: 'EIO' });
+      return sync.call(this);
+    });
+    const first = createFilesystemKeyStore({ dataRoot, canCreate: async () => true });
+    await assert.rejects(first.getKey(), { code: 'EIO' });
+    const saved = await readFile(join(dataRoot, 'vault', 'master-key'), 'utf8');
+    const second = createFilesystemKeyStore({ dataRoot, canCreate: async () => false });
+    await Promise.all([
+      assert.rejects(first.getKey(), { code: 'EIO' }),
+      assert.rejects(second.getKey(), { code: 'EIO' }),
+    ]);
+    assert.equal(await readFile(join(dataRoot, 'vault', 'master-key'), 'utf8'), saved);
+    fail = false;
+    const keys = await Promise.all([first.getKey(), second.getKey()]);
+    assert.ok(keys.every((key) => key.toString('base64') === saved));
+    const entry = { id: randomUUID(), owner_id: 'synthetic-owner', origin: 'https://example.test' };
+    const secret = { username: 'synthetic@example.test', password: 'synthetic-secret' };
+    const ciphertext = sealCredential(keys[0], entry, secret);
+    const restored = createFilesystemKeyStore({ dataRoot, canCreate: async () => false });
+    assert.deepEqual(openCredential(await restored.getKey(), { ...entry, ciphertext }), secret);
+  });
+
+  test('directory persistence failures withhold the key and retry retains the published key', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-vault-durability-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const handle = await open(root, 'r');
+    const prototype = Object.getPrototypeOf(handle);
+    const sync = prototype.sync;
+    await handle.close();
+    let fail = true;
+    t.mock.method(prototype, 'sync', async function (this: typeof handle) {
+      if ((await this.stat()).isDirectory() && fail)
+        throw Object.assign(new Error('Synthetic disk failure'), { code: 'EIO' });
+      return sync.call(this);
+    });
+    const store = createFilesystemKeyStore({ dataRoot: root, canCreate: async () => true });
+    await assert.rejects(store.getKey(), { code: 'EIO' });
+    const saved = await readFile(join(root, 'vault', 'master-key'), 'utf8');
+    fail = false;
+    const key = await store.getKey();
+    assert.equal(key.toString('base64'), saved);
+    const restored = createFilesystemKeyStore({ dataRoot: root, canCreate: async () => false });
+    fail = true;
+    await assert.rejects(restored.getKey(), { code: 'EIO' });
+    fail = false;
+    assert.deepEqual(await restored.getKey(), key);
+  });
+
   test('concurrent instances publish one private key and decrypt after restart', async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'otto-vault-key-'));
     t.after(() => rm(root, { recursive: true, force: true }));

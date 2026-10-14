@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import type { AgentReactionResult, MessageReaction } from '../shared/contracts.ts';
+import { transaction } from './transaction.ts';
 import { lockThread } from './thread.ts';
 
 export interface AgentReactionInput {
@@ -20,10 +21,8 @@ export function createAgentReactionService(dependencies: {
     input.signal?.throwIfAborted();
     if (input.reaction !== null && !isMessageReaction(input.reaction))
       throw new Error('Choose one emoji reaction.');
-    const client = await dependencies.pool.connect();
-    let result: AgentReactionResult;
-    try {
-      await client.query('BEGIN');
+    const result = await transaction(async (client): Promise<AgentReactionResult> => {
+      let result: AgentReactionResult;
       const thread = await lockThread(client, dependencies.ownerId);
       input.signal?.throwIfAborted();
       const current =
@@ -80,13 +79,8 @@ export function createAgentReactionService(dependencies: {
         }
       }
       input.signal?.throwIfAborted();
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+      return result;
+    }, dependencies.pool);
     if (result.status === 'updated') dependencies.refresh();
     return result;
   }

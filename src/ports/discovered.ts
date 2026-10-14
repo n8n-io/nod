@@ -1,4 +1,10 @@
 import type { IntegrationFile } from './integrations.ts';
+export class DiscoveredSignInRequired extends Error {
+  constructor() {
+    super('Connect this account again.');
+  }
+}
+
 export interface DiscoveredTool {
   name: string;
   description?: string;

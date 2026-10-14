@@ -300,7 +300,6 @@ export function ConnectionChoice({
   const locked = disabled || switching || signingIn;
   const confirmLocked = locked || view.checking;
   const changing = mode !== status.mode;
-  const unreadable = status.mode === 'own' && !status.suffix && status.switchable;
   const unknown = !view.linked && !view.checking;
   const detaching =
     changing &&
@@ -312,7 +311,7 @@ export function ConnectionChoice({
   if (detaching)
     warning =
       'Switching removes these connections from Otto. Permissions remain with their providers; remove them in provider settings if needed.';
-  else if (changing && !unreadable)
+  else if (changing)
     warning = unknown
       ? 'Switching disconnects apps connected the current way.'
       : view.linked?.length

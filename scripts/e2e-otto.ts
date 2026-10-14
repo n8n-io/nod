@@ -338,18 +338,18 @@ try {
     { createPiAgent },
     { createContainerBrowserComputer },
     { createDockerWorkspace },
-    { createOpenAIRelevanceClassifier },
     { createPublicLinkPreviewProvider },
     { events },
+    { profileNotes },
   ] = await Promise.all([
     import('../src/server/composition.ts'),
     import('../src/server/db.ts'),
     import('../src/providers/pi/index.ts'),
     import('../src/providers/container-browser/index.ts'),
     import('../src/providers/docker/index.ts'),
-    import('../src/providers/openai/relevance.ts'),
     import('../src/providers/public-web/link-preview.ts'),
     import('../src/server/events.ts'),
+    import('../src/server/personal.ts'),
   ]);
   databasePool = pool;
   const vaultKey = randomBytes(32);
@@ -376,15 +376,13 @@ try {
       synthesize: unavailable,
     },
     keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
-    relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
     linkPreviews: createPublicLinkPreviewProvider(),
     model: { provider, name: model, configured: true },
   });
   const { app } = application;
   if (fixtureData) {
     await application.triage.updatePreferences({ timeZone: 'Europe/Lisbon' });
-    if (fixtureData.profile)
-      await application.personal.manage('profile_update', fixtureData.profile);
+    for (const note of profileNotes(fixtureData.profile ?? {})) await application.memory.add(note);
     for (const schedule of fixtureData.schedules ?? [])
       await application.personal.manage('schedule_create', schedule);
   }

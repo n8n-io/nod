@@ -21,7 +21,7 @@ const stateSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const pendingPrefix = 'pending_';
 const accessState = z
   .object({
-    state: z.enum(['sign_in_required', 'enabled', 'revoked']),
+    state: z.enum(['sign_in_required', 'enabled', 'denied', 'revoked']),
     email: z.email().max(320).optional(),
   })
   .strict();

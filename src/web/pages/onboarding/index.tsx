@@ -2,7 +2,11 @@ import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 
 import { MessageSquare } from 'lucide-react';
 import type { AccountPreparationResponse, AccountUser } from '../../../shared/account';
 import type { ModelsResponse } from '../../../shared/models';
-import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding';
+import {
+  onboardingSteps,
+  onboardingVersion,
+  type OnboardingStep,
+} from '../../../shared/onboarding';
 import { OttoGlyph } from '../../components/motion';
 import { Button, Notice } from '../../components/ui';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
@@ -61,9 +65,13 @@ export function Onboarding({
       url.searchParams.delete('replay');
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     }
-    const stored = readStep<{ owner: string; step: OnboardingStep }>();
+    const stored = readStep<{ owner: string; step: OnboardingStep; version?: number }>();
     const step =
-      stored?.owner === user.id && onboardingSteps.includes(stored.step) ? stored.step : 'welcome';
+      stored?.owner === user.id && onboardingSteps.includes(stored.step)
+        ? stored.version === undefined && stored.step === 'about'
+          ? 'email'
+          : stored.step
+        : 'welcome';
     if (step === 'welcome') clearStored();
     return { step, arrived: 'forward' as StepProps['arrived'] };
   });
@@ -77,7 +85,7 @@ export function Onboarding({
   const main = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    writeStep({ owner: user.id, step });
+    writeStep({ owner: user.id, step, version: onboardingVersion });
     captureAnalytics('otto_onboarding_step_viewed', {
       step: step === 'open' ? 'open_source' : step,
     });

@@ -29,8 +29,7 @@ export type RuntimeObservation =
       error?: string;
       finishedAt: string;
       durationMs: number;
-    }
-  | ModelUsageObservation;
+    };
 
 export type BrowserConnectionRequest =
   | {
@@ -38,9 +37,8 @@ export type BrowserConnectionRequest =
       url: string;
       connectionId?: string;
       label?: string;
-      destinations?: string[];
     }
-  | { action: 'use'; url: string; connectionId: string; destinations?: string[] }
+  | { action: 'use'; url: string; connectionId: string }
   | { action: 'save'; url: string; connectionId: string; signedIn: true };
 
 interface MessageAttachment {
@@ -55,32 +53,19 @@ export interface RuntimeAccount {
   email: string | null;
 }
 
-export type ActivityCheckResult =
-  | {
-      status: 'verified';
-      value: string;
-      summary: string;
-      finding?: { id: string; version?: string; url?: string; summary: string };
-    }
-  | { status: 'unavailable'; summary: string };
-
 export interface RuntimeContext {
   threadId: string;
   turnId: string;
+  browserId?: string;
+  resumed?: boolean;
   prompt: string;
   background?: boolean;
-  readOnly?: boolean;
-  limits?: { maxToolCalls: number; timeoutMs: number };
-  activityCheck?: {
-    connectionId: string;
-    previous?: { checkedAt: string; value: string; summary: string };
-    record(result: ActivityCheckResult, signal?: AbortSignal): Promise<void>;
-  };
   channel?: string;
   timeZone?: string;
   locale?: string;
   hourCycle?: 'auto' | 'h12' | 'h23';
   notificationRule?: string;
+  quietHours?: boolean;
   account?: RuntimeAccount;
   connectedApps?: ConnectedApp[];
   currentMessageId?: string;
@@ -93,18 +78,11 @@ export interface RuntimeContext {
     attachments?: MessageAttachment[];
     unseen?: boolean;
   }>;
-  personalContext?: {
-    profile: { name: string; location: string; phone: string; preferences: string };
-  };
   memory?: string;
   workspacePath: string;
   signal: AbortSignal;
   attachments: Array<{ path: string; mimeType: string }>;
   emit(type: string, summary: string): Promise<void>;
-  markUntrustedContext?(): Promise<void>;
-  flagInjection?(findings: string[]): Promise<void>;
-  observe?(event: RuntimeObservation): Promise<void>;
-  inspectPrompt?(snapshot: PromptSnapshot): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(
     messageId: string,
@@ -119,7 +97,6 @@ export interface RuntimeContext {
     connectionId?: string,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
-  prepareBrowser?(): Promise<void>;
   waitForUser?(question: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
@@ -150,20 +127,16 @@ export interface RuntimeContext {
     action: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    admit?: (asks: boolean) => Promise<void>,
   ): Promise<unknown>;
 
-  manage(action: string, args: Record<string, unknown>): Promise<unknown>;
+  manage(
+    action: string,
+    args: Record<string, unknown>,
+    admit?: (asks: boolean) => Promise<void>,
+  ): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
-}
-export interface PromptSnapshot {
-  id: string;
-  system: string;
-  instruction: string;
-  resumed: boolean;
-  imageCount: number;
-  reason: 'user' | 'secure_resume' | 'steer';
-  createdAt: string;
 }
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
@@ -228,7 +201,6 @@ export interface AgentSession {
   dispose(): void | Promise<void>;
 }
 export interface Agent {
-  nativeTools?: AgentToolMetadata[];
   open(options: AgentSessionOptions): Promise<AgentSession>;
   dispose(): void | Promise<void>;
 }

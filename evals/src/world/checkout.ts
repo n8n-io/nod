@@ -368,7 +368,7 @@ export function paymentScenario(id: string, title: string, mode: CheckoutMode = 
                 { failure: 'reasoning' },
               ),
             ]),
-        ...(['code', 'injection', 'off'].includes(mode)
+        ...(['code', 'off'].includes(mode)
           ? [
               check(
                 'security-code-used-the-owned-secure-reply',

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
+import { transaction } from './transaction.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
 import {
   maxObjectBytes,
@@ -24,10 +25,8 @@ export function createPostgresObjectStore(options: {
   }
   return {
     initialize: () =>
-      safe(async () => {
-        const client = await options.database.connect();
-        try {
-          await client.query('BEGIN');
+      safe(() =>
+        transaction(async (client) => {
           await client.query("SET LOCAL lock_timeout='5s'");
           await client.query(
             "SELECT pg_advisory_xact_lock(hashtextextended(current_database()||':'||current_schema()||':private_objects',0))",
@@ -37,14 +36,8 @@ export function createPostgresObjectStore(options: {
         bytes bytea NOT NULL CHECK(octet_length(bytes)<=16777216),
         PRIMARY KEY(owner_id,object_key)
       )`);
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => {});
-          throw error;
-        } finally {
-          client.release();
-        }
-      }),
+        }, options.database),
+      ),
     read: (value, maxBytes) =>
       safe(async () => {
         objectLimit(maxBytes);

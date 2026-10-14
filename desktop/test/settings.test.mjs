@@ -12,9 +12,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
+import { execFile } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -613,6 +614,8 @@ async function runningDesktop(
   {
     allowStart = false,
     platform = 'darwin',
+    packaged = false,
+    environment = () => ({}),
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
   } = {},
@@ -623,6 +626,7 @@ async function runningDesktop(
   });
   const windows = [];
   const children = [];
+  const paths = new Map();
   const handlers = new Map();
   const ipc = Object.assign(new EventEmitter(), {
     handle: (name, handler) => handlers.set(name, handler),
@@ -630,9 +634,10 @@ async function runningDesktop(
   let openAtLogin = false;
   const context = {
     app: {
+      isPackaged: packaged,
       setName() {},
-      setPath() {},
-      getPath: () => dirname(storage.path),
+      setPath: (name, path) => paths.set(name, path),
+      getPath: (name) => paths.get(name) || dirname(storage.path),
       requestSingleInstanceLock: () => false,
       getLoginItemSettings: () => ({ openAtLogin }),
       setLoginItemSettings: (value) => {
@@ -640,12 +645,18 @@ async function runningDesktop(
       },
       quit() {},
     },
-    process: { platform, argv: [], env: {} },
+    process: {
+      platform,
+      argv: [],
+      env: environment(dirname(storage.path)),
+      resourcesPath: dirname(storage.path),
+    },
     ipcMain: ipc,
     dialog: { showMessageBox: async (options) => prompt(options) },
     shell: { showItemInFolder: reveal },
     URL,
     dirname,
+    isAbsolute,
     join,
     resolve,
     fileURLToPath,
@@ -675,7 +686,7 @@ async function runningDesktop(
       createDesktopLifecycle({
         ...options,
         prepareRuntime: async () => {
-          await mkdir(join(dirname(storage.path), 'profiles', 'local'), { recursive: true });
+          await mkdir(join(paths.get('userData'), 'profiles', 'local'), { recursive: true });
           return { env: {} };
         },
       }),
@@ -688,6 +699,7 @@ async function runningDesktop(
         assert.ok(allowStart, 'The healthy engine must not restart.');
         const child = new EventEmitter();
         child.port = options.env.PORT;
+        child.environment = options.env;
         child.stdout = { resume() {} };
         child.stderr = new EventEmitter();
         child.kill = () => {
@@ -787,6 +799,122 @@ async function runningDesktop(
   );
   return { ...context.running, windows, children, storage, handlers };
 }
+
+test('desktop proxy overrides reach only isolated source engines and retain origin validation', async (t) => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  for (const scenario of [
+    { name: 'isolated local source', url: 'http://127.0.0.1:8787', isolated: true },
+    { name: 'isolated HTTPS source', url: 'https://proxy.example.test', isolated: true },
+    {
+      name: 'packaged override',
+      url: 'https://proxy.example.test',
+      isolated: true,
+      packaged: true,
+    },
+    { name: 'ordinary source override', url: 'https://proxy.example.test' },
+    {
+      name: 'invalid packaged override',
+      url: 'file:///tmp/invalid',
+      isolated: true,
+      packaged: true,
+    },
+    ...[
+      'http://proxy.example.test',
+      'https://user:password@proxy.example.test',
+      'https://proxy.example.test/path',
+      'https://proxy.example.test?query=1',
+      'https://proxy.example.test#fragment',
+    ].map((url) => ({ name: `invalid source ${url}`, url, isolated: true, invalid: true })),
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const f = await runningDesktop(
+        t,
+        async (url) => {
+          assert.equal(new URL(url).pathname, '/api/health');
+          return Response.json({ ok: true });
+        },
+        {
+          allowStart: true,
+          packaged: scenario.packaged,
+          environment: (path) => ({
+            OTTO_COMPOSIO_PROXY_URL: scenario.url,
+            COMPOSIO_API_KEY: 'synthetic-inherited-project-key',
+            ...(scenario.isolated ? { OTTO_DESKTOP_USER_DATA: join(path, 'isolated') } : {}),
+          }),
+        },
+      );
+      f.crash();
+      assert.equal((await f.prepare()).phase, 'ready');
+      const environment = f.children[0].environment;
+      const allowed = scenario.isolated && !scenario.packaged;
+      assert.equal(environment.COMPOSIO_API_KEY, undefined);
+      assert.equal(environment.OTTO_COMPOSIO_PROXY_URL, allowed ? scenario.url : undefined);
+      assert.equal(Boolean(environment.OTTO_DESKTOP_USER_DATA), Boolean(allowed));
+      assert.equal(
+        environment.OTTO_DATA_ROOT,
+        allowed
+          ? join(dirname(f.storage.path), 'isolated', 'profiles', 'local')
+          : join(dirname(f.storage.path), 'Otto', 'profiles', 'local'),
+      );
+      const expected = allowed ? scenario.url : 'https://composio.n8n.cloud';
+      const script = `
+        import assert from 'node:assert/strict';
+        let requests = 0;
+        globalThis.fetch = async (resource, options) => {
+          const request = new Request(resource, options);
+          assert.equal(request.url, ${JSON.stringify(expected)} + '/v1/access/status');
+          assert.equal(request.method, 'POST');
+          assert.equal(request.headers.has('x-api-key'), false);
+          assert.ok(request.headers.get('x-otto-signature'));
+          requests++;
+          return Response.json({ state: 'sign_in_required' });
+        };
+        const { createDefaultAdapters } = await import('./src/server/composition.ts');
+        const { pool } = await import('./src/server/db.ts');
+        if (${Boolean(scenario.invalid)}) {
+          assert.throws(() => createDefaultAdapters(), /proxy address/);
+          assert.equal(requests, 0);
+        } else {
+          const adapters = createDefaultAdapters();
+          assert.deepEqual(await adapters.integrationAccess.status(), { state: 'sign_in_required', email: null });
+          assert.equal(requests, 1);
+          await adapters.integrationAccess.close();
+        }
+        await pool.end();
+      `;
+      await new Promise((resolveRun, reject) =>
+        execFile(
+          process.execPath,
+          ['--import', 'tsx', '--input-type=module', '--eval', script],
+          {
+            cwd: root,
+            env: {
+              ...environment,
+              DOTENV_CONFIG_PATH: join(dirname(f.storage.path), 'absent.env'),
+              COMPOSIO_BASE_URL: 'https://backend.composio.dev',
+              OTTO_ANALYTICS_ENABLED: 'false',
+            },
+            timeout: 20_000,
+            maxBuffer: 128 * 1024,
+          },
+          (error, _stdout, stderr) => {
+            if (error) reject(new Error(stderr || error.message));
+            else resolveRun();
+          },
+        ),
+      );
+    });
+  }
+  await assert.rejects(
+    runningDesktop(t, () => assert.fail('No engine should launch.'), {
+      environment: () => ({
+        OTTO_DESKTOP_USER_DATA: 'relative-profile',
+        OTTO_COMPOSIO_PROXY_URL: 'http://127.0.0.1:8787',
+      }),
+    }),
+    /profile path must be absolute/,
+  );
+});
 
 test('native artifact saving requires an owned main frame on the current trusted app', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('No separate download request is needed.'));

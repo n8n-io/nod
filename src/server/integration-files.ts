@@ -83,13 +83,12 @@ export function isIntegrationFile(value: unknown): value is IntegrationFile {
 
 export async function saveIntegrationFiles(
   value: unknown,
-  save?: (file: IntegrationFile) => Promise<string>,
+  save: (file: IntegrationFile) => Promise<string>,
 ): Promise<{ value: unknown; images: AgentImage[] }> {
   const images: AgentImage[] = [];
   async function visit(item: unknown): Promise<unknown> {
     if (isIntegrationFile(item)) {
       const file = { name: item.name, mimeType: item.mimeType, size: item.bytes.byteLength };
-      if (!save) return { ...file, message: 'The file was not saved in this run.' };
       const workspaceFile = await save(item);
       if (
         viewableImages.has(item.mimeType) &&

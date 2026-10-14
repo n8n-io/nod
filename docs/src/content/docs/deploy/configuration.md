@@ -37,21 +37,19 @@ flowchart LR
 
 Keys set here become server-managed connections. They stay in server memory and aren't copied into the database. You can also add connections in **Models** without any variable. See [Models](/connect/models/).
 
-| Variable             | What it does                                                                                                                                      | Default                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `LLM_PROVIDER`       | The provider of the first model choice: `openai`, `anthropic` or `openrouter`. A model you pick in the app takes priority.                        | `openai`                                                              |
-| `LLM_MODEL`          | The first model choice.                                                                                                                           | `gpt-6.1-sol`, `claude-opus-5-5` or `openai/gpt-6.1-sol`, by provider |
-| `OPENAI_API_KEY`     | Adds an OpenAI connection. It also turns on voice replies.                                                                                        | Empty                                                                 |
-| `ANTHROPIC_API_KEY`  | Adds an Anthropic connection.                                                                                                                     | Empty                                                                 |
-| `OPENROUTER_API_KEY` | Adds an OpenRouter connection.                                                                                                                    | Empty                                                                 |
-| `TYPESAFE_API_KEY`   | Uses Typesafe's Jev model to decide whether a connected-app event, such as a new email, should wake Otto. Without it, the selected model decides. | Empty                                                                 |
-| `TYPESAFE_MODEL`     | The Jev model name.                                                                                                                               | `jev-latest`                                                          |
-| `TTS_MODEL`          | The OpenAI speech model for voice replies.                                                                                                        | `gpt-4o-mini-tts`                                                     |
-| `TTS_VOICE`          | The voice for voice replies. Not in `.env.example`.                                                                                               | `coral`                                                               |
+| Variable             | What it does                                                                                                               | Default                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `LLM_PROVIDER`       | The provider of the first model choice: `openai`, `anthropic` or `openrouter`. A model you pick in the app takes priority. | `openai`                                                              |
+| `LLM_MODEL`          | The first model choice.                                                                                                    | `gpt-6.1-sol`, `claude-opus-5-5` or `openai/gpt-6.1-sol`, by provider |
+| `OPENAI_API_KEY`     | Adds an OpenAI connection. It also turns on voice replies.                                                                 | Empty                                                                 |
+| `ANTHROPIC_API_KEY`  | Adds an Anthropic connection.                                                                                              | Empty                                                                 |
+| `OPENROUTER_API_KEY` | Adds an OpenRouter connection.                                                                                             | Empty                                                                 |
+| `TTS_MODEL`          | The OpenAI speech model for voice replies.                                                                                 | `gpt-4o-mini-tts`                                                     |
+| `TTS_VOICE`          | The voice for voice replies. Not in `.env.example`.                                                                        | `coral`                                                               |
 
 ## Apps and Composio
 
-Desktop and source/server installs offer Google sign-in for Otto's connection or a personal Composio key. Managed access requires an exact email allowed by the proxy operator. The owner can select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project). Setting `COMPOSIO_API_KEY` pins a source/server install to its own project instead, and the app no longer offers the choice. Source/server installs can customize the settings below. The desktop app ignores `COMPOSIO_API_KEY` and `OTTO_COMPOSIO_PROXY_URL`.
+Desktop and source/server installs offer Google sign-in for Otto's connection or a personal Composio key. Managed access requires an exact email allowed by the proxy operator. The owner can select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project). Setting `COMPOSIO_API_KEY` pins a source/server install to its own project instead, and the app no longer offers the choice. Source/server installs can customize the settings below. The desktop app ignores `COMPOSIO_API_KEY`. Packaged and ordinary source desktop launches also ignore `OTTO_COMPOSIO_PROXY_URL`; [isolated desktop development](/deploy/desktop-app/) can override it.
 
 | Variable                           | What it does                                                                                                           | Default           |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------- |
@@ -64,11 +62,10 @@ Desktop and source/server installs offer Google sign-in for Otto's connection or
 | `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic         |
 | `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic         |
 | `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic         |
-| `COMPOSIO_NOTION_AUTH_CONFIG_ID`   | The same for Notion.                                                                                                   | Automatic         |
 
 For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
 
-Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. These settings don't change the built-in Notion and Linear connections, which use their hosted MCP servers. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
+Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. Notion and Linear connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
 
 ## Vault
 

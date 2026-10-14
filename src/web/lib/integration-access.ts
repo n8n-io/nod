@@ -155,6 +155,10 @@ export function startIntegrationAccess(): IntegrationAccessAttempt {
             body: JSON.stringify({ id }),
           });
           current();
+          finished =
+            access?.state === 'enabled' ||
+            access?.state === 'denied' ||
+            access?.state === 'revoked';
           if (access?.state !== 'enabled')
             throw new Error(
               access?.state === 'denied'
@@ -163,18 +167,22 @@ export function startIntegrationAccess(): IntegrationAccessAttempt {
                   ? 'Access for this Otto installation was removed. Sign in again to check your access.'
                   : 'Easy Connect access could not be verified. Try signing in again.',
             );
-          finished = true;
           return;
         }
         if (result.status === 'completed') {
           finished = true;
           return;
         }
-        if (result.status === 'denied')
+        if (result.status === 'denied') {
+          finished = true;
           throw new Error(
             'Easy Connect is not enabled for this Google account. Use your own Composio key.',
           );
-        if (result.status === 'cancelled') throw abort();
+        }
+        if (result.status === 'cancelled') {
+          finished = true;
+          throw abort();
+        }
         if (result.status !== 'pending')
           throw new Error('The sign-in status could not be verified.');
         if (popup?.closed && !proved) {
@@ -186,6 +194,7 @@ export function startIntegrationAccess(): IntegrationAccessAttempt {
       throw new Error('This sign-in expired. Start again.');
     } finally {
       cleanup();
+      await cancelRemote().catch(() => {});
     }
   })();
   return {

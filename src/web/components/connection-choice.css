@@ -50,7 +50,7 @@
 .connection-saved > p:focus-visible,
 .connection-choice a:focus-visible,
 .connection-link:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 .connection-mode-text {

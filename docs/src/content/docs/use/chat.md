@@ -71,7 +71,7 @@ Otto has no button for a new conversation in normal use. When you run Otto from 
 | ------------------------------------------- | ------------------------------------------------- |
 | The chat you see and Otto's working context | Your earlier messages, stored but no longer shown |
 | The workspace folder                        | Memory, connected apps and Vault                  |
-| The browser, with its temporary downloads   | Saved browser sessions and saved browser routines |
+| The browser, with its temporary downloads   | Saved browser sessions                            |
 | Running and queued work, which is cancelled | Tasks and schedules                               |
 
 ## Related resources

@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { IntegrationProvider } from '../ports/integrations.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { IntegrationKeyStatus, IntegrationManagedAccess } from '../shared/integrations.ts';
-import { pool, transaction } from './db.ts';
+import { pool } from './db.ts';
+import { transaction } from './transaction.ts';
 import { IntegrationError } from './integrations.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 
@@ -84,7 +85,7 @@ export function createIntegrationKeyService(options: {
         'INSERT INTO integration_keys(owner_id,vault_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
         [ownerId, id],
       );
-    });
+    }, pool);
     use(key);
   }
   async function remove() {
@@ -93,7 +94,7 @@ export function createIntegrationKeyService(options: {
       await transaction(async (client) => {
         await client.query('DELETE FROM integration_keys WHERE owner_id=$1', [ownerId]);
         await vault.remove(id, client);
-      });
+      }, pool);
     use();
   }
   return {

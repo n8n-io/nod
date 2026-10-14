@@ -40,12 +40,12 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - Only your messages, a schedule's instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
 - A confirmation is bound to the exact action and arguments, and runs once.
-- Background work Otto starts itself only reads and drafts on its own, and never signs in or pays. Read-only and onboarding work refuses anything the checker doesn't judge a read, and never signs in or pays.
+- Background work Otto starts itself only reads and drafts on its own; anything else, including a sign-in or a payment, waits for your yes.
 
 ### Secrets
 
 - No tool returns a saved password, code or card to the model.
-- If the model writes a message asking you for a password, code, card or API key, Otto withholds it and points the model to private entry.
+- Otto is told never to ask for a password, code, card or API key in chat; it opens private entry instead. While a verification code or a card's security code is pending, a code you send by itself in the conversation that asked for it is caught before the model sees it, and so is a card code labeled CVV, CVC or security code, as in "my CVC is 123". Other labels and unlabeled numbers in other messages reach the model. Any other secret you type into chat reaches the model.
 - Known secret values are removed from tool output and masked in screenshots.
 - Provider keys never enter the workspace, the browser or a prompt.
 
@@ -54,7 +54,8 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A login is entered only into a field whose real frame origin matches the login's exact origin. Card fields must match the approved destinations.
 - Entry and submission happen in one step that the model can't observe or act during. Scripts on the destination page can read the entered values, as with any form.
 - A page changed by the model's own JavaScript must reload before entry. After a failed entry, the model's view stays locked until the filled page changes.
-- A saved browser profile can reach only the exact origins permitted for the task.
+- While a field Otto filled still holds its value, the model's page scripts are paused, so a script can't read the value back.
+- The browser reaches only public addresses, never the host, the local network or other containers.
 
 ### One use
 
@@ -78,6 +79,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - The server and browser provider can read secret values. There's no isolated key service or hardware-backed key release.
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
+- The model can type any value it knows into a page, including a secret you typed into chat.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click, and the trust check covers app actions only.
 - The checker can be wrong, and the model isn't immune to prompt injection.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
@@ -100,7 +102,6 @@ The team aims to acknowledge your report within 3 business days and to share a f
 | Authority and confirmations | [`trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts), [`approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)               |
 | Vault and one use           | [`vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts), [`vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) |
 | Browser entry and proxy     | [`agent-browser`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser)                                                                                      |
-| Credential guard            | [`communication.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/communication.ts)                                                                                  |
 | Local access and hosting    | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts), [`gateway.ts`](https://github.com/n8n-io/otto/blob/main/src/server/gateway.ts)                 |
 
 ## Related resources

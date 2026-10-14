@@ -22,13 +22,7 @@ import { JSDOM } from 'jsdom';
 import pg from 'pg';
 import { act, createElement, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import type {
-  Agent,
-  AgentTool,
-  AgentToolResult,
-  RuntimeContext,
-  RuntimeObservation,
-} from '../src/ports/agent.ts';
+import type { Agent, AgentTool, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
 import { BrowserActionError, type BrowserAction, type Computer } from '../src/ports/computer.ts';
 import {
   browserSessionId,
@@ -104,31 +98,16 @@ test(
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
     const capturedAt = '2026-09-25T12:00:00.000Z';
-    let currentId: string | undefined;
     let locked = false;
     let fail = false;
-    let browserHeld = false;
     let pageShown = true;
     let onView: ((signal: AbortSignal) => AsyncGenerator<Buffer>) | undefined;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
-    const touched: string[] = [];
     const app = await createApp({
       configuration: () => configuration(),
-      browserInput: async (id, apply) => {
-        touched.push(`${id}:before:${controls.length}`);
-        await apply();
-        touched.push(`${id}:after:${controls.length}`);
-      },
-      runtime: {
-        status: () => ({ browser: 'Ready', workspace: 'Ready' }),
-        holdBrowserForUser: () => !browserHeld,
-      },
       computer: {
-        status: () => 'Ready',
-        currentSession: () =>
-          currentId ? { threadId: currentId, lastActivityAt: capturedAt } : undefined,
         screenStatus: () => ({ state: 'live', capturedAt }),
         screenshot: async (id) => {
           captures.push(id!);
@@ -141,6 +120,7 @@ test(
         control: async (id, input) => {
           controls.push([id, input]);
         },
+        discard: async () => {},
         act: async (id, input) => {
           controls.push([id, input]);
           return { text: 'Synthetic page', url: 'https://example.test/' };
@@ -171,7 +151,10 @@ test(
       const foreignThread = await activeThread(db.pool, 'other');
       const turnId = await insertTurn(thread.id, ownerId, 'Synthetic browser');
       const foreignTurnId = await insertTurn(foreignThread.id, 'other', 'Foreign browser');
-      currentId = thread.id;
+      await db.pool.query(
+        "INSERT INTO turn_events(id,turn_id,type,summary,created_at) VALUES($1,$2,'tool_start','browser',$3)",
+        [randomUUID(), turnId, capturedAt],
+      );
       const metadata = await request('/api/browser');
       assert.equal(metadata.statusCode, 200);
       assert.equal(metadata.headers['cache-control'], 'no-store');
@@ -240,7 +223,6 @@ test(
       assert.equal(failed.statusCode, 500);
       assert.equal(failed.body.includes('synthetic-private-provider-detail'), false);
       const nextTurnId = await insertTurn(next.id, ownerId, 'Next browser');
-      currentId = undefined;
       assert.deepEqual((await request('/api/browser')).json(), { currentBrowser: null });
       await db.pool.query(
         "INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,'tool_complete','browser')",
@@ -259,8 +241,6 @@ test(
       assert.equal(fallback.currentBrowser.threadId, next.id);
       assert.equal(fallback.currentBrowser.title, 'Next browser');
       assert.deepEqual(Object.keys(fallback), ['currentBrowser']);
-      currentId = thread.id;
-      assert.deepEqual((await request('/api/browser')).json(), { currentBrowser: null });
 
       fail = false;
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
@@ -306,15 +286,8 @@ test(
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
-      assert.deepEqual(touched, [
-        `${next.id}:before:0`,
-        `${next.id}:after:1`,
-        `${next.id}:before:1`,
-        `${next.id}:after:2`,
-      ]);
       const scroll = { type: 'wheel', deltaX: 0, deltaY: 120 };
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
-      assert.equal(touched.length, 4);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
       assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
@@ -324,11 +297,7 @@ test(
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [200, 200, 200]);
-      browserHeld = true;
-      assert.deepEqual(await handoff(), [423, 423, 423]);
-      browserHeld = false;
-      assert.deepEqual(await handoff(), [200, 200, 200]);
-      assert.equal(controls.length, 8);
+      assert.equal(controls.length, 6);
       for (const reason of ['timeout', 'revoked', 'archived', 'cancelled']) {
         const started = deferred<AbortSignal>();
         const aborted = deferred();
@@ -360,7 +329,8 @@ test(
         });
         try {
           const viewing = await started.promise;
-          if (reason === 'revoked') browserHeld = true;
+          if (reason === 'revoked')
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [nextTurnId]);
           if (reason === 'archived')
             await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [next.id]);
           if (reason === 'cancelled') controller.abort();
@@ -380,7 +350,8 @@ test(
           deadline.abort();
           controller.abort();
           await pending.catch(() => {});
-          browserHeld = false;
+          if (reason === 'revoked')
+            await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [nextTurnId]);
           if (reason === 'archived')
             await db.pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [next.id]);
           onView = undefined;
@@ -424,7 +395,7 @@ test(
         assert.ok(response.body.includes('synthetic-live-frame'));
         assert.equal(replacement.aborted, true);
         assert.equal(views, 2);
-        assert.equal(controls.length, 8);
+        assert.equal(controls.length, 6);
       } finally {
         deadline.abort();
         controller.abort();
@@ -437,7 +408,7 @@ test(
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
-      assert.equal(controls.length, 8);
+      assert.equal(controls.length, 6);
     } finally {
       await app.close();
       await db.pool.end();
@@ -520,18 +491,11 @@ test('browser frame streaming preserves fragmented and coalesced frames and reje
 
 function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
   return {
-    act: async () => ({ text: 'Synthetic page', url: 'https://example.test/' }),
-    screenshot: async () => null,
-    injectCredentials: async () => ({ status: 'submitted' }),
-    currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
-    hold: async () => {},
-    close: async () => {},
-    signOut: async () => {},
-    fillCard: async () => {},
-    cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
-    checkoutImage: async () => new Uint8Array(),
-    dispose: async () => {},
-    status: () => 'Synthetic browser',
+    ...fakeComputer({
+      act: async () => ({ text: 'Synthetic page', url: 'https://example.test/' }),
+      injectCredentials: async () => ({ status: 'submitted' }),
+      currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
+    }),
     canCheckpoint: () => true,
   };
 }
@@ -743,6 +707,7 @@ async function transportFixture(respectTimeouts = false) {
   await startDaemon();
   const computer = createAgentBrowserComputer({
     dataRoot: directory,
+    headless: true,
     onDiagnostic: (event) => diagnostics.push(event),
     daemonCommand: (path, command, signal, timeoutMs) => {
       timeouts.push({ action: command.action, timeoutMs });
@@ -943,6 +908,26 @@ for (const [method, phase] of [
     }
   });
 
+test('a failed navigation keeps the current page usable and says it did not load', async () => {
+  const browser = await transportFixture();
+  try {
+    await browser.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    browser.fail('navigate', 'Navigation failed: net::ERR_ABORTED');
+    const seen = await browser.computer.act('fixture', {
+      action: 'open',
+      url: 'https://1.1.1.1/files/report.pdf',
+    });
+    assert.match(seen.text, /did not finish loading/);
+    assert.equal(new URL(seen.url).pathname, '/login');
+    browser.fail();
+    assert.ok((await browser.computer.act('fixture', { action: 'snapshot' })).text);
+    assert.equal(browser.actions.includes('close'), false);
+  } finally {
+    browser.fail();
+    await browser.cleanup();
+  }
+});
+
 for (const action of ['snapshot', 'click'] as const)
   test(`an acknowledged ${action} observation failure preserves the page through the browser bridge`, async () => {
     const browser = await transportFixture();
@@ -1103,7 +1088,7 @@ test('a card goes only into the approved fields on the approved sites and stays 
     await assert.rejects(computer.act('shop', { action: 'snapshot' }));
     assert.equal(snapshots, beforeFailure);
     model.failMasks = false;
-    assert.doesNotMatch(seen, /4242|Synthetic Cardholder|: 737/);
+    assert.doesNotMatch(seen, /4242|: 737/);
     assert.match(seen, /"Expiry"[^\n]*: 08\/30/);
     assert.match(
       (await computer.act('shop', { action: 'evaluate', script: 'document.title' })).text,
@@ -1216,7 +1201,11 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const { port } = server.address() as { port: number };
     const directory = await mkdtemp(join(tmpdir(), 'otto-real-card-'));
-    const computer = createAgentBrowserComputer({ dataRoot: directory });
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      privateNetwork: true,
+      headless: true,
+    });
     const shop = `http://127.0.0.1:${port}`;
     const card = {
       cardNumber: '4242424242424242',
@@ -1268,7 +1257,7 @@ test(
         /Script result/,
       );
       assert.ok(await computer.screenshot('real'));
-      await computer.signOut('real');
+      await computer.close('real');
       steal = true;
       received.length = 0;
       await computer.act('real', { action: 'open', url: `${shop}/` });
@@ -1291,45 +1280,6 @@ test(
     }
   },
 );
-
-test('signing out closes the thread browser, clears its own profile and keeps saved sessions', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-sign-out-'));
-  const fixture = stagedLoginBrowser();
-  const profiles: string[] = [];
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (executable, args, options) => {
-      profiles.push(basename(args[args.indexOf('--profile') + 1]));
-      return fixture.run(executable, args, options);
-    },
-  });
-  const runtime = join(directory, 'runtime');
-  const savedProfile = randomUUID();
-  try {
-    for (const profile of ['thread', savedProfile]) {
-      await mkdir(join(runtime, 'profiles', profile), { recursive: true });
-      await writeFile(join(runtime, 'profiles', profile, 'Cookies'), 'synthetic-cookie');
-    }
-    await mkdir(join(runtime, 'downloads', 'thread'), { recursive: true });
-    await writeFile(join(runtime, 'downloads', 'thread', 'statement.pdf'), 'synthetic-statement');
-    await computer.bindProfile!('thread', savedProfile, ['https://1.1.1.1']);
-    await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
-    assert.equal(profiles.at(-1), savedProfile);
-    await computer.signOut('thread');
-    assert.deepEqual(await readdir(join(runtime, 'profiles')), [savedProfile]);
-    assert.deepEqual(await readdir(join(runtime, 'downloads')), []);
-    assert.equal(computer.screenStatus!('thread').state, 'unavailable');
-    await assert.rejects(
-      computer.act('thread', { action: 'snapshot' }),
-      (error: unknown) => error instanceof BrowserActionError && error.code === 'browser_not_open',
-    );
-    await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
-    assert.equal(profiles.at(-1), 'thread');
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 
 test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
@@ -1359,17 +1309,14 @@ test('discarding a thread closes its browser and deletes only its throwaway data
     for (const screen of screens) await writeFile(join(runtime, screen), 'synthetic');
     await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
     await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' });
-    await computer.bindProfile!('bound', savedProfile, ['https://1.1.1.1']);
+    await computer.bindProfile!('bound', savedProfile);
     await computer.discard!('old');
     await computer.discard!('bound');
     await assert.rejects(
       computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' }),
       /was reset/,
     );
-    await assert.rejects(
-      computer.bindProfile!('old', savedProfile, ['https://1.1.1.1']),
-      /was reset/,
-    );
+    await assert.rejects(computer.bindProfile!('old', savedProfile), /was reset/);
     assert.equal(commands.filter((command) => command === 'close').length, 1);
     assert.deepEqual(
       (await readdir(join(runtime, 'profiles'))).sort(),
@@ -1495,14 +1442,10 @@ type Execute = (
 async function runtimeFixture(
   computer: Computer,
   run: (execute: Execute) => Promise<void>,
-  options: {
-    controller?: AbortController;
-    observe?: (event: RuntimeObservation) => Promise<void>;
-  } = {},
+  controller = new AbortController(),
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-click-recovery-'));
   const threadId = randomUUID();
-  const observations: RuntimeObservation[] = [];
   const agent: Agent = {
     open: async ({ tools }) => ({
       resumed: false,
@@ -1523,12 +1466,8 @@ async function runtimeFixture(
     history: [],
     attachments: [],
     workspacePath: directory,
-    signal: (options.controller ?? new AbortController()).signal,
+    signal: controller.signal,
     emit: async () => {},
-    observe: async (event) => {
-      observations.push(event);
-      await options.observe?.(event);
-    },
     reply: async () => {},
     delta() {},
     publish: async () => {
@@ -1539,7 +1478,6 @@ async function runtimeFixture(
     manage: async () => ({}),
   };
   return {
-    observations,
     run: () => runtime.runTurn(context),
     async close() {
       try {
@@ -1551,11 +1489,12 @@ async function runtimeFixture(
   };
 }
 
-test('the browser has one holder, and the conversation keeps it for the user until it is done', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-claim-'));
+test('every session drives its own browser, so background work never waits for the conversation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-session-'));
   const threadId = randomUUID();
-  const opened: string[] = [];
-  const replies: string[] = [];
+  const opened = new Map<string, string>();
+  const discarded: string[] = [];
+  const held: string[] = [];
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
     agent: {
@@ -1570,33 +1509,39 @@ test('the browser has one holder, and the conversation keeps it for the user unt
       dispose() {},
     },
     computer: fakeComputer({
-      act: async (_id, action) => {
-        if (action.action === 'open' && action.url) opened.push(action.url);
+      act: async (id, action) => {
+        if (action.action === 'open' && action.url) opened.set(id, action.url);
         return { text: 'Fixture page', url: 'https://example.com' };
+      },
+      discard: async (id) => {
+        discarded.push(id);
+      },
+      hold: async (id) => {
+        held.push(id);
       },
     }),
     workspace: fakeWorkspace(),
   });
   const turn = (
-    background: boolean,
+    sessionId: string | undefined,
     script: (tools: Map<string, AgentTool>) => Promise<unknown>,
-    overrides: Partial<RuntimeContext> = {},
+    resumed = false,
   ) => {
     const turnId = randomUUID();
     scripts.set(turnId, script);
     return runtime.runTurn({
       threadId,
       turnId,
-      background,
+      browserId: sessionId,
+      background: sessionId !== undefined,
+      resumed,
       prompt: 'Use the browser.',
       history: [],
       attachments: [],
       workspacePath: directory,
       signal: new AbortController().signal,
       emit: async () => {},
-      reply: async (text) => {
-        replies.push(text);
-      },
+      reply: async () => {},
       delta() {},
       publish: async () => {
         throw new Error('unused');
@@ -1604,81 +1549,134 @@ test('the browser has one holder, and the conversation keeps it for the user unt
       requestCredential: async () => ({ filled: true }),
       integration: async () => ({}),
       manage: async () => ({}),
-      ...overrides,
     });
   };
   const open = (tools: Map<string, AgentTool>, url: string) =>
     tools.get('browser')!.execute({ action: 'open', url });
-  const handoff = deferred();
-  const backgroundDone = deferred();
+  const busy = deferred();
+  const deadline = new AbortController();
   try {
-    const asking = turn(false, async (tools) => {
+    const conversation = turn(undefined, async (tools) => {
       await open(tools, 'https://example.com/conversation');
-      await handoff.promise;
+      await busy.promise;
       await tools.get('ask_user')!.execute({ question: 'Sign in in [Open browser](/browser).' });
     });
-    await delay(10);
-    const background = turn(true, async (tools) => {
-      await open(tools, 'https://example.com/background');
-      await backgroundDone.promise;
+    const finished = randomUUID();
+    const asking = randomUUID();
+    const waiting = turn(asking, async (tools) => {
+      await open(tools, 'https://example.com/asking');
+      await tools.get('ask_user')!.execute({ question: 'Which date works?' });
     });
-    handoff.resolve();
-    assert.equal((await asking).status, 'waiting_user');
-    await delay(10);
-    assert.deepEqual(opened, ['https://example.com/conversation']);
-    assert.equal(runtime.holdBrowserForUser(threadId), true);
-    await turn(false, (tools) => open(tools, 'https://example.com/after-done'));
-    await delay(10);
-    assert.deepEqual(opened, [
-      'https://example.com/conversation',
-      'https://example.com/after-done',
-      'https://example.com/background',
+    const done = await Promise.race([
+      turn(finished, (tools) => open(tools, 'https://example.com/finished')),
+      delay(5_000, undefined, { signal: deadline.signal }).then(() =>
+        assert.fail('Background work waited for the conversation browser.'),
+      ),
     ]);
-    assert.equal(runtime.holdBrowserForUser(threadId), false);
-    const nextHandoff = turn(false, (tools) =>
-      tools.get('ask_user')!.execute({ question: 'Continue in [Open browser](/browser).' }),
+    assert.equal(done.status, 'succeeded');
+    assert.equal((await waiting).status, 'waiting_user');
+    busy.resolve();
+    assert.equal((await conversation).status, 'waiting_user');
+    assert.deepEqual(
+      Object.fromEntries(opened),
+      Object.fromEntries([
+        [threadId, 'https://example.com/conversation'],
+        [asking, 'https://example.com/asking'],
+        [finished, 'https://example.com/finished'],
+      ]),
     );
-    await delay(10);
-    assert.deepEqual(replies, ['Sign in in [Open browser](/browser).']);
-    backgroundDone.resolve();
-    await background;
-    assert.equal((await nextHandoff).status, 'waiting_user');
-    assert.equal(replies.at(-1), 'Continue in [Open browser](/browser).');
-    assert.equal(runtime.holdBrowserForUser(threadId), true);
-    await turn(false, async () => {});
-    const preparing = deferred();
-    const prepared = deferred();
-    const controller = new AbortController();
-    let stalledFinished = false;
-    const stalled = turn(true, (tools) => open(tools, 'https://example.com/stalled'), {
-      signal: controller.signal,
-      limits: { maxToolCalls: 8, timeoutMs: 10000 },
-      prepareBrowser: async () => {
-        preparing.resolve();
-        await prepared.promise;
-      },
-    }).finally(() => {
-      stalledFinished = true;
-    });
-    const stopped = assert.rejects(stalled);
-    await preparing.promise;
-    controller.abort(new Error('Synthetic Stop'));
-    const beforeStall = opened.length;
-    const afterStall = turn(true, (tools) => open(tools, 'https://example.com/after-preparation'));
-    try {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(stalledFinished, false);
-      assert.equal(opened.length, beforeStall);
-    } finally {
-      prepared.resolve();
-      await stopped;
-      await afterStall;
-    }
-    assert.equal(opened.at(-1), 'https://example.com/after-preparation');
+    assert.deepEqual(discarded, [finished]);
+    assert.deepEqual(held.sort(), [asking, threadId].sort());
+    assert.equal((await turn(asking, async () => {}, true)).status, 'succeeded');
+    assert.deepEqual(discarded, [finished, asking]);
   } finally {
-    handoff.resolve();
-    backgroundDone.resolve();
+    deadline.abort();
+    busy.resolve();
     await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('at the browser cap only a browser idle past the window and not held makes room, and a new one waits until then', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    maxLiveSessions: 2,
+    evictIdleMs: 3000,
+    slotWaitMs: 1000,
+  });
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
+  const pages = () => [...fixture.pages.keys()].sort();
+  try {
+    await open('chat');
+    await open('subagent');
+    await assert.rejects(open('scheduled'), /The browser sessions are busy/);
+    assert.deepEqual(pages(), ['chat', 'subagent']);
+    const stop = new AbortController();
+    const stopped = open('event', stop.signal);
+    await delay(200);
+    stop.abort();
+    await assert.rejects(stopped, { name: 'AbortError' });
+    assert.deepEqual(pages(), ['chat', 'subagent']);
+    await computer.hold('chat', Date.now() + 60_000);
+    await delay(3200);
+    await open('scheduled');
+    assert.deepEqual(pages(), ['chat', 'scheduled']);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('Stop ends a browser slot wait queued behind a slow close and leaves no phantom browser', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-slot-stop-'));
+  const fixture = stagedLoginBrowser();
+  const closing = deferred();
+  let slowClose = false;
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    maxLiveSessions: 1,
+    evictIdleMs: 1000,
+    slotWaitMs: 1000,
+    onDaemonCommand: async (command) => {
+      if (slowClose && command.action === 'close') await closing.promise;
+    },
+  });
+  const open = (id: string, signal?: AbortSignal) =>
+    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
+  const settle = (pending: Promise<unknown>) =>
+    Promise.race([
+      pending.then(
+        () => 'opened',
+        (error: Error) => error.name,
+      ),
+      delay(2000).then(() => 'still waiting'),
+    ]);
+  try {
+    await open('idle');
+    await delay(1100);
+    slowClose = true;
+    const stop = new AbortController();
+    const evicting = open('evicting', stop.signal);
+    await delay(100);
+    const queued = open('queued', stop.signal);
+    await delay(100);
+    stop.abort();
+    assert.deepEqual(await Promise.all([settle(evicting), settle(queued)]), [
+      'AbortError',
+      'AbortError',
+    ]);
+    closing.resolve();
+    await delay(200);
+    await open('next');
+    assert.deepEqual([...fixture.pages.keys()], ['next']);
+  } finally {
+    closing.resolve();
+    await computer.dispose();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1774,7 +1772,7 @@ test('a cancelled browser action cannot feed its cached screenshot back to the m
   }
 });
 
-for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cancelled_observation'])
+for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cancelled'])
   test(`${failure} browser failure stops the turn without a blocked result`, async () => {
     const controller = new AbortController();
     let calls = 0;
@@ -1782,6 +1780,7 @@ for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cance
       fakeComputer({
         act: async () => {
           calls++;
+          if (failure === 'cancelled') controller.abort();
           if (failure === 'unknown') throw new Error('Private unknown outcome');
           if (failure === 'forged')
             throw Object.assign(new Error('Private forged error'), {
@@ -1799,12 +1798,7 @@ for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cance
         });
         assert.fail('An uncertain browser result must not continue.');
       },
-      {
-        controller,
-        observe: async (event) => {
-          if (failure === 'cancelled_observation' && event.type === 'tool_end') controller.abort();
-        },
-      },
+      controller,
     );
     try {
       await assert.rejects(f.run());
@@ -1818,17 +1812,14 @@ for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cance
 
 function workerComputer() {
   const calls: Array<{ method: string; input?: unknown }> = [];
-  let session: ReturnType<NonNullable<Computer['currentSession']>>;
-  let act: Computer['act'] = async (id, input) => {
-    session = { threadId: id, lastActivityAt: new Date().toISOString() };
+  let act: Computer['act'] = async (_id, input) => {
     return {
       text: input.text ?? 'Synthetic page',
       url: input.url ?? 'https://example.com/',
     };
   };
   const computer: Computer = {
-    currentSession: () => session,
-    status: () => 'Synthetic workspace browser',
+    ...fakeComputer(),
     screenStatus: () => ({ state: 'live', capturedAt: '2026-09-25T12:00:00.000Z' }),
     act: (id, input, signal) => {
       calls.push({ method: 'act', input });
@@ -1852,9 +1843,6 @@ function workerComputer() {
     },
     discard: async (id) => {
       calls.push({ method: 'discard', input: id });
-    },
-    signOut: async (id) => {
-      calls.push({ method: 'signOut', input: id });
     },
     fillCard: async (input) => {
       calls.push({ method: 'fillCard', input });
@@ -2084,7 +2072,7 @@ test('malformed methods and namespaces never reach a computer or filesystem path
   const fixture = await harness();
   try {
     for (const request of [
-      { id: randomUUID(), namespace: '../../private', method: 'status' },
+      { id: randomUUID(), namespace: '../../private', method: 'dispose' },
       {
         id: randomUUID(),
         namespace: browserNamespace('/synthetic/invalid'),
@@ -2118,19 +2106,16 @@ test('malformed methods and namespaces never reach a computer or filesystem path
   }
 });
 
-test('discard and sign-out reach the namespace computer of the same thread only', async () => {
+test('discard reaches the namespace computer of the same thread only', async () => {
   const fixture = await harness();
   try {
     const computer = fixture.client('/synthetic/discard');
     await computer.act('task', { action: 'snapshot' });
-    await computer.signOut('task');
     await computer.discard!('task');
     assert.deepEqual(fixture.instance('/synthetic/discard').calls, [
       { method: 'act', input: { action: 'snapshot' } },
-      { method: 'signOut', input: 'task' },
       { method: 'discard', input: 'task' },
     ]);
-    await assert.rejects(computer.signOut('../task'));
     await assert.rejects(computer.discard!('../task'));
   } finally {
     await fixture.close();
@@ -2367,9 +2352,20 @@ test('browser observations redact OAuth callback values, API credentials and sig
     'https://example.com/callback?code=private-code&email=private-email&state=private-state&view=account#access_token=private-token',
     [],
   );
-  for (const value of ['private-code', 'private-email', 'private-state', 'private-token'])
-    assert.equal(url.includes(value), false);
-  assert.equal(new URL(url).searchParams.get('view'), 'account');
+  assert.equal(url.includes('private-token'), false);
+  assert.equal(
+    redactBrowserUrl('https://example.com/callback#access%5Ftoken=private-encoded', []).includes(
+      'private-encoded',
+    ),
+    false,
+  );
+  for (const [name, value] of [
+    ['code', 'private-code'],
+    ['email', 'private-email'],
+    ['state', 'private-state'],
+    ['view', 'account'],
+  ])
+    assert.equal(new URL(url).searchParams.get(name), value);
   for (const name of [
     'api_key',
     'X-API-Key',
@@ -2439,11 +2435,6 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
   try {
     await computer.act('login', { action: 'open', url: 'https://1.1.1.1/login' });
     const origin = 'https://1.1.1.1';
-    for (const action of ['fill', 'type'] as const)
-      await assert.rejects(
-        computer.act('login', { action, selector: '#account', text: 'not-through-chat' }),
-        /secure credential/,
-      );
     const identifier = computer.injectCredentials({
       threadId: 'login',
       origin,
@@ -2481,7 +2472,7 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
     assert.equal(fixture.pages.get('login')?.stage, 'complete');
     assert.equal(fixture.pages.get('login')?.entered.at(-1), '739204');
     const observation = await computer.act('login', { action: 'snapshot' });
-    for (const secret of ['synthetic-account@example.test', 'synthetic-password', '739204'])
+    for (const secret of ['synthetic-password', '739204'])
       assert.equal(JSON.stringify(observation).includes(secret), false);
   } finally {
     await computer.dispose();
@@ -2704,7 +2695,10 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
-    const computer = createAgentBrowserComputer(containerBrowserOptions(directory));
+    const computer = createAgentBrowserComputer({
+      ...containerBrowserOptions(directory),
+      privateNetwork: true,
+    });
     let stderrPath: string | undefined;
     try {
       await computer.act('fixture', { action: 'open', url: `http://127.0.0.1:${address.port}` });
@@ -2836,6 +2830,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const worker = await workerFixture(() => computer, 30_000);
@@ -3012,6 +3007,43 @@ test('secure entry types a code into the referenced field and keeps it out of ob
   }
 });
 
+test('a script cannot read back a privately entered value while the page keeps it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-login-script-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    const page = fixture.pages.get('fixture')!;
+    const render = page.render.bind(page);
+    page.render = () => {};
+    await computer.injectCredentials({
+      threadId: 'fixture',
+      origin: 'https://1.1.1.1',
+      kind: 'password',
+      password: 'synthetic-kept-secret',
+      passwordSelector: '#account',
+      submitSelector: 'button',
+    });
+    assert.equal(page.input.value, 'synthetic-kept-secret');
+    await assert.rejects(
+      computer.act('fixture', {
+        action: 'evaluate',
+        script: "document.querySelector('#account').value.split('').reverse().join('')",
+      }),
+      /still holds its value/,
+    );
+    const observation = await computer.act('fixture', { action: 'snapshot' });
+    assert.equal(JSON.stringify(observation).includes('synthetic-kept-secret'), false);
+    page.render = render;
+    await computer.act('fixture', { action: 'reload' });
+    const script = await computer.act('fixture', { action: 'evaluate', script: '1 + 1' });
+    assert.match(JSON.stringify(script), /Script result/);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test(
   'native secure entry completes single and split OTP controls without maxlength hints',
   { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
@@ -3069,6 +3101,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const worker = await harness({ computer });
@@ -3143,23 +3176,15 @@ test(
           assert.doesNotMatch(accepted, /\[ref=e\d+\]:\s*\d/);
           await act({ action: 'click', selector: `@${held}` });
           assert.match((await act({ action: 'snapshot' })).text, /Verified/);
-          const types = await act({
-            action: 'evaluate',
-            script: 'globalThis.fields.map(node => node.getAttribute("type"))',
-          });
-          assert.deepEqual(
-            JSON.parse(types.text.slice(types.text.indexOf('\n') + 1)),
-            Array(path === '/automatic' ? 1 : 6).fill(null),
+          await assert.rejects(
+            act({
+              action: 'evaluate',
+              script: 'globalThis.fields.map(node => node.value)',
+            }),
+            (error: unknown) =>
+              error instanceof BrowserActionError && error.code === 'browser_script_paused',
           );
-          await client.screenshot('fixture');
-          const styles = await act({
-            action: 'evaluate',
-            script: 'globalThis.fields.map(node => node.getAttribute("style"))',
-          });
-          assert.deepEqual(
-            JSON.parse(styles.text.slice(styles.text.indexOf('\n') + 1)),
-            Array(path === '/automatic' ? 1 : 6).fill(null),
-          );
+          assert.ok(await client.screenshot('fixture'));
           continue;
         }
         await act({ action: 'back' });
@@ -3897,7 +3922,7 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
     try {
       assert.equal(submissions.length, 1);
       assert.equal(submissions[0].text, text);
-      assert.equal(submissions[0].verificationRequestId, requestId);
+      assert.equal(submissions[0].verificationRequestId, text === '737' ? requestId : undefined);
       const editor = view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor;
       assert.equal(editor.getMarkdown(), text === 'call 911' ? text : '');
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
@@ -4149,6 +4174,7 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
       headless: true,
     });
     const read = async () => {
@@ -4766,6 +4792,9 @@ test('managed integration access proves browser possession and fences cancelled 
       let uncertain = false;
       let completedState = 'enabled';
       let nativeUrl;
+      let nativeCancelled = 0;
+      let nativeStatusFailure = false;
+      let cancellationFailure = false;
       let sequence = 0;
       window.open = () => {
         events.push('open');
@@ -4807,7 +4836,10 @@ test('managed integration access proves browser possession and fences cancelled 
           return Response.json({ id, url: 'https://broker.fixture.test/enroll?id=' + id, expiresAt: Date.now() + 60_000 });
         }
         if (path.startsWith('/api/integrations/access/status?')) {
-          if (path.endsWith('synthetic-native-attempt')) return Response.json({ status: 'completed' });
+          if (path.endsWith('synthetic-native-attempt')) {
+            if (nativeStatusFailure) throw new TypeError('Synthetic native status failed');
+            return Response.json({ status: 'completed' });
+          }
           const session = sessions.get(new URL(path, window.location.origin).searchParams.get('id'));
           return Response.json({ status: session.status });
         }
@@ -4820,8 +4852,13 @@ test('managed integration access proves browser possession and fences cancelled 
           return Response.json({ state: completedState, email: 'alex@example.test' });
         }
         if (path === '/api/integrations/access/cancel') {
+          if (input.id === 'synthetic-native-attempt') {
+            nativeCancelled++;
+            return Response.json({ ok: true });
+          }
           const session = sessions.get(input.id);
           session.cancelled++;
+          if (cancellationFailure) throw new TypeError('Synthetic cancellation failed');
           session.status = 'cancelled';
           return Response.json({ ok: true });
         }
@@ -4853,6 +4890,7 @@ test('managed integration access proves browser possession and fences cancelled 
         poll();
         await first.done;
         assert.equal(session.completed, 1);
+        assert.equal(session.cancelled, 0);
         assert.equal(proofs.length, 1);
         assert.equal(currentPopup.closed, true);
         message(session);
@@ -4874,6 +4912,7 @@ test('managed integration access proves browser possession and fences cancelled 
         delayedStart = null;
 
         uncertain = true;
+        cancellationFailure = true;
         const third = startIntegrationAccess();
         const thirdFailure = assert.rejects(third.done, /Synthetic connection lost/);
         await until(() => currentPopup.location.href.includes('synthetic-attempt-3'));
@@ -4886,8 +4925,10 @@ test('managed integration access proves browser possession and fences cancelled 
         message(ambiguous);
         await settle();
         assert.equal(ambiguous.completed, 1);
+        assert.equal(ambiguous.cancelled, 1);
         assert.equal(timers.size, 0);
 
+        cancellationFailure = false;
         uncertain = false;
         const signed = deferred();
         const releaseSignature = deferred();
@@ -4960,6 +5001,20 @@ test('managed integration access proves browser possession and fences cancelled 
           await rejected;
           poll();
           assert.equal(session.completed, 1);
+          assert.equal(session.cancelled, 0);
+          assert.equal(timers.size, 0);
+        }
+
+        for (const terminal of ['denied', 'cancelled']) {
+          const attempt = startIntegrationAccess();
+          const rejection = assert.rejects(attempt.done, terminal === 'denied' ? /not enabled/ : error => error.name === 'AbortError');
+          await until(() => currentPopup.location.href.startsWith('https://broker.fixture.test'));
+          const session = sessions.get('synthetic-attempt-' + sequence);
+          session.status = terminal;
+          poll();
+          await rejection;
+          assert.equal(session.cancelled, 0);
+          assert.equal(session.completed, 0);
           assert.equal(timers.size, 0);
         }
 
@@ -4981,12 +5036,24 @@ test('managed integration access proves browser possession and fences cancelled 
           'http://127.0.0.1:49152/' + capability.slice(1),
         ]) {
           nativeUrl = candidate;
+          const before = nativeCancelled;
           await assert.rejects(startIntegrationAccess().done, /address could not be verified/);
+          assert.equal(nativeCancelled, before + 1);
         }
         assert.equal(opened.length, 0);
         nativeUrl = 'http://127.0.0.1:49152/' + capability;
+        const beforeNativeSuccess = nativeCancelled;
         await startIntegrationAccess().done;
         assert.deepEqual(opened, [nativeUrl]);
+        assert.equal(nativeCancelled, beforeNativeSuccess);
+        nativeStatusFailure = true;
+        await assert.rejects(startIntegrationAccess().done, /Synthetic native status failed/);
+        assert.equal(nativeCancelled, beforeNativeSuccess + 1);
+        nativeStatusFailure = false;
+        window.ottoDesktop.openExternal = async () => { throw new Error('Synthetic native launch failed'); };
+        await assert.rejects(startIntegrationAccess().done, /Synthetic native launch failed/);
+        assert.equal(nativeCancelled, beforeNativeSuccess + 2);
+        assert.equal(timers.size, 0);
       } finally {
         crypto.subtle.generateKey = generateKey;
         crypto.subtle.sign = sign;
@@ -5103,9 +5170,15 @@ test('managed integration admission preserves personal-key connections until an 
         assert.equal(status.mode, 'own');
         assert.equal(status.suffix, 'TEST');
         assert.equal(accounts[0].connectionId, 'synthetic-gmail');
+        status.suffix = null;
+        await act(async () => pageDataCache.refresh('/api/integrations/key', true));
         const confirm = document.querySelector('.connection-switch .button');
         assert.ok(confirm);
-        assert.ok(confirm.getAttribute('aria-describedby'));
+        const warning = document.getElementById(confirm.getAttribute('aria-describedby'));
+        assert.ok(warning);
+        assert.ok(warning.textContent.includes('Gmail'));
+        assert.equal(switched, 0);
+        assert.equal(accounts[0].connectionId, 'synthetic-gmail');
         await act(async () => confirm.click());
         await settle();
         assert.equal(switched, 1);
@@ -5153,6 +5226,102 @@ test('managed integration admission preserves personal-key connections until an 
       } finally {
         await act(async () => root.unmount());
         pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('onboarding migrates legacy progress through email once and preserves current answers across reloads', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/onboarding', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ResizeObserver: class { observe() {} disconnect() {} },
+        ...Object.fromEntries(['Node', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = query => ({ matches: query === '(prefers-reduced-motion: reduce)', addEventListener() {}, removeEventListener() {} });
+      const requests = [];
+      globalThis.fetch = async (path, options = {}) => {
+        requests.push({ path, method: options.method ?? 'GET' });
+        if (path === '/api/preferences') return Response.json({ timeZone: 'UTC' });
+        if (path === '/api/account/prepare') return Response.json({ ok: true });
+        if (path === '/api/models') return Response.json({ connections: [{ id: 'synthetic-model', status: 'connected' }] });
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/integrations/key') return Response.json({ mode: 'otto', switchable: true, suffix: null, keyWritable: true, managed: { state: 'sign_in_required', email: null } });
+        if (path === '/api/configuration') return Response.json({ integrationsReady: true });
+        if (path === '/api/channel-settings') return Response.json({ ready: true, channels: [] });
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Onboarding } = await import('./src/web/pages/onboarding/index.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      const { readStep } = await import('./src/web/pages/onboarding/storage.ts');
+      const owner = 'synthetic-onboarding-owner';
+      const savedAnswers = { owner, answers: ['Synthetic ongoing project'], turns: [{ ack: ['Saved acknowledgement'], question: 'Saved question' }] };
+      let root;
+      const mount = async (id = owner) => {
+        root = createRoot(document.querySelector('#root'));
+        await act(async () => root.render(createElement(Onboarding, { user: { id, name: 'Fixture', email: null, avatarUrl: null }, canLogout: false, onLogout() {}, async onComplete() {}, onFeedback() {} })));
+        await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+      };
+      const unmount = async () => {
+        await act(async () => root.unmount());
+        root = null;
+        pageDataCache.clear();
+      };
+      const seed = (step, cookie = false, id = owner) => {
+        window.sessionStorage.clear();
+        document.cookie = 'otto_onboarding_step=; path=/; max-age=0';
+        const value = JSON.stringify({ owner: id, step });
+        if (cookie) document.cookie = 'otto_onboarding_step=' + encodeURIComponent(value) + '; path=/';
+        else window.sessionStorage.setItem('otto.onboarding.step', value);
+        window.sessionStorage.setItem('otto.onboarding.about', JSON.stringify(savedAnswers));
+      };
+      try {
+        for (const cookie of [false, true]) {
+          seed('about', cookie);
+          await mount();
+          assert.equal(document.querySelector('[data-step]').dataset.step, 'email');
+          assert.deepEqual(JSON.parse(window.sessionStorage.getItem('otto.onboarding.about')), savedAnswers);
+          const skip = document.querySelector('.ob-footer-end button:not(.ob-next)');
+          assert.ok(skip);
+          await act(async () => skip.click());
+          assert.equal(document.querySelector('[data-step]').dataset.step, 'about');
+          assert.equal(readStep().version, 1);
+          assert.equal(readStep().step, 'about');
+          assert.deepEqual(JSON.parse(window.sessionStorage.getItem('otto.onboarding.about')).answers, savedAnswers.answers);
+          await unmount();
+          if (cookie) window.sessionStorage.removeItem('otto.onboarding.step');
+          await mount();
+          assert.equal(document.querySelector('[data-step]').dataset.step, 'about');
+          assert.deepEqual(JSON.parse(window.sessionStorage.getItem('otto.onboarding.about')).answers, savedAnswers.answers);
+          await unmount();
+        }
+        seed('telegram');
+        await mount();
+        assert.equal(document.querySelector('[data-step]').dataset.step, 'telegram');
+        await unmount();
+        seed('about', false, 'another-owner');
+        await mount();
+        assert.equal(document.querySelector('[data-step]').dataset.step, 'welcome');
+        assert.equal(window.sessionStorage.getItem('otto.onboarding.about'), null);
+        assert.equal(requests.some(item => item.path === '/api/onboarding/interview'), false);
+        assert.equal(requests.some(item => item.path.startsWith('/api/integrations/access')), false);
+      } finally {
+        if (root) await unmount();
         dom.window.close();
       }
     `,
@@ -5947,7 +6116,11 @@ test(
     await new Promise<void>((resolve) => server.listen(0, '::', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const directory = await mkdtemp(join(tmpdir(), 'otto-private-entry-'));
-    const native = createAgentBrowserComputer({ dataRoot: directory });
+    const native = createAgentBrowserComputer({
+      dataRoot: directory,
+      privateNetwork: true,
+      headless: true,
+    });
     const worker = await harness({ computer: native });
     const computer = worker.client(directory, { timeoutMs: 30_000 });
     assert.ok(computer.cardDestinations);
@@ -5973,6 +6146,14 @@ test(
       await computer.injectCredentials(input);
       const seen = (await computer.act('private', { action: 'snapshot' })).text;
       assert.equal(seen.includes(secret), false);
+      await assert.rejects(
+        computer.act('private', {
+          action: 'evaluate',
+          script: 'document.querySelector("#password").value.split("").reverse().join("")',
+        }),
+        /still holds its value/,
+      );
+      await computer.act('private', { action: 'reload' });
       assert.equal(
         (
           await computer.act('private', {
@@ -5982,7 +6163,6 @@ test(
         ).text.includes(Buffer.from(secret).toString('base64')),
         false,
       );
-      await computer.act('private', { action: 'reload' });
       const page = (await computer.act('private', { action: 'snapshot' })).text;
       const ref = /"Foreign password"[^\n]*ref=(e\d+)/.exec(page)?.[1];
       assert.ok(ref);
@@ -6008,14 +6188,12 @@ test(
       assert.equal(receipt.includes('4242424242424242'), false);
       assert.equal(receipt.includes('737'), false);
       assert.ok(await computer.screenshot('private'));
-      assert.match(
-        (
-          await computer.act('private', {
-            action: 'evaluate',
-            script: '[...document.querySelectorAll("input")].map(node=>node.value)',
-          })
-        ).text,
-        /Script result/,
+      await assert.rejects(
+        computer.act('private', {
+          action: 'evaluate',
+          script: '[...document.querySelectorAll("input")].map(node=>node.value)',
+        }),
+        /still holds its value/,
       );
       await computer.act('private', { action: 'open', url: `${origin}/shadow` });
       const shadowPage = (await computer.act('private', { action: 'snapshot' })).text;
@@ -6052,6 +6230,8 @@ test(
       const image = await computer.screenshot('private');
       assert.ok(image);
       shadowImage = Buffer.from(image);
+      for (const field of [shadowFields.number, shadowFields.expiryYear, shadowFields.securityCode])
+        await computer.act('private', { action: 'fill', selector: field, text: '' });
       await computer.act('private', {
         action: 'evaluate',
         script: 'globalThis.privateStyles[0].style.setProperty("outline-width", "1px")',
@@ -6088,80 +6268,6 @@ test(
       await worker.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  'a saved profile blocks an ungranted account and keeps scripts and API access on granted origins',
-  { timeout: 60_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-profile-origins-'));
-    let apiHits = 0;
-    let accountHits = 0;
-    let apiOrigin = '';
-    let accountOrigin = '';
-    const page = createHttpServer((_request, response) => {
-      response.setHeader('content-type', 'text/html');
-      response.end(
-        `<h1>Workspace</h1><iframe src="${accountOrigin}/private"></iframe><script>fetch('${apiOrigin}/data').catch(() => {});</script>`,
-      );
-    });
-    const api = createHttpServer((_request, response) => {
-      apiHits++;
-      response.setHeader('access-control-allow-origin', '*');
-      response.setHeader('content-type', 'application/json');
-      response.end('{"ready":true}');
-    });
-    const account = createHttpServer((_request, response) => {
-      accountHits++;
-      response.setHeader('set-cookie', 'account=synthetic-owned-session; SameSite=Lax');
-      response.end('Private account');
-    });
-    const listen = async (server: typeof page) => {
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const address = server.address();
-      assert.ok(address && typeof address !== 'string');
-      return `http://127.0.0.1:${address.port}`;
-    };
-    const pageOrigin = await listen(page);
-    apiOrigin = await listen(api);
-    accountOrigin = await listen(account);
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
-      headless: true,
-    });
-    const profile = randomUUID();
-    try {
-      await computer.bindProfile!('profile', profile, [accountOrigin]);
-      await computer.act('profile', { action: 'open', url: accountOrigin });
-      assert.ok(accountHits > 0);
-      await computer.signOut('profile');
-      accountHits = 0;
-      await computer.bindProfile!('profile', profile, [pageOrigin]);
-      await computer.act('profile', { action: 'open', url: pageOrigin });
-      await delay(200);
-      assert.equal(accountHits, 0);
-      assert.equal(apiHits, 0);
-      await assert.rejects(computer.act('profile', { action: 'open', url: accountOrigin }));
-      await computer.bindProfile!('profile', profile, [pageOrigin, apiOrigin]);
-      await computer.act('profile', { action: 'open', url: pageOrigin });
-      const result = await computer.act('profile', {
-        action: 'evaluate',
-        script: `fetch('${apiOrigin}/data').then(response => response.json())`,
-      });
-      assert.match(result.text, /"ready":\s*true/);
-      assert.ok(apiHits > 0);
-      assert.equal(accountHits, 0);
-      assert.ok(await computer.screenshot('profile'));
-    } finally {
-      await computer.dispose();
-      for (const server of [page, api, account]) {
-        server.closeAllConnections();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-      }
       await rm(directory, { recursive: true, force: true });
     }
   },
@@ -6365,7 +6471,7 @@ test('failed private entry holds every Pi action until the filled document chang
 });
 
 test(
-  'private submission keeps SPA state, delayed requests, field formats and harmless inspection',
+  'private submission keeps SPA state, delayed requests and field formats, and pauses scripts while a value stays',
   { timeout: 60_000 },
   async () => {
     const submitted = deferred<string>();
@@ -6404,6 +6510,8 @@ test(
     const computer = createAgentBrowserComputer({
       dataRoot: directory,
       browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
     });
     try {
       await computer.act('state', { action: 'open', url: origin });
@@ -6442,14 +6550,12 @@ test(
         ),
         false,
       );
-      assert.match(
-        (
-          await computer.act('state', {
-            action: 'evaluate',
-            script: 'Promise.resolve("Synthetic inspection")',
-          })
-        ).text,
-        /Synthetic inspection/,
+      await assert.rejects(
+        computer.act('state', {
+          action: 'evaluate',
+          script: 'Promise.resolve(document.querySelector("#password").value.length)',
+        }),
+        /still holds its value/,
       );
       await computer.act('state', { action: 'open', url: `${origin}/card` });
       const fields = {
@@ -6480,11 +6586,13 @@ test(
         (await computer.act('state', { action: 'snapshot' })).text,
         /Order total EUR 30/,
       );
-      const inspector = await computer.act('state', {
-        action: 'evaluate',
-        script: 'document.querySelector("#number").value',
-      });
-      assert.equal(inspector.text.includes('4242424242424242'), false);
+      await assert.rejects(
+        computer.act('state', {
+          action: 'evaluate',
+          script: 'document.querySelector("#number").value',
+        }),
+        /still holds its value/,
+      );
       await computer.act('fence', { action: 'open', url: `${origin}/card` });
       await computer.act('fence', {
         action: 'evaluate',
@@ -6493,6 +6601,8 @@ test(
       const recovered = createAgentBrowserComputer({
         dataRoot: directory,
         browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
       });
       try {
         assert.equal((await recovered.currentPage('fence')).origin, origin);

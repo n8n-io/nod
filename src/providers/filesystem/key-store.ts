@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { CredentialKeyStore } from '../../ports/key-store.ts';
 import { parseCredentialKey } from '../environment/key-store.ts';
 
@@ -46,6 +46,29 @@ export function createFilesystemKeyStore(options: {
           metadata.size > 128
         )
           throw new Error('The Vault key file permissions are unsafe.');
+        for (let path = directory; ; path = dirname(path)) {
+          if (path !== directory && path !== root) {
+            try {
+              await access(path, constants.W_OK);
+            } catch (error) {
+              if (
+                ['EACCES', 'EPERM', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')
+              )
+                break;
+              throw error;
+            }
+          }
+          const parent = await open(
+            path,
+            constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+          );
+          try {
+            await parent.sync();
+          } finally {
+            await parent.close();
+          }
+          if (dirname(path) === path) break;
+        }
         return parseCredentialKey(await file.readFile('utf8'));
       } finally {
         await file.close();
