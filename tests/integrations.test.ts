@@ -584,9 +584,27 @@ test('managed proxy access binds browser enrollment to the installation and a pr
         const id = randomBytes(32).toString('base64url');
         assert.equal(body.browserKey.d, undefined);
         createPublicKey({ key: body.browserKey, format: 'jwk' });
+        const hosts = { localhost: 'localhost', ipv4: '127.0.0.1', ipv6: '[::1]' };
+        assert.equal(typeof body.uiOrigin, 'object');
+        const destination = body.uiOrigin;
+        let initiatingOrigin: string;
+        if (destination.type === 'loopback') {
+          assert.deepEqual(Object.keys(destination).sort(), ['host', 'port', 'type']);
+          assert.ok(Object.hasOwn(hosts, destination.host));
+          assert.equal(Number.isInteger(destination.port), true);
+          assert.ok(destination.port >= 1 && destination.port <= 65535);
+          assert.equal(/http:\/\//.test(bytes.toString()), false);
+          initiatingOrigin = new URL(
+            `http://${hosts[destination.host as keyof typeof hosts]}:${destination.port}`,
+          ).origin;
+        } else {
+          assert.deepEqual(Object.keys(destination).sort(), ['type', 'url']);
+          assert.equal(destination.type, 'https');
+          initiatingOrigin = destination.url;
+        }
         enrollments.set(id, {
           challenge: body.challenge,
-          origin: body.uiOrigin,
+          origin: initiatingOrigin,
           status: 'pending',
         });
         return Response.json({
@@ -697,6 +715,50 @@ test('managed proxy access binds browser enrollment to the installation and a pr
       assert.equal(calls.filter((path) => path === '/v1/access/complete').length, 1);
       assert.deepEqual((await route('DELETE', '')).json(), { state: 'revoked', email: null });
       assert.deepEqual(await access.status(), { state: 'revoked', email: null });
+    },
+  );
+
+  await t.test(
+    'Google access transports constrained loopback origins and refuses malformed origins before signing',
+    async () => {
+      for (const origin of [
+        'http://localhost:58431',
+        'http://127.0.0.1',
+        'http://[::1]:65535',
+        'https://otto.example.test:8443',
+      ]) {
+        const started = await proxy.startAccess(
+          browserKey,
+          origin,
+          randomBytes(32).toString('base64url'),
+        );
+        assert.equal(enrollments.get(started.id)!.origin, origin);
+      }
+      const before = calls.length;
+      for (const origin of [
+        'http://localhost:0',
+        'http://localhost:65536',
+        'http://127.1',
+        'http://localhost:58431/path',
+        'http://localhost:58431/',
+        'http://localhost:58431?query=1',
+        'http://localhost:58431#fragment',
+        'http://user:password@localhost:58431',
+        'http://remote.example.test',
+        'https://localhost',
+        'https://localhost.',
+        'https://app.localhost',
+        'https://127.0.0.1',
+        'https://[::1]',
+        'https://server',
+        'https://otto.example.test/path',
+        'https://user@otto.example.test',
+      ])
+        await assert.rejects(
+          proxy.startAccess(browserKey, origin, randomBytes(32).toString('base64url')),
+          origin,
+        );
+      assert.equal(calls.length, before);
     },
   );
 

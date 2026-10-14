@@ -272,8 +272,15 @@ export function createComposioProxy(options: {
       signal?: AbortSignal,
     ) {
       const ui = new URL(uiOrigin);
-      const loopback =
-        ui.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(ui.hostname);
+      const host =
+        ui.hostname === 'localhost'
+          ? 'localhost'
+          : ui.hostname === '127.0.0.1'
+            ? 'ipv4'
+            : ui.hostname === '[::1]'
+              ? 'ipv6'
+              : undefined;
+      const loopback = ui.protocol === 'http:' && host !== undefined;
       const hostname = ui.hostname.replace(/\.$/, '');
       const publicHttps =
         ui.protocol === 'https:' &&
@@ -281,7 +288,12 @@ export function createComposioProxy(options: {
         !hostname.endsWith('.localhost') &&
         !/^\d+\.\d+\.\d+\.\d+$/.test(hostname) &&
         !hostname.startsWith('[');
-      if (ui.origin !== uiOrigin || (!loopback && !publicHttps) || (ui.port && Number(ui.port) < 1))
+      if (
+        ui.origin !== uiOrigin ||
+        uiOrigin.length > 1500 ||
+        (!loopback && !publicHttps) ||
+        (ui.port && Number(ui.port) < 1)
+      )
         throw new Error('The sign-in origin is invalid.');
       const result = z
         .object({
@@ -295,7 +307,9 @@ export function createComposioProxy(options: {
             '/v1/access/start',
             {
               browserKey: browserKeySchema.parse(browserKey),
-              uiOrigin,
+              uiOrigin: loopback
+                ? { type: 'loopback', host, port: Number(ui.port || 80) }
+                : { type: 'https', url: uiOrigin },
               challenge: stateSchema.parse(challenge),
             },
             { signal, timeout: 10_000 },
