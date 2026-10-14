@@ -374,6 +374,19 @@ test(
             'The year is 2026',
           ])
             assert.equal((await send(text)).statusCode, 409, text);
+          const earlierTurn = randomUUID();
+          const earlierMessage = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,created_at)
+             VALUES($1,$2,$3,'user','Find hinges','web','completed',now()-interval '1 hour')`,
+            [earlierTurn, ownerId, threadId],
+          );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Found two hinges.',$3,$4)",
+            [earlierMessage, ownerId, threadId, earlierTurn],
+          );
+          const replied = await send("it's 739", { replyToMessageId: earlierMessage });
+          assert.equal(replied.statusCode, 409);
           const prose = ['2 hinges for the door', 'Pay at 15:30'];
           for (const text of prose) assert.equal((await send(text)).statusCode, 200, text);
           assert.deepEqual(ordinary, prose);

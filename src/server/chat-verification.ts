@@ -209,7 +209,7 @@ export async function createChatVerification(
                  'u',
                  `newer.created_at>u.created_at AND (NOT $7::boolean OR newer.created_at<now()-interval '10 minutes')`,
                )})
-               AND ((r.kind='payment' AND $4::boolean) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
+               AND ((r.kind='payment' AND ($4::boolean OR ($5::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
             [
               options.ownerId,
               channel,
@@ -223,8 +223,10 @@ export async function createChatVerification(
         ).rows[0];
         if (waiting)
           throw conflict(
-            waiting.kind === 'payment' && waiting.channel !== channel
-              ? 'Open the secure payment link in Otto. Otto did not use this code.'
+            waiting.kind === 'payment'
+              ? waiting.channel !== channel
+                ? 'Open the secure payment link in Otto. Otto did not use this code.'
+                : 'Send just the card’s security code.'
               : unavailableMessage,
           );
         await input.persistOrdinary?.(client);
