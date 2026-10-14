@@ -457,7 +457,7 @@ export async function createDiscoveredConnections(
   async function complete(id: string, input: unknown) {
     const { token, accountName } = z
       .object({
-        token: z.string().trim().min(8).max(8192),
+        token: z.string().trim().min(8),
         accountName: z.string().trim().min(1).max(200),
       })
       .strict()

@@ -15,14 +15,14 @@ const requestSchema = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('connect'),
-      url: z.url().max(2048),
-      label: z.string().trim().min(1).max(100).optional(),
+      url: z.url(),
+      label: z.string().trim().min(1).optional(),
     })
     .strict(),
   z
     .object({
       action: z.literal('save'),
-      url: z.url().max(2048),
+      url: z.url(),
       connectionId: idSchema,
       signedIn: z.literal(true),
     })
@@ -30,7 +30,7 @@ const requestSchema = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('use'),
-      url: z.url().max(2048),
+      url: z.url(),
       connectionId: idSchema,
     })
     .strict(),

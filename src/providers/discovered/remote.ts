@@ -68,7 +68,6 @@ export async function safeRemoteFetch(
         method: prepared.method,
         headers: Object.fromEntries(prepared.headers),
         signal,
-        maxHeaderSize: 16_384,
         lookup: (_host, options, callback) => {
           if (options.all) callback(null, [{ address, family: isIP(address) }]);
           else callback(null, address, isIP(address));
