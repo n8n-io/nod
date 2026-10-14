@@ -29,21 +29,23 @@ Today, Otto does long work in the chat session, and the owner sees little of it.
 
 ## 2. Decisions
 
-| #   | Decision                                                                                                          | Date       | By                  |
-| --- | ----------------------------------------------------------------------------------------------------------------- | ---------- | ------------------- |
-| D1  | One chat. No more threads, no bot for each task, no inline widgets in the answer                                  | 2026-10-13 | Johan               |
-| D2  | Three layers: quick answer, task, artifact. An artifact only when the result is a deliverable                     | 2026-10-13 | Johan               |
-| D3  | Engine path 3: full parallel tasks. Each task is its own session and can act                                      | 2026-10-13 | Johan               |
-| D4  | Progress modes Check-ins (default) and Quiet. No play-by-play mode                                                | 2026-10-13 | Johan               |
-| D5  | Check-in limits: at most 3 for each task, at least 2 minutes apart, none in quiet hours                           | 2026-10-13 | Johan (recommended) |
-| D6  | The task preview is a card inside the "On it" bubble. A click opens it in place. There is no separate task page   | 2026-10-13 | Johan               |
-| D7  | The side panel is only for artifacts                                                                              | 2026-10-13 | Johan               |
-| D8  | The card uses the app's styles: neutral card, `.task-status` pill, round buttons. Inner corners follow the bubble | 2026-10-13 | Johan               |
-| D9  | The Tasks strip shows only when 2 or more tasks are open or a task needs the owner                                | 2026-10-13 | Johan (recommended) |
-| D10 | A reply to a done result continues the same task                                                                  | 2026-10-13 | Johan (recommended) |
-| D11 | Start a task when the work takes more than approximately 30 seconds, uses the browser or waits for other people   | 2026-10-13 | Johan (recommended) |
-| D12 | Self-hosted Telegram gets document artifacts as PDF files                                                         | 2026-10-13 | Johan               |
-| D13 | The defaults in [section 16](#16-open-questions-and-defaults) apply until product changes them                    | 2026-10-13 | Build team          |
+| #   | Decision                                                                                                                                                                                                                                                                                       | Date       | By                  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------- |
+| D1  | One chat. No more threads, no bot for each task, no inline widgets in the answer                                                                                                                                                                                                               | 2026-10-13 | Johan               |
+| D2  | Three layers: quick answer, task, artifact. An artifact only when the result is a deliverable                                                                                                                                                                                                  | 2026-10-13 | Johan               |
+| D3  | Engine path 3: full parallel tasks. Each task is its own session and can act                                                                                                                                                                                                                   | 2026-10-13 | Johan               |
+| D4  | Progress modes Check-ins (default) and Quiet. No play-by-play mode                                                                                                                                                                                                                             | 2026-10-13 | Johan               |
+| D5  | Check-in limits: at most 3 for each task, at least 2 minutes apart, none in quiet hours                                                                                                                                                                                                        | 2026-10-13 | Johan (recommended) |
+| D6  | The task preview is a card inside the "On it" bubble. A click opens it in place. There is no separate task page                                                                                                                                                                                | 2026-10-13 | Johan               |
+| D7  | The side panel is only for artifacts                                                                                                                                                                                                                                                           | 2026-10-13 | Johan               |
+| D8  | The card uses the app's styles: neutral card, `.task-status` pill, round buttons. Inner corners follow the bubble                                                                                                                                                                              | 2026-10-13 | Johan               |
+| D9  | The Tasks strip shows only when 2 or more tasks are open or a task needs the owner                                                                                                                                                                                                             | 2026-10-13 | Johan (recommended) |
+| D10 | A reply to a done result continues the same task                                                                                                                                                                                                                                               | 2026-10-13 | Johan (recommended) |
+| D11 | Start a task when the work takes more than approximately 30 seconds, uses the browser or waits for other people                                                                                                                                                                                | 2026-10-13 | Johan (recommended) |
+| D12 | Self-hosted Telegram gets document artifacts as PDF files                                                                                                                                                                                                                                      | 2026-10-13 | Johan               |
+| D13 | The defaults in [section 16](#16-open-questions-and-defaults) apply until product changes them                                                                                                                                                                                                 | 2026-10-13 | Build team          |
+| D14 | While a task waits for its helpers (`delegate`), the card shows each helper and its latest step. The server writes these lines, not the model. A helper stops after 5 minutes, and the task continues with what it has                                                                         | 2026-10-14 | Johan               |
+| D15 | A result that the owner keeps, reads later or shares (a research write-up, a comparison of several options, a plan, a draft) is a Markdown document attached to the result. The result message keeps the conclusion and two or three key points. Quick facts and short results stay plain text | 2026-10-14 | Johan               |
 
 ## 3. Terms
 
@@ -173,6 +175,8 @@ Rules from step 6 (UI check of the real app):
 - On a phone, the time and the more button of a bubble with a card are below the bubble. The next bubble keeps space for them, so they never cover it.
 - A Done preview in the chat shows the result text, although the result is also a message below it. Thus the card is complete on the Tasks page and in the chat.
 
+Helpers (WP-31): while a task waits for its helpers, the summary line shows them, for example "2 helpers: Google Flights fares · Airline cross-check". The open card lists each helper with its title, its latest step (for example "Opening skyscanner.net") and how long it has run. The server makes the step lines from the tool name and the web address. They contain no model text and no search words.
+
 ### 4.6 Tasks strip
 
 The strip is above the composer. It shows when 2 or more tasks are open, or when one task needs the owner. Each chip shows the status icon and the title, and has a small Stop button for that task. The status is in the icon, the tone and the accessible name, not in visible text. A click on the chip scrolls the chat to the "On it" message and opens its preview.
@@ -189,7 +193,7 @@ The page keeps its tabs **Current**, **Scheduled** and **Previous**. **Current**
 
 ### 4.8 Artifacts
 
-A deliverable result carries one artifact card inside the result bubble. On web, the card opens the side panel (`<aside>` in `.workspace-body`). Documents (Markdown, PDF, images) render in the panel. HTML pages render later, in a sandboxed frame. On Telegram, document artifacts go as a PDF file that replies to the result. On WhatsApp, Otto sends no files: the result text tells the owner to open the artifact in Otto.
+A deliverable result carries one artifact card inside the result bubble. The task makes a document when the owner will keep, read later or share the result: a research write-up, a comparison of several options, a plan or a draft (D15). The result message then keeps the conclusion and two or three key points. Quick facts and short results stay plain text (WP-32). On web, the card opens the side panel (`<aside>` in `.workspace-body`). Documents (Markdown, PDF, images) render in the panel. HTML pages render later, in a sandboxed frame. On Telegram, document artifacts go as a PDF file that replies to the result. On WhatsApp, Otto sends no files: the result text tells the owner to open the artifact in Otto.
 
 Rules from step 5 (WP-26):
 
@@ -448,6 +452,8 @@ Line references are for main at `022b9960`. After step 1, some of them are out o
 | [WP-28](#wp-28) | Leftover open review items from PR #253                                  | Later            | S    | —                                 |
 | [WP-29](#wp-29) | Waiting for other people and planned checks                              | Gate B           | M    | WP-01, WP-15, WP-19               |
 | [WP-30](#wp-30) | Capability evals for tasks                                               | Later            | S    | WP-15, WP-16                      |
+| [WP-31](#wp-31) | Helpers on the task card and a helper time limit                         | Gate A           | M    | WP-14, WP-23, WP-25               |
+| [WP-32](#wp-32) | Deliverable results as documents                                         | Gate A           | S    | WP-15, WP-30                      |
 
 ### WP-01
 
@@ -1210,6 +1216,56 @@ Status on main: missing.
 
 - pnpm --dir evals run check and pnpm --dir evals test
 
+### WP-31
+
+**Helpers on the task card and a helper time limit** · Gate A · size M · needs WP-14, WP-23, WP-25
+
+Status on main: missing. Found in the first live use: a flight task gave its work to two helpers, and the card did not change for 10 minutes.
+
+**Change.** Show the helpers of a task on its card while the task waits for them. Stop each helper after 5 minutes.
+
+**Design.**
+
+- In a task turn, `delegate` tells the server when a helper starts, when its latest step changes and when it ends. The server keeps the helpers on the task row (`tasks.helpers`, `jsonb`, a list of title, step and start time) and sends the targeted `task` event (WP-23). It writes a step change at most once in 5 seconds for each task. The list is empty when the helper ends, and when the task turn ends, is stopped or fails, at server start and at reset.
+- The step line comes from a fixed map of the helper's tool calls: a browser open gives "Opening <host>", other browser actions give "Using <host>" or "Using the browser", web search and source checks give "Searching the web", `fetch_content` gives "Reading <host>", `bash` and `codemode` give "Running a script", and every other tool gives "Working". The line has no model text and no search words.
+- `state.tasks[]` gets `helpers`. The summary line shows the helpers while the list is not empty ("N helpers: title · title"). The open card lists each helper with a spinner icon, its title, its step line and its run time. The card follows the UI rules in 4.5.
+- The Telegram live preview is edited only when the list of helpers changes, never for a step change.
+- Every `delegate` call (tasks and the chat) has a time limit of 5 minutes for each helper (one setting). At the limit, the server stops the helper's Pi session, discards its browser and returns to the parent: the helper stopped at its limit before it finished, its last text if it wrote one, and the instruction to use what the parent has or do this part itself if it still matters. Stop task still stops all helpers at once.
+
+**Files.** `src/runtime/index.ts`, `src/server/tasks.ts`, `src/server/thread.ts`, `src/shared/tasks.ts`, `src/shared/contracts.ts`, `src/server/channels.ts`, `src/web/components/task-preview.tsx`, `src/web/pages/tasks.css`, a migration, docs `use/tasks.md` and `how-it-works/agent-runtime.md`
+
+**Keep.** Helpers never sign in, pay or open saved sessions. Helper output stays an untrusted tool result for the parent. The card never shows model text that the task did not write itself.
+
+**Tests.**
+
+- tests/pi.test.ts or the existing runtime test: a helper that passes its limit returns the limit message, its Pi session is disposed and its browser is discarded.
+- The existing task state test: helpers are saved on start, cleared on end and cleared when the task turn fails.
+- tests/browser.test.ts (jsdom): the card shows the helpers summary and the open card lists each helper.
+- tests/channels.test.ts: a step change makes no Telegram edit; a new helper does.
+
+### WP-32
+
+**Deliverable results as documents** · Gate A · size S · needs WP-15, WP-30
+
+Status on main: missing. Found in the first live use: a research task about a company's go-to-market strategy gave a 2,900-character message and no document.
+
+**Change.** Tell task runs when the result is a document, and make sure the document goes with the result.
+
+**Design.**
+
+- The task-run prompt gets the rule of D15: when the result is something the owner will keep, read later or share (a research write-up, a comparison of several options, a plan, a draft), write it as a Markdown document in the task folder and share it. The final text keeps the conclusion and two or three key points. Quick facts and short results stay plain text.
+- A file that a task shares goes with the result, never with a check-in or a question. If `share_file` in a task now attaches the file to the next message of any kind, change it so a task's shared files wait for the result.
+- An eval scenario in the `tasks` capability: the owner asks for research on a company's go-to-market strategy. The scenario expects a task, a result with one Markdown attachment and a short result message. `calibration: 'pending'`.
+
+**Files.** `src/runtime/prompt.ts`, the share path in `src/runtime/index.ts` or `src/server/thread.ts` if it needs the change, `evals/src/scenarios`, docs `use/tasks.md`
+
+**Keep.** No new tool. The model decides what is a deliverable; the server does not inspect the text.
+
+**Tests.**
+
+- If the share path changes: the existing task delivery test checks that a file shared before a check-in goes with the result, not the check-in.
+- pnpm --dir evals run check and pnpm --dir evals test. The evals themselves call live models and are run by a maintainer.
+
 ## 7. Risk register
 
 Risks for main as it is now (022b9960), with the work package that removes each one.
@@ -1353,6 +1409,7 @@ flowchart LR
 | 4    | WP-14, WP-13, WP-21, WP-09, WP-11, WP-27        | Web preview, strip and Tasks page, check-ins, task browser handoff, folders, channel reply targets and docs. After this step, Gate B: web testers                                                       |
 | 5    | WP-25, WP-26, WP-28, WP-30                      | Telegram live preview and buttons, PDF artifacts, the #253 leftovers and evals. After this step, Gate C: Telegram testers                                                                               |
 | 6    | S5-FIX, UI-FIX, S6-FIX                          | Follow-ups of the step 5 review and of the screenshot check in the real app. No new work packages                                                                                                       |
+| 7    | WP-31, WP-32                                    | From the first live use on 14 October: the helpers of a flight task worked for 10 minutes with no change on the card, and a research result came as a long message with no document                     |
 
 Every step ends with `pnpm run check`, `pnpm test` with a disposable PostgreSQL, `pnpm run test:integration` and `pnpm run build`. A step with docs changes also runs `pnpm --dir docs build`. A step with eval changes also runs `pnpm --dir evals run check` and `pnpm --dir evals test`. Report fixtures, UI checks and live checks separately.
 
