@@ -9,6 +9,8 @@ import type { Connection, VaultSession } from '../shared/contracts.ts';
 import type { TurnRef } from './thread.ts';
 import { browserOf } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
+import type { CaptureAnalytics } from './analytics.ts';
+import { captureConnection } from './analytics-connections.ts';
 
 const idSchema = z.uuid();
 const requestSchema = z.discriminatedUnion('action', [
@@ -82,7 +84,7 @@ function slug(origin: string) {
 
 export async function createBrowserConnections(
   pool: Pick<Pool, 'query'>,
-  options: { ownerId: string; computer: Computer; refresh?(): void },
+  options: { ownerId: string; computer: Computer; analytics?: CaptureAnalytics; refresh?(): void },
 ) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS browser_connections (
@@ -178,6 +180,11 @@ export async function createBrowserConnections(
           browserOf(turn),
         ],
       );
+      captureConnection(
+        options.analytics,
+        { connection_method: 'browser', endpoint: address.origin },
+        'started',
+      );
       let bound = false;
       try {
         await browser.bindProfile(browserOf(turn), profileId);
@@ -197,6 +204,12 @@ export async function createBrowserConnections(
         ]);
         if (bound) await browser.close(browserOf(turn)).catch(() => {});
         await browser.deleteProfile(profileId).catch(() => {});
+        captureConnection(
+          options.analytics,
+          { connection_method: 'browser', endpoint: address.origin },
+          'failed',
+          signal?.aborted ? 'cancelled' : 'unavailable',
+        );
         throw error;
       }
     }
@@ -229,6 +242,12 @@ export async function createBrowserConnections(
         );
         if (!saved.rowCount)
           throw new BrowserConnectionError('This browser connection is unavailable.');
+        if (row.state !== 'saved')
+          captureConnection(
+            options.analytics,
+            { connection_method: 'browser', endpoint: row.origin },
+            'connected',
+          );
         await browser.hold(browserOf(turn), null);
         options.refresh?.();
         return { status: 'session_saved' as const, connectionId: row.id };
@@ -319,10 +338,16 @@ export async function createBrowserConnections(
         [id, options.ownerId],
       );
       await browser.deleteProfile(row.profile_id);
-      await pool.query('DELETE FROM browser_connections WHERE id=$1 AND owner_id=$2', [
-        id,
-        options.ownerId,
-      ]);
+      const removed = await pool.query(
+        'DELETE FROM browser_connections WHERE id=$1 AND owner_id=$2',
+        [id, options.ownerId],
+      );
+      if (removed.rowCount)
+        captureConnection(
+          options.analytics,
+          { connection_method: 'browser', endpoint: row.origin },
+          'disconnected',
+        );
       options.refresh?.();
       return { ok: true };
     });

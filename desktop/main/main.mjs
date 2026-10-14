@@ -963,6 +963,7 @@ async function startEngine({ runtime, signal }) {
     PORT: String(port),
     OTTO_MODE: 'local',
     OTTO_DESKTOP: 'true',
+    OTTO_APP_VERSION: app.getVersion(),
     OTTO_DESKTOP_OWNER_ID: await profileOwner(),
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
     OTTO_ANALYTICS_ENABLED: String(analytics.enabled),

@@ -47,7 +47,7 @@ Provider keys, such as your model and Composio keys, stay in the Otto server. Th
 
 Usage analytics are off until you turn on **Share usage data** in onboarding or in **Settings**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
-Analytics never include your messages, anything you type, Vault values, sign-in or model-key forms, the remote browser view, images, real page addresses, names or email addresses. See [Analytics](/deploy/analytics/) for the full list and the switch that turns them off for a whole installation.
+Analytics never include your messages, anything you type, Vault values, sign-in or model-key forms, the remote browser view, images, full page addresses, names or email addresses. They can include normalized public service domains, Vault item types, task categories, inferred outcomes, timing and signs of friction. Your configured model analyzes bounded chat text to derive those categories; PostHog receives no conversation excerpts or summaries. This uses your model account. Measurements are associated with a pseudonymous installation or account ID. See [Analytics](/deploy/analytics/) for the full list and the switch that turns them off for a whole installation.
 
 ## Feedback
 

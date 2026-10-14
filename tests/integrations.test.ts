@@ -27,6 +27,7 @@ import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
+import { analyticsDomain, captureConnection } from '../src/server/analytics-connections.ts';
 import { channelReply } from '../src/server/channels.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
@@ -39,6 +40,76 @@ import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import type { Connection } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+
+test('connection analytics retain only service domains and reviewed app identifiers', () => {
+  for (const [url, domain] of [
+    ['https://tenant.slack.com/private/path?token=synthetic#fragment', 'slack.com'],
+    ['https://customer.github.io/private', 'github.io'],
+    ['https://customer.example.co.uk:8443/private', 'example.co.uk'],
+    ['https://localhost/private', undefined],
+    ['https://127.0.0.1/private', undefined],
+    ['https://[::1]/private', undefined],
+    ['https://router.internal/private', undefined],
+    ['https://private.example.test/private', undefined],
+    ['file:///private/path', undefined],
+  ])
+    assert.equal(analyticsDomain(url!), domain);
+  const captured: AnalyticsEvent[] = [];
+  const capture = (event: AnalyticsEvent) => captured.push(event);
+  captureConnection(
+    capture,
+    {
+      app: 'gmail',
+      connection_method: 'managed_app',
+      endpoint: 'https://connect.composio.dev/private',
+    },
+    'connected',
+  );
+  captureConnection(
+    capture,
+    {
+      app: 'private-tenant-label',
+      connection_method: 'mcp',
+      endpoint: 'https://tenant.notion.com/mcp?secret=synthetic',
+    },
+    'failed',
+    'verification_failed',
+  );
+  captureConnection(
+    capture,
+    {
+      app: 'private-cli',
+      connection_method: 'cli',
+      endpoint: 'https://private.github.com/install',
+    },
+    'connected',
+  );
+  assert.deepEqual(captured, [
+    {
+      event: 'otto_connection_changed',
+      properties: {
+        app: 'gmail',
+        domain: 'google.com',
+        connection_method: 'managed_app',
+        status: 'connected',
+      },
+    },
+    {
+      event: 'otto_connection_changed',
+      properties: {
+        app: 'custom',
+        domain: 'notion.com',
+        connection_method: 'mcp',
+        status: 'failed',
+        failure_reason: 'verification_failed',
+      },
+    },
+    {
+      event: 'otto_connection_changed',
+      properties: { app: 'custom', connection_method: 'cli', status: 'connected' },
+    },
+  ]);
+});
 
 function fakeProvider(session: IntegrationSession): IntegrationProvider {
   return {
@@ -723,8 +794,10 @@ test(
       service: 'gmail',
     });
     const app = Fastify();
+    const captured: AnalyticsEvent[] = [];
     const integrations = await createIntegrations(pool, {
       ownerId: 'local-development',
+      analytics: (event) => captured.push(event),
       provider,
       baseUrl: 'http://localhost:4310',
       wake: async () => {},
@@ -758,6 +831,78 @@ test(
       assert.equal(connection?.status, 'connected');
       assert.equal(connection?.triggersEnabled, true);
       assert.equal(connection?.triggersActive, true);
+      assert.deepEqual(
+        captured.map((event) => ('properties' in event ? event.properties : {})),
+        [
+          {
+            app: 'gmail',
+            domain: 'google.com',
+            connection_method: 'managed_app',
+            status: 'started',
+          },
+          {
+            app: 'gmail',
+            domain: 'google.com',
+            connection_method: 'managed_app',
+            status: 'failed',
+            failure_reason: 'verification_failed',
+          },
+          {
+            app: 'gmail',
+            domain: 'google.com',
+            connection_method: 'managed_app',
+            status: 'failed',
+            failure_reason: 'verification_failed',
+          },
+          {
+            app: 'gmail',
+            domain: 'google.com',
+            connection_method: 'managed_app',
+            status: 'connected',
+          },
+        ],
+      );
+      captured.length = 0;
+      await integrations.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+        connectionId: connection!.connectionId,
+      });
+      session.execute = async () => {
+        throw new Error('Synthetic private provider failure');
+      };
+      await assert.rejects(
+        integrations.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+          connectionId: connection!.connectionId,
+        }),
+      );
+      const controller = new AbortController();
+      session.execute = async () => {
+        controller.abort();
+        controller.signal.throwIfAborted();
+      };
+      await assert.rejects(
+        integrations.execute(
+          'local-development',
+          'GMAIL_FETCH_EMAILS',
+          { connectionId: connection!.connectionId },
+          undefined,
+          controller.signal,
+        ),
+      );
+      assert.deepEqual(
+        captured.map((event) => {
+          assert.equal(event.event, 'otto_service_used');
+          if (event.event !== 'otto_service_used') throw new Error('Expected service analytics');
+          const { duration_ms, ...properties } = event.properties;
+          assert.ok(Number.isSafeInteger(duration_ms) && duration_ms >= 0);
+          return properties;
+        }),
+        ['succeeded', 'failed', 'cancelled'].map((outcome) => ({
+          app: 'gmail',
+          domain: 'google.com',
+          connection_method: 'managed_app',
+          outcome,
+        })),
+      );
     } finally {
       await app.close();
       await pool.end();
@@ -1608,7 +1753,9 @@ test(
       finishRelease = resolve;
     });
     t.after(() => finishRelease());
+    const captured: AnalyticsEvent[] = [];
     const options = {
+      analytics: (event: AnalyticsEvent) => captured.push(event),
       ownerId,
       baseUrl: 'http://127.0.0.1:4310',
       grantVault,
@@ -1655,7 +1802,6 @@ test(
     const app = Fastify();
     t.after(() => app.close());
     registerLocalAccess(app, 4310, { key: 'synthetic-desktop-token', desktop: true });
-    const captured: AnalyticsEvent[] = [];
     registerAnalyticsRoutes(app, (event) => captured.push(event));
     service.registerRoutes(app);
     const headers = {
@@ -1705,8 +1851,8 @@ test(
       apps: [{ hash: setupHash, slug: 'fixture-desktop', name: 'Fixture app' }],
     });
     const connectionStarted: AnalyticsEvent = {
-      event: 'otto_settings_updated',
-      properties: { section: 'connections', operation: 'connect_started' },
+      event: 'otto_connection_changed',
+      properties: { app: 'custom', connection_method: 'mcp', status: 'started' },
     };
     assert.deepEqual(captured, [connectionStarted]);
     assert.equal((await authorize()).json().url, first.json().url);
@@ -1743,7 +1889,7 @@ test(
     const interrupted = callback(states[2], 'code=hold');
     await finishing;
     assert.equal((await authorize()).statusCode, 409);
-    assert.equal(captured.length, 4);
+    assert.equal(captured.length, 5);
     assert.equal(await callback(states[2], 'code=fixture-code'), 'expired');
     assert.equal(finished, 2);
     await createDiscoveredConnections(f.pool, { ...options, ownerId: 'foreign-owner' });
@@ -1764,7 +1910,43 @@ test(
     assert.equal((await recovered.inject(path)).json().oauthStatus, 'connected');
     assert.equal((await status()).authorizationUrl, undefined);
     assert.equal((await authorize()).statusCode, 409);
-    assert.deepEqual(captured, Array(5).fill(connectionStarted));
+    assert.deepEqual(captured, [
+      connectionStarted,
+      {
+        event: 'otto_connection_changed',
+        properties: {
+          app: 'custom',
+          connection_method: 'mcp',
+          status: 'failed',
+          failure_reason: 'cancelled',
+        },
+      },
+      connectionStarted,
+      {
+        event: 'otto_connection_changed',
+        properties: {
+          app: 'custom',
+          connection_method: 'mcp',
+          status: 'failed',
+          failure_reason: 'authorization_failed',
+        },
+      },
+      connectionStarted,
+      {
+        event: 'otto_connection_changed',
+        properties: {
+          app: 'custom',
+          connection_method: 'mcp',
+          status: 'failed',
+          failure_reason: 'unavailable',
+        },
+      },
+      connectionStarted,
+      {
+        event: 'otto_connection_changed',
+        properties: { app: 'custom', connection_method: 'mcp', status: 'connected' },
+      },
+    ]);
     assert.equal(await callback(states[3], 'code=fixture-code'), 'expired');
     assert.equal(finished, 3);
     assert.equal((await discovered.list()).length, 1);
@@ -4790,6 +4972,7 @@ test(
       const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
       const catalogs: string[] = [];
       let cliCalls = 0;
+      let cliExitCode: number | undefined;
       const cliRuns: unknown[] = [];
       let blocked: 'http' | 'listTools' | 'callTool' | 'cli' | undefined;
       let entered = () => {};
@@ -4803,6 +4986,7 @@ test(
         });
       };
       const discovered = await createDiscoveredConnections(pool, {
+        analytics: (event) => captured.push(event),
         ownerId: owner,
         baseUrl: 'http://localhost:4310',
         grantVault,
@@ -4835,6 +5019,8 @@ test(
           cliCalls++;
           cliRuns.push(cli);
           await waitForAbort('cli', signal);
+          if (cliExitCode !== undefined)
+            return { exitCode: cliExitCode, output: 'Synthetic private CLI output' };
           throw new Error('The CLI must not run during setup.');
         },
       });
@@ -4990,11 +5176,16 @@ test(
         completed: [],
         apps: [],
       });
-      const connectionUpdated: AnalyticsEvent = {
-        event: 'otto_settings_updated',
-        properties: { section: 'connections', operation: 'update' },
-      };
-      assert.deepEqual(captured, [connectionUpdated]);
+      assert.deepEqual(captured, [
+        {
+          event: 'otto_connection_changed',
+          properties: { app: 'custom', connection_method: 'cli', status: 'started' },
+        },
+        {
+          event: 'otto_connection_changed',
+          properties: { app: 'custom', connection_method: 'cli', status: 'connected' },
+        },
+      ]);
       assert.equal(cliCalls, 0);
       const addedCli = (await discovered.list()).find(
         (account) => account.accountName === 'Fixture CLI account',
@@ -5049,6 +5240,7 @@ test(
         ),
         /unavailable/,
       );
+      assert.equal(captured.filter((event) => event.event === 'otto_service_used').length, 0);
       const mcpArgs = { connectionId, pathId: mcpPath, tool: 'list_records' };
       const cancellations: Array<
         [NonNullable<typeof blocked>, (signal: AbortSignal) => Promise<unknown>]
@@ -5088,6 +5280,20 @@ test(
         controller.abort(reason);
         await outcome;
       }
+      assert.deepEqual(
+        captured
+          .filter((event) => event.event === 'otto_service_used')
+          .map((event) => {
+            const { duration_ms, ...properties } = event.properties;
+            assert.ok(Number.isSafeInteger(duration_ms) && duration_ms >= 0);
+            return properties;
+          }),
+        ['mcp', 'http', 'cli'].map((connection_method) => ({
+          app: 'custom',
+          connection_method,
+          outcome: 'cancelled',
+        })),
+      );
       blocked = undefined;
       assert.deepEqual(cliRuns, [
         { id: cliPath, command: 'fixturecli', source: { npm: '@fixture/cli@1.2.3' } },
@@ -5126,6 +5332,34 @@ test(
       await assert.rejects(discovered.reconnect('legacy-cli', legacyId), /set up this CLI again/);
       assert.equal(cliCalls, 1);
       await discovered.disconnect(legacyId, 'legacy-cli');
+      for (const exitCode of [7, 0]) {
+        cliExitCode = exitCode;
+        assert.equal(
+          (
+            (await discovered.execute(
+              'CONNECTED_CLI',
+              { connectionId, pathId: cliPath, argv: ['list'] },
+              ref,
+            )) as { exitCode: number }
+          ).exitCode,
+          exitCode,
+        );
+      }
+      assert.deepEqual(
+        captured.slice(-2).map((event) => {
+          assert.equal(event.event, 'otto_service_used');
+          if (event.event !== 'otto_service_used') throw new Error('Expected service analytics');
+          const { duration_ms, ...properties } = event.properties;
+          assert.ok(Number.isSafeInteger(duration_ms) && duration_ms >= 0);
+          return properties;
+        }),
+        ['failed', 'succeeded'].map((outcome) => ({
+          app: 'custom',
+          connection_method: 'cli',
+          outcome,
+        })),
+      );
+
       const replacement = await discovered.propose({
         service: 'fixture-app',
         name: 'Fixture app',
@@ -5148,7 +5382,19 @@ test(
       const replacedAccount = await account();
       assert.ok(replacedAccount);
       assert.equal((await complete()).statusCode, 200);
-      assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
+      assert.deepEqual(captured.slice(-2), [
+        {
+          event: 'otto_connection_changed',
+          properties: { app: 'custom', connection_method: 'http', status: 'started' },
+        },
+        {
+          event: 'otto_connection_changed',
+          properties: { app: 'custom', connection_method: 'http', status: 'connected' },
+        },
+      ]);
+      const count = captured.length;
+      assert.equal((await complete()).statusCode, 404);
+      assert.equal(captured.length, count);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
       assert.notEqual(await account(), replacedAccount);
     } finally {
@@ -5236,7 +5482,9 @@ test(
                 },
       });
     });
+    const captured: AnalyticsEvent[] = [];
     const discovered = await createDiscoveredConnections(pool, {
+      analytics: (event) => captured.push(event),
       ownerId: owner,
       baseUrl: 'http://localhost:4310',
       grantVault,
@@ -5335,6 +5583,24 @@ test(
       },
     );
     assert.deepEqual(toolCalls.at(-1), input);
+    assert.deepEqual(
+      captured.map((event) => {
+        assert.equal(event.event, 'otto_service_used');
+        if (event.event !== 'otto_service_used') throw new Error('Expected service analytics');
+        const { duration_ms, ...properties } = event.properties;
+        assert.ok(Number.isSafeInteger(duration_ms) && duration_ms >= 0);
+        return properties;
+      }),
+      [
+        ['http', 'failed'],
+        ['mcp', 'failed'],
+        ['http', 'succeeded'],
+        ['http', 'succeeded'],
+        ['http', 'succeeded'],
+        ['http', 'succeeded'],
+        ['mcp', 'succeeded'],
+      ].map(([connection_method, outcome]) => ({ app: 'custom', connection_method, outcome })),
+    );
   },
 );
 

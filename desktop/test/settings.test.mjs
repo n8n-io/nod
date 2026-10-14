@@ -634,6 +634,7 @@ async function runningDesktop(
       setName() {},
       setPath() {},
       getPath: () => dirname(storage.path),
+      getVersion: () => '0.0.0-test',
       requestSingleInstanceLock: () => false,
       getLoginItemSettings: () => ({ openAtLogin }),
       setLoginItemSettings: (value) => {

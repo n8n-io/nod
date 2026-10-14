@@ -5,6 +5,7 @@ import pg from 'pg';
 import type { BrowserConnectionRequest } from '../src/ports/agent.ts';
 import type { Computer } from '../src/ports/computer.ts';
 import { createBrowserConnections } from '../src/server/browser-connections.ts';
+import type { AnalyticsEvent } from '../src/server/analytics.ts';
 
 test(
   'browser profiles require an explicit observed sign-in outcome and retain owner and turn fences',
@@ -64,7 +65,12 @@ test(
           removed.push(profileId);
         },
       } as unknown as Computer;
-      const service = await createBrowserConnections(pool, { ownerId: 'owner-a', computer });
+      const captured: AnalyticsEvent[] = [];
+      const service = await createBrowserConnections(pool, {
+        ownerId: 'owner-a',
+        computer,
+        analytics: (event) => captured.push(event),
+      });
       const opened = await service.request(
         { action: 'connect', url: 'https://example.test/login' },
         first,
@@ -133,6 +139,16 @@ test(
       assert.equal((await service.list())[0].browserState, 'needs_sign_in');
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [first.turnId]);
       cancelTurnId = undefined;
+      assert.deepEqual(captured, [
+        {
+          event: 'otto_connection_changed',
+          properties: {
+            app: 'custom',
+            connection_method: 'browser',
+            status: 'started',
+          },
+        },
+      ]);
       assert.equal((await service.request(save, first)).status, 'session_saved');
       assert.equal((await service.list())[0].browserState, 'saved');
       await pool.query(
@@ -260,6 +276,17 @@ test(
         /no longer active/,
       );
       await service.disconnect(connectionId);
+      assert.deepEqual(
+        captured,
+        ['started', 'connected', 'disconnected'].map((status) => ({
+          event: 'otto_connection_changed',
+          properties: {
+            app: 'custom',
+            connection_method: 'browser',
+            status,
+          },
+        })),
+      );
       assert.deepEqual(removed, [bindings[0]]);
       await pool.query(
         "INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state) VALUES($1,'owner-a','https://example.test','https://example.test','Synthetic', $2,'disconnecting')",

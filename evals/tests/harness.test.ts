@@ -14,6 +14,7 @@ import { createAccountSession } from '../../src/server/account.ts';
 import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, fisherLower, holm, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
+import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { createCapture } from '../src/capture.ts';
@@ -39,6 +40,283 @@ import { daysAgo, inDays, localDate, localTime, nextWeekOn } from '../src/world/
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
+
+test('analytics grading detects semantic errors and matches tasks independently of output order', () => {
+  const item = (name: string) => analyticsCases.find((item) => item.id === name)!;
+  const multiple = item('multiple-tasks');
+  assert.equal(
+    scoreAnalytics(multiple, {
+      ...multiple.expected,
+      tasks: [...multiple.expected.tasks].reverse(),
+    }).exact,
+    true,
+  );
+  assert.equal(
+    scoreAnalytics(multiple, { ...multiple.expected, tasks: multiple.expected.tasks.slice(0, 1) })
+      .tasks.missing,
+    1,
+  );
+  assert.equal(
+    scoreAnalytics(multiple, {
+      ...multiple.expected,
+      tasks: [...multiple.expected.tasks, multiple.expected.tasks[0]],
+    }).tasks.extra,
+    1,
+  );
+  const reopened = item('reopen-wrong-result');
+  const wrong = scoreAnalytics(reopened, {
+    ...reopened.expected,
+    tasks: [
+      {
+        ...reopened.expected.tasks[0],
+        task_id: null,
+        task_type: 'other',
+        task_action: 'edit',
+        task_subject: 'document',
+        task_activities: ['edit:document'],
+        outcome: 'waiting',
+      },
+    ],
+  });
+  assert.equal(wrong.schemaValid, true);
+  assert.equal(wrong.valid, false);
+  assert.equal(wrong.exact, false);
+  assert.equal(wrong.tasks.wrongType, 1);
+  assert.equal(wrong.tasks.wrongAction, 1);
+  assert.equal(wrong.tasks.wrongSubject, 1);
+  assert.equal(wrong.tasks.wrongOutcome, 1);
+  assert.equal(wrong.tasks.wrongContinuation, 1);
+  const waiting = item('waiting-for-approval');
+  assert.equal(
+    scoreAnalytics(waiting, {
+      ...waiting.expected,
+      tasks: [
+        {
+          ...waiting.expected.tasks[0],
+          request_message_id: '00000000-0000-4000-8000-999999999999',
+        },
+      ],
+    }).tasks.wrongRequest,
+    1,
+  );
+  const injected = scoreAnalytics(waiting, { ...waiting.expected, private_text: 'synthetic text' });
+  assert.equal(injected.valid, false);
+  assert.equal(injected.tasks.missing, 1);
+});
+
+test('analytics grading separates goal dimensions from task state when matching repeated categories', () => {
+  const mixed = analyticsCases.find((item) => item.id === 'holdout-same-type-mixed-outcomes')!;
+  assert.equal(
+    scoreAnalytics(mixed, {
+      ...mixed.expected,
+      tasks: [...mixed.expected.tasks].reverse(),
+    }).exact,
+    true,
+  );
+  const wrongState = scoreAnalytics(mixed, {
+    ...mixed.expected,
+    tasks: [...mixed.expected.tasks].reverse().map((task) => ({ ...task, outcome: 'completed' })),
+  });
+  assert.equal(wrongState.valid, true);
+  assert.equal(wrongState.tasks.wrongOutcome, 1);
+  assert.equal(wrongState.tasks.wrongAction, 0);
+  assert.equal(wrongState.tasks.wrongSubject, 0);
+  const send = analyticsCases.find((item) => item.id === 'holdout-draft-then-send')!;
+  const wrongGoal = scoreAnalytics(send, {
+    ...send.expected,
+    tasks: [
+      {
+        ...send.expected.tasks[0],
+        task_action: 'draft',
+        task_subject: 'message',
+        task_activities: ['draft:message'],
+      },
+    ],
+  });
+  assert.equal(wrongGoal.valid, true);
+  assert.equal(wrongGoal.exact, false);
+  assert.equal(wrongGoal.tasks.wrongAction, 1);
+  assert.equal(wrongGoal.tasks.wrongSubject, 1);
+  const splitGoal = scoreAnalytics(send, {
+    ...send.expected,
+    tasks: [
+      {
+        ...send.expected.tasks[0],
+        task_action: 'draft',
+        task_activities: ['draft:email'],
+        outcome: 'completed',
+      },
+      send.expected.tasks[0],
+    ],
+  });
+  assert.equal(splitGoal.tasks.extra, 1);
+  assert.equal(splitGoal.tasks.wrongAction, 0);
+  assert.equal(splitGoal.tasks.wrongOutcome, 0);
+  const summary = summarizeAnalytics(
+    [wrongState, wrongGoal].map((score, index) => ({
+      case: String(index),
+      attempt: 1,
+      durationMs: 0,
+      status: 'scored',
+      score,
+    })),
+  );
+  assert.equal(summary.tasks.wrongAction, 1);
+  assert.equal(summary.tasks.wrongSubject, 1);
+  assert.equal(summary.tasks.wrongOutcome, 1);
+});
+
+test('analytics grading measures missing and extra requested activities without depending on their order', () => {
+  const compound = analyticsCases.find((item) => item.id === 'holdout-compound-find-analyze-send')!;
+  const independent = analyticsCases.find(
+    (item) => item.id === 'holdout-independent-find-analyze-send',
+  )!;
+  const goal = compound.expected.tasks[0];
+  assert.equal(
+    scoreAnalytics(compound, {
+      ...compound.expected,
+      tasks: [{ ...goal, task_activities: [...goal.task_activities].reverse() }],
+    }).exact,
+    true,
+  );
+  const missing = scoreAnalytics(compound, {
+    ...compound.expected,
+    tasks: [{ ...goal, task_activities: ['send:email'] }],
+  });
+  const extra = scoreAnalytics(compound, {
+    ...compound.expected,
+    tasks: [{ ...goal, task_activities: [...goal.task_activities, 'draft:email'] }],
+  });
+  assert.equal(missing.valid, true);
+  assert.equal(missing.exact, false);
+  assert.equal(missing.tasks.missingActivities, 2);
+  assert.equal(missing.tasks.extraActivities, 0);
+  assert.equal(extra.valid, true);
+  assert.equal(extra.exact, false);
+  assert.equal(extra.tasks.missingActivities, 0);
+  assert.equal(extra.tasks.extraActivities, 1);
+  const absent = scoreAnalytics(compound, { tasks: [], frustration: null });
+  assert.equal(absent.tasks.missing, 1);
+  assert.equal(absent.tasks.missingActivities, 3);
+  const split = scoreAnalytics(compound, independent.expected);
+  assert.equal(split.tasks.extra, 2);
+  assert.equal(split.tasks.missingActivities, 2);
+  assert.equal(split.tasks.extraActivities, 2);
+  const merged = scoreAnalytics(independent, compound.expected);
+  assert.equal(merged.tasks.missing, 2);
+  assert.equal(merged.tasks.missingActivities, 2);
+  assert.equal(merged.tasks.extraActivities, 2);
+  assert.equal(
+    scoreAnalytics(compound, {
+      ...compound.expected,
+      tasks: [{ ...goal, task_activities: [...goal.task_activities, 'send:email'] }],
+    }).valid,
+    false,
+  );
+  assert.equal(
+    scoreAnalytics(compound, {
+      ...compound.expected,
+      tasks: [{ ...goal, task_activities: ['find:spreadsheet', 'analyze:spreadsheet'] }],
+    }).valid,
+    false,
+  );
+  const summary = summarizeAnalytics(
+    [missing, extra].map((score, index) => ({
+      case: String(index),
+      attempt: 1,
+      durationMs: 0,
+      status: 'scored',
+      score,
+    })),
+  );
+  assert.equal(summary.tasks.expectedActivities, 6);
+  assert.equal(summary.tasks.predictedActivities, 5);
+  assert.equal(summary.tasks.missingActivities, 2);
+  assert.equal(summary.tasks.extraActivities, 1);
+});
+
+test('analytics continuation grading accepts the original request reference or null and rejects another message', () => {
+  const item = analyticsCases.find((item) => item.id === 'continuation')!;
+  const original = item.originalRequestIds[item.expected.tasks[0].task_id!];
+  assert.ok(original);
+  for (const request_message_id of [null, original]) {
+    const score = scoreAnalytics(item, {
+      ...item.expected,
+      tasks: [{ ...item.expected.tasks[0], request_message_id }],
+    });
+    assert.equal(score.valid, true);
+    assert.equal(score.exact, true);
+    assert.equal(score.tasks.wrongRequest, 0);
+  }
+  const wrong = scoreAnalytics(item, {
+    ...item.expected,
+    tasks: [{ ...item.expected.tasks[0], request_message_id: item.input.messages[0].id }],
+  });
+  assert.equal(wrong.schemaValid, true);
+  assert.equal(wrong.valid, false);
+  assert.equal(wrong.tasks.wrongRequest, 1);
+});
+
+test('analytics grading measures false frustration signals, missed signals and unsupported evidence', () => {
+  const neutral = analyticsCases.find((item) => item.id === 'neutral-edit')!;
+  const repeated = analyticsCases.find((item) => item.id === 'repeated-request')!;
+  const correction = analyticsCases.find((item) => item.id === 'repeated-correction')!;
+  const falsePositive = scoreAnalytics(neutral, {
+    ...neutral.expected,
+    frustration: {
+      ...repeated.expected.frustration,
+      signal: 'explicit_complaint',
+      message_ids: [neutral.input.messages[0].id],
+    },
+  });
+  const falseNegative = scoreAnalytics(repeated, { ...repeated.expected, frustration: null });
+  const correct = scoreAnalytics(repeated, repeated.expected);
+  assert.equal(falsePositive.frustration.falsePositive, 1);
+  assert.equal(falseNegative.frustration.falseNegative, 1);
+  assert.equal(
+    scoreAnalytics(correction, {
+      ...correction.expected,
+      frustration: { ...correction.expected.frustration, signal: 'repeated_request' },
+    }).exact,
+    true,
+  );
+  assert.equal(
+    scoreAnalytics(repeated, {
+      ...repeated.expected,
+      frustration: {
+        ...repeated.expected.frustration,
+        message_ids: [repeated.input.messages[0].id, repeated.input.messages[1].id],
+      },
+    }).frustration.wrongEvidence,
+    1,
+  );
+  const rejected = scoreAnalytics(repeated, {
+    ...repeated.expected,
+    frustration: {
+      ...repeated.expected.frustration,
+      message_ids: [repeated.input.messages[1].id, repeated.input.messages[3].id],
+    },
+  });
+  assert.equal(rejected.schemaValid, true);
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.frustration.truePositive, 0);
+  assert.equal(rejected.frustration.falseNegative, 1);
+  const summary = summarizeAnalytics([
+    ...[correct, falsePositive, falseNegative].map((score, index) => ({
+      case: String(index),
+      attempt: 1,
+      durationMs: 0,
+      status: 'scored' as const,
+      score,
+    })),
+    { case: 'unavailable', attempt: 1, durationMs: 0, status: 'model_error' },
+  ]);
+  assert.equal(summary.frustration.precision, 0.5);
+  assert.equal(summary.frustration.recall, 0.5);
+  assert.equal(summary.responseCoverage, 0.75);
+  assert.equal(summary.modelErrors, 1);
+  assert.equal(summary.scored, 3);
+});
 
 const manifest: RunManifest = {
   label: 't',

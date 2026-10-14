@@ -21,6 +21,7 @@ import { registerLocalAccess } from '../src/server/access.ts';
 import { verificationCode, verificationSenderDomain } from '../src/server/email-code.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
 import type { TurnRef } from '../src/server/thread.ts';
+import type { AnalyticsEvent } from '../src/server/analytics.ts';
 import {
   credentialOrigin,
   checkedKeyStore,
@@ -222,7 +223,9 @@ test(
     const injectionComplete = new Promise<void>((resolve) => {
       complete = resolve;
     });
+    const captured: AnalyticsEvent[] = [];
     const vault = await createVault(pool, {
+      analytics: (event) => captured.push(event),
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       retry: async () => {},
       inject: async (input) => {
@@ -278,6 +281,7 @@ test(
         },
       });
       await injectionStarted;
+      assert.deepEqual(captured, []);
       assert.equal(resumed, 0);
       let secondSettled = false;
       const second = app
@@ -306,6 +310,12 @@ test(
         ).statusCode,
         409,
       );
+      assert.deepEqual(captured, [
+        {
+          event: 'otto_vault_changed',
+          properties: { item_type: 'login', operation: 'create', source: 'user' },
+        },
+      ]);
       const metadata = await app.inject({ url: '/api/vault' });
       assert.equal(metadata.json().length, 1);
       assert.equal(metadata.body.includes('secret-password'), false);
@@ -1963,10 +1973,12 @@ test(
       'INSERT INTO vault_entries(id,owner_id,label,origin,username_hint,ciphertext) VALUES($1,$2,$3,$4,$5,$6)',
       [login.id, owner, 'Legacy login', login.origin, 'fu…', legacyCiphertext],
     );
+    const captured: AnalyticsEvent[] = [];
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const app = Fastify({ logger: false });
       registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
+        analytics: (event) => captured.push(event),
         keyStore: { id: 'synthetic', configured: true, getKey },
         inject: async () => assert.fail('Cards must never enter a website login.'),
         resume: async () => assert.fail('Card management must not resume a task.'),
@@ -1989,6 +2001,31 @@ test(
       instance: FastifyInstance = app,
     ) => instance.inject({ method: 'PATCH', url: `/api/vault/${id}`, headers, payload });
     try {
+      await t.test(
+        'card analytics omit values and do not count unchanged edits or repeated deletes',
+        async () => {
+          const entry = await create();
+          assert.equal((await update(entry.id, input)).statusCode, 200);
+          assert.equal(
+            (await update(entry.id, { ...input, label: 'Updated card' })).statusCode,
+            200,
+          );
+          for (let attempt = 0; attempt < 2; attempt++) {
+            assert.equal(
+              (await app.inject({ method: 'DELETE', url: `/api/vault/${entry.id}`, headers }))
+                .statusCode,
+              200,
+            );
+          }
+          assert.deepEqual(
+            captured,
+            ['create', 'update', 'delete'].map((operation) => ({
+              event: 'otto_vault_changed',
+              properties: { item_type: 'card', operation, source: 'user' },
+            })),
+          );
+        },
+      );
       const first = await create();
       await create({
         ...input,
@@ -2132,10 +2169,12 @@ test(
       origin: 'http://localhost:4310',
       cookie: 'otto-access-4310=synthetic-local-access',
     };
+    const captured: AnalyticsEvent[] = [];
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const instance = Fastify({ logger: false });
       registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
+        analytics: (event) => captured.push(event),
         keyStore: checkedKeyStore(pool, { id: 'fixture', configured: true, getKey }),
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),
         resume: async () => assert.fail('Viewing or editing a login must not resume a turn.'),
@@ -2183,6 +2222,54 @@ test(
     try {
       const first = await save('First');
       const second = await save('Second');
+      await t.test(
+        'Vault analytics count committed mutations without private item data',
+        async () => {
+          captured.length = 0;
+          const entry = await save('Analytics');
+          await save('Analytics');
+          const same = { label: 'Analytics', username: 'Analytics@example.test' };
+          assert.equal((await patch(entry.id, same)).statusCode, 200);
+          assert.equal(
+            (await patch(entry.id, { ...same, label: 'Updated analytics' })).statusCode,
+            200,
+          );
+          assert.equal((await patch(randomUUID(), same)).statusCode, 404);
+          for (let attempt = 0; attempt < 2; attempt++) {
+            assert.equal(
+              (await app.inject({ method: 'DELETE', url: `/api/vault/${entry.id}`, headers }))
+                .statusCode,
+              200,
+            );
+          }
+          assert.deepEqual(
+            captured,
+            ['create', 'update', 'delete'].map((operation) => ({
+              event: 'otto_vault_changed',
+              properties: { item_type: 'login', operation, source: 'user' },
+            })),
+          );
+          await pool.query(`CREATE FUNCTION reject_analytics_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN IF NEW.label='Rolled back analytics' THEN RAISE EXCEPTION 'Synthetic rejected write'; END IF; RETURN NEW; END $$;
+          CREATE TRIGGER reject_analytics_fixture BEFORE INSERT ON vault_entries FOR EACH ROW EXECUTE FUNCTION reject_analytics_fixture()`);
+          const refused = await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: {
+              label: 'Rolled back analytics',
+              origin: 'https://example.test',
+              username: 'synthetic',
+              password: 'synthetic-secret',
+            },
+          });
+          assert.equal(refused.statusCode, 500);
+          assert.equal(captured.length, 3);
+          await pool.query(
+            'DROP TRIGGER reject_analytics_fixture ON vault_entries; DROP FUNCTION reject_analytics_fixture()',
+          );
+        },
+      );
 
       await t.test(
         'foreign, missing and malformed IDs and body overrides cannot read or change values',
@@ -2401,6 +2488,7 @@ test(
               'App,android://key@com.fixture.app/,ana,app-import-secret,\n',
           );
           assert.equal(unreadable, 1);
+          captured.length = 0;
           const imported = await app.inject({
             method: 'POST',
             url: '/api/vault/import',
@@ -2426,6 +2514,13 @@ test(
           });
           assert.equal(imported.statusCode, 200);
           assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
+          assert.deepEqual(
+            captured,
+            Array.from({ length: 2 }, () => ({
+              event: 'otto_vault_changed',
+              properties: { item_type: 'login', operation: 'create', source: 'import' },
+            })),
+          );
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
@@ -5394,9 +5489,16 @@ globalThis.location = window.location;
 const requests=[];
 window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
-window.fetch = globalThis.fetch = async (url, init={}) => { requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body}); return Response.json(new URL(url).pathname.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1}); };
+window.fetch = globalThis.fetch = async (url, init={}) => {
+  const path = new URL(url,window.location.href).pathname;
+  if (path==='/api/configuration') return Response.json({localOnly:true,integrationsReady:true});
+  if (path==='/api/apps') return Response.json([{slug:'gmail',status:'disconnected'}]);
+  if (path==='/api/integrations/key') return Response.json({managed:false,saved:true,suffix:'K7Q9'});
+  requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body});
+  return Response.json(path.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1});
+};
 const { recordingOptions } = await import('./src/web/lib/analytics-privacy.ts');
-const { createElement } = await import('react');
+const { createElement, act } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { Sidebar } = await import('./src/web/components/sidebar.tsx');
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(Sidebar, {path:'/', unreadCount:73, collapsed:false, onToggle() {}, onNavigate() {}})));
@@ -5442,6 +5544,15 @@ analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
 assert.equal(sdk.sessionRecordingStarted(), true);
+const { createRoot } = await import('react-dom/client');
+const { Email } = await import('./src/web/pages/onboarding/steps/email.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const emailContainer = document.createElement('div');
+document.body.append(emailContainer);
+const emailRoot = createRoot(emailContainer);
+await act(async () => {emailRoot.render(createElement(Email,{arrived:'back',onNext() {},onBack() {}})); await new Promise(resolve => setTimeout(resolve,50));});
+await act(async () => {await new Promise(resolve => setTimeout(resolve,50));});
+assert.match(emailContainer.textContent,/Key saved.*K7Q9/);
 document.querySelector('#mutable').textContent = 'synthetic-private-recorded-mutation';
 document.querySelector('input').value = 'synthetic-private-recorded-input';
 document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));
@@ -5460,7 +5571,10 @@ assert.ok(snapshots.some(event => event.type === 2));
 assert.ok(snapshots.some(event => event.type === 3));
 assert.equal(snapshots.find(event => event.type === 4).data.href, 'https://otto.invalid/credentials');
 assert.match(JSON.stringify(snapshots), /Settings/);
+assert.match(JSON.stringify(snapshots), /Sign in to Gmail/);
+assert.doesNotMatch(JSON.stringify(snapshots), /K7Q9/);
 assert.doesNotMatch(JSON.stringify(snapshots), /synthetic-private/);
+await act(async () => emailRoot.unmount());
 assert.equal(requests.filter(request => new URL(request.url).pathname.endsWith('/config')).length, 1);
 assert.ok(requests.every(request => !new URL(request.url).pathname.startsWith('/flags')));
 analytics.capturePageview('/credentials/synthetic-private-request?token=synthetic-private-query');
@@ -5541,6 +5655,316 @@ process.exit(0);
   });
   assert.equal(result.exitCode, 0, result.stderr);
 });
+
+test(
+  'analytics consent fences SDK batches, replay, retries and delayed callbacks',
+  { concurrency: 3 },
+  async (t) => {
+    await Promise.all(
+      [
+        'disabled',
+        'desktop_disabled',
+        'queued_event',
+        'replay',
+        'late_config',
+        'retry',
+        'late_failure',
+        'owner_change',
+        'reoptin',
+        'cross_tab',
+        'failed_revoke',
+        'peer_failed_revoke',
+        'stale_peer_grant',
+      ].map((scenario) =>
+        t.test(scenario, async () => {
+          const result = await runProcess(
+            process.execPath,
+            ['--import', 'tsx', '--input-type=module'],
+            {
+              timeoutMs: 25_000,
+              input:
+                `const scenario = ${JSON.stringify(scenario)};\n` +
+                String.raw`
+import assert from 'node:assert/strict';
+import {gunzipSync} from 'node:zlib';
+import {JSDOM} from 'jsdom';
+const NativeMessageEvent = MessageEvent;
+const dom = new JSDOM('<!doctype html><html><head></head><body><nav data-analytics-public>Settings</nav><div id="private">synthetic-private-chat</div><input value="synthetic-private-input"></body></html>', {url:'https://otto.fixture.invalid/',pretendToBeVisual:true});
+for (const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLFormElement','HTMLIFrameElement','HTMLImageElement','HTMLLinkElement','HTMLStyleElement','HTMLMediaElement','HTMLVideoElement','HTMLAudioElement','HTMLCanvasElement','SVGElement','Document','DocumentFragment','ShadowRoot','CSSStyleSheet','CSSStyleDeclaration','MutationObserver','Event','CustomEvent']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+Object.defineProperty(globalThis,'MessageEvent',{configurable:true,value:NativeMessageEvent});
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location = window.location;
+window.XMLHttpRequest = globalThis.XMLHttpRequest = undefined;
+const requests = [];
+let phase = 'disabled';
+let releaseConfig;
+let releaseFailure;
+let failed = false;
+let session;
+let delaySession = false;
+let releaseSession;
+let releasePatch;
+let revokeSignal;
+const wait = ms => new Promise(resolve => setTimeout(resolve,ms));
+async function decode(body) {
+  if (!body) return undefined;
+  if (body instanceof ArrayBuffer) body = Buffer.from(body);
+  if (ArrayBuffer.isView(body)) body = Buffer.from(body.buffer,body.byteOffset,body.byteLength);
+  if (typeof body.text === 'function') body = await body.text();
+  if (Buffer.isBuffer(body)) body = (body[0]===31 ? gunzipSync(body) : body).toString();
+  if (body.startsWith('data=')) body = Buffer.from(new URLSearchParams(body).get('data'),'base64').toString();
+  return JSON.parse(body);
+}
+window.fetch = globalThis.fetch = async (url,init={}) => {
+  const path = new URL(url,window.location.href).pathname;
+  if (path==='/api/session' || path==='/api/account') {
+    if (path==='/api/account') {
+      const change = JSON.parse(init.body);
+      if (scenario==='stale_peer_grant' && change.usageData===false) {
+        revokeSignal = init.signal;
+        await new Promise(resolve => {releasePatch=resolve;});
+      }
+      if (change.usageData!==undefined) session = {...session,settings:{...session.settings,usageData:change.usageData},analytics:{...session.analytics,enabled:change.usageData}};
+      if (scenario==='failed_revoke' && change.usageData===false) {
+        await new Promise(resolve => {releasePatch=resolve;});
+        return Response.json({error:'Synthetic tenant synchronization failure'},{status:503});
+      }
+    } else if (delaySession) {
+      const snapshot = session;
+      await new Promise(resolve => {releaseSession=resolve;});
+      return Response.json(snapshot);
+    }
+    return Response.json(session);
+  }
+  const request = {phase,path};
+  requests.push(request);
+  request.payload = await decode(init.body);
+  if (request.path.endsWith('/config')) {
+    if (scenario==='late_config' && !releaseConfig) await new Promise(resolve => {releaseConfig=resolve;});
+    return Response.json({sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false});
+  }
+  if (['retry','late_failure'].includes(scenario) && !failed && request.payload) {
+    failed = true;
+    if (scenario==='late_failure') await new Promise(resolve => {releaseFailure=resolve;});
+    return new Response('',{status:503});
+  }
+  return Response.json({status:1});
+};
+Object.defineProperty(navigator,'sendBeacon',{configurable:true,value:(url,body) => {
+  const request = {phase,path:new URL(url).pathname};
+  requests.push(request);
+  void decode(body).then(payload => {request.payload=payload;});
+  return true;
+}});
+const analytics = await import('./src/web/lib/analytics-client.ts');
+const {analyticsForCurrentSession} = await import('./src/web/lib/analytics.ts');
+const {posthog:sdk} = await import('posthog-js/no-external');
+const enabled = id => ({enabled:true,distinctId:'hosted:fixture-'+id,deployment:'hosted',environment:'production',appVersion:'0.1.0'});
+const disabled = {...enabled('a'),enabled:false};
+const events = request => Array.isArray(request.payload) ? request.payload : request.payload?.batch ?? (request.payload?.event ? [request.payload] : []);
+function interact() {
+  document.querySelector('#private').textContent = 'synthetic-private-'+phase;
+  document.querySelector('input').value = 'synthetic-private-'+phase;
+  document.querySelector('input').dispatchEvent(new window.Event('input',{bubbles:true}));
+}
+if (scenario==='desktop_disabled') {
+  window.ottoDesktop = {getAnalyticsConfiguration:async () => disabled};
+  await import('./desktop/ui/analytics.ts');
+  window.ottoSetupAnalytics.step('preparing');
+  await wait(100);
+  await window.ottoSetupAnalytics.completed();
+} else {
+  analytics.configureAnalytics(disabled,'web');
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  analytics.capturePageview('/');
+}
+assert.equal(requests.length,0);
+if (['cross_tab','failed_revoke','peer_failed_revoke','stale_peer_grant'].includes(scenario)) {
+  const {act,createElement} = await import('react');
+  const {createRoot} = await import('react-dom/client');
+  const {useSession} = await import('./src/web/hooks/use-session.ts');
+  const {sessionStore} = await import('./src/web/lib/session.ts');
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  session = {auth:{mode:'google',googleAvailable:true},user:{id:'fixture-a',name:'Fixture',email:null,avatarUrl:null},settings:{theme:'light',onboardingCompleted:true,usageData:true},capabilities:{developer:false},analytics:enabled('a')};
+  sessionStore.subscribe(() => analytics.configureAnalytics(sessionStore.getSnapshot().session?.user ? sessionStore.getSnapshot().session.analytics : undefined,'web'));
+  let current;
+  function Account() { current=useSession(); return null; }
+  const root = createRoot(document.createElement('div'));
+  const peer = new BroadcastChannel('otto.auth');
+  let notices = 0;
+  const changes = [];
+  peer.onmessage = ({data}) => {notices++; changes.push(data);};
+  await act(async () => {root.render(createElement(Account)); await wait(100);});
+  if (scenario==='stale_peer_grant') {
+    phase='enabled';
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    phase='revoked';
+    let pending;
+    await act(async () => {pending=current.update({usageData:false}); await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    assert.equal(sdk.sessionRecordingStarted(),false);
+    await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
+    assert.equal(revokeSignal.aborted,false);
+    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    assert.equal(sdk.sessionRecordingStarted(),false);
+    await act(async () => {releasePatch(); await pending; await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    session = {...session,settings:{...session.settings,usageData:true},analytics:enabled('a')};
+    await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
+    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    assert.equal(sdk.sessionRecordingStarted(),false);
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    await wait(8000);
+    assert.equal(requests.filter(request => request.phase==='revoked').length,0);
+    assert.equal(requests.flatMap(events).length,0);
+    phase='renewed';
+    await act(async () => {await current.update({usageData:true}); await wait(100);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,true);
+    assert.equal(sdk.has_opted_out_capturing(),false);
+    assert.equal(sdk.sessionRecordingStarted(),true);
+    await act(async () => {root.unmount();});
+    peer.close();
+    dom.window.close();
+    process.exit(0);
+  }
+  if (scenario!=='cross_tab') {
+    phase='enabled';
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    delaySession=true;
+    let pending;
+    if (scenario==='failed_revoke') {
+      await act(async () => {void current.refresh(); await wait(20);});
+      await act(async () => {
+        pending = current.update({usageData:false}).then(() => {throw new Error('Expected failed revocation');}, cause => assert.match(cause.message,/Synthetic tenant synchronization failure/));
+        assert.equal(sdk.has_opted_out_capturing(),true);
+        assert.equal(sdk.sessionRecordingStarted(),false);
+        await wait(100);
+      });
+      assert.equal(notices,1);
+      assert.deepEqual(changes[0],{type:'usage-data',owner:'fixture-a',enabled:false});
+      assert.equal(typeof releasePatch,'function');
+    } else {
+      await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:false}); await wait(100);});
+      assert.equal(sdk.has_opted_out_capturing(),true);
+      assert.equal(sdk.sessionRecordingStarted(),false);
+    }
+    phase='revoked';
+    delaySession=false;
+    await act(async () => {releaseSession(); await wait(50);});
+    if (pending) await act(async () => {releasePatch(); await pending; await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
+    session = {...session,settings:{...session.settings,usageData:true},analytics:enabled('a')};
+    await act(async () => {await current.refresh(); await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    await wait(8000);
+    assert.equal(requests.filter(request => request.phase==='revoked').length,0);
+    assert.equal(requests.flatMap(events).length,0);
+    phase='renewed';
+    if (scenario==='failed_revoke') await act(async () => {await current.update({usageData:true}); await wait(100);});
+    else await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,true);
+    assert.equal(sdk.has_opted_out_capturing(),false);
+    assert.equal(sdk.sessionRecordingStarted(),true);
+    await act(async () => {root.unmount();});
+    peer.close();
+    dom.window.close();
+    process.exit(0);
+  }
+  await act(async () => {await current.update({usageData:false}); await wait(50);});
+  assert.equal(notices,1);
+  assert.equal(sdk.has_opted_out_capturing(),true);
+  await act(async () => {await current.update({usageData:true}); await wait(100);});
+  assert.equal(notices,2);
+  phase='enabled';
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  interact();
+  session = {...session,settings:{...session.settings,usageData:false},analytics:disabled};
+  delaySession=true;
+  await act(async () => {peer.postMessage('changed'); await wait(100);});
+  assert.equal(sdk.has_opted_out_capturing(),true);
+  assert.equal(sdk.sessionRecordingStarted(),false);
+  phase='revoked';
+  await wait(3500);
+  assert.equal(requests.filter(request => request.phase==='revoked').length,0);
+  assert.equal(requests.flatMap(events).length,0);
+  delaySession=false;
+  await act(async () => {releaseSession(); await wait(100); root.unmount();});
+  peer.close();
+  dom.window.close();
+  process.exit(0);
+}
+if (!['disabled','desktop_disabled'].includes(scenario)) {
+  phase='enabled';
+  analytics.configureAnalytics(enabled('a'),'web');
+  sdk.set_config({api_transport:'fetch',...(['retry','late_failure'].includes(scenario)?{request_batching:false}:{})});
+  await wait(scenario==='late_config'?100:350);
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  const previous = analyticsForCurrentSession();
+  const previousSession = sdk.get_session_id();
+  interact();
+  await wait(scenario==='replay'?750:50);
+  phase='transition';
+  analytics.configureAnalytics(disabled,'web');
+  assert.equal(sdk.sessionRecordingStarted(),false);
+  assert.equal(sdk.has_opted_out_capturing(),true);
+  phase='revoked';
+  previous('otto_ui_error',{area:'chat',action:'send'});
+  analytics.capturePageview('/apps');
+  interact();
+  if (releaseConfig) releaseConfig();
+  if (['owner_change','reoptin','late_failure','late_config'].includes(scenario)) {
+    await wait(50);
+    phase='renewed';
+    const owner = scenario==='owner_change'?'b':'a';
+    analytics.configureAnalytics(enabled(owner),'web');
+    analytics.captureAnalytics('otto_settings_viewed',{tab:'models'});
+    previous('otto_ui_error',{area:'chat',action:'send'});
+    await wait(100);
+    assert.equal(sdk.sessionRecordingStarted(),true);
+    assert.notEqual(sdk.get_session_id(),previousSession);
+    interact();
+  }
+  if (releaseFailure) releaseFailure();
+  await wait(['retry','late_failure'].includes(scenario)?12000:8000);
+  await sdk.shutdown();
+  await wait(100);
+  assert.equal(requests.filter(request => ['transition','revoked'].includes(request.phase)).length,0);
+  const renewed = requests.filter(request => request.phase==='renewed').flatMap(events);
+  assert.ok(renewed.every(event => event.event!=='otto_chat_stop_requested' && event.event!=='otto_ui_error' && event.properties.$session_id!==previousSession));
+  if (['owner_change','reoptin','late_failure','late_config'].includes(scenario)) {
+    assert.ok(renewed.some(event => event.event==='otto_settings_viewed'));
+    assert.ok(renewed.some(event => event.event==='$snapshot'));
+    assert.ok(renewed.every(event => event.properties.distinct_id==='hosted:fixture-'+(scenario==='owner_change'?'b':'a')));
+    assert.ok(renewed.every(event => event.properties.app_version==='0.1.0'));
+  }
+} else {
+  await wait(3500);
+  assert.equal(requests.length,0);
+}
+assert.ok(requests.flatMap(events).every(event => event.event!=='otto_ui_error'));
+dom.window.close();
+process.exit(0);
+`,
+            },
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+        }),
+      ),
+    );
+  },
+);
 
 test(
   'a legacy Vault proves the old key before it creates a key check and concurrent saves keep one account',

@@ -281,7 +281,7 @@ test('runtime bootstrap requires the fixed trusted gateway and forwarding preser
   assert.equal(forwarded.headers.get('x-otto-runtime'), 'signed-fixture');
 });
 
-test('tenant control permits only signed channel claims for the trusted owner', async () => {
+test('tenant control permits only signed channel and analytics requests for the trusted owner', async () => {
   const { env, calls, ownerId, tenantContext } = fixture();
   const control = TenantContainer.outboundByHost!['otto.control'];
   const request = (path: string, owner = ownerId) =>
@@ -304,6 +304,12 @@ test('tenant control permits only signed channel claims for the trusted owner', 
   assert.equal(forwarded.headers.get('cookie'), null);
   assert.equal(forwarded.url, 'https://otto.example.test/api/internal/channels/claim');
   assert.equal(await forwarded.text(), '{"provider":"telegram","accountId":"123456"}');
+  assert.equal((await control(request('/api/internal/analytics'), env, tenantContext)).status, 200);
+  assert.equal(calls[1].request!.url, 'https://otto.example.test/api/internal/analytics');
+  assert.equal(
+    (await control(request('/api/internal/analytics', randomUUID()), env, tenantContext)).status,
+    403,
+  );
   for (const path of [
     '/runtime/start',
     '/api/runtime/wake',
@@ -315,7 +321,7 @@ test('tenant control permits only signed channel claims for the trusted owner', 
       .status,
     403,
   );
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test('the scheduled wake targets only the configured gateway', async () => {

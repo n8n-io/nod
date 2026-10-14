@@ -8,6 +8,7 @@ import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
+import { createConversationAnalytics } from './conversation-analytics.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
@@ -85,7 +86,11 @@ import { createGateway } from './gateway.ts';
 import { createTenantStore } from './tenants.ts';
 import { createTenantRuntimeHost } from './runtime-host.ts';
 import { createChannelAccountRegistry } from './channel-account-registry.ts';
-import { createTenantControl, createTenantChannelRegistry } from './tenant-control.ts';
+import {
+  createTenantControl,
+  createTenantChannelRegistry,
+  createTenantAnalytics,
+} from './tenant-control.ts';
 import { createHostedWebhooks } from './hosted-webhooks.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
@@ -146,6 +151,7 @@ export interface ApplicationAdapters {
   integrations: IntegrationProvider;
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
+  analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
@@ -282,7 +288,20 @@ export function createDefaultAdapters(
   if (runtimeMode === 'tenant' && !objectStore)
     throw new Error('Private durable storage is required.');
   return {
-    ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
+    ...(analyticsEnabled(env)
+      ? {
+          analytics:
+            runtimeMode === 'tenant'
+              ? createTenantAnalytics({
+                  origin: env.OTTO_CONTROL_URL!,
+                  ownerId,
+                  environment: env.OTTO_ENVIRONMENT!,
+                  generation: env.OTTO_RUNTIME_GENERATION!,
+                  secret: env.OTTO_RUNTIME_SECRET!,
+                })
+              : createPostHogAnalytics(),
+        }
+      : {}),
     initialize: async () => {
       await models.initialize();
       await integrationKey?.initialize();
@@ -342,6 +361,7 @@ export function createDefaultAdapters(
     ...(integrationKey ? { integrationKey } : {}),
     keyStore,
     memoryCurator: modelCurator,
+    analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(
@@ -388,6 +408,8 @@ async function initializeApplication(
     environment: analyticsEnvironment(process.env),
     dataRoot,
     installationId: process.env.OTTO_ANALYTICS_ID,
+    appVersion:
+      process.env.OTTO_APP_VERSION || process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE,
   });
   const captureAnalytics = analytics.forOwner(ownerId);
   const admission = createWorkAdmission();
@@ -478,6 +500,7 @@ async function initializeApplication(
     keyStore: adapters.keyStore,
   });
   const discovered = await createDiscoveredConnections(pool, {
+    analytics: captureAnalytics,
     ownerId,
     baseUrl: publicOrigin,
     grantVault,
@@ -505,6 +528,7 @@ async function initializeApplication(
     ? cachedIcons((origin) => adapters.linkPreviews!.icon!(origin))
     : undefined;
   const integrations = await createIntegrations(pool, {
+    analytics: captureAnalytics,
     admission,
     ownerId,
     provider: adapters.integrations,
@@ -522,6 +546,7 @@ async function initializeApplication(
     icon,
   });
   vault = await createVault(pool, {
+    analytics: captureAnalytics,
     refresh,
     keyStore: adapters.keyStore,
     resume: resumeAfterCredentials,
@@ -545,6 +570,7 @@ async function initializeApplication(
       ),
   });
   browserConnections = await createBrowserConnections(pool, {
+    analytics: captureAnalytics,
     ownerId,
     computer,
     refresh,
@@ -612,12 +638,27 @@ async function initializeApplication(
         ),
       ),
   });
+  const localConsent = await localAccounts?.readConsent(ownerId);
   analytics.setUsageData(
     ownerId,
-    localAccounts
-      ? (await localAccounts.read(ownerId)).usageData
-      : ((await accountProfiles.read())?.usageData ?? false),
+    runtimeMode === 'tenant'
+      ? Boolean(
+          (await accountProfiles.read())?.usageData &&
+          (await adapters.analytics?.permitted?.().catch(() => false)),
+        )
+      : localConsent
+        ? localConsent.enabled
+        : ((await accountProfiles.read())?.usageData ?? false),
+    localConsent?.revision,
   );
+  const conversationAnalytics = createConversationAnalytics({
+    pool,
+    ownerId,
+    analytics,
+    curator: adapters.analyticsCurator ? ledger.curator(adapters.analyticsCurator) : curator,
+    secrets,
+  });
+  await conversationAnalytics.initialize();
   const accountProfile = async () =>
     runtimeAccount(
       localAccounts
@@ -682,6 +723,7 @@ async function initializeApplication(
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
     await startThreadWorkers({
       analytics: captureAnalytics,
+      observeTurn: conversationAnalytics.observe,
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),
@@ -1081,6 +1123,7 @@ async function initializeApplication(
     for (const close of [
       () => channels?.close(),
       () => stopThreadWorkers(),
+      () => conversationAnalytics.close(),
       finishWork,
       async () => {
         await runtime.dispose();
@@ -1138,8 +1181,17 @@ export async function createGatewayApplication(
     options: '-c search_path=otto_auth',
   });
   let runtimes: ReturnType<typeof createTenantRuntimeHost> | undefined;
+  const accounts = createAccountStore(authenticationDatabase);
   const analytics = await createAnalytics({
-    provider: analyticsEnabled(env) ? createPostHogAnalytics() : undefined,
+    provider: analyticsEnabled(env)
+      ? createPostHogAnalytics({
+          permitted: async (distinctId, revision) => {
+            if (!distinctId.startsWith('hosted:') || revision === undefined) return false;
+            const current = await accounts.readConsent(distinctId.slice(7));
+            return current.enabled && current.revision === revision;
+          },
+        })
+      : undefined,
     deployment: 'hosted',
     environment: analyticsEnvironment(env),
     dataRoot,
@@ -1154,7 +1206,6 @@ export async function createGatewayApplication(
       clientSecret: env.GOOGLE_CLIENT_SECRET || '',
     });
     await authentication.initialize();
-    const accounts = createAccountStore(authenticationDatabase);
     await accounts.initialize();
     const channelAccounts = createChannelAccountRegistry({ admin: pool, environment });
     await channelAccounts.initialize();
@@ -1200,6 +1251,16 @@ export async function createGatewayApplication(
         environment,
         accounts: channelAccounts,
         currentLease: tenants.currentLease,
+        analytics: {
+          consent: async (owner) => {
+            const current = await accounts.readConsent(owner);
+            return { ...current, enabled: analyticsEnabled(env) && current.enabled };
+          },
+          capture: (owner, event, delivery) => {
+            analytics.setUsageData(owner, true, delivery?.consentRevision);
+            analytics.capture(owner, event, delivery);
+          },
+        },
       }),
       webhook: createHostedWebhooks({
         runtimes,

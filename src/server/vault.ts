@@ -32,6 +32,7 @@ import { logFailure } from './failure-log.ts';
 import type { TurnRef } from './thread.ts';
 import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 const passwordInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -128,6 +129,7 @@ export type VaultUse = {
   reason: 'entered' | 'picked';
 };
 type VaultOptions = {
+  analytics?: CaptureAnalytics;
   refresh?(): void;
   onUse?(use: VaultUse, client: PoolClient): Promise<void>;
   onOwnerUse?(
@@ -625,10 +627,28 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
-  async function save(ownerId: string, raw: unknown, database?: PoolClient): Promise<VaultEntry> {
-    if (!database) {
-      return transaction((client) => save(ownerId, raw, client), pool);
-    }
+  function track(
+    item_type: 'login' | 'card',
+    operation: 'create' | 'update' | 'delete',
+    source?: 'user' | 'import' | 'agent',
+  ) {
+    options.analytics?.({
+      event: 'otto_vault_changed',
+      properties: { item_type, operation, ...(source ? { source } : {}) },
+    });
+  }
+
+  async function save(ownerId: string, raw: unknown, source?: 'user') {
+    const saved = await transaction((client) => saveEntry(ownerId, raw, client), pool);
+    if (saved.operation) track('login', saved.operation, source);
+    return saved.entry;
+  }
+
+  async function saveEntry(
+    ownerId: string,
+    raw: unknown,
+    database: PoolClient,
+  ): Promise<{ entry: VaultEntry; operation?: 'create' | 'update' }> {
     await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
       `otto-vault-items:${ownerId}`,
     ]);
@@ -652,7 +672,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     if (current) {
       const { entry, secret } = current;
       if (!input.password || input.password === secret.password)
-        return metadata(entry, input.username);
+        return { entry: metadata(entry, input.username) };
       const { rows } = await database.query<EntryRow>(
         'UPDATE vault_entries SET label=$3,ciphertext=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 AND ciphertext=$5 RETURNING *',
         [
@@ -666,7 +686,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           entry.ciphertext,
         ],
       );
-      if (rows[0]) return metadata(rows[0], input.username);
+      if (rows[0]) return { entry: metadata(rows[0], input.username), operation: 'update' };
     }
     const entry = {
       id: randomUUID(),
@@ -679,7 +699,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       'INSERT INTO vault_entries (id, owner_id, label, origin, username_hint, ciphertext) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
       [entry.id, ownerId, input.label, entry.origin, hint, ciphertext],
     );
-    return metadata(rows[0], input.username);
+    return { entry: metadata(rows[0], input.username), operation: 'create' };
   }
 
   async function importLogins(raw: unknown): Promise<VaultImportResult> {
@@ -751,6 +771,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         result.imported++;
       }
     }, pool);
+    for (let index = 0; index < result.imported; index++) track('login', 'create', 'import');
     return result;
   }
 
@@ -759,7 +780,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const input = updateInput.parse(raw);
     await ownedEntry(id);
     const credentialKey = await key();
-    return transaction(async (client) => {
+    let changed = false;
+    const entry = await transaction(async (client) => {
       const { rows } = await client.query<EntryRow>(
         'SELECT * FROM vault_entries WHERE id=$1 AND owner_id=$2 FOR UPDATE',
         [id, owner],
@@ -774,6 +796,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       }
       if (!input.username.trim() && !input.password && !secret.password)
         throw new VaultError('Add a username, email or password for this login.', 400);
+      changed =
+        input.label !== entry.label ||
+        input.username !== secret.username ||
+        Boolean(input.password && input.password !== secret.password);
       const ciphertext = sealCredential(credentialKey, entry, {
         username: input.username,
         password: input.password || secret.password,
@@ -790,6 +816,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
       return metadata(result.rows[0], input.username);
     }, pool);
+    if (changed) track('login', 'update', 'user');
+    return entry;
   }
 
   async function ownedCard(id: string, client?: PoolClient) {
@@ -857,7 +885,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       throw new VaultError('Otto never keeps security codes here.', 400);
     const id = z.uuid().parse(rawId);
     const credentialKey = await key();
-    return transaction(async (client) => {
+    let changed = false;
+    const entry = await transaction(async (client) => {
       const entry = (
         await client.query<CardRow>(
           'SELECT * FROM vault_cards WHERE id=$1 AND owner_id=$2 FOR UPDATE',
@@ -874,6 +903,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const { securityCode: previous, ...secret } = openCard(credentialKey, entry);
       const on = 'on' in change ? change.on : true;
       const kept = on ? ('code' in change ? change.code : previous) : undefined;
+      changed = on !== entry.do_it_for_me || kept !== previous;
       const { rows } = await client.query<CardRow>(
         'UPDATE vault_cards SET ciphertext=$3,do_it_for_me=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',
         [
@@ -896,6 +926,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         );
       return cardMetadata(rows[0]!);
     }, pool);
+    if (changed) track('card', 'update');
+    return entry;
   }
 
   const setDoItForMe = (id: string, on: boolean) => changeCardPermission(id, { on });
@@ -930,6 +962,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         input.securityCode ? true : null,
       ],
     );
+    track('card', 'create', 'user');
     return cardMetadata(rows[0]);
   }
 
@@ -943,7 +976,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       input.cardNumber === undefined ? undefined : normalizedCardNumber(input.cardNumber);
     await ownedCard(id);
     const credentialKey = await key();
-    return transaction(async (client) => {
+    let changed = false;
+    const entry = await transaction(async (client) => {
       const { rows } = await client.query<CardRow>(
         'SELECT * FROM vault_cards WHERE id=$1 AND owner_id=$2 FOR UPDATE',
         [id, owner],
@@ -952,13 +986,24 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       if (!entry) throw new VaultError('This saved card could not be found.', 404);
       const secret = openCard(credentialKey, entry);
       const number = replacement ?? secret.cardNumber;
+      const securityCode =
+        input.securityCode === null ? undefined : input.securityCode || secret.securityCode;
+      const doItForMe =
+        input.securityCode === null ? false : input.securityCode ? true : entry.do_it_for_me;
+      changed =
+        input.label !== entry.label ||
+        input.cardholder !== secret.cardholder ||
+        number !== secret.cardNumber ||
+        input.expiryMonth !== secret.expiryMonth ||
+        input.expiryYear !== secret.expiryYear ||
+        securityCode !== secret.securityCode ||
+        doItForMe !== entry.do_it_for_me;
       const ciphertext = sealCard(credentialKey, entry, {
         cardholder: input.cardholder,
         cardNumber: number,
         expiryMonth: input.expiryMonth,
         expiryYear: input.expiryYear,
-        securityCode:
-          input.securityCode === null ? undefined : input.securityCode || secret.securityCode,
+        securityCode,
       });
       const result = await client.query<CardRow>(
         `UPDATE vault_cards SET label=$3,brand=$4,last4=$5,expiry_month=$6,expiry_year=$7,ciphertext=$8,
@@ -983,6 +1028,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
       return cardMetadata(result.rows[0]);
     }, pool);
+    if (changed) track('card', 'update', 'user');
+    return entry;
   }
 
   async function currentTurn(
@@ -1309,6 +1356,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     let label: string | undefined;
     let heldPassword = '';
     let heldLabel = '';
+    let savedOperation: 'create' | 'update' | undefined;
     const result = await uses.run(use, {
       prepare: async (client) => {
         if (request) {
@@ -1501,19 +1549,20 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           if (
             (source.kind === 'form' && (input.kind === 'password' || !heldPassword)) ||
             (source.kind === 'selection' && input.kind === 'password' && !entryId)
-          )
-            entryId = (
-              await save(
-                ownerId,
-                {
-                  label: label ?? input.label,
-                  origin: input.origin,
-                  username: secret.username,
-                  password: input.kind === 'password' ? secret.password : '',
-                },
-                client,
-              )
-            ).id;
+          ) {
+            const saved = await saveEntry(
+              ownerId,
+              {
+                label: label ?? input.label,
+                origin: input.origin,
+                username: secret.username,
+                password: input.kind === 'password' ? secret.password : '',
+              },
+              client,
+            );
+            entryId = saved.entry.id;
+            savedOperation = saved.operation;
+          }
           await rememberSelection(client, {
             rootTurnId: root,
             ownerId,
@@ -1557,6 +1606,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         }
       },
     });
+    if (savedOperation) track('login', savedOperation, 'user');
     return result === true;
   }
 
@@ -1817,7 +1867,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .parse(request.body);
         if (kind === 'card') return saveCard(request.body);
         requireFullHost(request.body);
-        return save(owner, loginInput.parse(request.body));
+        return save(owner, loginInput.parse(request.body), 'user');
       });
       scope.patch<{ Params: { id: string } }>(
         '/api/vault/:id',
@@ -1936,11 +1986,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .send(Buffer.from(icon.bytes));
       });
       scope.delete<{ Params: { id: string } }>('/api/vault/:id', async (request) => {
-        await pool.query(
-          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2)
-           DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2`,
+        const removed = await pool.query<{ kind: 'login' | 'card' }>(
+          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING id),
+           card AS (DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2 RETURNING id)
+           SELECT 'login' AS kind FROM login UNION ALL SELECT 'card' AS kind FROM card`,
           [z.uuid().parse(request.params.id), owner],
         );
+        for (const row of removed.rows) track(row.kind, 'delete', 'user');
         return { ok: true };
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>

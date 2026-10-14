@@ -152,6 +152,9 @@ export async function createGateway(options: {
   const profileAccounts = new Map<string, StoredAccount>();
   const accountVersions = new Map<string, number>();
   const accountStore: AccountStore = {
+    ...(options.accounts.readConsent && {
+      readConsent: (ownerId: string) => options.accounts.readConsent!(ownerId),
+    }),
     async read(ownerId) {
       const version = accountVersions.get(ownerId);
       const account = await options.accounts.read(ownerId);
@@ -174,6 +177,7 @@ export async function createGateway(options: {
     ...options,
     accounts: accountStore,
     withProfile,
+    usageDataChanged: syncProfile,
     origin: origin.origin,
     prepare: (ownerId) => setup(ownerId, '/api/account/prepare'),
     start: (ownerId, name) => setup(ownerId, '/api/onboarding/start', { name }),
@@ -265,7 +269,8 @@ export async function createGateway(options: {
       (Boolean(deployment) && request.method === 'POST' && path === deploymentPath) ||
       (Boolean(options.internal) &&
         request.method === 'POST' &&
-        /^\/api\/internal\/channels\/(claim|release)$/.test(path)) ||
+        (/^\/api\/internal\/channels\/(claim|release)$/.test(path) ||
+          path === '/api/internal/analytics')) ||
       (Boolean(options.webhook) &&
         ((request.method === 'POST' &&
           (path === '/api/webhooks/composio' ||
@@ -386,9 +391,11 @@ export async function createGateway(options: {
       });
       return sendFetchResponse(reply, privateRuntimeResponse(await handler(input)));
     };
-    if (options.internal)
+    if (options.internal) {
       for (const path of ['claim', 'release'])
         app.post(`/api/internal/channels/${path}`, { bodyLimit: 4096 }, service);
+      app.post('/api/internal/analytics', { bodyLimit: 16_384 }, service);
+    }
     if (options.webhook) {
       app.post('/api/webhooks/composio', { bodyLimit: 262_144 }, service);
       app.post('/api/webhooks/telegram/:token', { bodyLimit: 262_144 }, service);

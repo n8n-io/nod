@@ -224,7 +224,11 @@ const controlOutbound: OutboundHandler<Bindings> = async (request, env, context)
       context.className !== 'TenantContainer' ||
       request.method !== 'POST' ||
       url.search ||
-      !['/api/internal/channels/claim', '/api/internal/channels/release'].includes(url.pathname)
+      ![
+        '/api/internal/channels/claim',
+        '/api/internal/channels/release',
+        '/api/internal/analytics',
+      ].includes(url.pathname)
     )
       throw new RuntimeControlError(403);
     const tenant = env.TENANTS.get(env.TENANTS.idFromString(context.containerId));

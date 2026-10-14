@@ -668,6 +668,11 @@ export function AccountSettings({
                       }}
                     />
                   </div>
+                  <p className="account-preference-hint" data-analytics-public>
+                    Includes app domains, task categories, timing, signs of friction and masked
+                    recordings. Your model analyzes chat text; messages, files and Vault values are
+                    never sent to PostHog.
+                  </p>
                 </>
               )}
               {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}

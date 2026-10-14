@@ -31,6 +31,8 @@ import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { privateEmailResult } from './integration-result.ts';
 import { withoutSecretKeys } from './redaction.ts';
+import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
+import { captureConnection, withServiceAnalytics } from './analytics-connections.ts';
 import {
   hasWorkspaceFiles,
   uploadWorkspaceFiles,
@@ -106,6 +108,7 @@ type ConnectionRow = {
 };
 type IntegrationOptions = {
   admission?: WorkAdmission;
+  analytics?: CaptureAnalytics;
   ownerId: string;
   wake(
     prompt: string,
@@ -179,6 +182,29 @@ export function eventOverview(toolkit: string, trigger: string, data: Record<str
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
   const configuredOwner = z.string().min(1).max(200).parse(options.ownerId);
   const provider = options.provider;
+  function track(
+    app: string,
+    status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
+    failureReason?: Extract<
+      AnalyticsEvent,
+      { event: 'otto_connection_changed' }
+    >['properties']['failure_reason'],
+  ) {
+    captureConnection(
+      options.analytics,
+      { app, connection_method: 'managed_app' },
+      status,
+      failureReason,
+    );
+  }
+  function connectionFailure(error: unknown) {
+    if (error instanceof IntegrationAuthConfigurationError) return 'invalid_configuration';
+    if (error instanceof IntegrationConnectionError)
+      return error.reason === 'authorization' || error.reason === 'permission'
+        ? 'authorization_failed'
+        : 'unavailable';
+    return 'unknown';
+  }
   const providerId = z
     .string()
     .regex(/^[a-z][a-z0-9-]{0,39}$/)
@@ -698,8 +724,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const nonce = randomBytes(32).toString('base64url');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
     callbackUrl.searchParams.set('state', nonce);
-    const session = await provider.createSession(configuredOwner, {});
+    track(slug, 'started');
+    let session: IntegrationSession | undefined;
     try {
+      session = await provider.createSession(configuredOwner, {});
       const attempt = await session.authorize(slug, callbackUrl.href);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
@@ -722,8 +750,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         ],
       );
       return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
+    } catch (error) {
+      track(slug, 'failed', connectionFailure(error));
+      throw error;
     } finally {
-      provider.deleteSession(session.id).catch(() => {});
+      if (session) provider.deleteSession(session.id).catch(() => {});
     }
   }
 
@@ -799,6 +830,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (!reserved.rowCount)
       throw new IntegrationError('This connected account changed. Try again.', 409);
     await discardReconnect(reserved.rows[0]);
+    track(slug, 'started');
     let attemptedId: string | undefined;
     try {
       const attempt = await provider.reconnectAccount(
@@ -837,6 +869,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       const cleared = await clearReconnect(row.id, hash);
       if (attemptedId && cleared !== attemptedId) await discardReconnect(row, attemptedId);
+      track(slug, 'failed', connectionFailure(error));
       throw error;
     }
   }
@@ -934,6 +967,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
       }
     }, pool);
+    track(row.slug, 'connected');
     if (row.account_id) {
       if (previousTrigger) await provider.unsubscribe(previousTrigger).catch(() => {});
       if (row.account_id !== row.pending_account_id)
@@ -974,6 +1008,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         [row.id, configuredOwner],
       );
     }, pool);
+    if (!row.revoked) track(row.slug, 'disconnected');
     if (row.trigger_id) await provider.unsubscribe(row.trigger_id);
     if (row.account_id) await provider.deleteAccount(row.account_id);
     if (row.pending_account_id && row.pending_account_id !== row.account_id)
@@ -1056,7 +1091,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const current = await selectedConnection(ownerId, action, args);
         if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
         signal?.throwIfAborted();
-        return session.execute(action, providerArgs, row.account_id!, signal);
+        return withServiceAnalytics(
+          options.analytics,
+          { app: row.slug, connection_method: 'managed_app' },
+          () => session.execute(action, providerArgs, row.account_id!, signal),
+          signal,
+        );
       });
     } catch (error) {
       throw new IntegrationError(failure('The app request failed', error), 502);
@@ -1688,18 +1728,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 const result = await provider.parseCallback(request.query);
                 if (!result.success) {
                   outcome = 'cancelled';
-                  await pool.query(
+                  const deleted = await pool.query(
                     'DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NULL',
                     [row.id, configuredOwner, hash],
                   );
-                  await clearReconnect(row.id, hash);
+                  const cleared = await clearReconnect(row.id, hash);
+                  if (deleted.rowCount || cleared) track(row.slug, 'failed', 'cancelled');
                 } else {
                   const resumed = await completeConnection(result, row);
                   outcome = resumed && returnTo === 'chat' ? 'continued' : 'connected';
                 }
               } catch {
                 outcome = 'failed';
+                const pending = await pool.query(
+                  'SELECT 1 FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3',
+                  [row.id, configuredOwner, hash],
+                );
                 await clearReconnect(row.id, hash);
+                if (pending.rowCount) track(row.slug, 'failed', 'verification_failed');
               }
             } else await clearReconnect(row.id, hash);
           } else if (options.discovered) {
