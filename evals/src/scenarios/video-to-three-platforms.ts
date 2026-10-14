@@ -53,6 +53,8 @@ const platforms: Platform[] = [
 ];
 
 const approval = 'Looks good, post them.';
+const presentsCaptions =
+  /^(?=[\s\S]*\b(?:youtube|shorts|shortsy)\b)(?=[\s\S]*\b(?:tiktok|tiktoc)\b)(?=[\s\S]*\b(?:linkedin|linkwork)\b)(?=[\s\S]*(?:caption|title|post|#))/i;
 const approvedAt = (run: { userMessages: Array<{ at: number; text: string }> }) =>
   run.userMessages.find((message) => message.text === approval)?.at ?? Number.MAX_SAFE_INTEGER;
 
@@ -127,7 +129,7 @@ export default scenario({
   calibration: 'pending',
   user: {
     approve: true,
-    answers: [{ when: /caption|post|publish|upload|share/i, say: approval }],
+    answers: [{ when: presentsCaptions, say: approval }],
     persona:
       'You are Alex Rivera. The attached studio-launch-teaser.mp4 is the final teaser for your new studio website launch: five seconds of title cards, no sound. Your logins are in the vault.',
   },

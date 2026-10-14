@@ -17,11 +17,20 @@ const meetings: Meeting[] = [
   { summary: '1:1 with Priya', keyword: 'priya', offset: 270, minutes: 30 },
 ];
 
+function clock(match: RegExpMatchArray) {
+  const hour = Number(match[1]);
+  const meridiem = (match[3] ?? match[4])?.toLowerCase();
+  const hours = meridiem ? (hour % 12) + (meridiem === 'p' ? 12 : 0) : hour;
+  return hours * 60 + Number(match[2]);
+}
+
 function listedAtItsTime(text: string, meeting: Meeting) {
   return text.split('\n').some((line) => {
-    const times = [...line.matchAll(/\b(\d{1,2})[:.](\d{2})(?:\s*[–-]\s*\d{1,2}[:.]\d{2})?/g)].map(
-      (match) => ({ at: match.index, minutes: Number(match[1]) * 60 + Number(match[2]) }),
-    );
+    const times = [
+      ...line.matchAll(
+        /\b(\d{1,2})[:.](\d{2})(?:\s*([ap])\.?m\b\.?)?(?:\s*[–-]\s*\d{1,2}[:.]\d{2}(?:\s*([ap])\.?m\b\.?)?)?/gi,
+      ),
+    ].map((match) => ({ at: match.index, minutes: clock(match) }));
     const lower = line.toLowerCase();
     for (
       let at = lower.indexOf(meeting.keyword);
