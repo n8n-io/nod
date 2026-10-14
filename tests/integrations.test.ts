@@ -6756,7 +6756,7 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',run_id uuid,parent_run_id uuid,session_id uuid,browser_id text,call_id uuid,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
@@ -7041,13 +7041,16 @@ test(
         await session.prompt('Synthetic request', []);
         await session.dispose();
       }
-      const execution = (await app.inject(`/api/trust/turns/${chat}`)).json();
       const usageIds = new Set([
         rootUsage.type === 'model_usage' ? rootUsage.id : '',
         childUsage.type === 'model_usage' ? childUsage.id : '',
         reviewId,
       ]);
-      const recorded = execution.usage.filter((item: { id: string }) => usageIds.has(item.id));
+      const { rows: recorded } = await pool.query(
+        `SELECT id,run_id AS "runId",parent_run_id AS "parentRunId",session_id AS "sessionId",details
+         FROM model_usage WHERE owner_id=$1 AND turn_id=$2 AND id=ANY($3::text[])`,
+        ['owner', chat, [...usageIds]],
+      );
       assert.equal(recorded.length, 3);
       assert.equal(
         recorded.filter((item: { runId: string }) => item.runId === childRunId).length,
@@ -7055,9 +7058,11 @@ test(
       );
       assert.ok(recorded.every((item: { sessionId: string }) => item.sessionId === sessionId));
       assert.equal(recorded.find((item: { id: string }) => item.id === reviewId).parentRunId, chat);
-      assert.equal(recorded.find((item: { runId: string }) => item.runId === chat).inputTokens, 4);
+      assert.equal(
+        recorded.find((item: { runId: string }) => item.runId === chat).details.inputTokens,
+        4,
+      );
       assert.equal(Math.round((await ledger.messageCosts([chat]))[chat].costUsd! * 100) / 100, 0.9);
-      assert.equal((await app.inject(`/api/trust/turns/${foreign}`)).statusCode, 404);
       assert.equal(
         (await pool.query("SELECT count(*)::int AS n FROM model_usage WHERE details ? 'costUsd'"))
           .rows[0].n,

@@ -879,12 +879,10 @@ test(
           await waitFor(settledThread);
           const threadId = (await thread.activeThread(db.pool)).id;
           let release = () => {};
-          sessionGates.set(
-            'session-fixture-first',
-            new Promise<void>((resolve) => {
-              release = resolve;
-            }),
-          );
+          const gate = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          sessionGates.set('session-fixture-first', gate);
           const first = await thread.enqueueTurn('session-fixture-first', {
             source: 'event',
             sourceId: `session-fixture:${randomUUID()}`,
@@ -895,12 +893,24 @@ test(
             background: true,
             sessionId: first,
           });
+          const parallel: string[] = [];
+          for (let index = 0; index < 3; index++) {
+            const prompt = `session-fixture-parallel-${index}`;
+            sessionGates.set(prompt, gate);
+            parallel.push(
+              await thread.enqueueTurn(prompt, {
+                source: 'event',
+                sourceId: `session-fixture:${randomUUID()}`,
+              }),
+            );
+          }
           const other = await thread.enqueueTurn('session-fixture-other', {
             source: 'event',
             sourceId: `session-fixture:${randomUUID()}`,
           });
           try {
             await waitFor(settled(other));
+            assert.ok((await Promise.all(parallel.map(turnStatus))).every((s) => s === 'running'));
             const chat = await thread.submitUserMessage('while a session works', [], {
               channel: 'web',
             });
@@ -912,6 +922,7 @@ test(
             release();
           }
           await waitFor(settled(next));
+          await Promise.all(parallel.map((id) => waitFor(settled(id))));
           assert.equal(await turnStatus(next), 'succeeded');
           assert.equal(ran(first)?.sessionId, first);
           assert.equal(ran(next)?.sessionId, first);

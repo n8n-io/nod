@@ -39,7 +39,7 @@ flowchart TD
   each -- yes --> wait[Leave it queued]:::muted
 ```
 
-The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts one chat turn and up to three background turns without waiting for them. When a turn finishes, it queues the next drain.
+The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns from independent sessions without waiting for them. When a turn finishes, it queues the next drain.
 
 ## Turn status
 
@@ -106,7 +106,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.
-- **Limits.** At most two subagents run across all turns. Further calls wait. A paused turn cannot start a queued subagent. A subagent cannot delegate, ask the owner, sign in, pay, or open saved browser sessions.
+- **Tools.** A subagent cannot delegate, ask the owner, sign in, pay, or open saved browser sessions. A paused turn cannot start another subagent.
 - **Browsers.** A subagent's browser is deleted when it finishes.
 - **Files.** Each subagent starts in `.otto/runs/<run ID>` inside the shared workspace. It returns complete file paths to its parent.
 - **Outcomes.** Model failures and incomplete responses return as errors. They do not count as successful empty answers.

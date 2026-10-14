@@ -26,29 +26,3 @@ export interface UsageDetails {
   costUsd?: number | null;
   pricing?: 'reported' | 'sdk_estimate' | 'unavailable';
 }
-
-export interface ExecutionReport {
-  turnId: string;
-  events: Array<{
-    id: string;
-    runId: string | null;
-    parentRunId: string | null;
-    sessionId: string | null;
-    browserId: string | null;
-    callId: string | null;
-    type: string;
-    summary: string;
-    createdAt: string;
-  }>;
-  usage: Array<
-    UsageDetails & {
-      id: string;
-      runId: string | null;
-      parentRunId: string | null;
-      sessionId: string | null;
-      browserId: string | null;
-      costUsd: number | null;
-      createdAt: string;
-    }
-  >;
-}

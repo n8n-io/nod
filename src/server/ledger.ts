@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { Agent } from '../ports/agent.ts';
-import type { ExecutionScope, ExecutionReport } from '../shared/execution.ts';
+import type { ExecutionScope } from '../shared/execution.ts';
 import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
@@ -329,31 +329,6 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/trust', () => read());
-    app.get('/api/trust/turns/:id', async (request, reply) => {
-      const { id } = z.object({ id: z.uuid() }).parse(request.params);
-      if (
-        !(await pool.query('SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2', [id, ownerId]))
-          .rowCount
-      )
-        return reply.code(404).send({ error: 'This execution is unavailable.' });
-      const [events, usage] = await Promise.all([
-        pool.query(
-          `SELECT e.id,e.run_id AS "runId",e.parent_run_id AS "parentRunId",e.session_id AS "sessionId",e.browser_id AS "browserId",e.call_id AS "callId",e.type,e.summary,e.created_at AS "createdAt"
-          FROM turn_events e JOIN turns u ON u.id=e.turn_id WHERE u.id=$1 AND u.owner_id=$2 ORDER BY e.created_at,e.id`,
-          [id, ownerId],
-        ),
-        pool.query(
-          `SELECT id,run_id AS "runId",parent_run_id AS "parentRunId",session_id AS "sessionId",browser_id AS "browserId",cost_usd AS "costUsd",details,created_at AS "createdAt"
-          FROM model_usage WHERE turn_id=$1 AND owner_id=$2 ORDER BY created_at,id`,
-          [id, ownerId],
-        ),
-      ]);
-      return {
-        turnId: id,
-        events: events.rows,
-        usage: usage.rows.map(({ details, ...row }) => ({ ...details, ...row })),
-      } satisfies ExecutionReport;
-    });
     app.get('/api/trust/entries', (request) =>
       entries(z.object({ at: z.iso.datetime(), id: z.uuid() }).strict().parse(request.query)),
     );

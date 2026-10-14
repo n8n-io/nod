@@ -11,11 +11,11 @@ The short version: `src/runtime` runs each turn in a Pi session. Every tool call
 
 ## Pi sessions
 
-Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) runs one chat turn and up to three background turns at once. Each session runs one turn at a time:
+Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
 - Background sessions save their transcript too. A reply or secure form continues that session.
-- Subagents use temporary in-memory Pi sessions. At most two subagents run across the owner's turns.
+- Subagents use temporary in-memory Pi sessions and run in parallel.
 
 Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets new background messages since its previous turn started.
 
@@ -28,9 +28,6 @@ Tools and model usage keep this scope. `turn_events` records execution and tool 
 `model_usage` is the only cost ledger. Each model request reports one usage ID, including subagent, compaction, review, and memory requests.
 Repeated reports with the same ID create no extra charge record. Parent runs never add child costs again.
 All totals come from these ledger rows. Missing prices stay unknown.
-
-In **Settings → Trust & cost**, expand **Work and usage** to see agent activity and each model request.
-The view reads the same ledger, including model names, token counts, cache use, and costs.
 
 ## Keeping the context small
 

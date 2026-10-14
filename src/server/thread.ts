@@ -737,7 +737,6 @@ async function claimTurns(threadId: string) {
     const sessions = new Set(busy.rows.map((row) => row.session_id as string));
     const claimed = rows.filter((row) => {
       if (sessions.has(row.session_id)) return false;
-      if (row.background && [...sessions].filter((id) => id !== threadId).length >= 3) return false;
       sessions.add(row.session_id);
       return true;
     });

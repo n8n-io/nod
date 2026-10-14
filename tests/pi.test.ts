@@ -1805,7 +1805,7 @@ function context(directory: string): RuntimeContext {
   };
 }
 
-test('delegated subagents run two at a time, each in its own browser, and answer as untrusted data', async (t) => {
+test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const opened = new Map<string, string>();
@@ -1839,12 +1839,11 @@ test('delegated subagents run two at a time, each in its own browser, and answer
               tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` }),
             ),
           );
-          for (let wait = 0; started.length < 2 && wait < 200; wait++) await setTimeout(5);
-          await setTimeout(50);
+          for (let wait = 0; started.length < 3 && wait < 200; wait++) await setTimeout(5);
           const first = [...started].sort();
           release();
           results = await pending;
-          assert.deepEqual(first, ['shop-a', 'shop-b']);
+          assert.deepEqual(first, ['shop-a', 'shop-b', 'shop-c']);
         },
       }),
       dispose() {},
@@ -1929,10 +1928,11 @@ test('a subagent returns its question to the parent before the parent pauses', a
   }
 });
 
-test('a paused turn cannot start a queued subagent and failed children return errors', async (t) => {
+test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-stop-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   let opened = 0;
+  let preparing = 0;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -1957,7 +1957,7 @@ test('a paused turn cannot start a queued subagent and failed children return er
             const pending = [1, 2, 3].map((number) =>
               delegate.execute({ title: `Check ${number}`, instruction: 'Run a synthetic check.' }),
             );
-            for (let wait = 0; opened < 2 && wait < 200; wait++) await setTimeout(5);
+            for (let wait = 0; preparing < 3 && wait < 200; wait++) await setTimeout(5);
             await input.tools
               .find((tool) => tool.name === 'ask_user')!
               .execute({ question: 'Which source should I use?' });
@@ -1979,7 +1979,16 @@ test('a paused turn cannot start a queued subagent and failed children return er
       dispose() {},
     },
     computer: fakeComputer(),
-    workspace: fakeWorkspace(),
+    workspace: fakeWorkspace({
+      open: () => ({
+        path: '/fixture/workspace',
+        instructions: 'Fixture workspace only.',
+        exec: async () => {
+          if (++preparing === 3) await gate;
+          return { exitCode: 0 };
+        },
+      }),
+    }),
   });
   try {
     assert.equal(

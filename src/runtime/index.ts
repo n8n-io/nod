@@ -91,8 +91,6 @@ export function createAgentRuntime(dependencies: {
   let disposed = false;
   let disposal: Promise<void> | undefined;
   const completedDisposals = new Set<string>();
-  let delegates = 0;
-  const delegateQueue: Array<() => void> = [];
 
   async function runTurn(input: RuntimeContext): Promise<RuntimeResult> {
     if (disposed) throw new Error('The runtime has stopped.');
@@ -386,31 +384,6 @@ export function createAgentRuntime(dependencies: {
         confirm,
       };
       const delegate = async (title: string, instruction: string) => {
-        assertActive();
-        if (delegates < 2) delegates += 1;
-        else
-          await new Promise<void>((resolve, reject) => {
-            const start = () => {
-              signal.removeEventListener('abort', stop);
-              resolve();
-            };
-            const stop = () => {
-              delegateQueue.splice(delegateQueue.indexOf(start), 1);
-              reject(signal.reason);
-            };
-            delegateQueue.push(start);
-            signal.addEventListener('abort', stop, { once: true });
-          });
-        try {
-          assertActive();
-          return await subagent(title, instruction);
-        } finally {
-          const next = delegateQueue.shift();
-          if (next) next();
-          else delegates -= 1;
-        }
-      };
-      const subagent = async (title: string, instruction: string) => {
         assertActive();
         const runId = randomUUID();
         const childBrowser = runId;

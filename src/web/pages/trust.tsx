@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { CalendarClock, MessageCircle, Pencil, ScanSearch, Undo2, Zap } from 'lucide-react';
 import type { TrustEntry, TrustSource, TrustView } from '../../shared/trust';
-import type { ExecutionReport } from '../../shared/execution';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
@@ -242,86 +241,6 @@ function Cost({ view, onSaved }: { view: TrustView; onSaved(): void }) {
   );
 }
 
-function ExecutionDetails({ turnId }: { turnId: string }) {
-  const [report, setReport] = useState<ExecutionReport>();
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  async function load(open: boolean) {
-    if (!open || report || loading) return;
-    setLoading(true);
-    try {
-      setReport(await api<ExecutionReport>(`/api/trust/turns/${turnId}`));
-      setError('');
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setLoading(false);
-    }
-  }
-  const agents = new Map(
-    report?.events
-      .filter((event) => event.type === 'agent_start')
-      .map((event) => [event.runId, event.summary]),
-  );
-  return (
-    <details className="execution-report" onToggle={(event) => void load(event.currentTarget.open)}>
-      <summary>Work and usage</summary>
-      {loading && <Loading label="Loading usage…" />}
-      {error && <Notice kind="error">{error}</Notice>}
-      {report && (
-        <>
-          <ol>
-            {report.events
-              .filter((event) => event.type.startsWith('agent_'))
-              .map((event) => (
-                <li key={event.id}>
-                  {agents.get(event.runId) ?? event.summary}: {event.type.slice('agent_'.length)}
-                </li>
-              ))}
-          </ol>
-          <div className="execution-usage">
-            <table>
-              <thead>
-                <tr>
-                  <th>Work</th>
-                  <th>Model</th>
-                  <th>Input tokens</th>
-                  <th>Output tokens</th>
-                  <th>Cached tokens read</th>
-                  <th>Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.usage.map((usage) => (
-                  <tr key={usage.id}>
-                    <td>
-                      {agents.get(usage.runId) ?? usage.category ?? 'Model work'} ·{' '}
-                      {usage.operation ?? 'request'}
-                    </td>
-                    <td>{usage.model ?? 'Unknown'}</td>
-                    <td>
-                      {usage.inputTokens === undefined ? '—' : formatNumber(usage.inputTokens)}
-                    </td>
-                    <td>
-                      {usage.outputTokens === undefined ? '—' : formatNumber(usage.outputTokens)}
-                    </td>
-                    <td>
-                      {usage.cacheReadTokens === undefined
-                        ? '—'
-                        : formatNumber(usage.cacheReadTokens)}
-                    </td>
-                    <td>{usage.costUsd === null ? 'Price unavailable' : money(usage.costUsd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </details>
-  );
-}
-
 function Entry({ entry }: { entry: TrustEntry }) {
   const format = useDateFormat();
   const { icon: Icon, label } = sources[entry.source];
@@ -335,7 +254,6 @@ function Entry({ entry }: { entry: TrustEntry }) {
           {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
-        <ExecutionDetails turnId={entry.id} />
       </div>
       <span
         className="statement-entry-end"
