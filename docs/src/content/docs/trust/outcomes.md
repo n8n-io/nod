@@ -35,16 +35,17 @@ stateDiagram-v2
 
 When you say yes to an app action, the server runs that saved action once. If it fails or is interrupted, it becomes uncertain, and Otto asks you to check the app before trying again. It never runs again on its own.
 
-## Tasks and actions aren't retried
+## Work and actions aren't retried
 
-| What                                   | If it fails                                                                                                                                             |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A task                                 | It ends with a message asking you to check what happened, or say continue                                                                               |
-| A tool call                            | It isn't repeated                                                                                                                                       |
-| A confirmed app action                 | It becomes uncertain                                                                                                                                    |
-| A private entry or payment             | It becomes uncertain                                                                                                                                    |
-| A saved login that doesn't get through | Otto checks the page and doesn't enter that login again in the task. The next try opens the private form, where you pick a login or type a new password |
-| A model request                        | The one exception: a temporary provider error is retried up to three times                                                                              |
+| What                                    | If it fails                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A request in the chat                   | It ends with a message asking you to check what happened, or say continue                                                                               |
+| A [task](/use/tasks/#when-a-task-fails) | It closes as **Failed** with a note. Check what happened, then reply to it to pick it up again                                                          |
+| A tool call                             | It isn't repeated                                                                                                                                       |
+| A confirmed app action                  | It becomes uncertain                                                                                                                                    |
+| A private entry or payment              | It becomes uncertain                                                                                                                                    |
+| A saved login that doesn't get through  | Otto checks the page and doesn't enter that login again in the task. The next try opens the private form, where you pick a login or type a new password |
+| A model request                         | The one exception: a temporary provider error is retried up to three times                                                                              |
 
 ## Stop and restarts
 

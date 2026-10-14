@@ -74,7 +74,7 @@ If a run comes due while Otto is closed, it runs once when Otto is running again
 
 ## Related resources
 
-- [Track tasks](/use/tasks/)
+- [Tasks](/use/tasks/)
 - [Chat with Otto](/use/chat/)
 - [Telegram and WhatsApp](/use/channels/)
 - [Approvals and the trust check](/trust/approvals/)

@@ -20,14 +20,14 @@ Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 You don't have to wait. The message box stays open while Otto works.
 
-A short follow-up, such as "also check Friday", joins the task that's running. Otto reads it before its next step. A message with attachments, a reply to a specific message or a message from another app waits in line and runs as its own request. A reply to a message of a [task](/use/tasks/) goes to that task instead, and a working task reads it before its next step.
+A short follow-up, such as "also check Friday", joins the work in progress. Otto reads it before its next step. A message with attachments, a reply to a specific message or a message from another app waits in line and runs as its own request. A reply to a message of a [task](/use/tasks/) goes to that task instead, and a working task reads it before its next step.
 
 ```mermaid
 flowchart LR
   new[You send a message] --> busy{{Is Otto<br/>working?}}
   busy -- no --> run[Otto starts on it]:::go
   busy -- yes --> plain{{Plain text<br/>from the same app?}}
-  plain -- yes --> join[Joins the running task]:::accent
+  plain -- yes --> join[Joins the work<br/>in progress]:::accent
   plain -- no --> queue[Waits for its own turn]:::muted
 ```
 
@@ -38,14 +38,16 @@ Long work, such as research in the browser or waiting for a reply, runs as a [ta
 When two or more tasks are open, or a task needs you, the Tasks strip shows above the message box:
 
 - Each task shows its title and status. Select it to scroll to its "On it" message and open its card.
-- **Stop** next to a task stops only that task.
+- The stop button next to a task stops only that task.
 - **Stop all** stops the chat, every task and the background runs that are working.
 
-When a task asks for a yes or no, select **Yes** or **No** under its question. That answers only that question.
+When a task asks for a yes or no, select **Yes** or **No** under its question. That answers only that question. To add to a task or answer it in your own words, reply to any of its messages. See [Add to a task or change it](/use/tasks/#add-to-a-task-or-change-it).
 
 ## Answer Otto's questions
 
 When Otto needs a decision, an approval or your help in its browser, it asks and stops. Your next message is the answer, and Otto continues from there. For actions that need a yes or no, see [Approvals](/trust/approvals/).
+
+A task's question waits for your reply to that task instead, so the chat stays free. See [Answer a task's question](/use/tasks/#answer-a-tasks-question).
 
 Otto doesn't ask for passwords or card numbers in chat. It uses a saved login or a private form instead. See [Vault](/trust/vault/).
 
@@ -55,7 +57,7 @@ To stop Otto, select **Stop** next to the send button.
 
 Stop ends the chat's running work and cancels your queued messages and the chat's open questions. It stops only the chat: tasks and background runs, such as a schedule that's running, keep going. To stop one task, select **Stop task** in its card. To stop everything, select **Stop all** in the Tasks strip or on the Tasks page. See [Stop a task](/use/tasks/#stop-a-task). Stop can't undo something that already happened, such as an email that was already sent.
 
-Otto never repeats a task on its own. If a task fails or Otto restarts in the middle of one, it tells you. Check what happened, then say "continue" if you want it to carry on.
+Otto never repeats work on its own. If a request fails or Otto restarts in the middle of one, it tells you. Check what happened, then say "continue" if you want it to carry on. A task that fails closes as **Failed** instead. Reply to it to pick it up again.
 
 ## Choose the model
 
@@ -84,11 +86,12 @@ Otto has no button for a new conversation in normal use. When you run Otto from 
 | The chat you see and Otto's working context | Your earlier messages, stored but no longer shown |
 | The workspace folder                        | Memory, connected apps and Vault                  |
 | The browser, with its temporary downloads   | Saved browser sessions and saved browser routines |
-| Running and queued work, which is cancelled | Tasks and schedules                               |
+| Running and queued work, which is cancelled | Schedules                                         |
+| Open tasks, which close as **Stopped**      | Earlier tasks on the **Tasks** page               |
 
 ## Related resources
 
-- [Track tasks](/use/tasks/)
+- [Tasks](/use/tasks/)
 - [Schedules and background work](/use/schedules/)
 - [Workspace and files](/use/workspace/)
 - [Telegram and WhatsApp](/use/channels/)

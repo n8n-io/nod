@@ -15,7 +15,7 @@ Open **Settings → Trust & cost** (⌘I on a Mac, Ctrl+I elsewhere).
 
 - **The last 7 days.** One line with how many things Otto did, how many reached other people and what it spent.
 - **This month.** What Otto has spent so far, a chart and a forecast, such as "On track for $12.40".
-- **The statement.** Every request that cost money or acted in a connected app, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Otto did and the cost.
+- **The statement.** Every request that cost money or acted in a connected app, grouped by day. Each line shows where it came from, such as **Schedule**, **Task**, **Activity check** or **Approved action**, what Otto did and the cost.
 
 Reads in your apps aren't recorded as actions. Changes and sends are.
 
@@ -42,6 +42,7 @@ flowchart LR
 When the month's spending reaches your limit:
 
 - New chat messages, schedules and background work stop before Otto calls the model. Chat shows that it's paused.
+- A [task](/use/tasks/) that starts work again, such as after your reply, stops the same way. It closes as **Failed**, with the limit notice as its note. Reply to it after the pause lifts to pick it up again.
 - Work that's already running can finish.
 - An action you already approved still runs once.
 

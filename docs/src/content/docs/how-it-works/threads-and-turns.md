@@ -7,7 +7,7 @@ sidebar:
 
 This page explains how Otto turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, and every schedule fire and app event is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, each task is one, and every schedule fire and app event is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -73,13 +73,13 @@ The composer never blocks. After each Pi step, a running chat or task turn takes
 
 A closed turn like this is newer than the turn that took its message. So when the server checks whether a session is busy or waits for you, it reads the status of the session's turns, not which turn is newest. A session with a queued, running or waiting turn keeps its saved browser session, and the turn that took your message can still pay, pause the browser view for a secure form and hand its browser to you.
 
-A message with attachments or from another channel stops the take. It and every message after it stay queued and run as their own turns. In the chat, a reply target stops the take too. In a task it doesn't, because your messages reach a task as replies to it or as messages the chat moved there. A task turn reads them as corrections or additions to the task. Schedule, event and read-only turns never take queued messages.
+A message with attachments or from another channel stops the take. It and every message after it stay queued and run as their own turns. In the chat, a reply target stops the take too. In a task it doesn't, because your messages reach a task as replies to it or as messages the chat moved there. They all carry the task's channel, so in a task a reply from another app doesn't stop the take either. A task turn reads them as corrections or additions to the task. Schedule, event and read-only turns never take queued messages.
 
 Steering reaches only the turn's own Pi session, never a running subagent. A subagent finishes its part without your message, and the turn reads the message at its next step, after the subagents of that step return.
 
 ## Waiting and resuming
 
-A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
+A question, an approval or a credential request ends the turn as `waiting`. In the chat, your next message is the next turn in the same Pi session. In a task, your reply to one of the task's messages is. See [Replies to a task](#replies-to-a-task).
 
 A secure form or a verification code request stays open until a later turn starts in the same session. A payment request stays open until you send a newer message to the session that asked for it. So a chat message doesn't close a schedule or event session's sign-in or payment. A code you send as a reply goes to the request of the session that wrote the message you replied to. A task's "On it" message belongs to the task, so a code that replies to it goes to the task's request.
 
@@ -189,7 +189,7 @@ sequenceDiagram
   participant W as Shared workspace
   C->>W: One turn at a time, saved Pi session
   T->>W: In parallel, one turn at a time each
-  T-->>C: Messages sent with send_message
+  T-->>C: send_message, a task's result
   Note over C: Next chat turn sees them
 ```
 
@@ -256,7 +256,7 @@ Stop works on one session or on all of them:
 | One task      | `POST /api/tasks/<id>/stop`             |
 | Every session | `POST /api/thread/stop`                 |
 
-**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** on the **Browser** page stops only the session whose browser it shows. That's always the chat for now, so it stops the chat and never a task.
+**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** in a task's card or in the Tasks strip stops that task, and **Stop all** stops every session. **Stop** on the **Browser** page stops only the session whose browser it shows: the chat, or the task named by `?session=<taskId>`.
 
 Stop locks the thread, then cancels the queued, running and waiting turns in its scope and aborts the running ones. In the same transaction, for each session it cancelled, it declines the open confirmations, closes the secure forms, verification code and payment requests, and closes the task as **Stopped** with a short note that replies to its "On it" message. Then it deletes the browser of each background session it cancelled.
 

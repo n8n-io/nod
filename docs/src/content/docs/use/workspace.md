@@ -55,7 +55,7 @@ The workspace can reach the internet. Code that Otto runs there can download fil
 
 ## Get files from Otto
 
-When Otto shares a file, it appears as an attachment in chat, up to 15 MB. Select it to preview or download it.
+When Otto shares a file, it appears as an attachment in chat, up to 15 MB. Select it to preview or download it. When a [task](/use/tasks/#open-a-tasks-document)'s result is a document, such as a report, the result carries a card that opens the document in a panel next to the chat.
 
 Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
 

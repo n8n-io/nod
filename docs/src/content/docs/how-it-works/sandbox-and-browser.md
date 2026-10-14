@@ -88,13 +88,14 @@ The CLI then runs with an environment built from scratch: a fixed `PATH`, a priv
 
 The browser is a separate trusted container. It doesn't share mounts or a network namespace with the workspace. The server drives Vercel Labs [agent-browser](https://github.com/vercel-labs/agent-browser) over a fixed stdin bridge to a private Unix socket.
 
-| Setting    | Value                                                                   |
-| ---------- | ----------------------------------------------------------------------- |
-| Display    | Headed Chromium on a private 1920x1080 virtual display per session      |
-| Viewport   | 1440x900, with Noto fonts and software WebGL                            |
-| Time zone  | The owner's saved IANA time zone, or UTC when unknown or invalid        |
-| Language   | The owner's formatting locale, such as en-GB, sent as `Accept-Language` |
-| HTTP cache | Under `/tmp`, per session, outside saved profiles                       |
+| Setting       | Value                                                                                                                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Display       | Headed Chromium on a private 1920x1080 virtual display per session                                                                                                               |
+| Viewport      | 1440x900, with Noto fonts and software WebGL                                                                                                                                     |
+| Time zone     | The owner's saved IANA time zone, or UTC when unknown or invalid                                                                                                                 |
+| Language      | The owner's formatting locale, such as en-GB, sent as `Accept-Language`                                                                                                          |
+| HTTP cache    | Under `/tmp`, per session, outside saved profiles                                                                                                                                |
+| Live browsers | Four for the chat, tasks and other sessions, plus two for subagents. See [Every session has its own browser](/how-it-works/threads-and-turns/#every-session-has-its-own-browser) |
 
 Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. Otto runs no page-parsing scripts of its own. While a dialog is open, the observation is the dialog, and every action except open is refused until Pi accepts or dismisses it.
 
