@@ -80,6 +80,7 @@ export interface RuntimeContext {
     request: string;
     result(text: string): Promise<void>;
     progress?(input: unknown): Promise<unknown>;
+    checkIn?(input: unknown): Promise<unknown>;
   };
   readOnly?: boolean;
   limits?: { maxToolCalls: number; timeoutMs: number };

@@ -798,6 +798,7 @@ async function initializeApplication(
       startTask: tasksEnabled ? tasks.dispatch : undefined,
       routeToTask: tasksEnabled ? tasks.route : undefined,
       taskProgress: tasks.progress,
+      taskCheckIn: tasks.checkIn,
       openTasks: tasksEnabled ? tasks.open : undefined,
       connections: integrations.manageConnections,
       browserConnection: async (request, turn, signal, launch) => {

@@ -34,6 +34,7 @@ const parentTools = new Set([
   'start_task',
   'route_to_task',
   'task_progress',
+  'check_in',
 ]);
 const parallelTools = new Set([
   'delegate',

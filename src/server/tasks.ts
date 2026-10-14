@@ -20,6 +20,7 @@ import { turnChain, untakenTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 import { answered } from './trust.ts';
+import { isQuietTime, readPreferences } from './preferences.ts';
 import type { WorkConsumers } from './work-admission.ts';
 
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
@@ -55,8 +56,10 @@ const progressInput = z
     (input) => !input.waitingFor === !input.nextCheck && !(input.nextCheck && input.stop),
     'Give waitingFor and nextCheck together, and never with stop.',
   );
+const checkInInput = z.object({ text: z.string().trim().min(1).max(280) }).strict();
 const minute = 60_000;
 const maxChecks = 24;
+const maxCheckIns = 3;
 const checkPrompt =
   "Planned check. See whether the people this task waits for have answered, then continue the task. If they haven't, plan the next check with task_progress, or give the result when waiting no longer helps.";
 
@@ -426,6 +429,47 @@ export function createTasks(options: {
     return result;
   }
 
+  async function checkIn(turn: TurnRef, raw: unknown) {
+    const { text } = checkInInput.parse(raw);
+    const result = await withTurnLock(turn.turnId, async (client) => {
+      const task = (
+        await client.query<{ id: string; on_it: string; check_ins: number; recent: boolean }>(
+          `SELECT t.id,t.on_it_message_id AS on_it,t.check_ins,
+             COALESCE(t.last_check_in_at>now()-interval '2 minutes',false) AS recent FROM turns u
+           JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
+           WHERE u.id=$1 AND u.owner_id=$2 AND t.state='open' FOR NO KEY UPDATE OF t`,
+          [turn.turnId, ownerId],
+        )
+      ).rows[0];
+      if (!task) throw failure('Only an open task can check in.', 409);
+      const preferences = await readPreferences(client, ownerId);
+      const [reason, note] =
+        preferences.progressMode === 'quiet'
+          ? ['quiet_mode', 'The user turned check-ins off. Send no more in this run.']
+          : task.check_ins >= maxCheckIns
+            ? ['limit', `This task sent ${maxCheckIns} check-ins in this run. Send no more.`]
+            : task.recent
+              ? ['too_soon', 'The last check-in was less than 2 minutes ago.']
+              : isQuietTime(preferences)
+                ? ['quiet_hours', "It's the user's quiet hours."]
+                : [];
+      if (reason)
+        return {
+          status: 'skipped',
+          reason,
+          message: `${note} Nothing was sent. Carry on with the task.`,
+        };
+      await insertAssistantMessage(client, turn, text, [], undefined, task.on_it);
+      await client.query(
+        'UPDATE tasks SET check_ins=check_ins+1,last_check_in_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2',
+        [task.id, ownerId],
+      );
+      return 'Check-in sent.';
+    });
+    if (typeof result === 'string') refresh();
+    return result;
+  }
+
   async function initialize() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
@@ -584,6 +628,7 @@ export function createTasks(options: {
     dispatch,
     route,
     progress,
+    checkIn,
     open,
     read,
     forget,

@@ -2466,6 +2466,7 @@ test('a task run delivers its final text as the result and edits only its own ta
       progress.push(input);
       return 'Progress saved.';
     },
+    checkIn: async () => 'Check-in sent.',
   };
   const run = (fields: Partial<RuntimeContext>) =>
     runtime.runTurn({
@@ -2485,10 +2486,11 @@ test('a task run delivers its final text as the result and edits only its own ta
     assert.deepEqual(progress, [{ steps: ['Find', 'Report'], current: 2 }]);
     assert.deepEqual(refused, ['task_progress', 'ask_user']);
     const parent = tools.get('parent')!;
-    assert.ok(parent.includes('task_progress') && parent.includes('delegate'));
+    for (const name of ['task_progress', 'check_in', 'delegate'])
+      assert.ok(parent.includes(name), name);
     for (const name of ['send_message', 'start_task'])
       assert.equal(parent.includes(name), false, name);
-    for (const name of ['send_message', 'task_progress', 'start_task', 'sign_in'])
+    for (const name of ['send_message', 'task_progress', 'check_in', 'start_task', 'sign_in'])
       assert.equal(tools.get('child')!.includes(name), false, name);
 
     stopRequested = true;
@@ -2502,7 +2504,8 @@ test('a task run delivers its final text as the result and edits only its own ta
     stopRequested = false;
     await run({ background: false, sessionId: undefined, startTask: async () => ({}) });
     assert.ok(tools.get('parent')!.includes('send_message'));
-    assert.equal(tools.get('parent')!.includes('task_progress'), false);
+    for (const name of ['task_progress', 'check_in'])
+      assert.equal(tools.get('parent')!.includes(name), false, name);
   } finally {
     await runtime.dispose();
   }

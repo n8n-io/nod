@@ -199,6 +199,10 @@ export function actionConfirmation(
     String(args.hourCycle)
   ];
   if (clock) add('Clock', clock);
+  const progress = ({ check_ins: 'Check-ins', quiet: 'Quiet' } as Record<string, string>)[
+    String(args.progressMode)
+  ];
+  if (progress) add('Task updates', progress);
   if (typeof args.enabled === 'boolean') add('Schedule', args.enabled ? 'Active' : 'Paused');
   if (typeof args.targetDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.targetDate))
     add('Target date', args.targetDate);

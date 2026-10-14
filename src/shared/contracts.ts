@@ -299,7 +299,9 @@ export interface Preferences {
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
+  progressMode: ProgressMode;
 }
+export type ProgressMode = 'check_ins' | 'quiet';
 export type ChannelProvider = 'telegram' | 'whatsapp';
 export interface ChannelSetupSummary {
   provider: ChannelProvider;

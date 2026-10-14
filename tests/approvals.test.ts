@@ -2349,6 +2349,63 @@ test(
       );
 
       await t.test(
+        'a progress-mode change asked for in chat runs only after the trust check',
+        async () => {
+          const progressApprovals = await createApprovals(
+            (action, args, context) => personal.manage(action.replace(/^OTTO_/, ''), args, context),
+            async (action, args) => {
+              await personal.validateReview(action.replace(/^OTTO_/, ''), args);
+            },
+            async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
+            (reply) => trust.answer(reply),
+          );
+          const progressMessages = thread.createUserMessageService({
+            confirmAction: progressApprovals.chat,
+          });
+          const mode = async () =>
+            (await personal.manage('notification_preferences_get', {})).progressMode;
+          const original = await mode();
+          try {
+            await personal.manage('notification_preferences_update', { progressMode: 'check_ins' });
+            const origin = await begin('Keep my task updates quiet from now on.');
+            const args = await personal.validateReview('notification_preferences_update', {
+              progressMode: 'quiet',
+            });
+            assert.equal(
+              (
+                await progressApprovals.request(
+                  origin,
+                  'OTTO_notification_preferences_update',
+                  args,
+                )
+              ).requiresConfirmation,
+              true,
+            );
+            assert.deepEqual(reviews.at(-1)!.action, {
+              name: 'OTTO_notification_preferences_update',
+              arguments: { progressMode: 'quiet' },
+            });
+            assert.equal(await mode(), 'check_ins');
+            const pending = await proposal(origin.turnId);
+            await finish(origin.turnId);
+            const accepted = await progressMessages.submit('Yes.', [], {
+              replyToMessageId: pending.confirmation_message_id,
+            });
+            const continuation = await running(accepted.turnId);
+            await progressApprovals.executeConfirmed(
+              continuation.turnId,
+              new AbortController().signal,
+            );
+            assert.equal((await stored(pending.id)).status, 'completed');
+            assert.equal(await mode(), 'quiet');
+            await finish(continuation.turnId, 'succeeded');
+          } finally {
+            await personal.manage('notification_preferences_update', { progressMode: original });
+          }
+        },
+      );
+
+      await t.test(
         'a schedule request after a confirmed, declined or uncertain approval asks again',
         async () => {
           for (const outcome of ['confirmed', 'declined', 'uncertain'] as const) {

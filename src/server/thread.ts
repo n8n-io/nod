@@ -117,6 +117,7 @@ export interface ThreadDependencies {
     provenance: { sourceMessageId: string | null },
   ) => Promise<unknown>;
   taskProgress?: (turn: TurnRef, input: unknown) => Promise<unknown>;
+  taskCheckIn?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   openTasks?: (threadId: string) => Promise<NonNullable<RuntimeContext['openTasks']>>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   discardBrowser?: (sessionId: string) => Promise<void>;
@@ -343,6 +344,9 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   return turnId;
 }
 
+const runCheckIns =
+  "check_ins=CASE WHEN state IN ('done','stopped','failed') THEN 0 ELSE check_ins END";
+
 export type TaskTarget = { id: string; channel: string | null; channel_source_id: string | null };
 
 async function taskOfMessage(client: PoolClient, threadId: string, messageId?: string) {
@@ -383,7 +387,8 @@ export async function insertUserTurn(
   );
   if (task) {
     await client.query(
-      "UPDATE tasks SET state='queued',closed_at=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND state NOT IN ('queued','open')",
+      `UPDATE tasks SET state='queued',closed_at=NULL,updated_at=now(),${runCheckIns}
+       WHERE id=$1 AND owner_id=$2 AND state NOT IN ('queued','open')`,
       [task.id, ownerId],
     );
     await endSessionApprovals(client, [task.id]);
@@ -978,7 +983,8 @@ async function claimTurns(threadId: string) {
     );
     const taskTurns = claimed.filter((row) => row.task_session);
     await client.query(
-      "UPDATE tasks SET state='open',closed_at=NULL,updated_at=now() WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND state<>'open'",
+      `UPDATE tasks SET state='open',closed_at=NULL,updated_at=now(),${runCheckIns}
+       WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND state<>'open'`,
       [ownerId, taskTurns.map((row) => row.session_id)],
     );
     const replies = taskTurns.filter((row) => row.source === 'user').map((row) => row.session_id);
@@ -1402,6 +1408,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         progress:
           dependencies.taskProgress &&
           fenced((input: unknown) => dependencies.taskProgress!(ref, input)),
+        checkIn:
+          dependencies.taskCheckIn &&
+          fenced((input: unknown) => dependencies.taskCheckIn!(ref, input)),
       },
       readOnly: turn.read_only,
       channel: String(turn.channel).split(':')[0],

@@ -297,6 +297,7 @@ test(
     const remoteUploads = new Map<string, Uint8Array>();
     const fileContexts = new Map<string, RuntimeContext>();
     const folderRuns = new Map<string, unknown>();
+    const checkIns = new Map<string, string[]>();
     const integrationReads: string[] = [];
     const appResults = new Map<string, unknown>();
     const largeAppResult = {
@@ -349,6 +350,7 @@ test(
       startTask: tasks.dispatch,
       routeToTask: tasks.route,
       taskProgress: tasks.progress,
+      taskCheckIn: tasks.checkIn,
       openTasks: tasks.open,
       artifacts: {
         ...localArtifacts,
@@ -456,6 +458,31 @@ test(
           await sessionGates.get(`${context.prompt}:planned`);
           if (context.prompt === 'task-wait-fail')
             throw new Error('Synthetic failure after waiting');
+          return { status: 'succeeded' };
+        }
+        if (context.prompt.startsWith('check-in-')) {
+          const send = async (text: string, aged = true) => {
+            if (aged)
+              await db.pool.query(
+                "UPDATE tasks SET last_check_in_at=last_check_in_at-interval '3 minutes' WHERE id=$1",
+                [context.sessionId],
+              );
+            const result = await context.task!.checkIn!({ text });
+            return typeof result === 'string' ? 'sent' : (result as { reason: string }).reason;
+          };
+          const outcomes: string[] = [];
+          if (context.prompt === 'check-in-limits') {
+            outcomes.push(await send('First synthetic finding.'));
+            outcomes.push(await send('Too soon.', false));
+            for (const text of ['Second', 'Third', 'Fourth'])
+              outcomes.push(await send(`${text} synthetic finding.`));
+          } else outcomes.push(await send(`Synthetic check-in for ${context.prompt}.`));
+          checkIns.set(context.prompt, outcomes);
+          if (context.prompt === 'check-in-question') {
+            await context.waitForUser!('Which synthetic supplier should I use?');
+            return { status: 'waiting_user' };
+          }
+          await context.task!.result(`Synthetic result for ${context.prompt}.`);
           return { status: 'succeeded' };
         }
         if (context.prompt.startsWith('task-mode-')) {
@@ -2015,6 +2042,103 @@ test(
         await waitFor(settledThread);
         await closeDispatched();
       });
+
+      await t.test(
+        'check-ins follow the progress mode and server limits, while questions and results still go out',
+        async () => {
+          await waitFor(settledThread);
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const original = await preferences.get();
+          const start = async (instruction: string) => {
+            const chat = await thread.submitUserMessage(`dispatch-status:${instruction}`, [], {
+              channel: 'web',
+            });
+            await waitFor(() => dispatched.has(chat.turnId) && checkIns.has(instruction));
+            await waitFor(settledThread);
+            return dispatched.get(chat.turnId)!;
+          };
+          const reply = async (text: string, replyToMessageId: string) => {
+            const sent = await thread.submitUserMessage(text, [], {
+              channel: 'web',
+              replyToMessageId,
+            });
+            await waitFor(settled(sent.turnId));
+          };
+          const replies = async (taskId: string) =>
+            (
+              await db.pool.query(
+                `SELECT m.id,m.text,m.reply_to_message_id FROM messages m JOIN turns u ON u.id=m.turn_id
+                 WHERE u.session_id=$1 AND m.role='assistant' ORDER BY m.created_at,m.id`,
+                [taskId],
+              )
+            ).rows;
+          const counter = async (taskId: string) =>
+            (await db.pool.query('SELECT check_ins FROM tasks WHERE id=$1', [taskId])).rows[0]
+              .check_ins;
+          try {
+            await preferences.update({ progressMode: 'check_ins', quietHoursEnabled: false });
+            const limited = await start('check-in-limits');
+            assert.deepEqual(checkIns.get('check-in-limits'), [
+              'sent',
+              'too_soon',
+              'sent',
+              'sent',
+              'limit',
+            ]);
+            assert.equal(await counter(limited.taskId), 3);
+            await reply('check-in-reopened', limited.onItMessageId);
+            assert.deepEqual(checkIns.get('check-in-reopened'), ['sent']);
+            assert.equal(await counter(limited.taskId), 1);
+            assert.deepEqual(
+              (await replies(limited.taskId)).map((message) => [
+                message.text,
+                message.reply_to_message_id,
+              ]),
+              [
+                'First synthetic finding.',
+                'Second synthetic finding.',
+                'Third synthetic finding.',
+                'Synthetic result for check-in-limits.',
+                'Synthetic check-in for check-in-reopened.',
+                'Synthetic result for check-in-reopened.',
+              ].map((text) => [text, limited.onItMessageId]),
+            );
+
+            const hour = new Date().getUTCHours();
+            await preferences.update({
+              timeZone: 'UTC',
+              quietHoursEnabled: true,
+              quietStart: `${String(hour).padStart(2, '0')}:00`,
+              quietEnd: `${String((hour + 2) % 24).padStart(2, '0')}:00`,
+            });
+            const asking = await start('check-in-question');
+            assert.deepEqual(checkIns.get('check-in-question'), ['quiet_hours']);
+            const [question] = await replies(asking.taskId);
+            assert.deepEqual(
+              [question.text, question.reply_to_message_id],
+              ['Which synthetic supplier should I use?', asking.onItMessageId],
+            );
+            await preferences.update({ quietHoursEnabled: false, progressMode: 'quiet' });
+            await reply('check-in-quiet', question.id);
+            assert.deepEqual(checkIns.get('check-in-quiet'), ['quiet_mode']);
+            assert.deepEqual(
+              (await replies(asking.taskId)).map((message) => [
+                message.text,
+                message.reply_to_message_id,
+              ]),
+              [
+                ['Which synthetic supplier should I use?', asking.onItMessageId],
+                ['Synthetic result for check-in-quiet.', asking.onItMessageId],
+              ],
+            );
+            assert.equal(await counter(asking.taskId), 0);
+          } finally {
+            await preferences.update(original);
+          }
+          await waitFor(settledThread);
+          await closeDispatched();
+        },
+      );
 
       await t.test(
         'a task stages and reads files in its own folder, and the chat keeps the workspace root',

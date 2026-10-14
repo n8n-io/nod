@@ -8,6 +8,7 @@ import {
   Globe,
   MapPin,
   LogOut,
+  MessageSquareText,
   Monitor,
   Moon,
   ShieldCheck,
@@ -16,7 +17,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import type { AccountPreferences, AccountTheme } from '../../shared/account';
-import type { HourCycle } from '../../shared/contracts';
+import type { HourCycle, ProgressMode } from '../../shared/contracts';
 import type { AccountControls, AccountTab } from './account-menu';
 import { AccountAvatar, GoogleMark } from './account-avatar';
 import {
@@ -49,7 +50,12 @@ import { Memory } from '../pages/memory';
 import { Trust } from '../pages/trust';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
-const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
+const editablePreferences = [
+  'progressMode',
+  'quietHoursEnabled',
+  'quietStart',
+  'quietEnd',
+] as const;
 const regionLabels = {
   choose: 'Choose region',
   search: 'Search regions',
@@ -62,6 +68,10 @@ const clockOptions: Array<{ value: HourCycle; label: string }> = [
   { value: 'auto', label: 'Automatic' },
   { value: 'h12', label: '12-hour' },
   { value: 'h23', label: '24-hour' },
+];
+const progressOptions: Array<{ value: ProgressMode; label: string }> = [
+  { value: 'check_ins', label: 'Check-ins' },
+  { value: 'quiet', label: 'Quiet' },
 ];
 
 function regionOptions(current: string, detected: string) {
@@ -204,6 +214,7 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
     error: loadError,
     refresh,
   } = usePageData<AccountPreferences>('/api/preferences');
+  const progressLabel = useId();
   const [draft, setDraft] = useState<AccountPreferences | null>(null);
   const [saving, setSaving] = useState(false);
   const [regionBusy, setRegionBusy] = useState(false);
@@ -278,6 +289,27 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
     <>
       <LanguageAndRegion saved={saved} onBusyChange={setRegionBusy} />
       <form onSubmit={(event) => void save(event)}>
+        <div className="account-preference-row account-clock-row">
+          <span id={progressLabel} data-analytics-public>
+            <MessageSquareText size={16} aria-hidden="true" />
+            Task updates
+          </span>
+          <div className="account-clock-options" role="group" aria-labelledby={progressLabel}>
+            {progressOptions.map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                size="sm"
+                variant={current.progressMode === option.value ? 'secondary' : 'ghost'}
+                aria-pressed={current.progressMode === option.value}
+                disabled={saving}
+                onClick={() => setDraft({ ...current, progressMode: option.value })}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </div>
         <div className="account-preference-row">
           <div className="account-preference-label">
             <Moon size={16} aria-hidden="true" />

@@ -15,6 +15,17 @@ To answer a task or add to it, reply to any of its messages. Your reply goes to 
 
 Up to three tasks work at the same time. When three are working, a new task waits as **Queued** until one of them finishes or stops to ask you something. So does a task you answer or open again while three others work. A task that waits for your answer or for someone else doesn't take a place, and the chat and your schedules never wait for tasks.
 
+## Check-ins and Quiet
+
+While a task works, it can send you a short check-in as a reply to "On it": a first finding that can change the plan, a change to the plan, cost or time that doesn't need your decision, or the start of a step that takes more than about two minutes. When the task needs your decision, it asks a question instead.
+
+Choose how much you hear in **Settings → Preferences → Task updates**:
+
+- **Check-ins**, the default, sends at most three check-ins before the task closes, at least two minutes apart.
+- **Quiet** sends none.
+
+Both send "On it", the task's questions and confirmations, its result and the notes when it stops or fails. During your [quiet hours](/use/schedules/#quiet-hours), a task sends no check-ins, and Otto doesn't send a skipped check-in later. A reply that opens a closed task again gives it three new check-ins. A change takes effect at once, also for tasks that already run. When you ask in the chat to change it, the [trust check](/trust/approvals/) reviews the change like any other notification setting.
+
 ## Answer a task's question
 
 To answer a task's confirmation, reply yes or no to the confirmation or to any other message of that task. Anything else you reply to the task cancels the confirmation, and the task reads your reply instead.
@@ -53,11 +64,11 @@ Otto deletes a task's browser when the task closes. It deletes the task's transc
 
 ## Three views
 
-| View          | Shows                                                                          |
-| ------------- | ------------------------------------------------------------------------------ |
-| **Current**   | Open tasks, with the ones that need you first                                  |
-| **Scheduled** | Your schedules and Otto's planned check-ins. See [Schedules](/use/schedules/). |
-| **Previous**  | Done, stopped and failed tasks, and past schedule runs, newest first           |
+| View          | Shows                                                                           |
+| ------------- | ------------------------------------------------------------------------------- |
+| **Current**   | Open tasks, with the ones that need you first                                   |
+| **Scheduled** | Your schedules and Otto's planned follow-ups. See [Schedules](/use/schedules/). |
+| **Previous**  | Done, stopped and failed tasks, and past schedule runs, newest first            |
 
 ![The Scheduled view with a weekday calendar check and a Friday weekly recap, each with its next run and a switch to pause it.](../../../assets/screens/tasks-light.png)
 

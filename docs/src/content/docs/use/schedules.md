@@ -16,7 +16,7 @@ Ask in chat. For example:
 - "Every weekday at 8:00, summarize my calendar and anything urgent in my inbox."
 - "Tomorrow at 15:00, remind me to call the landlord."
 
-A schedule runs **One time** or is **Recurring**. Otto tells you when it's saved and when it runs next. When you hand Otto work that needs follow-up, it can also plan its own check-in, such as "I'll look for a reply on Friday". Check-ins are schedules too, except for a [task](/use/tasks/#when-a-task-waits-for-someone-else) that waits for someone: its planned check belongs to the task and doesn't show in **Tasks → Scheduled**.
+A schedule runs **One time** or is **Recurring**. Otto tells you when it's saved and when it runs next. When you hand Otto work that needs follow-up, it can also plan its own follow-up, such as "I'll look for a reply on Friday". Follow-ups are schedules too, except for a [task](/use/tasks/#when-a-task-waits-for-someone-else) that waits for someone: its planned check belongs to the task and doesn't show in **Tasks → Scheduled**.
 
 Otto uses your time zone, saved from your browser the first time you use Otto. Change it in **Settings → Preferences**. If Otto doesn't know your time zone, it asks.
 
@@ -62,7 +62,7 @@ Work Otto starts on its own only reads and drafts. Sending, deleting or anything
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Preferences → Quiet hours**.
 
-During quiet hours, Otto keeps working on new mail and app activity, but messages you only for something that can't wait until they end. Schedules you created still run and deliver on time.
+During quiet hours, Otto keeps working on new mail and app activity, but messages you only for something that can't wait until they end. Schedules you created still run and deliver on time. A [task](/use/tasks/#check-ins-and-quiet) keeps working too, but sends no check-ins until quiet hours end. Its questions and its result still reach you. To turn off a task's check-ins at any hour, choose **Quiet** in **Settings → Preferences → Task updates**.
 
 ## Keep Otto running
 
