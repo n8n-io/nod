@@ -748,7 +748,7 @@ export async function createDiscoveredConnections(
       ...(row.reconnect_required ? { connectionId: row.id } : {}),
       paths: row.paths.map((path) => {
         if (path.kind === 'cli') {
-          if (!path.source) throw error('Ask Otto to set up this CLI again.', 409);
+          if (!path.source || !path.env) throw error('Ask Otto to set up this CLI again.', 409);
           return {
             kind: path.kind,
             command: path.command,
