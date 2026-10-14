@@ -153,6 +153,37 @@ test(
       const turnId = await insertTurn(thread.id, ownerId, 'Synthetic browser');
       const foreignTurnId = await insertTurn(foreignThread.id, 'other', 'Foreign browser');
       await db.pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=ANY($1::uuid[])",
+        [[turnId, foreignTurnId]],
+      );
+      await db.pool.query(
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES
+         ($1,$2,'assistant','Continue in [Open browser](/browser).',$3,$4),
+         ($5,'other','assistant','Which date works?',$6,$7)`,
+        [randomUUID(), ownerId, thread.id, turnId, randomUUID(), foreignThread.id, foreignTurnId],
+      );
+      await db.pool.query('ALTER TABLE turns DROP COLUMN handoff_browser_id');
+      await db.initializeDatabase();
+      const legacyInput = { type: 'key', key: 'Tab' };
+      const legacy = await app.inject({
+        method: 'POST',
+        url: '/api/browser-handoff',
+        headers,
+        payload: { turnId, inputs: [legacyInput] },
+      });
+      assert.equal(legacy.statusCode, 200);
+      assert.deepEqual(controls.pop(), [thread.id, legacyInput]);
+      assert.equal(
+        (await db.pool.query('SELECT handoff_browser_id FROM turns WHERE id=$1', [foreignTurnId]))
+          .rows[0].handoff_browser_id,
+        null,
+      );
+      await db.initializeDatabase();
+      await db.pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL WHERE id=ANY($1::uuid[])",
+        [[turnId, foreignTurnId]],
+      );
+      await db.pool.query(
         "INSERT INTO turn_events(id,turn_id,type,summary,created_at) VALUES($1,$2,'tool_start','browser',$3)",
         [randomUUID(), turnId, capturedAt],
       );

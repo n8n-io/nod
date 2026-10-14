@@ -26,7 +26,7 @@ import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
-const ownBrowserTools = new Set(['sign_in', 'pay', 'browser_session']);
+const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'ask_user', 'send_message']);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -346,7 +346,9 @@ export function createAgentRuntime(dependencies: {
           parameters,
           parallel: parallelTools.has(name),
           execute: async (params) => {
+            assertActive();
             if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
+            assertActive();
             const admitted = orderedTools.has(name) ? admission() : undefined;
             const run = () =>
               guard(
@@ -412,7 +414,7 @@ export function createAgentRuntime(dependencies: {
             systemContext: systemContext(context),
             tools: bind({ ...shared, execution: source }, async () => {
               browsed = true;
-            }).filter((tool) => !ownBrowserTools.has(tool.name) && tool.name !== 'ask_user'),
+            }).filter((tool) => !parentTools.has(tool.name)),
             workspace: { ...workspace, path: childPath },
             timeZone: context.timeZone,
             runTool: (name, params, run, options) =>

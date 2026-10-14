@@ -1863,7 +1863,14 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
     const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
     assert.equal(result.status, 'succeeded');
     assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
-    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session', 'ask_user'])
+    for (const name of [
+      'delegate',
+      'sign_in',
+      'pay',
+      'browser_session',
+      'ask_user',
+      'send_message',
+    ])
       assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];
     assert.equal(new Set(browsers).size, 3);
@@ -1958,6 +1965,7 @@ test('a paused turn cannot start a subagent still preparing and failed children 
               delegate.execute({ title: `Check ${number}`, instruction: 'Run a synthetic check.' }),
             );
             for (let wait = 0; preparing < 3 && wait < 200; wait++) await setTimeout(5);
+            assert.equal(preparing, 3);
             await input.tools
               .find((tool) => tool.name === 'ask_user')!
               .execute({ question: 'Which source should I use?' });

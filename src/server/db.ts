@@ -54,7 +54,6 @@ export async function initializeDatabase() {
       END IF;
     END $$;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS parent_turn_id uuid;
-    ALTER TABLE turns ADD COLUMN IF NOT EXISTS handoff_browser_id text;
     CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
       RETURN NEW;
@@ -91,6 +90,16 @@ export async function initializeDatabase() {
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema=current_schema() AND table_name='turns' AND column_name='handoff_browser_id') THEN
+        ALTER TABLE turns ADD COLUMN handoff_browser_id text;
+        UPDATE turns u SET handoff_browser_id=u.session_id::text
+          WHERE NOT u.background AND u.status='waiting' AND u.waiting_reason='question'
+            AND (SELECT m.text FROM messages m WHERE m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant'
+              ORDER BY m.created_at DESC,m.id DESC LIMIT 1) LIKE '%](/browser)%';
+      END IF;
+    END $$;
     CREATE INDEX IF NOT EXISTS messages_owner_agent_reaction_time ON messages(owner_id,assistant_reacted_at DESC) WHERE assistant_reacted_at IS NOT NULL;
     CREATE TABLE IF NOT EXISTS artifacts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,

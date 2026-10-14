@@ -7047,7 +7047,7 @@ test(
         reviewId,
       ]);
       const { rows: recorded } = await pool.query(
-        `SELECT id,run_id AS "runId",parent_run_id AS "parentRunId",session_id AS "sessionId",details
+        `SELECT id,run_id AS "runId",parent_run_id AS "parentRunId",session_id AS "sessionId",browser_id AS "browserId",details
          FROM model_usage WHERE owner_id=$1 AND turn_id=$2 AND id=ANY($3::text[])`,
         ['owner', chat, [...usageIds]],
       );
@@ -7057,6 +7057,12 @@ test(
         2,
       );
       assert.ok(recorded.every((item: { sessionId: string }) => item.sessionId === sessionId));
+      assert.equal(recorded.find((item) => item.runId === chat).browserId, sessionId);
+      assert.ok(
+        recorded
+          .filter((item) => item.runId === childRunId)
+          .every((item) => item.browserId === childRunId),
+      );
       assert.equal(recorded.find((item: { id: string }) => item.id === reviewId).parentRunId, chat);
       assert.equal(
         recorded.find((item: { runId: string }) => item.runId === chat).details.inputTokens,
