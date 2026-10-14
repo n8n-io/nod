@@ -275,7 +275,7 @@ export function paymentScenario(id: string, title: string, mode: CheckoutMode = 
           (run) => {
             const visible = [
               run.said,
-              ...run.tools.flatMap((tool) => [JSON.stringify(tool.input), tool.output, tool.lead]),
+              ...run.tools.flatMap((tool) => [JSON.stringify(tool.input), tool.output]),
             ].join('\n');
             return {
               pass:

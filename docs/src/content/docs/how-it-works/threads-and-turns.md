@@ -39,7 +39,7 @@ flowchart TD
   each -- yes --> wait[Leave it queued]:::muted
 ```
 
-The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns without waiting for them. When a turn finishes, it queues the next drain.
+The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns from independent sessions without waiting for them. When a turn finishes, it queues the next drain.
 
 ## Turn status
 
@@ -70,7 +70,7 @@ A message with attachments, a reply target or another channel stops the take. It
 
 ## Waiting and resuming
 
-A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
+A question, an approval, or a credential request ends the turn as `waiting`. A reply to the question continues its session. Unrelated messages continue the chat. A reply to a background question returns to that background session.
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
 
@@ -93,7 +93,7 @@ sequenceDiagram
 | ----------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Key         | The thread ID              | The session's first turn                                                                                           |
 | Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                                                          |
-| Pi session  | The thread's saved session | A new in-memory session per turn                                                                                   |
+| Pi session  | The thread's saved session | A saved session, keyed by the session ID                                                                           |
 | Context     | The full conversation      | Turns from any session that finished before the trigger, plus the session's own messages                           |
 | Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message`, `share_file`, `share_screenshot` and `create_audio` calls. |
 | Browser     | The thread's browser       | Its own browser, deleted when the session ends                                                                     |
@@ -105,17 +105,19 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 `delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Otto's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The model then puts the answers together, such as comparing three shops.
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
-- **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
-- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser.
+- **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.
+- **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, sign in, pay, or open saved browser sessions. A paused turn cannot start another subagent.
 - **Browsers.** A subagent's browser is deleted when it finishes.
+- **Files.** Each subagent starts in `.otto/runs/<run ID>` inside the shared workspace. It returns complete file paths to its parent.
+- **Outcomes.** Model failures and incomplete responses return as errors. They do not count as successful empty answers.
 
 ## Every session has its own browser
 
 A session opens its browser on its first browser call, so a session that never browses never starts one. Sessions never share a browser.
 
-- The chat's browser is the one Otto hands to you, and the browser page shows it.
+- A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most four browsers live at once, enough for the chat, two subagents and a scheduled run. At that limit, a new browser replaces the least recently used one that has been idle for five minutes, which closes and keeps its profile until it's used again.
+- The browser container keeps at most four browsers live at once. Other sessions can wait for a browser. At that limit, a new browser replaces the least recently used one that has been idle for five minutes, which closes and keeps its profile until it's used again.
 - A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. One waiting for you stays open for 30 minutes.
 - When no browser can close, a new one waits up to two minutes for a free slot, then the browser call fails as busy. **Stop** cancels the wait at once.
 

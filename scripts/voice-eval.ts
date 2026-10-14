@@ -323,6 +323,7 @@ async function runScenario(
   violations.set(turnId, []);
   browsers.set(threadId, { pages: scenario.pages ?? {}, url: 'about:blank' });
   const context: RuntimeContext = {
+    sessionId: threadId,
     threadId,
     turnId,
     prompt: scenario.prompt,

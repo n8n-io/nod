@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { Agent } from '../ports/agent.ts';
+import type { ExecutionScope } from '../shared/execution.ts';
+import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
@@ -37,13 +39,18 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
 
 export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
   const activeTurn = new AsyncLocalStorage<string>();
+  const activeExecution = new AsyncLocalStorage<ExecutionScope>();
   async function initialize() {
     await pool.query(`DROP TABLE IF EXISTS provider_usage;
     CREATE TABLE IF NOT EXISTS model_usage (
       id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
       cost_usd double precision, created_at timestamptz NOT NULL DEFAULT now()
     );
-    ALTER TABLE model_usage DROP COLUMN IF EXISTS model;
+    ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS run_id uuid;
+    ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS parent_run_id uuid;
+    ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS session_id uuid;
+    ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS browser_id text;
+    ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
     CREATE INDEX IF NOT EXISTS model_usage_owner_time ON model_usage(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS model_usage_turn ON model_usage(turn_id);
     CREATE TABLE IF NOT EXISTS app_actions (
@@ -66,8 +73,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
-  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,created_at)
-    SELECT $1,$2,$3,$4,$5::timestamptz WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,created_at,run_id,parent_run_id,session_id,browser_id,details)
+    SELECT $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb
+    WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
     ON CONFLICT(id) DO NOTHING`;
   const pendingUsage = new Map<string, { values: unknown[]; pending: Promise<void> }>();
   async function flushUsage() {
@@ -78,9 +86,21 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     }
   }
 
-  function usage(id: string, turnId: string | null, costUsd: unknown) {
-    const attributedTurn = turnId ?? activeTurn.getStore() ?? null;
-    const values = [id, ownerId, attributedTurn, cost(costUsd as number), new Date().toISOString()];
+  function record(usage: ProviderUsageEvent, execution = activeExecution.getStore()) {
+    const { id, costUsd, turnId, ...details } = usage;
+    const attributedTurn = execution?.turnId ?? turnId ?? activeTurn.getStore() ?? null;
+    const values = [
+      id,
+      ownerId,
+      attributedTurn,
+      cost(costUsd),
+      new Date().toISOString(),
+      execution?.runId ?? null,
+      execution?.parentRunId ?? null,
+      execution?.sessionId ?? null,
+      execution?.browserId ?? null,
+      JSON.stringify(details),
+    ];
     const pending = pool.query(usageSql, values).then(
       () => {
         pendingUsage.delete(id);
@@ -98,16 +118,30 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         const opened = await base.open({
           ...session,
           onEvent(event) {
-            if (event.type === 'model_usage') usage(event.id, session.turnId, event.costUsd);
+            if (event.type === 'model_usage') {
+              const { type: _, costSource, totalTokens: __, createdAt: ___, ...value } = event;
+              record(
+                {
+                  ...value,
+                  turnId: session.turnId,
+                  category: 'agent',
+                  operation: 'request',
+                  status: value.status ?? 'succeeded',
+                  durationMs: 0,
+                  pricing: costSource,
+                },
+                session,
+              );
+            }
             if (event.type !== 'provider_usage') return session.onEvent(event);
-            usage(event.usage.id ?? crypto.randomUUID(), session.turnId, event.usage.costUsd);
+            record({ ...event.usage, turnId: session.turnId }, session);
           },
         });
         return {
           ...opened,
           async prompt(text, images) {
             try {
-              await opened.prompt(text, images);
+              await activeExecution.run(session, () => opened.prompt(text, images));
             } finally {
               await flushUsage();
             }
@@ -127,7 +161,15 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {
           return await base.curate(request, signal, (value) => {
-            usage(crypto.randomUUID(), null, value.costUsd);
+            record({
+              provider: value.provider ?? 'model',
+              category:
+                request.task === 'review' ? 'review' : request.task === 'plan' ? 'tasks' : 'memory',
+              operation: request.task,
+              status: 'succeeded',
+              durationMs: 0,
+              ...value,
+            });
             report?.(value);
           });
         } finally {

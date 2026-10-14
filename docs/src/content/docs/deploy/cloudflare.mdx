@@ -117,7 +117,7 @@ pnpm --dir deployment/cloudflare run provision:storage production
 
 ## Workspace users
 
-Workspace commands run as `node`, and connected CLIs as `otto-connected` (uid 1002) with a private home. A deployed container gives every process root's capabilities, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared. Otherwise a workspace command could read a CLI token from `/proc`. Connected CLIs live outside checkpoints and reinstall from their declared source after a restart.
+Workspace commands run as `node`, and each connected CLI as its own user in group `otto-connected` (gid 1002) with a private home. A deployed container gives every process root's capabilities, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared. Otherwise a workspace command could read a CLI token from `/proc`. Connected CLIs live outside checkpoints and reinstall from their declared source after a restart.
 
 ## Computer checkpoints
 

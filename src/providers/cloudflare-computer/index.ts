@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Computer, Workspace } from '../../ports/computer.ts';
 import { createBridgeComputer } from '../container-browser/client.ts';
 import { createCommandWorkspace } from '../docker/index.ts';
-import { runSupervisedCommand, WorkspaceCommandError } from '../docker/command.ts';
+import { connectedUser, runSupervisedCommand, WorkspaceCommandError } from '../docker/command.ts';
 import { cloudflareBrowserLive, launchCloudflareCommand } from './transport.ts';
 
 export function createCloudflareAdapters(options: {
@@ -51,13 +51,14 @@ export function createCloudflareAdapters(options: {
     instructions:
       'Your remote Linux workspace is separate from the trusted browser. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>. A connected app CLI never runs from here: Otto installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
     runCommand: (threadId, args, { session, ...input }) => run(threadId, args, input, { session }),
-    runConnectedCommand: (threadId, args, input) => run(threadId, args, input, { connected: true }),
+    runConnectedCommand: (threadId, args, input) =>
+      run(threadId, args, input, { connected: connectedUser(input.cli) }),
   });
   function run(
     threadId: string,
     args: string[],
     input: Omit<Parameters<typeof runSupervisedCommand>[0], 'args' | 'launch'>,
-    mode: { connected?: boolean; session?: boolean },
+    mode: { connected?: number; session?: boolean },
   ) {
     if (workspaceUnavailable)
       throw new WorkspaceCommandError(

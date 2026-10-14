@@ -68,7 +68,7 @@ export function createE2BClient(options: {
             input.role === 'browser'
               ? 'otto-browser'
               : input.role === 'connected'
-                ? 'otto-connected'
+                ? 'root'
                 : 'node',
           envs: {},
           timeoutMs: 0,

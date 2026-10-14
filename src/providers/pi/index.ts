@@ -71,6 +71,7 @@ const webAccess = {
   toolActivation: 'eager',
   workflow: 'none',
   githubClone: { enabled: false },
+  githubPrIssue: { enabled: false },
   video: { enabled: false },
   allowBrowserCookies: false,
 };
@@ -155,7 +156,9 @@ export function createPiAgent(options: {
             ),
         };
       }
-      const directory = resolve(options.sessionRoot, threadIdentity(input.threadId));
+      const sessionId = input.sessionId;
+      const ephemeral = input.ephemeral === true;
+      const directory = resolve(options.sessionRoot, threadIdentity(sessionId));
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const connection = access ? await createPiModelRuntime(access) : undefined;
       const runtime = connection
@@ -190,16 +193,16 @@ export function createPiAgent(options: {
             }
           : selectedModel;
       const durable =
-        options.objectStore && !input.background
+        options.objectStore && !ephemeral
           ? await createPiCheckpoint({
               store: options.objectStore,
-              threadId: input.threadId,
+              threadId: sessionId,
               directory,
             })
           : undefined;
       const manager =
         durable?.manager ??
-        (input.background ? SessionManager.inMemory(directory) : openLocalSession(directory));
+        (ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory));
       closeInterruptedCalls(manager);
       const completedEvents: AgentEvent[] = [];
       const checkpoint = async () => {

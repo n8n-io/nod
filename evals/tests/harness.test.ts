@@ -24,7 +24,7 @@ import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
-import { requireBackgroundPrompts, type Run } from '../src/trace.ts';
+import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
@@ -1564,6 +1564,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
   t.after(() => runtime.dispose());
   await runtime.runTurn({
     threadId: 'capture-fixture',
+    sessionId: 'capture-fixture',
     turnId: 'capture-fixture',
     prompt: 'Inspect the synthetic receipt.',
     history: [],
@@ -1615,6 +1616,124 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     ['model_usage', 'child'],
     ['tool_end', 'delegate', 'succeeded', 'The subagent finished without an answer.'],
   ]);
+});
+
+test('persisted background sessions and child captures count each request and tool once', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-accounting-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, 'background'));
+  await writeFile(
+    join(directory, 'background', 'session.jsonl'),
+    [
+      { role: 'user', content: [{ type: 'text', text: '{"mode":"conversation"}' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Checking the synthetic calendar.' },
+          { type: 'toolCall', id: 'call', name: 'apps', arguments: {} },
+        ],
+        usage: { totalTokens: 3, cost: { total: 0.1 } },
+      },
+      { role: 'toolResult', toolCallId: 'call', content: [{ type: 'text', text: 'Saved output' }] },
+      { role: 'assistant', stopReason: 'error', errorMessage: 'Synthetic model failure' },
+    ]
+      .map((message) => JSON.stringify({ type: 'message', timestamp: new Date(0), message }))
+      .join('\n'),
+  );
+  const ledger: Array<{ cost_usd: number | null; details: Record<string, number> }> = [
+    { cost_usd: 0.1, details: { inputTokens: 1, outputTokens: 2 } },
+    { cost_usd: 0.2, details: { inputTokens: 3, outputTokens: 4 } },
+    { cost_usd: 0.4, details: { inputTokens: 5, outputTokens: 6 } },
+    { cost_usd: 0.8, details: { cacheReadTokens: 7, cacheWriteTokens: 8 } },
+  ];
+  const observations: Stack['observations'] = [];
+  for (const [index, runId] of ['background', 'child', 'chat'].entries()) {
+    const turnId = runId === 'chat' ? 'chat' : 'background';
+    const execution = {
+      threadId: 'chat',
+      sessionId: turnId,
+      turnId,
+      runId,
+      browserId: runId,
+    };
+    observations.push(
+      {
+        turnId,
+        event: {
+          execution,
+          type: 'tool_start',
+          id: 'call',
+          name: 'apps',
+          input: { action: runId },
+          startedAt: new Date(index).toISOString(),
+        },
+      },
+      {
+        turnId,
+        event: {
+          execution,
+          type: 'tool_end',
+          id: 'call',
+          name: 'apps',
+          output: runId,
+          status: 'succeeded',
+          durationMs: 1,
+          finishedAt: new Date(10).toISOString(),
+        },
+      },
+    );
+  }
+  observations.push({
+    turnId: 'background',
+    event: {
+      type: 'model_usage',
+      id: 'request',
+      provider: 'fixture',
+      model: 'fixture',
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 3,
+      costUsd: 0.1,
+      costSource: 'sdk_estimate',
+      createdAt: new Date(0).toISOString(),
+    },
+  });
+  const stack = {
+    sessionRoot: directory,
+    observations,
+    prompts: [{ turnId: 'background', instruction: 'Check the synthetic calendar.' }],
+    pool: {
+      query: async (sql: string) => ({
+        rows: sql.includes('FROM model_usage')
+          ? ledger
+          : sql.includes('FROM turns')
+            ? [{ id: 'background', background: true, status: 'succeeded', started_at: new Date(0) }]
+            : [],
+      }),
+    },
+    request: async () => Response.json({ notes: [], archive: [] }),
+    exec: async () => ({ exitCode: 0, output: '' }),
+  } as unknown as Stack;
+  const session = createSession({ stack, user: {}, deadline: Date.now() + 1000 });
+  const read = () =>
+    collect({ task: 'Synthetic request', stack, session, world: {}, visits: [], seconds: 1 });
+  const run = await read();
+  assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  assert.deepEqual(
+    run.tools.map((tool) => [tool.turnId, tool.input.action, tool.output]),
+    [
+      ['background', 'background', '"background"'],
+      ['background', 'child', '"child"'],
+      ['chat', 'chat', '"chat"'],
+    ],
+  );
+  assert.deepEqual(run.modelErrors, ['Synthetic model failure']);
+  assert.deepEqual(run.acknowledgement, { turnsWithTools: 1, acknowledged: 1 });
+  assert.doesNotMatch(run.transcript(), /Saved output/);
+  ledger[0].cost_usd = null;
+  assert.deepEqual((await read()).usage, { modelCalls: 4, tokens: 36, costUsd: null });
 });
 
 test('missing executed background captures are measurement errors, not isolation verdicts', () => {

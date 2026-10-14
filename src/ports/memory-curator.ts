@@ -1,3 +1,5 @@
+import type { ProviderUsageEvent } from './provider-usage.ts';
+
 export interface MemoryCurator {
   id: string;
   configured: boolean;
@@ -8,6 +10,8 @@ export interface MemoryCurator {
       input: object;
     },
     signal?: AbortSignal,
-    report?: (usage: { model: string; costUsd: number | null }) => void,
+    report?: (
+      usage: Partial<ProviderUsageEvent> & { id: string; model: string; costUsd: number | null },
+    ) => void,
   ): Promise<unknown>;
 }

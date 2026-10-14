@@ -314,16 +314,6 @@ export function Chat({
     if (turn.status === 'waiting') return 'waiting';
     return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
   }
-  const foregroundTurn = state.turns
-    .filter((turn) => turn.showTyping !== false)
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-  const handoffMessage = foregroundTurn
-    ? foregroundTurn.status === 'waiting'
-      ? visibleMessages.findLast(
-          (message) => message.role === 'assistant' && message.turnId === foregroundTurn.id,
-        )
-      : undefined
-    : visibleMessages.at(-1);
   const unseen = away
     ? persistedMessages.filter(
         (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
@@ -645,7 +635,11 @@ export function Chat({
     const sentThread = threadId;
     setReturningHandoff(messageId);
     try {
-      const result = await send('Done, I finished in the browser.', []);
+      const result = await send(
+        'Done, I finished in the browser.',
+        [],
+        allMessages.find((message) => message.id === messageId) ?? null,
+      );
       if (!result.sent) throw new Error('Could not hand control back. Try Done again.');
     } finally {
       if (threadRef.current === sentThread) setReturningHandoff(null);
@@ -934,10 +928,9 @@ export function Chat({
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                     onHandoffDone={
                       message.id === returningHandoff ||
-                      (message.id === handoffMessage?.id &&
-                        message.role === 'assistant' &&
-                        !working &&
-                        !sending)
+                      (message.role === 'assistant' &&
+                        !sending &&
+                        state.turns.some((turn) => turn.handoffMessageId === message.id))
                         ? () => finishHandoff(message.id)
                         : undefined
                     }
