@@ -233,7 +233,7 @@ export function createComputerCommands(options: {
       id: string;
       role: string;
       threadId?: string;
-      connected?: boolean;
+      connected?: number;
       session?: boolean;
     };
     try {
@@ -251,9 +251,12 @@ export function createComputerCommands(options: {
         ) ||
         input.role !== options.role ||
         (input.threadId !== undefined && typeof input.threadId !== 'string') ||
-        [input.connected, input.session].some(
-          (flag) => flag !== undefined && (flag !== true || options.role !== 'workspace'),
-        ) ||
+        (input.session !== undefined && (input.session !== true || options.role !== 'workspace')) ||
+        (input.connected !== undefined &&
+          (!Number.isInteger(input.connected) ||
+            input.connected < 20_000 ||
+            input.connected >= 60_000 ||
+            options.role !== 'workspace')) ||
         (input.connected && input.session) ||
         (options.role === 'workspace' && !input.threadId) ||
         (options.role === 'browser' && input.threadId !== undefined)
@@ -332,7 +335,7 @@ export function createComputerCommands(options: {
           id: input.id,
           generation: version,
           threadId: input.threadId,
-          ...(input.connected && { connected: true }),
+          ...(input.connected && { connected: input.connected }),
           ...(input.session && { session: true }),
         });
       } catch (error) {

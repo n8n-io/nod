@@ -110,9 +110,9 @@ If the workspace container is lost between checkpoints, changes since the last c
 
 ## Workspace users and connected CLIs
 
-Workspace commands run as `node`, and connected CLI commands run as `otto-connected`. A deployed container gives every process root's capabilities, whatever its user. So both users start through `setpriv --no-new-privs` with their capabilities cleared. Otherwise, a workspace command could read a CLI token from `/proc`.
+Workspace commands run as `node`, and each connected CLI runs as its own user in group `otto-connected`. A deployed container gives every process root's capabilities, whatever its user. So both start through `setpriv --no-new-privs` with their capabilities cleared. Otherwise, a workspace command could read a CLI token from `/proc`.
 
-Connected CLIs run from sealed installs under `/home/otto-connected/cli`. Those installs aren't checkpointed, so each CLI is installed again from its declared source on first use after a restart. `otto-connected` can read shared workspace files but can't write them.
+Connected CLIs run from sealed installs under `/var/tmp/otto-cli-<path id>`. Those installs aren't checkpointed, so each CLI is installed again from its declared source on first use after a restart. Connected CLIs can read shared workspace files but can't write them.
 
 ## What hosted mode refuses
 

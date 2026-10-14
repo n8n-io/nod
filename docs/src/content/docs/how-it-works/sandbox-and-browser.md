@@ -16,7 +16,7 @@ flowchart LR
   server[Otto server<br/>provider keys · Vault]:::accent
   subgraph workspace[Workspace container]
     sandbox[Sandbox user<br/>runs Pi commands]
-    cli[otto-connected<br/>one CLI token]
+    cli[One user per CLI<br/>one CLI token each]
   end
   browser[Browser container<br/>Chromium · profiles]:::muted
   net([Internet])
@@ -72,7 +72,7 @@ Pi writes truncated output, codemode files and images, and extracted web PDFs to
 
 ## Connected CLIs
 
-A connected CLI runs as a separate user, `otto-connected`. Before each run, the supervisor installs the CLI's declared source into `/home/otto-connected/cli/<path id>` if it's missing. It refuses an install folder or executable that another user can write.
+Each connected CLI runs as its own Linux user, derived from its path ID, in group `otto-connected`. Before each run, the supervisor installs the CLI's declared source into `/var/tmp/otto-cli-<path id>`, a folder only that user can open, if it's missing. It refuses an install folder or executable that another user can write, and refuses to run if another CLI's install belongs to the same user. So one CLI can't change another's install or read its token.
 
 The CLI then runs with an environment built from scratch: a fixed `PATH`, a private temporary `HOME` and `XDG_CONFIG_HOME`, `LANG` and the one token variable. Nothing comes from the sandbox user's files or environment, so a program the model plants never receives the token. See [MCP, APIs and CLIs](/connect/mcp-api-cli/).
 

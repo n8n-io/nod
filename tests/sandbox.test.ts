@@ -29,6 +29,7 @@ import { threadIdentity } from '../src/ports/thread-identity.ts';
 import { isPublicAddress, publicUrl } from '../src/providers/agent-browser/network.ts';
 import {
   cliInstallProgram,
+  connectedUser,
   runWorkspaceCommand,
   WorkspaceCommandError,
   type WorkspaceCommandLauncher,
@@ -424,7 +425,7 @@ test('connected CLIs run only their sealed install with a clean environment', as
       `open(${JSON.stringify(stolen)},'w').write('python')`,
     );
     const cli = { id: randomUUID(), command: 'fixturecli', source: { npm: 'fixturecli' } };
-    const prefix = join(home, 'cli', cli.id);
+    const prefix = join(home, `otto-cli-${cli.id}`);
     await mkdir(join(prefix, 'bin'), { recursive: true });
     await writeFile(join(prefix, 'bin', 'fixturecli'), '#!/bin/sh\nenv\necho "argv $*"\n', {
       mode: 0o755,
@@ -482,12 +483,18 @@ test('connected CLIs run only their sealed install with a clean environment', as
       'exec',
       '-i',
       '--user',
-      'otto-connected',
+      `${connectedUser(cli)}:1002`,
       '--workdir',
-      '/home/otto-connected',
+      '/var/tmp',
     ]);
     assert.deepEqual(launches[0]!.slice(7, 9), ['/usr/bin/python3', '-I']);
     await assert.rejects(run(['fixturecli']), WorkspaceCommandError);
+    const other = join(home, `otto-cli-${randomUUID()}`);
+    await mkdir(other);
+    const sharing = await run(['status'], cli);
+    assert.equal(sharing.exitCode, 126);
+    assert.match(sharing.stderr.toString(), /not sealed/);
+    await rm(other, { recursive: true });
     const shared = join(root, 'shared');
     await mkdir(shared);
     await chmod(shared, 0o777);
@@ -526,7 +533,7 @@ test('a missing sealed install comes from its declared source and a failed insta
     });
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr.toString(), /Could not install fixturecli/);
-    assert.equal(existsSync(join(home, 'cli', cli.id, '.installed')), false);
+    assert.equal(existsSync(join(home, `otto-cli-${cli.id}`, '.installed')), false);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

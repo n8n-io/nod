@@ -365,11 +365,11 @@ def check_connected_cli(processes, workspace_directory, connected_directory):
     os.chmod(workspace_directory, 0o755)
     processes.python(1000, f"import pathlib\np=pathlib.Path({str(planted)!r});p.mkdir();p.chmod(0o755)\nfor name in [{command!r},'python3','sh','env','npm']:\n f=p/name;f.write_text('#!/bin/sh\\necho otto-planted-binary\\n');f.chmod(0o755)", "connected-cli")
     identity = str(uuid.uuid4())
-    prefix = connected_directory / "cli" / identity
+    prefix = connected_directory / ("otto-cli-" + identity)
     (prefix / "bin").mkdir(parents=True)
     (prefix / "bin" / command).write_text("#!/bin/sh\nenv\n")
     (prefix / ".installed").write_text("")
-    for path in [prefix.parent, prefix, prefix / "bin", prefix / "bin" / command, prefix / ".installed"]:
+    for path in [prefix, prefix / "bin", prefix / "bin" / command, prefix / ".installed"]:
         os.chown(path, 1002, 1002)
         os.chmod(path, 0o700)
     request = {"args": ["status"], "environment": {"OTTO_BOUNDARY_TOKEN": "synthetic-live-boundary"}, "cli": {"id": identity, "command": command, "source": {"npm": command}}, "timeoutMs": 10000, "installTimeoutMs": 10000, "maxBytes": 8192}
