@@ -202,7 +202,6 @@ globalThis.fetch = async (resource, options) => {
       return Response.json({
         redirectUrl: proxyOrigin + '/v1/connect/pair?ticket=synthetic',
         transactionId: body.transactionId,
-        pairingCode: '123-456',
       });
     }
     if (url.pathname === '/v1/connect/complete' && request.method === 'POST') {
@@ -651,7 +650,7 @@ try {
         url: '/api/apps/gmail/connect',
         payload: {},
       });
-      assert.equal(pairing.json().pairingCode, '123-456');
+      assert.equal(pairing.json().pairingCode, undefined);
       const managedAttempt = attempts.at(-1)!;
       const checked = calls.length;
       const invalid = await save('synthetic-invalid-key');

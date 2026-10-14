@@ -175,7 +175,6 @@ test('managed integration requests bind SDK calls to a private persisted install
       return Response.json({
         redirectUrl: 'https://proxy.example.test/v1/connect/pair?ticket=synthetic',
         transactionId: body.transactionId,
-        pairingCode: '123-456',
       });
     }
     if (url.pathname === '/v1/connect/status') {
@@ -243,15 +242,24 @@ test('managed integration requests bind SDK calls to a private persisted install
     /owner/,
   );
   assert.equal(calls.length, afterAuthorization);
-  assert.equal(await provider.pairingConfirmed!('fixture-owner', directAttempt.url), false);
+  assert.deepEqual(await provider.connectionStatus!('fixture-owner', directAttempt.url), {
+    pairingConfirmed: false,
+  });
   pairingStatus = { pairingConfirmed: true };
-  assert.equal(await provider.pairingConfirmed!('fixture-owner', directAttempt.url), true);
+  assert.deepEqual(await provider.connectionStatus!('fixture-owner', directAttempt.url), {
+    pairingConfirmed: true,
+  });
   assert.deepEqual(
     calls.slice(afterAuthorization).map((call) => call.path),
     ['/v1/connect/status', '/v1/connect/status'],
   );
+  pairingStatus = { pairingConfirmed: false, signInRequired: true };
+  assert.deepEqual(await provider.connectionStatus!('fixture-owner', directAttempt.url), {
+    pairingConfirmed: false,
+    signInRequired: true,
+  });
   const beforeInvalidPairing = calls.length;
-  await assert.rejects(provider.pairingConfirmed!('another-owner', directAttempt.url), /owner/);
+  await assert.rejects(provider.connectionStatus!('another-owner', directAttempt.url), /owner/);
   for (const url of [
     'https://other.example.test/v1/connect/pair?ticket=synthetic',
     'https://proxy.example.test/v1/connect/complete?ticket=synthetic',
@@ -261,13 +269,20 @@ test('managed integration requests bind SDK calls to a private persisted install
     `${directAttempt.url}&unrelated=1`,
     'https://proxy.example.test/v1/connect/pair?ticket=',
   ])
-    await assert.rejects(provider.pairingConfirmed!('fixture-owner', url), /link is invalid/);
+    await assert.rejects(provider.connectionStatus!('fixture-owner', url), /link is invalid/);
   assert.equal(calls.length, beforeInvalidPairing);
   pairingStatus = { pairingConfirmed: 'true' };
-  await assert.rejects(provider.pairingConfirmed!('fixture-owner', directAttempt.url));
+  await assert.rejects(provider.connectionStatus!('fixture-owner', directAttempt.url));
+  for (const invalid of [
+    { pairingConfirmed: false, signInRequired: 'true' },
+    { pairingConfirmed: false, signInRequired: true, arbitrary: true },
+  ]) {
+    pairingStatus = invalid;
+    await assert.rejects(provider.connectionStatus!('fixture-owner', directAttempt.url));
+  }
   const abortedPairing = calls.length;
   await assert.rejects(
-    provider.pairingConfirmed!(
+    provider.connectionStatus!(
       'fixture-owner',
       directAttempt.url,
       AbortSignal.abort(new Error('Pairing cancelled.')),
@@ -275,11 +290,11 @@ test('managed integration requests bind SDK calls to a private persisted install
     /Pairing cancelled/,
   );
   assert.equal(calls.length, abortedPairing);
-  assert.equal(createComposioProvider({ apiKey: 'synthetic' }).pairingConfirmed, undefined);
+  assert.equal(createComposioProvider({ apiKey: 'synthetic' }).connectionStatus, undefined);
   const session = await provider.createSession('fixture-owner', {});
   const attempt = directAttempt;
   assert.equal(attempt.accountId, `pending_${state}`);
-  assert.equal(attempt.pairingCode, '123-456');
+  assert.equal(attempt.pairingCode, undefined);
   assert.ok(attempt.verificationSecret);
   const completed = await provider.parseCallback(
     { state, completion_token: 'synthetic-completion' },
@@ -311,7 +326,7 @@ test('managed integration requests bind SDK calls to a private persisted install
     expectedCallback = callback;
     const connected = await session.authorize('gmail', callbackUrl);
     assert.equal(connected.accountId, `pending_${state}`);
-    assert.equal(connected.pairingCode, '123-456');
+    assert.equal(connected.pairingCode, undefined);
   }
   const completedCalls = calls.length;
   for (const callbackUrl of [
@@ -1306,6 +1321,7 @@ test(
     let completions = 0;
     let refreshes = 0;
     let pairingConfirmed = false;
+    let signInRequired = false;
     let pairingUnavailable = false;
     const provider = fakeProvider({
       id: 'fixture-deferred-session',
@@ -1335,9 +1351,9 @@ test(
       assert.equal(owner, 'fixture-owner');
       assert.equal(url, 'https://proxy.example.test/v1/connect/browser?ticket=fixture');
       if (pairingUnavailable) throw new Error('Synthetic pairing status unavailable.');
-      return pairingConfirmed;
+      return { pairingConfirmed, ...(signInRequired ? { signInRequired: true } : {}) };
     });
-    provider.pairingConfirmed = pairingChecks;
+    provider.connectionStatus = pairingChecks;
     provider.supportsSubscriptions = [];
     provider.webhooksConfigured = false;
     provider.parseCallback = async (query, pending) => {
@@ -1392,6 +1408,16 @@ test(
     assert.equal(pairingChecks.mock.callCount(), 0);
     assert.equal((await status(begin.json().url)).json().apps[0].pairingConfirmed, undefined);
     assert.equal(pairingChecks.mock.callCount(), 1);
+    await database.pool.query('UPDATE app_connections SET pairing_code=NULL');
+    signInRequired = true;
+    const renewal = await status(begin.json().url);
+    assert.equal(renewal.json().apps[0].signInRequired, true);
+    assert.equal(renewal.json().apps[0].pairingCode, undefined);
+    assert.equal(renewal.body.includes(secret), false);
+    assert.equal((await status()).json().apps[0].signInRequired, undefined);
+    assert.equal(completions, 0);
+    assert.equal(refreshes, 0);
+    signInRequired = false;
     pairingConfirmed = true;
     const paired = await status(begin.json().url);
     assert.equal(paired.json().apps[0].pairingConfirmed, true);
@@ -1406,6 +1432,7 @@ test(
     const unavailable = await status(begin.json().url);
     assert.equal(unavailable.statusCode, 200);
     assert.equal(unavailable.json().apps[0].pairingConfirmed, undefined);
+    assert.equal(unavailable.json().apps[0].signInRequired, undefined);
     pairingUnavailable = false;
     const pairingReads = pairingChecks.mock.callCount();
     await status('https://proxy.example.test/v1/connect/browser?ticket=foreign');
@@ -12077,6 +12104,11 @@ test('chat app setup shows owned pairing codes before handoff and completes with
   const pending = new Set([hashes[0], hashes[2]]);
   const paired = new Set<string>();
   let personalCode = '234-567';
+  let signInRequired = false;
+  let accessStarts = 0;
+  let accessCompletions = 0;
+  let accessCancellations = 0;
+  let finishAccess: (() => void) | undefined;
   const timers = new Map<number, () => void>();
   const pollDelays = new Map<number, number>();
   let timerId = 100_000;
@@ -12130,6 +12162,37 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     getComputedStyle: dom.window.getComputedStyle,
     IS_REACT_ACT_ENVIRONMENT: true,
     fetch: async (path: unknown, init: RequestInit) => {
+      if (path === '/api/integrations/access/start') {
+        accessStarts++;
+        assert.deepEqual(JSON.parse(String(init.body)), { native: true });
+        return Response.json({
+          id: 'synthetic-renewal',
+          url: 'http://127.0.0.1:49152/' + 'A'.repeat(43),
+          expiresAt: Date.now() + 60_000,
+        });
+      }
+      if (typeof path === 'string' && path.startsWith('/api/integrations/access/status?'))
+        return new Promise<Response>((resolve) => {
+          finishAccess = () => resolve(Response.json({ status: 'authorized' }));
+        });
+      if (path === '/api/integrations/access/complete') {
+        accessCompletions++;
+        return Response.json({ state: 'enabled', email: 'approved@example.test' });
+      }
+      if (path === '/api/integrations/access/cancel') {
+        accessCancellations++;
+        return Response.json({ cancelled: true });
+      }
+      if (path === '/api/integrations/key') {
+        assert.ok(!init?.method || init.method === 'GET');
+        return Response.json({
+          mode: 'otto',
+          suffix: null,
+          switchable: true,
+          keyWritable: true,
+          managed: { state: 'enabled', email: 'approved@example.test' },
+        });
+      }
       assert.equal(path, '/api/apps/setup-status');
       assert.equal(init.method, 'POST');
       const body = JSON.parse(String(init.body));
@@ -12155,8 +12218,9 @@ test('chat app setup shows owned pairing codes before handoff and completes with
                   hash: hashes[0],
                   slug: 'gmail',
                   name: 'Gmail',
-                  pairingCode: '123-456',
+                  pairingCode: signInRequired ? undefined : '123-456',
                   pairingConfirmed: paired.has(hashes[0]),
+                  ...(signInRequired ? { signInRequired: true } : {}),
                 },
                 {
                   hash: hashes[1],
@@ -12503,6 +12567,33 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     );
     assert.equal(dialog(), null);
     assert.equal(timers.size, 0);
+    Object.assign(dom.window, { ottoDesktop: desktopBridge });
+    signInRequired = true;
+    await render('browser-access-recovery');
+    await waitFor(() => buttons().length === 3 && Boolean(buttons()[0].querySelector('img')));
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('.app-connect-actions .button')));
+    assert.equal(accessStarts, 0);
+    assert.equal(code(), undefined);
+    const renew = dialog()!.querySelector<HTMLButtonElement>('.app-connect-actions .button')!;
+    await act(async () => renew.click());
+    await waitFor(() => Boolean(finishAccess));
+    assert.equal(accessStarts, 1);
+    assert.equal(renew.disabled, true);
+    signInRequired = false;
+    await poll();
+    assert.equal(accessCancellations, 0);
+    assert.equal(renew.isConnected, true);
+    assert.equal(renew.disabled, true);
+    assert.equal(accessCompletions, 0);
+    await act(async () => finishAccess!());
+    await waitFor(() => !dialog());
+    assert.equal(accessCompletions, 1);
+    assert.equal(accessCancellations, 0);
+    assert.equal(timers.size, 0);
+    const restart = dom.window.document.querySelector<HTMLAnchorElement>('.notice-success a');
+    assert.equal(restart?.pathname, '/apps');
+    assert.equal(buttons().length, 3);
   } finally {
     await act(async () => root.unmount());
     await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));

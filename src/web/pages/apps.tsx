@@ -312,6 +312,7 @@ export function Apps({
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState('');
+  const [connectionNotice, setConnectionNotice] = useState('');
   const [connectErrorService, setConnectErrorService] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [signIn, setSignIn] = useState<AppSignIn & { attempt?: string }>();
@@ -445,6 +446,15 @@ export function Apps({
         if (!result.completed.includes(hash)) {
           const app = result.apps.find((app) => app.hash === hash);
           if (app) {
+            setSignIn((current) =>
+              current?.url === url &&
+              current.service === signIn.service &&
+              current.attempt === signIn.attempt &&
+              !current.signInRequired &&
+              app.signInRequired === true
+                ? { ...current, signInRequired: true }
+                : current,
+            );
             if (app.pairingConfirmed === true && !pairingConfirmed) {
               pairingConfirmed = true;
               setSignIn((current) =>
@@ -692,6 +702,7 @@ export function Apps({
         : `connect:${connection.slug}`,
     );
     setError('');
+    setConnectionNotice('');
     setSignIn({
       service: connection.slug,
       name: connection.name,
@@ -904,6 +915,11 @@ export function Apps({
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
+      {connectionNotice && (
+        <Notice kind="success" onDismiss={() => setConnectionNotice('')}>
+          {connectionNotice}
+        </Notice>
+      )}
       {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}
       {loadError && (
         <Notice>
@@ -1213,6 +1229,11 @@ export function Apps({
         signIn={signIn}
         opening={Boolean(busy)}
         onClose={closeSignIn}
+        onAccessRenewed={() => {
+          closeSignIn();
+          setManageService(null);
+          setConnectionNotice('Browser sign-in renewed. Connect the app again.');
+        }}
         onOpened={() =>
           setSignIn((current) =>
             current && current === signIn ? { ...current, opened: true } : current,

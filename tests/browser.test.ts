@@ -5087,10 +5087,10 @@ test('managed integration admission preserves personal-key connections until an 
       let accounts = [{ slug: 'gmail', name: 'Gmail', connectionId: 'synthetic-gmail', status: 'connected', triggersEnabled: false }];
       let stage = 'pending';
       let switched = 0;
+      let started = 0;
       let completed = 0;
       let keyWrites = 0;
       const retainedPermissionNotice = 'Synthetic provider permissions remain.';
-      let browserSessionActive = false;
       let choice;
       let observed;
       window.ottoDesktop = { openExternal: async url => {
@@ -5122,13 +5122,13 @@ test('managed integration admission preserves personal-key connections until an 
         if (path === '/api/configuration') return Response.json({ integrationsReady: true });
         if (path === '/api/integrations/access/start') {
           assert.deepEqual(JSON.parse(options.body), { native: true });
+          started++;
           return Response.json({ id: 'synthetic-native-attempt', url: 'http://127.0.0.1:49152/' + 'A'.repeat(43), expiresAt: Date.now() + 60_000 });
         }
         if (path.startsWith('/api/integrations/access/status?')) return Response.json({ status: stage });
         if (path === '/api/integrations/access/complete') {
           assert.equal(stage, 'authorized');
           completed++;
-          browserSessionActive = true;
           stage = 'completed';
           status.managed = { state: 'enabled', email: 'alex@example.test' };
           return Response.json(status.managed);
@@ -5159,13 +5159,11 @@ test('managed integration admission preserves personal-key connections until an 
         assert.equal(choice.status.managed.state, 'enabled');
         assert.equal(observed.managed.state, 'enabled');
         assert.equal(observed.mode, 'own');
-        browserSessionActive = false;
-        const reauthenticate = document.querySelector('.connection-managed > .button');
-        assert.ok(reauthenticate);
-        await act(async () => reauthenticate.click());
+        assert.equal(!!document.querySelector('.connection-managed > .button'), false);
+        await act(async () => pageDataCache.refresh('/api/integrations/key', true));
         await settle();
-        assert.equal(browserSessionActive, true);
-        assert.equal(completed, 2);
+        assert.equal(started, 1);
+        assert.equal(completed, 1);
         assert.equal(switched, 0);
         assert.equal(status.mode, 'own');
         assert.equal(status.suffix, 'TEST');
@@ -5185,11 +5183,12 @@ test('managed integration admission preserves personal-key connections until an 
         assert.equal(status.mode, 'otto');
         assert.equal(accounts.length, 0);
         assert.equal(observed.mode, 'otto');
-        browserSessionActive = false;
-        await act(async () => document.querySelector('.connection-managed > .button').click());
+        assert.equal(!!document.querySelector('.connection-managed > .button'), false);
+        await act(async () => pageDataCache.refresh('/api/integrations/key', true));
         await settle();
-        assert.equal(browserSessionActive, true);
-        assert.equal(completed, 3);
+        assert.equal(choice.ready, true);
+        assert.equal(started, 1);
+        assert.equal(completed, 1);
         assert.equal(switched, 1);
         assert.equal(status.mode, 'otto');
         assert.equal(status.managed.state, 'enabled');
@@ -5202,6 +5201,21 @@ test('managed integration admission preserves personal-key connections until an 
             await pageDataCache.refresh('/api/integrations/key', true);
             await pageDataCache.refresh('/api/apps', true);
           });
+          assert.equal(choice.ready, false);
+          const recover = document.querySelector('.connection-managed > .button');
+          assert.ok(recover);
+          assert.equal(recover.disabled, false);
+          const beforeRecovery = completed;
+          await act(async () => recover.click());
+          await settle();
+          assert.equal(completed, beforeRecovery + 1);
+          assert.equal(started, completed);
+          assert.equal(choice.ready, true);
+          assert.equal(switched, 1);
+          assert.equal(accounts[0].connectionId, 'synthetic-managed-gmail');
+          assert.equal(!!document.querySelector('.connection-managed > .button'), false);
+          status.managed = { state, email: null };
+          await act(async () => pageDataCache.refresh('/api/integrations/key', true));
           const before = keyWrites;
           await act(async () => document.querySelectorAll('.connection-mode')[1].click());
           const input = document.querySelector('input[type="password"]');

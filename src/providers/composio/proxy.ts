@@ -403,7 +403,7 @@ export function createComposioProxy(options: {
       signal?.throwIfAborted();
       return result;
     },
-    async pairingConfirmed(url: string, signal?: AbortSignal) {
+    async connectionStatus(url: string, signal?: AbortSignal) {
       const pairing = new URL(url);
       const ticket = pairing.searchParams.get('ticket');
       if (
@@ -418,10 +418,9 @@ export function createComposioProxy(options: {
       )
         throw new Error('The integration connection link is invalid.');
       return z
-        .object({ pairingConfirmed: z.boolean() })
+        .object({ pairingConfirmed: z.boolean(), signInRequired: z.boolean().optional() })
         .strict()
-        .parse(await rpc('/v1/connect/status', { ticket }, { signal, timeout: 5_000 }))
-        .pairingConfirmed;
+        .parse(await rpc('/v1/connect/status', { ticket }, { signal, timeout: 5_000 }));
     },
     async authorize(toolkit: string, callbackUrl: string, authConfigId?: string) {
       const callback = new URL(callbackUrl);
@@ -459,7 +458,10 @@ export function createComposioProxy(options: {
         .object({
           redirectUrl: z.url(),
           transactionId: stateSchema,
-          pairingCode: z.string().regex(/^\d{3}-\d{3}$/),
+          pairingCode: z
+            .string()
+            .regex(/^\d{3}-\d{3}$/)
+            .optional(),
         })
         .parse(
           await rpc('/v1/connect/start', {

@@ -831,10 +831,10 @@ export function createComposioProvider(options: {
           return options.proxy!.authorize(schemaToolkit.parse(service), callbackUrl);
         }
       : undefined,
-    pairingConfirmed: options.proxy
+    connectionStatus: options.proxy
       ? async (ownerId, url, signal) => {
           userId(ownerId);
-          return options.proxy!.pairingConfirmed(url, signal);
+          return options.proxy!.connectionStatus(url, signal);
         }
       : undefined,
     verificationEmails: (accountId, query, signal) =>

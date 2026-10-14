@@ -186,7 +186,11 @@ export interface IntegrationProvider {
     service: IntegrationService,
     callbackUrl: string,
   ): Promise<IntegrationAuthorization>;
-  pairingConfirmed?(ownerId: string, url: string, signal?: AbortSignal): Promise<boolean>;
+  connectionStatus?(
+    ownerId: string,
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<{ pairingConfirmed: boolean; signInRequired?: boolean }>;
   createSession(
     ownerId: string,
     accounts: Partial<Record<IntegrationService, string | string[]>>,

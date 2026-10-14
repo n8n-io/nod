@@ -1,5 +1,9 @@
-import { useRef, type ComponentProps } from 'react';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { ExternalLink } from 'lucide-react';
+import { errorMessage } from '../lib/api';
+import { startIntegrationAccess, type IntegrationAccessAttempt } from '../lib/integration-access';
+import { pageDataCache } from '../lib/page-data-cache';
+import { GoogleMark } from './account-avatar';
 import { OttoGlyph } from './motion';
 import { PairingCode } from './pairing-code';
 import { ServiceLogo } from './service-logo';
@@ -14,7 +18,73 @@ export type AppSignIn = {
   opened: boolean;
   reopened?: boolean;
   pairingConfirmed?: boolean;
+  signInRequired?: boolean;
 };
+
+export function AppAccessRecovery({ onRenewed }: { onRenewed(): void }) {
+  const attempt = useRef<IntegrationAccessAttempt | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(
+    () => () => {
+      const current = attempt.current;
+      attempt.current = null;
+      void current?.cancel().catch(() => {});
+    },
+    [],
+  );
+  function signIn() {
+    if (attempt.current) return;
+    const current = startIntegrationAccess();
+    attempt.current = current;
+    setBusy(true);
+    setError('');
+    void current.done
+      .then(async () => {
+        await pageDataCache.refresh('/api/integrations/key', true).catch(() => {});
+        if (attempt.current !== current) return;
+        attempt.current = null;
+        setBusy(false);
+        onRenewed();
+      })
+      .catch((cause) => {
+        if (attempt.current !== current) return;
+        attempt.current = null;
+        setBusy(false);
+        if (!(cause instanceof DOMException && cause.name === 'AbortError'))
+          setError(errorMessage(cause));
+      });
+  }
+  return (
+    <div>
+      <p className="app-connect-waiting" role="status">
+        {busy
+          ? 'Finish Google sign-in in your browser.'
+          : 'Continue with Google in this browser, then connect this app again.'}
+      </p>
+      <div className="app-connect-actions connection-row">
+        <Button variant="outline" disabled={busy} onClick={signIn}>
+          <GoogleMark />
+          Continue with Google
+        </Button>
+        {busy && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              const current = attempt.current;
+              attempt.current = null;
+              setBusy(false);
+              void current?.cancel().catch(() => {});
+            }}
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+      {error && <Notice>{error}</Notice>}
+    </div>
+  );
+}
 
 export function AppConnectionDialog({
   signIn,
@@ -22,6 +92,7 @@ export function AppConnectionDialog({
   error,
   onClose,
   onOpened,
+  onAccessRenewed,
   onCloseAutoFocus,
 }: {
   signIn?: AppSignIn;
@@ -29,6 +100,7 @@ export function AppConnectionDialog({
   error?: string;
   onClose(): void;
   onOpened(): void;
+  onAccessRenewed(): void;
   onCloseAutoFocus?: ComponentProps<typeof DialogContent>['onCloseAutoFocus'];
 }) {
   const title = useRef<HTMLHeadingElement>(null);
@@ -66,14 +138,18 @@ export function AppConnectionDialog({
                 Connect {signIn.name}
               </DialogTitle>
               <DialogDescription>
-                {error
-                  ? 'Sign-in could not continue.'
-                  : !signIn.url
-                    ? 'Your browser will open when sign-in is ready.'
-                    : 'Sign in in your browser and review what Otto can access.'}
+                {signIn.signInRequired
+                  ? 'Renew your browser sign-in to continue.'
+                  : error
+                    ? 'Sign-in could not continue.'
+                    : !signIn.url
+                      ? 'Your browser will open when sign-in is ready.'
+                      : 'Sign in in your browser and review what Otto can access.'}
               </DialogDescription>
             </div>
-            {error ? (
+            {signIn.signInRequired ? (
+              <AppAccessRecovery key={signIn.url} onRenewed={onAccessRenewed} />
+            ) : error ? (
               <Notice kind="error">{error}</Notice>
             ) : (
               <>

@@ -2070,17 +2070,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         const pairingHash = pairingUrl
           ? createHash('sha256').update(pairingUrl).digest('hex')
           : undefined;
-        const pendingPairing = links.rows.find(
-          (row) => !row.completed && row.pairing_code && row.hash === pairingHash,
-        );
-        const pairingConfirmed = Boolean(
-          pairingUrl &&
-          pendingPairing &&
-          configurationMatches(pendingPairing) &&
-          (await providerForRow(pendingPairing)
-            .pairingConfirmed?.(configuredOwner, pairingUrl)
-            .catch(() => false)),
-        );
+        const pendingPairing = links.rows.find((row) => !row.completed && row.hash === pairingHash);
+        const connectionStatus =
+          pairingUrl && pendingPairing && configurationMatches(pendingPairing)
+            ? await providerForRow(pendingPairing)
+                .connectionStatus?.(configuredOwner, pairingUrl)
+                .catch(() => undefined)
+            : undefined;
         const discoveredLinks = discovered.map(({ id, link_hash, ...service }) => ({
           ...service,
           hash:
@@ -2101,7 +2097,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               ...('pairing_code' in row && row.pairing_code
                 ? { pairingCode: row.pairing_code }
                 : {}),
-              ...(pairingConfirmed && row.hash === pairingHash ? { pairingConfirmed: true } : {}),
+              ...(connectionStatus?.pairingConfirmed && row.hash === pairingHash
+                ? { pairingConfirmed: true }
+                : {}),
+              ...(connectionStatus?.signInRequired && row.hash === pairingHash
+                ? { signInRequired: true }
+                : {}),
             };
           });
         return reply.header('Cache-Control', 'no-store').send({

@@ -432,10 +432,6 @@ export function ConnectionChoice({
               <Check size={16} aria-hidden="true" />
               Access enabled for this Otto installation.
             </p>
-            <Button variant="outline" disabled={locked} onClick={view.signIn}>
-              <GoogleMark />
-              Sign in again
-            </Button>
             {changing && (
               <div className="connection-switch">
                 {warning && (
@@ -558,7 +554,11 @@ export function ConnectionChoice({
               )}
               <span className="connection-mode-text">
                 <span className="connection-mode-name">{item.name}</span>
-                <span className="connection-muted">{item.sub}</span>
+                <span className="connection-muted">
+                  {item.id === 'otto' && status.managed?.state === 'enabled'
+                    ? 'Signed in with Google.'
+                    : item.sub}
+                </span>
               </span>
             </button>
           ))}

@@ -9,6 +9,7 @@ import {
 } from '../../../components/connection-choice';
 import { Rise } from '../../../components/motion';
 import { PairingCode } from '../../../components/pairing-code';
+import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
@@ -52,6 +53,8 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const [stale, setStale] = useState(false);
   const [pollFailing, setPollFailing] = useState(false);
   const [error, setError] = useState('');
+  const [signInRequired, setSignInRequired] = useState(false);
+  const [accessRenewed, setAccessRenewed] = useState(false);
   const choice = useConnectionChoice('onboarding', () => setError(''));
   const keyStatus = choice.status;
   const request = useRef<AbortController | null>(null);
@@ -64,6 +67,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     setSignInUrl(undefined);
     setStale(false);
     setPollFailing(false);
+    setSignInRequired(false);
   }
 
   useEffect(() => {
@@ -139,6 +143,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           settle('failed');
           return true;
         }
+        if (app.signInRequired === true) setSignInRequired(true);
         if (app.pairingConfirmed === true && !confirmed) {
           confirmed = true;
           setPairingConfirmed(true);
@@ -230,6 +235,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     setPending('opening');
     setPairingConfirmed(false);
     setError('');
+    setAccessRenewed(false);
     let next: 'waiting' | undefined;
     try {
       const response = await api<{ url: string; attempt?: string; pairingCode?: string }>(
@@ -295,6 +301,16 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           'Signed in.'
         )}
       </p>
+    );
+  else if (signInRequired)
+    status = (
+      <AppAccessRecovery
+        key={signInUrl}
+        onRenewed={() => {
+          cancel();
+          setAccessRenewed(true);
+        }}
+      />
     );
   else if (gmailState === 'waiting')
     status = (
@@ -402,6 +418,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           </div>
           {!connected && pairingCode && !pairingConfirmed && <PairingCode code={pairingCode} />}
           {status}
+          {accessRenewed && (
+            <p role="status" className="ob-email-muted">
+              Browser sign-in renewed. Connect Gmail again.
+            </p>
+          )}
           {pollFailing && (
             <p role="alert" className="ob-email-error">
               Can’t check on the sign-in right now. Still trying.
