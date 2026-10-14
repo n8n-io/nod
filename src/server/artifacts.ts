@@ -163,6 +163,7 @@ export function createArtifactService(options: {
       maxBytes: number,
       purpose?: 'attachment' | 'publication',
     ) => Promise<Uint8Array>,
+    database: Pick<PoolClient, 'query'> = options.database,
   ) {
     z.uuid().parse(threadId);
     if (!path || path.length > 4096 || path.includes('\0') || path.includes('\\'))
@@ -176,6 +177,7 @@ export function createArtifactService(options: {
       name || posix.basename(actual),
       mimeTypes[extname(actual).toLowerCase()] || 'application/octet-stream',
       threadId,
+      database,
     );
   }
   async function readThreadArtifacts(

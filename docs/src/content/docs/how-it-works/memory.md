@@ -29,11 +29,11 @@ The code is in [`src/server/memory.ts`](https://github.com/n8n-io/otto/blob/main
 
 ## How Pi reads memory
 
-Pi, the agent that runs each turn, sees memory in three steps so the prompt stays small.
+Pi, the agent that runs each turn, sees memory in three steps.
 
 ```mermaid
 flowchart TD
-  l0["Index in the prompt<br/>one-line abstracts"]:::accent
+  l0["Index in the prompt<br/>every entry in full"]:::accent
   l1["Area<br/>entry list"]
   l2["One entry<br/>in full"]
   find[memory_find<br/>words]:::muted
@@ -42,7 +42,7 @@ flowchart TD
   find -- path --> l2
 ```
 
-- The **index** is a JSON list of abstracts in the owner context, within a 6,000-character budget. Confirmed entries come first, then the newest. Tentative entries stay out.
+- The **index** is a JSON list of every entry's full text in the owner context, with confirmed entries first. Nothing is cut. Tentative entries stay out.
 - An **area** lists its entries.
 - An **entry** shows its full text, status and evidence count.
 

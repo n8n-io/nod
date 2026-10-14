@@ -357,11 +357,16 @@ export async function createApprovals(
     const answer = input.answer;
     const approved = answer && answer.approvalId === approval.id ? answer.approved : undefined;
     if (approved === undefined) {
-      if (approval.status === 'pending')
+      if (approval.status === 'pending') {
         await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
           approval.id,
           ownerId,
         ]);
+        await client.query(
+          "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='waiting'",
+          [approval.turn_id, ownerId],
+        );
+      }
       return undefined;
     }
     if (approval.status !== 'pending' || !['running', 'waiting'].includes(approval.turn_status))

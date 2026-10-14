@@ -6,7 +6,6 @@ export const areas = memoryAreas;
 export const maxBytes = 256 * 1024;
 export const maxEntries = 300;
 export const maxArchive = 40;
-export const indexBudget = 6000;
 
 export const personalSecret = new RegExp(
   String.raw`\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@|` + secretToken.source,
@@ -112,9 +111,7 @@ export const same = (a: string, b: string) => {
   return !!left && left === tokens(b).join(' ');
 };
 
-export const abstractOf = (entry: Entry) =>
-  entry.abstract ??
-  (entry.text.length <= 120 ? entry.text : `${entry.text.slice(0, 119).trimEnd()}…`);
+export const abstractOf = (entry: Entry) => entry.abstract ?? entry.text;
 export const statusOf = (entry: Entry) =>
   entry.origin === 'stated'
     ? 'stated'
@@ -229,47 +226,24 @@ export function render(tree: Tree) {
   return bytes;
 }
 
-export function indexLayout(tree: Tree, options: { tentative?: boolean; budget?: number } = {}) {
-  const budget = options.budget ?? indexBudget;
-  const listed = tree.entries.filter(
-    (entry) => options.tentative || statusOf(entry) !== 'tentative',
-  );
-  const row = (entry: Entry) =>
-    `${entry.slug}: ${abstractOf(entry)}${statusOf(entry) === 'tentative' ? ' (tentative)' : ''}`;
-  const ranked = listed.toSorted(
-    (a, b) =>
-      Number(statusOf(b) === 'stated') - Number(statusOf(a) === 'stated') ||
-      b.updated.localeCompare(a.updated) ||
-      pathOf(a).localeCompare(pathOf(b)),
-  );
-  let used = 2 + areas.length * 40;
-  const shown = new Set<Entry>();
-  for (const entry of ranked) {
-    const cost = JSON.stringify(row(entry)).length + 1;
-    if (used + cost > budget) break;
-    used += cost;
-    shown.add(entry);
-  }
+export function indexLayout(tree: Tree, options: { tentative?: boolean } = {}) {
   const index: Record<string, string[]> = {};
   for (const target of areas) {
-    const all = listed.filter((entry) => entry.area === target);
-    if (!all.length) continue;
-    const visible = all
-      .filter((entry) => shown.has(entry))
+    const rows = tree.entries
+      .filter(
+        (entry) => entry.area === target && (options.tentative || statusOf(entry) !== 'tentative'),
+      )
       .toSorted(
         (a, b) =>
           Number(statusOf(b) === 'stated') - Number(statusOf(a) === 'stated') || bySlug(a, b),
+      )
+      .map(
+        (entry) =>
+          `${entry.slug}: ${entry.text}${statusOf(entry) === 'tentative' ? ' (tentative)' : ''}`,
       );
-    index[target] = [
-      ...visible.map(row),
-      ...(all.length > visible.length ? [`+${all.length - visible.length} more`] : []),
-    ];
+    if (rows.length) index[target] = rows;
   }
-  return {
-    text: JSON.stringify(index),
-    hidden: listed.length - shown.size,
-    shown: new Set([...shown].map(pathOf)),
-  };
+  return JSON.stringify(index);
 }
 
 const matches = (tokens: string[], term: string) =>
@@ -327,7 +301,6 @@ export function open(tree: Tree, target: string) {
 }
 
 export function view(tree: Tree, source: (id: string) => MemorySource): MemoryView {
-  const index = indexLayout(tree);
   return {
     saving: tree.enabled,
     sensitive: tree.sensitive,
@@ -338,7 +311,6 @@ export function view(tree: Tree, source: (id: string) => MemorySource): MemoryVi
         area: entry.area,
         text: entry.text,
         status: statusOf(entry),
-        inMind: index.shown.has(pathOf(entry)),
         updated: entry.updated,
         edited: entry.edited ?? null,
         expires: entry.expires ?? null,

@@ -71,7 +71,12 @@ export function createTrust(options: {
         ...words,
         action: { name: action, arguments: args },
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        console.error(
+          `Trust check for ${action} failed (${error instanceof Error ? error.name : typeof error}); asking the owner.`,
+        );
+        return undefined;
+      });
     if (answer && typeof answer === 'object' && (answer as { run?: unknown }).run === true)
       return { confirm: false };
     return {
