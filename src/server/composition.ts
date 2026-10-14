@@ -984,6 +984,7 @@ async function initializeApplication(
     deploymentDrain,
     artifacts,
     submitMessage: userMessages.submit,
+    answerApproval: approvals.answer,
     verification: chatVerification,
     onboard: async (timeZone, threadId) => {
       if (timeZone) await triage.updatePreferences({ timeZone });

@@ -70,6 +70,11 @@ export interface AppDependencies {
   deploymentDrain?: TenantDrain;
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
+  answerApproval?: (input: {
+    approvalId: string;
+    approved: boolean;
+    channel: string;
+  }) => Promise<unknown>;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
     Computer,
@@ -354,6 +359,16 @@ export async function createApp(dependencies: AppDependencies = {}) {
         clientMessageId,
       },
     );
+  });
+  app.post<{ Params: { id: string } }>('/api/approvals/:id/answer', async (request) => {
+    const { approved } = z.object({ approved: z.boolean() }).strict().parse(request.body);
+    if (!dependencies.answerApproval)
+      throw Object.assign(new Error('Answers are unavailable.'), { statusCode: 503 });
+    return dependencies.answerApproval({
+      approvalId: z.uuid().parse(request.params.id),
+      approved,
+      channel: 'web',
+    });
   });
   app.post('/api/thread/stop', async () => {
     const { browsers } = await stopThread();

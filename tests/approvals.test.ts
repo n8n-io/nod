@@ -182,6 +182,7 @@ test(
     let messages: ReturnType<typeof thread.createUserMessageService>;
     const app = await createApp({
       submitMessage: (text, attachments, options) => messages.submit(text, attachments, options),
+      answerApproval: (input) => approvals.answer(input),
       configuration: () => configuration({ llmReady: true }),
     });
     const personal = createPersonalService({
@@ -1913,6 +1914,175 @@ test(
             },
           );
           assert.equal((await request('DELETE', `/api/schedules/${created.id}`)).statusCode, 200);
+          await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
+        },
+      );
+
+      await t.test(
+        'an answer reaches one task by reply target or approval ID, and a bare yes never picks between tasks',
+        async () => {
+          aligned = false;
+          const before = calls.length;
+          const onIt = async (taskId: string) =>
+            (await db.pool.query('SELECT on_it_message_id FROM tasks WHERE id=$1', [taskId]))
+              .rows[0].on_it_message_id as string;
+          const session = async (turnId: string) => (await row(turnId)).session_id as string;
+          const turnCount = async () =>
+            (await db.pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n as number;
+          const press = (id: string, approved: boolean) =>
+            request('POST', `/api/approvals/${id}/answer`, { approved });
+          const ask = async (text: string) => {
+            const task = await startTask(text);
+            const id = await propose(task.turn, 'OTTO_schedule_cancel', { id: randomUUID() });
+            return { ...task, id };
+          };
+
+          const args = { id: randomUUID() };
+          const a = await startTask('Pause the synthetic digest for the sales team.');
+          const b = await startTask('Pause the synthetic digest for the support team.');
+          const x = await propose(a.turn, 'OTTO_schedule_cancel', args);
+          const y = await propose(b.turn, 'OTTO_schedule_cancel', args);
+          assert.notEqual(x, y);
+          assert.equal(
+            (
+              await db.pool.query('SELECT reply_to_message_id FROM messages WHERE id=$1', [
+                (await stored(x)).confirmation_message_id,
+              ])
+            ).rows[0].reply_to_message_id,
+            await onIt(a.taskId),
+          );
+          await finish(a.turn.turnId);
+          await finish(b.turn.turnId);
+          for (const text of ['Yes.', 'What is on my synthetic calendar?']) {
+            const sent = await messages.submit(text);
+            assert.equal(await session(sent.turnId), sent.threadId);
+            await finish(sent.turnId, 'succeeded');
+          }
+          assert.deepEqual(
+            [(await stored(x)).status, (await stored(y)).status],
+            ['pending', 'pending'],
+          );
+          const yes = await messages.submit('Yes.', [], { replyToMessageId: await onIt(a.taskId) });
+          assert.deepEqual(
+            [(await stored(x)).status, (await stored(y)).status],
+            ['confirmed', 'pending'],
+          );
+          assert.deepEqual(
+            [await session(yes.turnId), (await row(yes.turnId)).background],
+            [a.taskId, true],
+          );
+
+          const turns = await turnCount();
+          assert.equal((await press(x, false)).statusCode, 409);
+          assert.equal((await press(randomUUID(), true)).statusCode, 409);
+          await db.pool.query("UPDATE approvals SET owner_id='another-owner' WHERE id=$1", [y]);
+          assert.equal((await press(y, true)).statusCode, 409);
+          await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [y, ownerId]);
+          assert.equal(await turnCount(), turns);
+          const declined = await press(y, false);
+          assert.equal(declined.statusCode, 200);
+          assert.deepEqual(
+            [(await stored(x)).status, (await stored(y)).status],
+            ['confirmed', 'declined'],
+          );
+          assert.equal(await session(declined.json().turnId), b.taskId);
+
+          const paying = await startTask('Buy the synthetic train ticket.');
+          await approvals.request(
+            paying.turn,
+            'OTTO_payment_approve',
+            { paymentId: randomUUID() },
+            { confirm: true, question: 'Pay the synthetic fare?' },
+          );
+          await finish(paying.turn.turnId);
+          const payment = (await proposal(paying.turn.turnId)).id as string;
+          const payTurns = await turnCount();
+          await assert.rejects(
+            approvals.answer({ approvalId: payment, approved: true, channel: 'telegram' }),
+            { statusCode: 409 },
+          );
+          assert.equal(await turnCount(), payTurns);
+          assert.equal((await stored(payment)).status, 'pending');
+          assert.equal((await press(payment, false)).statusCode, 200);
+          assert.equal((await stored(payment)).status, 'declined');
+
+          const c = await ask('Pause the synthetic digest for the finance team.');
+          await say(c.turn.turnId, 'Found the synthetic digest. Still checking its owners.');
+          await finish(c.turn.turnId);
+          const afterCheckIn = await messages.submit('Yes.');
+          assert.equal(await session(afterCheckIn.turnId), afterCheckIn.threadId);
+          await finish(afterCheckIn.turnId, 'succeeded');
+          assert.equal((await stored(c.id)).status, 'pending');
+          const checkIn = (
+            await db.pool.query(
+              "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+              [c.turn.turnId],
+            )
+          ).rows[0].id;
+          const other = await messages.submit('Use the archive schedule instead.', [], {
+            replyToMessageId: checkIn,
+          });
+          assert.equal((await stored(c.id)).status, 'expired');
+          assert.deepEqual(
+            [await session(other.turnId), (await row(other.turnId)).source],
+            [c.taskId, 'user'],
+          );
+
+          const d = await ask('Pause the synthetic digest for the legal team.');
+          await finish(d.turn.turnId);
+          await db.pool.query(
+            "UPDATE approvals SET expires_at=expires_at-interval '23 hours' WHERE id=$1",
+            [d.id],
+          );
+          const only = await messages.submit('Yes.');
+          assert.equal((await stored(d.id)).status, 'confirmed');
+          assert.equal(await session(only.turnId), d.taskId);
+
+          const e = await ask('Pause the synthetic digest for the design team.');
+          await finish(e.turn.turnId);
+          await db.pool.query(
+            "UPDATE approvals SET expires_at=expires_at-interval '24 hours' WHERE id=$1",
+            [e.id],
+          );
+          assert.equal((await press(e.id, true)).statusCode, 409);
+          assert.equal((await stored(e.id)).status, 'pending');
+          const lateTurns = await turnCount();
+          const late = await messages.submit('Yes.', [], {
+            replyToMessageId: (await stored(e.id)).confirmation_message_id,
+          });
+          assert.equal(late.turnId, e.turn.turnId);
+          assert.equal(await turnCount(), lateTurns);
+          assert.equal((await stored(e.id)).status, 'expired');
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT reply_to_message_id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+                [e.turn.turnId],
+              )
+            ).rows[0].reply_to_message_id,
+            await onIt(e.taskId),
+          );
+
+          const f = await ask('Pause the synthetic digest for the ops team.');
+          await db.pool.query("UPDATE tasks SET state='open' WHERE id=$1", [f.taskId]);
+          await tasks.progress(f.turn, { stop: 'Stopped as you asked.' });
+          assert.equal((await stored(f.id)).status, 'declined');
+          assert.equal((await press(f.id, true)).statusCode, 409);
+
+          const g = await ask('Pause the synthetic digest for the data team.');
+          await finish(g.turn.turnId);
+          const chat = await begin('Cancel the synthetic weekly sync.');
+          const z = await propose(chat, 'OTTO_schedule_cancel', { id: randomUUID() });
+          await finish(chat.turnId);
+          const bare = await messages.submit('Yes.');
+          assert.deepEqual(
+            [(await stored(z)).status, (await stored(z)).confirmation_reply_id],
+            ['expired', bare.messageId],
+          );
+          assert.equal((await stored(g.id)).status, 'pending');
+          assert.equal(await session(bare.turnId), bare.threadId);
+          assert.equal(calls.length, before);
+          await thread.stopThread();
           await db.pool.query('DELETE FROM tasks WHERE owner_id=$1', [ownerId]);
         },
       );

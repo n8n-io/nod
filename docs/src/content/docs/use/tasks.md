@@ -9,13 +9,20 @@ The **Tasks** page shows what Otto is working on, what's scheduled and what's do
 
 A task is long work that Otto hands off from the chat, so the chat stays free while the task runs. Tasks are in development. They appear only when Otto runs with `OTTO_TASKS` turned on. See [Configuration](/deploy/configuration/#server-and-data).
 
-When Otto starts a task, it answers your message with a short "On it" message. The task's questions, sign-in and payment links, files and result reply to that message. A confirmation from the [trust check](/trust/approvals/) still appears as a plain message.
+When Otto starts a task, it answers your message with a short "On it" message. The task's questions, confirmations from the [trust check](/trust/approvals/), sign-in and payment links, files and result reply to that message.
 
 To answer a task or add to it, reply to any of its messages. Your reply goes to that task, not the chat. While the task works, your reply waits and runs next. A reply to a done, stopped or failed task opens it again. When Otto sees that a message without a reply belongs to a task, it moves your message to that task word for word.
 
-To answer a task's confirmation, reply to the confirmation. Any other reply to the task cancels it, and the task reads your reply instead.
-
 Up to three tasks work at the same time. When three are working, a new task waits as **Queued** until one of them finishes or stops to ask you something. So does a task you answer or open again while three others work. A task that waits for your answer doesn't take a place, and the chat and your schedules never wait for tasks.
+
+## Answer a task's question
+
+To answer a task's confirmation, reply yes or no to the confirmation or to any other message of that task. Anything else you reply to the task cancels the confirmation, and the task reads your reply instead.
+
+- A yes or no sent without a reply answers a task only when it's the only task question waiting in that conversation and the newest message you'd seen. With two or more, nothing runs and Otto asks which task you mean.
+- A message you send without a reply never cancels a task's question.
+- A task's confirmation stays open for 24 hours. A yes after that gets a short reply that the question expired, and nothing runs. Reply to the task again to pick it up.
+- When a task finishes or stops, its open confirmations close without running.
 
 ## Three views
 

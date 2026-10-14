@@ -377,18 +377,22 @@ export async function insertUserTurn(
       "UPDATE tasks SET state='queued',closed_at=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND state NOT IN ('queued','open')",
       [task.id, ownerId],
     );
-    await expireSessionApprovals(client, [task.id]);
+    await endSessionApprovals(client, [task.id]);
   }
   await sendDrain(client, threadId);
   return id;
 }
 
-async function expireSessionApprovals(client: PoolClient, sessionIds: string[]) {
+export async function endSessionApprovals(
+  client: PoolClient,
+  sessionIds: string[],
+  status: 'expired' | 'declined' = 'expired',
+) {
   await client.query(
-    `UPDATE approvals a SET status='expired' FROM turns u
+    `UPDATE approvals a SET status=$3 FROM turns u
      WHERE u.id=a.turn_id AND u.owner_id=a.owner_id AND a.owner_id=$1 AND a.status='pending'
        AND u.session_id=ANY($2::uuid[])`,
-    [ownerId, sessionIds],
+    [ownerId, sessionIds, status],
   );
 }
 
@@ -829,7 +833,7 @@ async function claimTurns(threadId: string) {
       [ownerId, taskTurns.map((row) => row.session_id)],
     );
     const replies = taskTurns.filter((row) => row.source === 'user').map((row) => row.session_id);
-    if (replies.length) await expireSessionApprovals(client, replies);
+    if (replies.length) await endSessionApprovals(client, replies);
     return claimed;
   });
 }
@@ -1389,11 +1393,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         task.id,
         ownerId,
       ]);
-      await client.query(
+      const done = await client.query(
         `UPDATE tasks SET state='done',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'
          AND NOT EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=$2 AND q.session_id=$1 AND q.status='queued')`,
         [task.id, ownerId],
       );
+      if (done.rowCount) await endSessionApprovals(client, [task.id], 'declined');
     }).catch((error) => {
       if (!signal.aborted) throw error;
     });

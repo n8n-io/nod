@@ -1,13 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { pool } from './db.ts';
+import { pool, transaction } from './db.ts';
 import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
-import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
+import {
+  enqueueTurn,
+  insertAssistantMessage,
+  lockThread,
+  withTurnLock,
+  type SubmitUserMessageResult,
+  type TurnRef,
+} from './thread.ts';
 import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
-import { taskOfTurn, taskSessionSql, turnChain } from './turn-chain.ts';
+import { sessionOfMessageSql, taskOfTurn, taskSessionSql, turnChain } from './turn-chain.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -34,6 +41,24 @@ export type ChatConfirmationResult =
 function conflict(message = 'This confirmation is expired, already handled, or its turn changed.') {
   return Object.assign(new Error(message), { statusCode: 409 });
 }
+
+const expiredQuestion = 'That question expired, so I did nothing.';
+const appOnlyActions = ['OTTO_payment_approve', 'OTTO_payment_setting'];
+
+const confirmationFields = `a.*,u.status AS turn_status,u.background AS turn_background,
+  u.session_id AS turn_session_id,u.prompt AS turn_prompt,u.channel AS turn_channel,t.id AS task_id,
+  t.channel AS task_channel,t.channel_source_id AS task_channel_source_id,t.on_it_message_id AS task_on_it,
+  t.id IS NOT NULL AND a.expires_at<=now() AS timed_out,
+  t.id IS NOT NULL AND EXISTS (SELECT 1 FROM turns q WHERE q.owner_id=u.owner_id
+    AND q.session_id=u.session_id AND q.status='queued' AND q.source='user') AS task_replied`;
+const confirmationFrom = `FROM approvals a
+  JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id AND u.thread_id=a.thread_id
+  LEFT JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id`;
+const otherOpenTaskQuestion = `EXISTS (SELECT 1 FROM approvals o
+  JOIN turns v ON v.id=o.turn_id AND v.owner_id=o.owner_id AND v.thread_id=o.thread_id
+  WHERE o.owner_id=a.owner_id AND o.thread_id=a.thread_id AND o.id<>a.id AND o.status='pending'
+    AND o.confirmation_message_id IS NOT NULL AND o.expires_at>now()
+    AND v.status IN ('running','waiting') AND v.channel=u.channel AND ${taskSessionSql('v')})`;
 
 async function scheduleAuthority(client: PoolClient, turnId: string) {
   if (
@@ -258,15 +283,21 @@ export async function createApprovals(
       const question = direct
         ? undefined
         : (options.question ?? actionConfirmation(action, snapshot, targetTitle));
-      const messageId = question ? randomUUID() : null;
-      if (messageId)
-        await client.query(
-          "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant',$5)",
-          [messageId, ownerId, turn.threadId, turn.turnId, question],
-        );
+      const messageId = question
+        ? await insertAssistantMessage(
+            client,
+            turn,
+            question,
+            [],
+            undefined,
+            task?.on_it_message_id ?? undefined,
+          )
+        : null;
       const approval = (
         await client.query(
-          'INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,execution_turn_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',
+          `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,
+             confirmation_message_id,execution_turn_id,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()+$11::interval) RETURNING *`,
           [
             id,
             ownerId,
@@ -278,6 +309,7 @@ export async function createApprovals(
             authorMessageId,
             messageId,
             direct ? turn.turnId : null,
+            task ? '24 hours' : '30 minutes',
           ],
         )
       ).rows[0];
@@ -307,16 +339,28 @@ export async function createApprovals(
         )
       ).rows[0]?.id;
     if (!target) return undefined;
-    return (
+    const lockRow = lock ? ' FOR UPDATE OF a' : '';
+    const exact = (
       await database.query(
-        `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt,
-         ${taskSessionSql()} AS turn_task_session,${taskSessionSql()} AND EXISTS (SELECT 1 FROM turns q
-           WHERE q.owner_id=u.owner_id AND q.session_id=u.session_id AND q.status='queued' AND q.source='user') AS task_replied
-       FROM approvals a JOIN turns u ON u.id=a.turn_id
-       WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
+        `SELECT ${confirmationFields},${input.replyToMessageId ? 'false' : otherOpenTaskQuestion} AS ambiguous
+         ${confirmationFrom}
+         WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND a.thread_id=$3 AND u.channel=$4${lockRow}`,
         [target, ownerId, input.threadId, input.channel],
       )
     ).rows[0];
+    if (exact || !input.replyToMessageId) return exact;
+    const pending = (
+      await database.query(
+        `SELECT ${confirmationFields},false AS ambiguous ${confirmationFrom}
+         WHERE a.owner_id=$2 AND a.thread_id=$3 AND u.channel=$4 AND a.status='pending'
+           AND a.confirmation_message_id IS NOT NULL AND u.status IN ('running','waiting')
+           AND t.id=(SELECT ${sessionOfMessageSql('m')} FROM messages m
+             WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3)
+         LIMIT 2${lockRow}`,
+        [target, ownerId, input.threadId, input.channel],
+      )
+    ).rows;
+    return pending.length === 1 ? pending[0] : undefined;
   }
 
   async function answerChat(input: ChatConfirmationInput) {
@@ -327,40 +371,30 @@ export async function createApprovals(
     return approved === undefined ? undefined : { approvalId: approval.id as string, approved };
   }
 
-  async function acceptChat(
+  async function resume(
     client: PoolClient,
-    input: ChatConfirmationInput,
-  ): Promise<ChatConfirmationResult> {
-    const approval = await confirmationFor(client, input, true);
-    if (!approval) return undefined;
-    const answer = input.answer;
-    const approved = answer && answer.approvalId === approval.id ? answer.approved : undefined;
-    if (approved === undefined || approval.task_replied) {
-      if (approval.status === 'pending') {
-        await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
-          approval.id,
-          ownerId,
-        ]);
-        return { supersededApprovalId: approval.id };
-      }
-      return undefined;
-    }
-    if (approval.status !== 'pending' || !['running', 'waiting'].includes(approval.turn_status))
-      return undefined;
+    approval: Record<string, any>,
+    approved: boolean,
+    input: Pick<
+      ChatConfirmationInput,
+      'text' | 'threadId' | 'replyToMessageId' | 'clientMessageId' | 'sourceId'
+    >,
+  ) {
     if (approved) await preflight?.(approval.action, approval.args);
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'
       : 'The user declined the saved action. Do not execute it or ask for it again. Continue only other already-authorized work, or finish quietly.';
     const background = Boolean(approval.turn_background);
     const turnId = await enqueueTurn(
-      background && !approval.turn_task_session
+      background && !approval.task_id
         ? `${prompt}\nThe request was: ${approval.turn_prompt}`
         : prompt,
       {
         source: 'resume',
         sourceId:
           input.sourceId ?? `confirmation:${approval.id}:${approved ? 'accepted' : 'declined'}`,
-        channel: input.channel,
+        channel: approval.task_channel ?? approval.turn_channel,
+        channelSourceId: approval.task_channel_source_id,
         background,
         sessionId: approval.turn_session_id,
         client,
@@ -381,6 +415,88 @@ export async function createApprovals(
       [approval.id, approved ? 'confirmed' : 'declined', messageId, turnId],
     );
     return { threadId: input.threadId, turnId, messageId };
+  }
+
+  async function answerExpired(
+    client: PoolClient,
+    approval: Record<string, any>,
+    input: ChatConfirmationInput,
+  ) {
+    const messageId = input.clientMessageId ?? randomUUID();
+    const turn = { threadId: input.threadId, turnId: approval.turn_id as string };
+    await client.query(
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6)",
+      [messageId, ownerId, input.text, input.threadId, turn.turnId, input.replyToMessageId ?? null],
+    );
+    await insertAssistantMessage(client, turn, expiredQuestion, [], undefined, approval.task_on_it);
+    await client.query(
+      "UPDATE approvals SET status='expired',confirmation_reply_id=$2 WHERE id=$1 AND owner_id=$3",
+      [approval.id, messageId, ownerId],
+    );
+    return { ...turn, messageId };
+  }
+
+  async function acceptChat(
+    client: PoolClient,
+    input: ChatConfirmationInput,
+  ): Promise<ChatConfirmationResult> {
+    const approval = await confirmationFor(client, input, true);
+    if (!approval) return undefined;
+    const answer = input.answer;
+    const approved =
+      answer && answer.approvalId === approval.id && !approval.ambiguous
+        ? answer.approved
+        : undefined;
+    if (
+      approval.task_id &&
+      !input.replyToMessageId &&
+      (approved === undefined || approval.task_replied)
+    )
+      return undefined;
+    if (approved !== undefined && approval.status === 'pending' && approval.timed_out)
+      return answerExpired(client, approval, input);
+    if (approved === undefined || approval.task_replied) {
+      if (approval.status === 'pending') {
+        await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
+          approval.id,
+          ownerId,
+        ]);
+        return { supersededApprovalId: approval.id };
+      }
+      return undefined;
+    }
+    if (approval.status !== 'pending' || !['running', 'waiting'].includes(approval.turn_status))
+      return undefined;
+    return resume(client, approval, approved, input);
+  }
+
+  async function answer(input: { approvalId: string; approved: boolean; channel: string }) {
+    const result = await transaction(async (client) => {
+      const thread = await lockThread(client);
+      const approval = (
+        await client.query(
+          `SELECT ${confirmationFields} ${confirmationFrom}
+           WHERE a.id=$1 AND a.owner_id=$2 AND a.thread_id=$3 FOR UPDATE OF a`,
+          [input.approvalId, ownerId, thread.id],
+        )
+      ).rows[0];
+      if (approval?.status === 'pending' && approval.timed_out) throw conflict(expiredQuestion);
+      if (
+        approval?.status !== 'pending' ||
+        approval.task_replied ||
+        !['running', 'waiting'].includes(approval.turn_status)
+      )
+        throw conflict();
+      if (input.channel !== 'web' && appOnlyActions.includes(approval.action))
+        throw conflict('Answer this question in the Otto app.');
+      return resume(client, approval, input.approved, {
+        text: input.approved ? 'Yes' : 'No',
+        threadId: thread.id,
+        replyToMessageId: approval.confirmation_message_id,
+      });
+    });
+    refresh();
+    return result;
   }
 
   async function executeConfirmed(turnId: string, signal: AbortSignal) {
@@ -405,5 +521,5 @@ export async function createApprovals(
     return { prompt };
   }
 
-  return { request, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed };
+  return { request, answer, chat: { answer: answerChat, accept: acceptChat }, executeConfirmed };
 }

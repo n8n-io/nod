@@ -118,9 +118,9 @@ Tasks don't hold back other background work. Otto skips the read-only check of a
 A task turn runs in task mode, which replaces the rules of a background session:
 
 - **Prompt.** It names the task and carries your message that started it. The turn works only on that task, not on chat requests or other tasks.
-- **Replies.** Every message the turn posts replies to the task's "On it" message: questions, secure-form and payment links, audio and files. A file shared with `share_file` goes out with the turn's next message, usually the result. The trust check's confirmation questions are posted without a reply target.
-- **Result.** The turn's final text is the result, posted as a reply to "On it". The task row keeps the result's message ID, and the task closes as **Done** when the turn finishes.
-- **Progress.** `task_progress {steps?, current?, now?, stop?}` changes the task's steps, current step and status line, and sends nothing. The server finds the task from the turn's session, so a task can only change its own row. `stop` closes the task as **Stopped** and posts its note as a reply to "On it". The task's prompt allows it only when you ask that task to stop.
+- **Replies.** Every message the turn posts replies to the task's "On it" message: questions, the trust check's confirmations, secure-form and payment links, audio and files. A file shared with `share_file` goes out with the turn's next message, usually the result.
+- **Result.** The turn's final text is the result, posted as a reply to "On it". The task row keeps the result's message ID, and the task closes as **Done** when the turn finishes. Closing declines the task's open confirmations, so none of them can run later.
+- **Progress.** `task_progress {steps?, current?, now?, stop?}` changes the task's steps, current step and status line, and sends nothing. The server finds the task from the turn's session, so a task can only change its own row. `stop` closes the task as **Stopped**, declines its open confirmations and posts its note as a reply to "On it". The task's prompt allows it only when you ask that task to stop.
 - **Tools.** A task turn has no `send_message` or `start_task`. Its subagents also lose `task_progress` and can't hand their browser to you.
 - **Context.** The turn sees your message that started the task and the messages of the task's own session. It never sees the chat's later messages or another task's, and it doesn't get the count of messages you haven't answered.
 
@@ -133,8 +133,18 @@ The chat sees each task only through its "On it" message and its latest result. 
 Your reply to any message of a task goes to that task: its "On it" message, a question, a link or its result. The server finds the task from the message you replied to while it saves your message, and queues a `user` turn in the task's session. Every turn in a task's session is a background turn on the task's channel, so the task's answer goes where the task replies. A message without a reply target, or a reply to a chat message, stays in the chat.
 
 - **While the task works.** Your reply waits behind the running turn and runs after it. The task stays open until your reply has run. If the running turn stops the task first, your reply opens it again when it starts.
-- **While the task waits for you.** Your reply starts the task's next turn. A reply to the task's confirmation question itself is your yes or no. Any other reply cancels the task's open confirmations. A confirmation the task asks while an earlier reply of yours waits is cancelled too, and your yes or no to it reaches the task as an ordinary reply. So an action you were asked about can't run twice.
+- **While the task waits for you.** Your reply starts the task's next turn. A yes or no that replies to the confirmation, or to any other message of a task with one open confirmation, answers it and queues a `resume` turn in the task's session. Any other reply cancels the task's open confirmations. A confirmation the task asks while an earlier reply of yours waits is cancelled too, and your yes or no to it reaches the task as an ordinary reply. So an action you were asked about can't run twice.
 - **After the task closed.** A reply to a done, stopped or failed task opens it again as **Queued**, in the same session and saved Pi session. It runs when fewer than three other tasks work.
+
+### Answers to a task's confirmation
+
+The server binds each answer to one approval, never to "the newest question" across tasks:
+
+- **Reply target.** A reply to a task's message answers that task's one open confirmation, on the channel that asked. A reply to an Otto message in the chat never answers a task.
+- **Approval ID.** `POST /api/approvals/<id>/answer {approved}` answers that approval only, whichever channel asked it. It needs the owner key like every local route, skips the reply reader and resumes the task on its own channel. A press on an approval that isn't pending, belongs to another owner or has expired creates no turn and returns `409`. A payment or **Do it for me** approval takes an answer only from the Otto app, so a chat-app button can't approve it.
+- **No reply target.** A yes or no without a target answers the newest Otto message you'd seen on that channel only when it's a confirmation and no other task confirmation is open there. With two or more open, nothing is answered and the message goes to the chat, which asks which one you mean. A chat confirmation you'd seen closes, as it does for any other chat message, so it can't run twice. A message without a target never cancels a task's confirmation.
+
+A task's confirmation expires 24 hours after Otto asks. A yes or no to it after that gets a short reply that the question expired, in the task's session and on its channel, and nothing runs. Chat, schedule and event confirmations stay open while their turn waits.
 
 The chat can also hand your message to a task. When your message answers, corrects or adds to an open task, Otto calls `route_to_task {taskId}`. The server moves your message itself, with its text and ID, into the task's session as your reply, and the chat writes nothing more about it. Otto never writes your words for a task, so the trust check sees exactly what you sent. A message the chat moved answers no Otto message, so a moved "yes" can't approve what the task proposed. The server refuses to move a message into a task that waits for your yes or no to a confirmation, so Otto asks you to reply to that confirmation. When a bare yes or no could answer more than one task, Otto asks which one.
 

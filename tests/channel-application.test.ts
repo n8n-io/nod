@@ -387,6 +387,55 @@ test(
           .rows[0].state,
         'submitted',
       );
+      const taskQuestions: string[] = [];
+      for (const title of ['Synthetic task one', 'Synthetic task two']) {
+        const [taskId, turnId, messageId, id] = [
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+        ];
+        await pool.query('INSERT INTO tasks(id,owner_id,thread_id,title) VALUES($1,$2,$3,$4)', [
+          taskId,
+          source.owner_id,
+          first.thread_id,
+          title,
+        ]);
+        await pool.query(
+          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,background,session_id,status,waiting_reason)
+           VALUES($1,$2,$3,'task',$4,$5,true,$6,'waiting','approval')`,
+          [turnId, source.owner_id, first.thread_id, title, first.channel, taskId],
+        );
+        await pool.query(
+          "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Update your preferences? Reply yes or no.',$3,$4)",
+          [messageId, source.owner_id, first.thread_id, turnId],
+        );
+        await pool.query(
+          `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,confirmation_message_id)
+           VALUES($1,$2,$3,$4,'OTTO_profile_update',$5,$6)`,
+          [id, source.owner_id, first.thread_id, turnId, { preferences: title }, messageId],
+        );
+        taskQuestions.push(id);
+      }
+      assert.equal((await send(12, 'sure, go ahead')).statusCode, 200);
+      await application.channels!.drain();
+      assert.deepEqual(
+        (
+          await pool.query('SELECT DISTINCT status FROM approvals WHERE id=ANY($1::uuid[])', [
+            taskQuestions,
+          ])
+        ).rows,
+        [{ status: 'pending' }],
+      );
+      assert.equal(
+        (
+          await pool.query(
+            'SELECT u.session_id FROM channel_inbox i JOIN turns u ON u.id=i.turn_id WHERE i.source_id LIKE $1',
+            ['%:12'],
+          )
+        ).rows[0].session_id,
+        first.thread_id,
+      );
       const disabled = await application.app.inject({
         method: 'DELETE',
         url: '/api/channel-settings/telegram',

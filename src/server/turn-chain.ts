@@ -31,8 +31,13 @@ export async function taskOfTurn(
   turnId: string,
 ) {
   return (
-    await database.query<{ id: string; source_message_id: string | null; read_only: boolean }>(
-      `SELECT t.id,t.source_message_id,t.read_only FROM turns u
+    await database.query<{
+      id: string;
+      source_message_id: string | null;
+      on_it_message_id: string | null;
+      read_only: boolean;
+    }>(
+      `SELECT t.id,t.source_message_id,t.on_it_message_id,t.read_only FROM turns u
        JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2`,
       [turnId, ownerId],

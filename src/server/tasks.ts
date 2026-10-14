@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
+  endSessionApprovals,
   enqueueTurn,
   insertAssistantMessage,
   insertUserTurn,
@@ -333,6 +334,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         ],
       );
       if (input.stop === undefined) return 'Progress saved.';
+      await endSessionApprovals(client, [task.id], 'declined');
       await insertAssistantMessage(client, turn, input.stop, [], undefined, task.on_it);
       return 'The task is stopped. End now without a final message.';
     });
