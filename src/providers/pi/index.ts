@@ -71,6 +71,7 @@ const webAccess = {
   toolActivation: 'eager',
   workflow: 'none',
   githubClone: { enabled: false },
+  githubPrIssue: { enabled: false },
   video: { enabled: false },
   allowBrowserCookies: false,
 };
