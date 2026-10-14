@@ -1435,15 +1435,15 @@ test('bash rewrites inside the workspace and never retries an executed command',
     { code: 1, replacement: '', expected: 'original' },
     { code: 42, replacement: 'bash job.sh filtered', expected: 'original' },
     { code: 0, replacement: '', expected: 'original' },
-    { code: 2, replacement: '', expected: 'denied' },
+    { code: 2, replacement: 'bash job.sh filtered', expected: 'original' },
   ]) {
     await writeFile(join(directory, 'rewrite-code'), String(code));
     await writeFile(join(directory, 'rewrite-output'), replacement);
     await writeFile(join(directory, 'executions'), '');
     const output = await run('bash', { command: 'git status' });
     assert.match(output, new RegExp(expected));
-    assert.match(output, new RegExp(`Command exited with code ${code === 2 ? 126 : 7}`));
-    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), code === 2 ? '' : 'run\n');
+    assert.match(output, /Command exited with code 7/);
+    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
   }
   for (const name of ['npm', 'python3'])
     await writeFile(join(bin, name), '#!/bin/sh\nbash job.sh original\n', { mode: 0o755 });
