@@ -13,6 +13,7 @@ export interface ToolCall {
   output: string;
   isError: boolean;
   at: number;
+  lead: string;
 }
 
 export interface ChatMessage {
@@ -105,7 +106,7 @@ async function sessionEvents(sessionRoot: string) {
     const latest = files.sort((a, b) => b.modified - a.modified)[0];
     if (latest)
       for (const line of (await readFile(latest.path, 'utf8')).split('\n'))
-        if (line.trim()) entries.push(JSON.parse(line));
+        if (line.trim()) entries.push({ sessionId: thread, entry: JSON.parse(line) });
   }
   return entries;
 }
@@ -114,7 +115,7 @@ function capturedTools(stack: Stack) {
   const tools: ToolCall[] = [];
   const started = new Map<string, ToolCall>();
   for (const { turnId, event } of stack.observations) {
-    if (event.type === 'model_usage') continue;
+    if (event.type === 'model_usage' || !event.execution?.parentRunId) continue;
     const id = `${event.execution?.runId ?? turnId}:${event.id}`;
     if (event.type === 'tool_start') {
       if (started.has(id)) continue;
@@ -125,13 +126,25 @@ function capturedTools(stack: Stack) {
         output: '',
         isError: false,
         at: Date.parse(event.startedAt),
+        lead: '',
       };
       started.set(id, call);
       tools.push(call);
     } else if (event.type === 'tool_end') {
       const call = started.get(id);
       if (call) {
-        call.output = JSON.stringify(event.output ?? event.error ?? '');
+        const output = event.output ?? event.error ?? '';
+        call.output =
+          output &&
+          typeof output === 'object' &&
+          'content' in output &&
+          Array.isArray(output.content)
+            ? output.content
+                .map((block: any) => (block.type === 'text' ? block.text : `[${block.type}]`))
+                .join('\n')
+            : typeof output === 'string'
+              ? output
+              : JSON.stringify(output);
         call.isError = event.status !== 'succeeded';
       }
     }
@@ -149,12 +162,15 @@ export async function collect(options: {
 }): Promise<Run> {
   const { stack, session, world } = options;
   const tools = capturedTools(stack);
+  const calls = new Map<string, ToolCall>();
+  const prompts = [...stack.prompts];
+  const currentTurns = new Map<string, string | undefined>();
   let turnsWithTools = 0;
   let acknowledged = 0;
   let waitingForFirst = false;
   let foreground = false;
   const modelErrors: string[] = [];
-  for (const entry of await sessionEvents(stack.sessionRoot)) {
+  for (const { sessionId, entry } of await sessionEvents(stack.sessionRoot)) {
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user') {
@@ -163,6 +179,10 @@ export async function collect(options: {
         .join('');
       foreground = /"mode":"conversation"/.test(text);
       waitingForFirst = foreground;
+      const index = prompts.findIndex(
+        (prompt) => prompt.sessionId === sessionId && prompt.instruction === text,
+      );
+      currentTurns.set(sessionId, index < 0 ? undefined : prompts.splice(index, 1)[0].turnId);
     }
     if (message.role === 'assistant') {
       if (waitingForFirst) {
@@ -177,6 +197,34 @@ export async function collect(options: {
       }
       if (message.stopReason === 'error')
         modelErrors.push(String(message.errorMessage ?? 'model error'));
+      const lead = (message.content ?? [])
+        .filter((block: any) => block.type === 'text')
+        .map((block: any) => block.text)
+        .join('')
+        .trim();
+      for (const block of message.content ?? []) {
+        if (block.type !== 'toolCall') continue;
+        const id = `${sessionId}:${block.id}`;
+        const call: ToolCall = {
+          turnId: currentTurns.get(sessionId),
+          name: block.name,
+          input: block.arguments,
+          output: '',
+          isError: false,
+          at: Date.parse(entry.timestamp),
+          lead,
+        };
+        calls.set(id, call);
+        tools.push(call);
+      }
+    } else if (message.role === 'toolResult') {
+      const call = calls.get(`${sessionId}:${message.toolCallId}`);
+      if (call) {
+        call.output = (message.content ?? [])
+          .map((block: any) => (block.type === 'text' ? block.text : `[${block.type}]`))
+          .join('\n');
+        call.isError = message.isError === true;
+      }
     }
   }
   const usage = (await stack.pool.query('SELECT cost_usd,details FROM model_usage')).rows;
@@ -210,8 +258,7 @@ export async function collect(options: {
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
-  const prompts = stack.prompts;
-  requireBackgroundPrompts(turns, prompts);
+  requireBackgroundPrompts(turns, stack.prompts);
   tools.sort((a, b) => a.at - b.at);
   const schedules = (
     await stack.pool.query(
@@ -271,7 +318,7 @@ export async function collect(options: {
     said: replies.join('\n\n'),
     tools,
     turns,
-    prompts,
+    prompts: stack.prompts,
     interactions: session.interactions,
     userMessages: session.userMessages,
     writes: world.apps?.writes ?? [],

@@ -14,7 +14,7 @@ function redactedInput(name: string, input: unknown) {
 
 export function createCapture() {
   const observations: Array<{ turnId: string; event: Observation }> = [];
-  const prompts: Array<{ turnId: string; instruction: string }> = [];
+  const prompts: Array<{ turnId: string; sessionId: string; instruction: string }> = [];
   const privateOutputs = new Set<string>();
   const opened = new Set<string>();
   return {
@@ -22,20 +22,21 @@ export function createCapture() {
     prompts,
     observe(turnId: string, event: Observation) {
       if (event.type === 'model_usage') return;
+      const id = `${event.execution?.runId ?? turnId}:${event.id}`;
       if (event.type === 'tool_start') {
         if (
           event.name === 'sign_in' ||
           (event.name === 'manage_personal_context' &&
             String((event.input as { action?: unknown } | null)?.action).startsWith('memory_'))
         )
-          privateOutputs.add(event.id);
+          privateOutputs.add(id);
         observations.push({
           turnId,
           event: { ...event, input: redactedInput(event.name, event.input) },
         });
         return;
       }
-      if (event.status === 'succeeded' && privateOutputs.has(event.id)) {
+      if (event.status === 'succeeded' && privateOutputs.has(id)) {
         const { output: _output, ...rest } = event;
         observations.push({ turnId, event: rest });
       } else observations.push({ turnId, event });
@@ -46,7 +47,8 @@ export function createCapture() {
           const main = !opened.has(options.turnId);
           opened.add(options.turnId);
           const record = (instruction: string) => {
-            if (main) prompts.push({ turnId: options.turnId, instruction });
+            if (main)
+              prompts.push({ turnId: options.turnId, sessionId: options.sessionId, instruction });
             return instruction;
           };
           const { nextMessages } = options;
