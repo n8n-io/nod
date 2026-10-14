@@ -218,6 +218,7 @@ export function createDefaultAdapters(
   const integrations = createComposioProvider({
     apiKey: env.COMPOSIO_API_KEY,
     webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
+    webhooksVerified: runtimeMode === 'tenant' && env.OTTO_COMPOSIO_WEBHOOKS === 'gateway',
     webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });

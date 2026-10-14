@@ -31,7 +31,6 @@ const forwardedEnvironment = [
   'TTS_MODEL',
   'TTS_VOICE',
   'COMPOSIO_API_KEY',
-  'COMPOSIO_WEBHOOK_SECRET',
   'COMPOSIO_GMAIL_AUTH_CONFIG_ID',
   'COMPOSIO_CALENDAR_AUTH_CONFIG_ID',
   'COMPOSIO_DRIVE_AUTH_CONFIG_ID',
@@ -184,6 +183,8 @@ export function createTenantRuntimeHost(options: {
         if (value) environment[key] = value;
       }
       if (webhookUrl) environment.OTTO_COMPOSIO_WEBHOOK_URL = webhookUrl;
+      if (options.operatorEnvironment.COMPOSIO_WEBHOOK_SECRET)
+        environment.OTTO_COMPOSIO_WEBHOOKS = 'gateway';
       if (options.operatorEnvironment.OBJECT_STORAGE_ROOT)
         environment.OBJECT_STORAGE_ROOT = join(
           options.operatorEnvironment.OBJECT_STORAGE_ROOT,

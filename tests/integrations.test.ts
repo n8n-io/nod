@@ -6552,6 +6552,14 @@ test('Composio adapter normalizes sessions without exposing SDK metadata and aut
   await assert.rejects(
     provider.verifyWebhook(body, signed(String(Math.floor(Date.now() / 1000) - 600))),
   );
+  const unconfigured = createComposioProvider({ client });
+  assert.equal(unconfigured.webhooksConfigured, false);
+  await assert.rejects(unconfigured.verifyWebhook(body, signed()));
+  const tenant = createComposioProvider({ client, webhooksVerified: true });
+  assert.equal(tenant.webhooksConfigured, true);
+  const forwarded = await tenant.verifyWebhook(body, { 'webhook-id': 'delivery-fixture' });
+  assert.equal(forwarded.ownerId, 'local-development');
+  assert.equal(forwarded.subscriptionId, 'ti-fixture');
 });
 
 async function hostedDatabase() {
