@@ -110,7 +110,7 @@ export function createMemoryService(options: {
 
   async function context() {
     const { tree } = await load();
-    const index = indexLayout(tree).text;
+    const index = indexLayout(tree);
     const settings = {
       ...(tree.enabled ? {} : { savingEnabled: false }),
       ...(tree.sensitive ? { sensitiveTopics: 'allowed' } : {}),
