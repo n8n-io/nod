@@ -16,7 +16,8 @@ import type {
   CredentialSubmission,
   BrowserPage,
 } from '../../ports/computer.ts';
-import { BrowserActionError, browserUploadBytes } from '../../ports/computer.ts';
+import { BrowserActionError } from '../../ports/computer.ts';
+import { fileBytes } from '../../shared/files.ts';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
@@ -33,8 +34,11 @@ import {
 import {
   completedDownloads,
   createDownloadCapture,
-  decodeDownload,
+  decodeDownloadChunk,
+  downloadFile,
   downloadName,
+  fetchChunkBytes,
+  fetchChunkScript,
   fetchDownloadScript,
   readDownload,
 } from './downloads.ts';
@@ -54,7 +58,7 @@ interface BrowserState {
   busy: number;
   closed: boolean;
   closing: boolean;
-  heldUntil: number;
+  heldAt?: number;
   socket?: string;
   recovered?: boolean;
   saved: StoredScreen;
@@ -74,6 +78,8 @@ const streamFrame = z.object({
   data: z.string().max(4 * 1024 * 1024),
   metadata: z.object({ deviceWidth: z.number().positive(), deviceHeight: z.number().positive() }),
 });
+
+const holdMs = 30 * 60_000;
 
 class BrowserLockedError extends Error {
   statusCode = 423;
@@ -187,8 +193,6 @@ export function createAgentBrowserComputer(options: {
   sandbox?: boolean;
   platform?: NodeJS.Platform;
   headless?: boolean;
-  idleTimeoutMs?: number;
-  slotWaitMs?: number;
   evictIdleMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
@@ -225,10 +229,10 @@ export function createAgentBrowserComputer(options: {
   const viewport = options.viewport;
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
-  const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
-  const slotWaitMs = options.slotWaitMs ?? 2 * 60_000;
   const evictIdleMs = options.evictIdleMs ?? 5 * 60_000;
-  const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
+  const maxLiveSessions = Math.max(1, options.maxLiveSessions ?? 4);
+  const holding = (state: BrowserState) =>
+    state.heldAt !== undefined && Date.now() - state.heldAt < holdMs;
   let disposed = false;
   let activeCalls = 0;
   let allocationQueue: Promise<void> = Promise.resolve();
@@ -302,7 +306,6 @@ export function createAgentBrowserComputer(options: {
         busy: 0,
         closed: false,
         closing: false,
-        heldUntil: 0,
         saved: { version: 1, url: '', sensitive: false, active: false },
         browserExecutable: options.browserExecutable,
       };
@@ -335,17 +338,15 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function reserveBrowser(state: BrowserState, signal?: AbortSignal): Promise<void> {
-    const limit = AbortSignal.timeout(slotWaitMs);
-    const wait = signal ? AbortSignal.any([signal, limit]) : limit;
     const stopped = new Promise<never>((_, reject) => {
-      if (wait.aborted) reject(wait.reason);
-      wait.addEventListener('abort', () => reject(wait.reason), { once: true });
+      if (signal?.aborted) reject(signal.reason);
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
     });
     stopped.catch(() => {});
     const reserve = () =>
       allocate(async () => {
         if (state.started || state.saved.navigationFailed) return true;
-        if (wait.aborted) return false;
+        if (signal?.aborted) return false;
         const occupied = () =>
           [...browsers.values()].filter((entry) => entry.started || entry.saved.navigationFailed);
         const attempted = new Set<string>();
@@ -359,7 +360,7 @@ export function createAgentBrowserComputer(options: {
                 !entry.closed &&
                 !entry.closing &&
                 !entry.injecting &&
-                entry.heldUntil <= Date.now() &&
+                !holding(entry) &&
                 Date.now() - entry.lastUsed >= evictIdleMs,
             )
             .sort((a, b) => a.lastUsed - b.lastUsed)[0];
@@ -375,20 +376,14 @@ export function createAgentBrowserComputer(options: {
         }
         if (disposed || state.closed || state.closing)
           throw new Error('The browser session has expired. Open the URL again.');
-        if (wait.aborted) return false;
+        if (signal?.aborted) return false;
         state.started = true;
         return true;
       });
-    try {
-      while (!(await Promise.race([reserve(), stopped]))) {
-        if (disposed || state.closed || state.closing)
-          throw new Error('The browser session has expired. Open the URL again.');
-        await delay(500, undefined, { signal: wait });
-      }
-    } catch (error) {
-      if (limit.aborted && !signal?.aborted)
-        throw new Error('The browser sessions are busy. Finish an open browser task and retry.');
-      throw error;
+    while (!(await Promise.race([reserve(), stopped]))) {
+      if (disposed || state.closed || state.closing)
+        throw new Error('The browser session has expired. Open the URL again.');
+      await delay(500, undefined, { signal });
     }
   }
 
@@ -489,7 +484,7 @@ export function createAgentBrowserComputer(options: {
           '--download-path',
           resolve(runtimeRoot, 'downloads', state.id),
           '--idle-timeout',
-          `${Math.ceil((Math.max(idleTimeoutMs, 30 * 60_000) + 15 * 60_000) / 1000)}s`,
+          '86400s',
           ...(action === 'close' ? ['close'] : ['open', String(request.url)]),
         ],
         {
@@ -499,8 +494,7 @@ export function createAgentBrowserComputer(options: {
             ...(timeZone && { TZ: timeZone }),
           },
           signal: options.signal,
-          timeoutMs: options.timeoutMs ?? null,
-          maxBytes: 256 * 1024,
+          timeoutMs: options.timeoutMs,
         },
       ),
     );
@@ -622,7 +616,6 @@ export function createAgentBrowserComputer(options: {
         {
           env: serviceEnvironment(),
           timeoutMs: 5000,
-          maxBytes: 16_384,
         },
       );
       const response = JSON.parse(result.stdout);
@@ -663,7 +656,6 @@ export function createAgentBrowserComputer(options: {
       {
         env: serviceEnvironment(),
         timeoutMs: 5000,
-        maxBytes: 16_384,
         signal,
       },
     );
@@ -920,7 +912,7 @@ export function createAgentBrowserComputer(options: {
             {
               action: 'scroll',
               direction: input.direction ?? 'down',
-              amount: 600,
+              amount: input.amount ?? 600,
               ...(input.selector ? { selector: selector(input.selector) } : {}),
             },
             { signal },
@@ -1060,10 +1052,10 @@ export function createAgentBrowserComputer(options: {
   async function upload(id: string, input: BrowserUploadInput, signal?: AbortSignal) {
     if (
       !input.bytes.length ||
-      input.bytes.length > browserUploadBytes ||
+      input.bytes.length > fileBytes ||
       !/^[^/\\\u0000-\u001f\u007f]{1,200}$/.test(input.name)
     )
-      throw new Error('Choose a file of at most 12 MB.');
+      throw new Error(`Choose a file of at most ${fileBytes / 1024 / 1024} MB.`);
     const state = await recoverBrowser(id);
     if (!state?.started) throw new Error('Open the upload website first.');
     if (state.injecting) throw new BrowserLockedError();
@@ -1145,13 +1137,26 @@ export function createAgentBrowserComputer(options: {
         if (!url.startsWith(`blob:${new URL(current).origin}/`)) browserUrl(url);
       }
       if (url && !crossOrigin) {
-        const result = await command(
-          state,
-          { action: 'evaluate', script: fetchDownloadScript(url) },
-          { signal, maxBytes: 17 * 1024 * 1024 },
-        );
-        signal?.throwIfAborted();
-        return decodeDownload(result.result, input.name);
+        const key = `otto-download-${randomUUID()}`;
+        try {
+          const fetched = z
+            .object({ size: z.number().int().min(0).max(fileBytes), mimeType: z.string() })
+            .nullable()
+            .parse(await evaluate(state, fetchDownloadScript(url, key), signal));
+          if (!fetched) throw new Error('The browser file is unavailable.');
+          const chunks: Buffer[] = [];
+          for (let offset = 0; offset < fetched.size; offset += fetchChunkBytes)
+            chunks.push(
+              decodeDownloadChunk(await evaluate(state, fetchChunkScript(key, offset), signal)),
+            );
+          const bytes = Buffer.concat(chunks);
+          if (bytes.length !== fetched.size) throw new Error('The browser file is unavailable.');
+          signal?.throwIfAborted();
+          return downloadFile(bytes, input.name, fetched.mimeType);
+        } finally {
+          if (!state.closed && !state.closing)
+            await evaluate(state, `delete window[${JSON.stringify(key)}]`).catch(() => {});
+        }
       }
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
@@ -1482,18 +1487,16 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function hold(id: string, until: number | null): Promise<void> {
+  async function hold(id: string, held: boolean): Promise<void> {
     const state = browsers.get(threadIdentity(id));
     if (!state?.started) return;
     await serialize(state, async () => {
-      if (until !== null && !Number.isFinite(until))
-        throw new Error('A valid browser hold expiry is required.');
-      state.heldUntil = until === null ? 0 : Math.min(until, Date.now() + 30 * 60_000);
-      if (state.heldUntil > Date.now()) await currentUrl(state);
-      if (state.heldUntil > Date.now())
-        await captureScreen(state).catch((error: unknown) => {
-          if (!(error instanceof BrowserLockedError)) throw error;
-        });
+      state.heldAt = held ? Date.now() : undefined;
+      if (!held) return;
+      await currentUrl(state);
+      await captureScreen(state).catch((error: unknown) => {
+        if (!(error instanceof BrowserLockedError)) throw error;
+      });
     });
   }
 
@@ -1674,10 +1677,7 @@ export function createAgentBrowserComputer(options: {
     if (idleAt === undefined) state.closing = true;
     const close = async () => {
       if (browsers.get(id) !== state) return;
-      if (
-        idleAt !== undefined &&
-        (state.lastUsed !== idleAt || state.busy || state.injecting || state.heldUntil > Date.now())
-      )
+      if (idleAt !== undefined && (state.lastUsed !== idleAt || state.busy || state.injecting))
         return;
       state.closing = true;
       if (state.started && !state.closed && !state.injecting)
@@ -1730,8 +1730,7 @@ export function createAgentBrowserComputer(options: {
         if (otherId === id) continue;
         const other = browsers.get(otherId) ?? (await recoverBrowser(otherId, true));
         if (!other) continue;
-        if (other.busy || other.injecting || other.heldUntil > Date.now())
-          throw new BrowserLockedError();
+        if (other.busy || other.injecting || holding(other)) throw new BrowserLockedError();
         await closeBrowser(otherId);
       }
       const state = stateFor(id);
@@ -1754,7 +1753,7 @@ export function createAgentBrowserComputer(options: {
       const ids = await screens.profileScreens(profileId);
       for (const id of ids) {
         const state = browsers.get(id) ?? (await recoverBrowser(id, true));
-        if (state && (state.busy || state.injecting || state.heldUntil > Date.now()))
+        if (state && (state.busy || state.injecting || holding(state)))
           throw new BrowserLockedError();
         if (state) await closeBrowser(id);
       }
@@ -1782,32 +1781,13 @@ export function createAgentBrowserComputer(options: {
     screenStatuses.delete(id);
   }
 
-  const cleanup = setInterval(
-    () => {
-      for (const state of browsers.values()) {
-        if (
-          !state.busy &&
-          !state.injecting &&
-          state.heldUntil <= Date.now() &&
-          Date.now() - state.lastUsed >= idleTimeoutMs
-        )
-          void closeBrowser(state.id, state.lastUsed).catch(() => {});
-      }
-    },
-    Math.min(60_000, Math.max(10, idleTimeoutMs)),
-  );
-  cleanup.unref();
   return {
-    canCheckpoint: () => {
-      const now = Date.now();
-      return (
-        !disposed &&
-        !activeCalls &&
-        [...browsers.values()].every(
-          (state) => !state.busy && !state.closing && !state.injecting && state.heldUntil <= now,
-        )
-      );
-    },
+    canCheckpoint: () =>
+      !disposed &&
+      !activeCalls &&
+      [...browsers.values()].every(
+        (state) => !state.busy && !state.closing && !state.injecting && !holding(state),
+      ),
     bindProfile: tracked(bindProfile),
     deleteProfile: tracked(deleteProfile),
     act: tracked(browserAction),
@@ -1827,7 +1807,6 @@ export function createAgentBrowserComputer(options: {
     discard: tracked(discard),
     dispose: async () => {
       disposed = true;
-      clearInterval(cleanup);
       const results = await Promise.allSettled([...browsers.keys()].map((id) => closeBrowser(id)));
       if (results.some((result) => result.status === 'rejected'))
         throw new Error('The browser service could not finish closing its sessions.');

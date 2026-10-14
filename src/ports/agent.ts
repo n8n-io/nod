@@ -138,7 +138,14 @@ export interface RuntimeContext {
     admit?: (asks: boolean) => Promise<void>,
   ): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
-  takeMessages?(): Promise<Array<{ id: string; text: string }>>;
+  takeMessages?(): Promise<
+    Array<{
+      id: string;
+      text: string;
+      replyTo?: RuntimeContext['replyTo'];
+      attachments: RuntimeContext['attachments'];
+    }>
+  >;
 }
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
@@ -192,10 +199,11 @@ export interface AgentSessionOptions extends ExecutionScope {
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;
-  nextMessages?(): Promise<string[]>;
+  nextMessages?(): Promise<Array<{ text: string; images: AgentImage[] }>>;
 }
 export interface AgentSession {
   resumed: boolean;
+  readsImages?: boolean;
   prompt(text: string, images: AgentImage[]): Promise<void>;
   abort(): void | Promise<void>;
   dispose(): void | Promise<void>;

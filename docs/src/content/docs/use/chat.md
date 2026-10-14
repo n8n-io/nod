@@ -13,20 +13,20 @@ Otto keeps one ongoing conversation with you. The desktop app, the web app, Tele
 
 Type in the message box and press Enter. Press Shift+Enter for a new line.
 
-- **Attach files.** Select **Attach files**, paste an image or drop files on the box. You can attach up to 20 files per message, each 15 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/) and sees images directly.
+- **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
 - **Reply to a message.** Hover over a message and select **Reply** to point Otto at it.
 
 ## Keep talking while Otto works
 
 You don't have to wait. The message box stays open while Otto works.
 
-A short follow-up, such as "also check Friday", joins the task that's running. Otto reads it before its next step. A message with attachments, a reply to a specific message or a message from another app waits in line and runs as its own request.
+A follow-up, such as "also check Friday" or a screenshot of an error, joins the task that's running. Otto reads it before its next step. A message from another app waits in line and runs as its own request.
 
 ```mermaid
 flowchart LR
   new[You send a message] --> busy{{Is Otto<br/>working?}}
   busy -- no --> run[Otto starts on it]:::go
-  busy -- yes --> plain{{Plain text<br/>from the same app?}}
+  busy -- yes --> plain{{From the<br/>same app?}}
   plain -- yes --> join[Joins the running task]:::accent
   plain -- no --> queue[Waits for its own turn]:::muted
 ```

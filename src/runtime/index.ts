@@ -24,9 +24,18 @@ import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
 
-const holdMs = 30 * 60_000;
-const imageBytes = 5 * 1024 * 1024;
-const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'ask_user', 'send_message']);
+const imageBytes = (5 * 1024 * 1024 * 3) / 4;
+const inlineChars = 40_000;
+const imageBudget = 16 * 1024 * 1024;
+const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const parentTools = new Set([
+  'sign_in',
+  'pay',
+  'browser_session',
+  'ask_user',
+  'send_message',
+  'manage_apps',
+]);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -34,6 +43,8 @@ const parallelTools = new Set([
   'skills',
   'apps',
   'manage_personal_context',
+  'task',
+  'react_to_message',
 ]);
 const orderedTools = new Set(['apps', 'manage_personal_context']);
 const admissions = new AsyncLocalStorage<{
@@ -168,7 +179,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (browsed) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
+      if (browsed) await computer.hold(browserId, true).catch(() => {});
       stopped = true;
       if (post && text) {
         if (context.waitForUser)
@@ -219,6 +230,16 @@ export function createAgentRuntime(dependencies: {
       streamSubmitted = false;
     };
 
+    const spill = async (text: string) => {
+      if (text.length <= inlineChars) return text;
+      const name = `${randomUUID()}-error.txt`;
+      try {
+        await dependencies.workspace.writeArtifact(threadId, name, Buffer.from(text), signal);
+        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${name}. Read it there.`;
+      } catch {
+        return text.slice(0, inlineChars);
+      }
+    };
     const assertActive = () => {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
@@ -285,8 +306,10 @@ export function createAgentRuntime(dependencies: {
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'
-            : (dependencies.redactError ?? String)(
-                browserFailure ?? (error instanceof Error ? error.message : String(error)),
+            : await spill(
+                (dependencies.redactError ?? String)(
+                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
+                ),
               );
           end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
@@ -355,8 +378,12 @@ export function createAgentRuntime(dependencies: {
                 name,
                 params,
                 async () => {
-                  if (!Value.Check(parameters, params))
-                    throw new Error('The tool arguments do not match its schema.');
+                  if (!Value.Check(parameters, params)) {
+                    const error = Value.Errors(parameters, params).First();
+                    throw new Error(
+                      `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
+                    );
+                  }
                   if (handsOverBrowser(name, params))
                     await computer.currentPage(turn.execution.browserId).catch(() => {
                       throw new Error(
@@ -459,12 +486,53 @@ export function createAgentRuntime(dependencies: {
         return answer || 'The subagent finished without an answer.';
       };
       const tools = bind({ ...shared, execution, delegate }, async () => {
-        if (!browsed) await computer.hold(browserId, null).catch(() => {});
+        if (!browsed) await computer.hold(browserId, false).catch(() => {});
         browsed = true;
       });
       const instruct = (instruction: string) =>
         `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
+      const root = resolve(context.workspacePath);
+      const inline = async (
+        attachments: RuntimeContext['attachments'],
+        budget = { left: imageBudget },
+      ) => {
+        const images: AgentImage[] = [];
+        const omitted = new Set<string>();
+        for (const attachment of attachments) {
+          if (!imageTypes.has(attachment.mimeType)) continue;
+          const path = resolve(attachment.path);
+          if (!path.startsWith(root + sep)) continue;
+          const limit = Math.min(imageBytes, budget.left);
+          try {
+            const bytes =
+              session?.readsImages !== false && limit > 0
+                ? Buffer.from(
+                    await dependencies.workspace.readArtifact(
+                      threadId,
+                      relative(root, path),
+                      limit,
+                      'attachment',
+                    ),
+                  )
+                : undefined;
+            signal.throwIfAborted();
+            if (!bytes || bytes.length > limit) omitted.add(attachment.path);
+            else {
+              budget.left -= bytes.length;
+              images.push({
+                type: 'image',
+                data: bytes.toString('base64'),
+                mimeType: attachment.mimeType,
+              });
+            }
+          } catch {
+            signal.throwIfAborted();
+            omitted.add(attachment.path);
+          }
+        }
+        return { images, omitted };
+      };
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
@@ -477,8 +545,15 @@ export function createAgentRuntime(dependencies: {
         shouldStop: () => stopped,
         nextMessages:
           takeMessages &&
-          (async () =>
-            (await takeMessages()).map((message) => instruct(steeredInstruction(message)))),
+          (async () => {
+            const budget = { left: imageBudget };
+            const messages = [];
+            for (const message of await takeMessages()) {
+              const { images, omitted } = await inline(message.attachments, budget);
+              messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
+            }
+            return messages;
+          }),
         onEvent: (event) => {
           if (event.type === 'message_start') {
             completeStream();
@@ -505,36 +580,8 @@ export function createAgentRuntime(dependencies: {
       session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
-      const images: AgentImage[] = [];
-      const omittedImages = new Set<string>();
-      const root = resolve(context.workspacePath);
-      for (const attachment of context.attachments) {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(attachment.mimeType)) continue;
-        const path = resolve(attachment.path);
-        if (!path.startsWith(root + sep)) continue;
-        try {
-          const bytes = Buffer.from(
-            await dependencies.workspace.readArtifact(
-              threadId,
-              relative(root, path),
-              imageBytes,
-              'attachment',
-            ),
-          );
-          signal.throwIfAborted();
-          if (bytes.length > imageBytes) omittedImages.add(attachment.path);
-          else
-            images.push({
-              type: 'image',
-              data: bytes.toString('base64'),
-              mimeType: attachment.mimeType,
-            });
-        } catch {
-          signal.throwIfAborted();
-          omittedImages.add(attachment.path);
-        }
-      }
-      await session!.prompt(instruct(firstInstruction(context, resumed, omittedImages)), images);
+      const { images, omitted } = await inline(context.attachments);
+      await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
       await pendingReplies;
       signal.throwIfAborted();
       if (modelFailed)

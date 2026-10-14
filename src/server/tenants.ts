@@ -110,7 +110,7 @@ function record(row: TenantRow): TenantRecord {
 }
 
 function leaseDuration(value: number) {
-  if (!Number.isSafeInteger(value) || value < 5_000 || value > 300_000)
+  if (!Number.isSafeInteger(value) || value < 1)
     throw new TenantError('invalid_configuration', 'The runtime lease duration is invalid.');
   return value;
 }
@@ -141,7 +141,6 @@ export function createTenantStore(options: TenantStoreOptions) {
   if (
     !Number.isSafeInteger(maxTenants) ||
     maxTenants < 1 ||
-    maxTenants > 400 ||
     !Number.isSafeInteger(credentialVersion) ||
     credentialVersion < 1 ||
     credentialVersion > 65535

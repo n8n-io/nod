@@ -1355,6 +1355,38 @@ test(
 );
 
 test(
+  'replies go out between inbound messages so a busy inbox cannot hold them back',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const sentBefore: number[] = [];
+    const channels = await create({
+      submit: async (_text, sourceId, client, channel) => {
+        sentBefore.push(posts.length);
+        const turnId = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [turnId, threadId, sourceId, channel],
+        );
+        return turnId;
+      },
+    });
+    try {
+      receive('111', 'a1', 'chat-a1');
+      await channels.drain();
+      await reply((await turnOf('a1')).turn_id, 'first reply', randomUUID(), 1);
+      receive('222', 'b1', 'chat-b1');
+      receive('111', 'a2', 'chat-a2');
+      await channels.drain();
+      assert.deepEqual(sentBefore, [0, 0, 1]);
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'first reply' }]);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
   'a failing inbound message does not stop replies and a committed one is announced to the web chat',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -1723,8 +1755,8 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     const { initializeDatabase, pool } = await import('../src/server/db.ts');
-    const { storeArtifact, readThreadArtifacts, maxFileSize } =
-      await import('../src/server/artifacts.ts');
+    const { storeArtifact, readThreadArtifacts } = await import('../src/server/artifacts.ts');
+    const files = await import('../src/shared/files.ts');
     const { ownerId, dataRoot } = await import('../src/server/config.ts');
     const { activeThread } = await import('../src/server/thread.ts');
     await initializeDatabase();
@@ -1735,6 +1767,7 @@ test(
       caption: string;
       chat: string;
     }> = [];
+    const texts: string[] = [];
     let failDocument = false;
     t.mock.method(
       globalThis,
@@ -1746,6 +1779,19 @@ test(
             ok: true,
             result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
           });
+        if (/\/send(?:Rich)?Message$/.test(target)) {
+          const body = JSON.parse(String(init?.body));
+          texts.push(String(body.rich_message?.markdown ?? body.text));
+          return Response.json({
+            ok: true,
+            result: {
+              message_id: texts.length + 500,
+              date: Math.floor(Date.now() / 1000),
+              chat: { id: 123456, type: 'private' },
+              text: 'Fixture accepted',
+            },
+          });
+        }
         assert.match(
           target,
           /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video)$/,
@@ -1910,9 +1956,10 @@ test(
       assert.deepEqual(Buffer.from(sent.at(-1)!.file), videoBytes);
 
       failDocument = true;
-      const uncertain = await addReply(turnId, [image, document]);
+      const partial = await addReply(turnId, [image, document]);
       await channels.drain();
-      assert.equal((await state(uncertain)).state, 'uncertain');
+      assert.equal((await state(partial)).state, 'sent');
+      assert.deepEqual(texts.slice(-2), ['Here is the file.', 'Open Otto to get result.txt.']);
       const partialCount = sent.length;
       await channels.drain();
       assert.equal(sent.length, partialCount);
@@ -1927,10 +1974,8 @@ test(
       await pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [image.id]);
       const foreign = await addReply(turnId, [image]);
       await channels.drain();
-      assert.deepEqual(await state(foreign), {
-        state: 'blocked',
-        reason: 'attachment_unavailable',
-      });
+      assert.deepEqual(await state(foreign), { state: 'sent', reason: null });
+      assert.match(texts.at(-1)!, /available in Otto/);
       assert.equal(sent.length, partialCount);
       await pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [image.id, ownerId]);
 
@@ -1943,17 +1988,17 @@ test(
       await pool.query('UPDATE artifacts SET storage_path=$2 WHERE id=$1', [image.id, imagePath]);
       await rm(imagePath);
       await symlink(outside, imagePath);
-      await assert.rejects(readThreadArtifacts(threadId, [image.id]));
+      await assert.rejects((await readThreadArtifacts(threadId, [image.id]))[0].read());
       await rm(imagePath);
       await writeFile(imagePath, imageBytes);
-      await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, maxFileSize + 1]);
-      await assert.rejects(readThreadArtifacts(threadId, [image.id]), /limit/);
+      await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, files.fileBytes + 1]);
+      await assert.rejects(readThreadArtifacts(threadId, [image.id]), /unavailable/);
       await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, imageBytes.length]);
       await assert.rejects(readThreadArtifacts(threadId, ['https://attacker.invalid/file']));
-      await assert.rejects(readThreadArtifacts(threadId, Array(11).fill(image.id)));
       const forged = await addReply(turnId, [{ url: 'http://localhost:4310/private' }]);
       await channels.drain();
-      assert.equal((await state(forged)).state, 'blocked');
+      assert.equal((await state(forged)).state, 'sent');
+      assert.doesNotMatch(texts.at(-1)!, /localhost/);
       assert.equal(sent.length, partialCount);
       holdResolve = true;
       const changedAccount = await addReply(turnId, [image]);

@@ -1,4 +1,4 @@
-export const maxObjectBytes = 16 * 1024 * 1024;
+import { fileBytes } from '../shared/files.ts';
 
 export function objectKey(key: string) {
   if (
@@ -11,7 +11,7 @@ export function objectKey(key: string) {
 }
 
 export function objectLimit(limit: number) {
-  if (!Number.isInteger(limit) || limit < 1 || limit > maxObjectBytes)
+  if (!Number.isInteger(limit) || limit < 1 || limit > fileBytes)
     throw new Error('The private file size limit is invalid.');
   return limit;
 }

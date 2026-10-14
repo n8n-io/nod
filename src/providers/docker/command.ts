@@ -70,7 +70,7 @@ export const connectedUser = (cli: ConnectedCli) =>
   20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
 
 export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
-line=sys.stdin.buffer.raw.readline(1048577)
+line=sys.stdin.buffer.raw.readline()
 home=None
 def sealed(path):
  path=os.path.realpath(path)
@@ -82,19 +82,19 @@ def sealed(path):
   part=os.path.dirname(part)
 try:
  r=json.loads(line)
- if len(line)>1048576 or not isinstance(r['args'],list) or not all(isinstance(v,str) for v in r['args']): raise ValueError()
+ if not isinstance(r['args'],list) or not all(isinstance(v,str) for v in r['args']): raise ValueError()
  env=r.get('environment',{})
- if not isinstance(env,dict) or len(env)>1 or not all(isinstance(k,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)',k) and isinstance(v,str) and 8<=len(v)<=8192 for k,v in env.items()): raise ValueError()
+ if not isinstance(env,dict) or not all(isinstance(k,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}(?:TOKEN|KEY|SECRET|PASSWORD|_ID|_SID)',k) and isinstance(v,str) and v for k,v in env.items()): raise ValueError()
  limit=int(r['maxBytes'])
  timeout=float(r['timeoutMs'])/1000
- if not 1<=limit<=16777216 or not 0<timeout<=3600: raise ValueError()
+ if limit<1 or not 0<timeout: raise ValueError()
  cli=r.get('cli')
  if cli is None:
   if not r['args'] or env: raise ValueError()
   steps=[(r['args'],os.environ.copy(),timeout)]
  else:
   install=float(r['installTimeoutMs'])/1000
-  if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install<=3600: raise ValueError()
+  if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install: raise ValueError()
   prefix=sealed('.')+'/otto-cli-'+cli['id']
   os.close(os.open(prefix+'.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600))
   home=tempfile.mkdtemp(prefix='otto-cli-')
@@ -280,8 +280,8 @@ export function runSupervisedCommand(options: {
   const transportGraceMs = options.transportGraceMs ?? 0;
   if (!Number.isInteger(transportGraceMs) || transportGraceMs < 0 || transportGraceMs > 300_000)
     throw new Error('The workspace transport grace period is invalid.');
-  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 30_000, 3_600_000));
-  const maxBytes = Math.max(1, Math.min(options.maxBytes ?? 16 * 1024 * 1024, 16 * 1024 * 1024));
+  const timeoutMs = Math.max(1, options.timeoutMs ?? 30_000);
+  const maxBytes = Math.max(1, options.maxBytes ?? 16 * 1024 * 1024);
   const request =
     JSON.stringify({
       args: options.args,
@@ -315,7 +315,10 @@ export function runSupervisedCommand(options: {
     let drain: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(
       () => cancel(),
-      transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
+      Math.min(
+        transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
+        2 ** 31 - 1,
+      ),
     );
     const cleanup = () => {
       clearTimeout(timer);

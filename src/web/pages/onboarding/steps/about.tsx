@@ -3,6 +3,7 @@ import { ArrowUp, Mic } from 'lucide-react';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
 import {
+  interviewAnswerChars,
   interviewLabels,
   lastQuestion,
   type InterviewResponse,
@@ -235,7 +236,7 @@ export function About({ arrived, onNext }: StepProps) {
               placeholder="Type your answer…"
               aria-label="Your answer"
               autoComplete="off"
-              maxLength={560}
+              maxLength={interviewAnswerChars}
               data-analytics-private
             />
             <div className="composer-tools">

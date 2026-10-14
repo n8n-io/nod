@@ -421,8 +421,6 @@ test('skill reads cannot escape the trusted library or load workspace instructio
     assert.throws(() => library.read('untrusted'));
     assert.throws(() => library.read('implicit'));
     assert.throws(() => library.read('disabled'));
-    await writeFile(join(base, 'references', 'large.md'), 'x'.repeat(64 * 1024 + 1));
-    assert.throws(() => library.read('fixture', 'references/large.md'));
     await mkdir(join(base, 'references', 'directory.md'));
     assert.throws(() => library.read('fixture', 'references/directory.md'));
     await writeFile(
@@ -733,7 +731,7 @@ test('sign-in method questions remain available without requesting credential va
 
 test('a browser hold that fails still posts the question and waits for the reply', async () => {
   const question = 'Which account should I use?';
-  const holds: Array<number | null> = [];
+  const holds: boolean[] = [];
   const result = await fixture(
     async (tools) => {
       await call(tools, 'browser', { action: 'open', url: 'https://example.com' });
@@ -742,8 +740,8 @@ test('a browser hold that fails still posts the question and waits for the reply
     {},
     {
       computer: fakeComputer({
-        hold: async (_id, until) => {
-          holds.push(until);
+        hold: async (_id, held) => {
+          holds.push(held);
           throw new Error('Browser unavailable.');
         },
       }),
@@ -751,7 +749,7 @@ test('a browser hold that fails still posts the question and waits for the reply
   );
   assert.equal(result.result.status, 'waiting_user');
   assert.deepEqual(result.replies, [question]);
-  assert.ok(holds.some((until) => until !== null));
+  assert.ok(holds.includes(true));
 });
 
 test(
@@ -962,4 +960,37 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   );
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
+});
+
+test('long tool errors reach the model as a preview and a workspace file', async () => {
+  const saved: Array<{ path: string; text: string }> = [];
+  const messages: string[] = [];
+  const failure = `${'Synthetic provider detail. '.repeat(2000)}synthetic tail`;
+  await fixture(
+    async (_tools, _emit, options) => {
+      for (const detail of ['Short synthetic failure.', failure])
+        await assert.rejects(
+          options.runTool('fetch_content', { urls: [] }, async () => {
+            throw new Error(detail);
+          }),
+          (error) => {
+            messages.push((error as Error).message);
+            return true;
+          },
+        );
+    },
+    {},
+    {
+      workspace: fakeWorkspace({
+        writeArtifact: async (_threadId, path, bytes) => {
+          saved.push({ path, text: Buffer.from(bytes).toString() });
+        },
+      }),
+    },
+  );
+  assert.equal(messages[0], 'Short synthetic failure.');
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]!.text, failure);
+  assert.ok(messages[1]!.length < 2500);
+  assert.ok(messages[1]!.includes(saved[0]!.path));
 });

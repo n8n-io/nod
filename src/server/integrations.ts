@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -44,7 +45,7 @@ import {
   uploadWorkspaceFiles,
   workspaceFileSchemas,
 } from './integration-files.ts';
-import { maxFileSize } from './artifacts.ts';
+import { fileBytes } from '../shared/files.ts';
 import {
   normalizedEmail,
   verificationCode,
@@ -1245,7 +1246,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 connectionId: 'Saved account ID.',
                 pathId: 'Saved path ID.',
                 argv: 'CLI arguments without the program name or a token.',
-                timeoutSeconds: 'Optional limit from 1 to 120 seconds.',
+                timeoutSeconds: 'Optional runtime limit in seconds.',
               },
             },
           });
@@ -1297,7 +1298,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       if (hasWorkspaceFiles(args)) {
         const read = options.readWorkspaceFile;
         if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
-        let remaining = maxFileSize;
+        let remaining = fileBytes;
         args = (await withAccountSession(ownerId, [row], signal, async (session) => {
           if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
           return uploadWorkspaceFiles(
@@ -1305,10 +1306,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             async (input) => {
               signal?.throwIfAborted();
               if (!remaining)
-                throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+                throw new IntegrationError(
+                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+                );
               const bytes = await read(turn, input.workspaceFile, remaining);
               if (!bytes.byteLength || bytes.byteLength > remaining)
-                throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+                throw new IntegrationError(
+                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+                );
               remaining -= bytes.byteLength;
               signal?.throwIfAborted();
               return {
@@ -1362,7 +1367,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         !senderDomain ||
         !Number.isFinite(input.after) ||
         !Number.isFinite(input.before) ||
-        input.after < now - 5 * 60_000 - 30_000 ||
+        input.after < now - 6 * 60_000 ||
         input.after > now ||
         input.before < input.after ||
         input.before > now + 30_000
@@ -1395,14 +1400,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           )
         ).rowCount === 1;
       if (!(await current())) return;
-      const messages = await provider.verificationEmails(
+      let before = input.before;
+      let messages = await provider.verificationEmails(
         row.account_id!,
-        { recipient, senderDomain, after: input.after, before: input.before },
+        { recipient, senderDomain, after: input.after, before },
         signal,
       );
+      while (messages?.length === 0) {
+        await delay(5000, undefined, { signal });
+        before = Date.now();
+        messages = await provider.verificationEmails(
+          row.account_id!,
+          { recipient, senderDomain, after: input.after, before },
+          signal,
+        );
+      }
       signal.throwIfAborted();
       if (!messages || !(await current())) return;
-      const code = verificationCode(messages, { ...input, recipient });
+      const code = verificationCode(messages, { ...input, before, recipient });
       return code
         ? {
             code,

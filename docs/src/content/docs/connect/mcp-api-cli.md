@@ -21,7 +21,7 @@ Ask Otto to connect a service it can't find in the app catalog. Otto proposes a 
 | ----------- | ---------------------------------- | ------------------------------------- |
 | MCP server  | Tools on a public HTTPS MCP server | A token in a header, or OAuth sign-in |
 | HTTP API    | A method and path on the API       | A token in a header                   |
-| CLI         | A command with arguments           | One token in an environment variable  |
+| CLI         | A command with arguments           | Tokens in environment variables       |
 
 Otto keeps the token encrypted in Vault, and the server adds it to each call. A file returned by the service that contains the token is withheld.
 
@@ -33,26 +33,28 @@ A CLI path declares where to install the tool from:
 - a PyPI package, installed with `pipx`, or
 - an HTTPS download of a release program or archive, with an optional `sha256` checksum.
 
-The setup page shows that source next to the token field, so you can check it before you paste the token.
+It also names the environment variables the tool reads its credentials from, such as `GITHUB_TOKEN`, or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Each name must end in `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `_ID` or `_SID`, so it can't be a variable that loads code, such as `LD_PRELOAD`. A tool with several variables is its own connection.
+
+The setup page shows the source and one field per variable, so you can check it before you paste anything. A command runs for up to 59 minutes unless Otto asks for longer.
 
 ```mermaid
 flowchart LR
   source[Declared source<br/>npm · PyPI · HTTPS] -- installs --> sealed[(Sealed install)]
   sealed --> runner[Runs as<br/>its own user]:::go
-  token[(Token in Vault)]:::accent -- one variable --> runner
+  token[(Tokens in Vault)]:::accent -- its variables --> runner
   files[Workspace files]:::muted -. as arguments .-> runner
   runner -- text output --> otto[Otto]
 ```
 
-Otto installs each tool as its own Linux user, in a folder only that user can open, so neither the workspace user nor another connected tool can change it or read its token. Each run gets an environment built from scratch: a `PATH` with the sealed tool and system folders, a private temporary home and the one token variable.
+Otto installs each tool as its own Linux user, in a folder only that user can open, so neither the workspace user nor another connected tool can change it or read its token. Each run gets an environment built from scratch: a `PATH` with the sealed tool and system folders, a private temporary home and its credential variables.
 
 Nothing comes from the workspace user's files or settings. A program that the model writes or replaces in the workspace never receives the token. You can still pass workspace files as arguments, and the CLI returns text.
 
 ## Send and receive files
 
-To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them. Files in one action can total 15 MB. If the action waits for your approval, the attachment can't change in the meantime.
+To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them. Files in one action can total 90 MB. If the action waits for your approval, the attachment can't change in the meantime.
 
-Files that apps send back are saved privately in the workspace. Otto sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until Otto shares it.
+Files that apps send back, up to 90 MB each, are saved privately in the workspace one at a time. Otto sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until Otto shares it.
 
 MCP servers, APIs and CLIs use their own upload methods.
 

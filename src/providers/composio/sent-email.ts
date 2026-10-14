@@ -25,9 +25,8 @@ function gmail(client: Client, accountId: string, signal: AbortSignal) {
       { signal },
     );
     signal.throwIfAborted();
-    if (response.status !== 200 || JSON.stringify(response.data).length > 1_000_000)
-      throw new Error('Gmail did not answer.');
-    return response.data;
+    if (response.status !== 200) throw new Error('Gmail did not answer.');
+    return JSON.stringify(response.data).length > 1_000_000 ? undefined : response.data;
   };
 }
 

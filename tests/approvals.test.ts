@@ -403,6 +403,7 @@ test(
             const reply = String(input.reply)
               .replace(/[.!]+$/, '')
               .toLowerCase();
+            if (replyAnswers[reply] === 'fail') throw new Error('Synthetic reader outage.');
             return { answer: replyAnswers[reply] ?? 'other' };
           }
           reviews.push(input as Record<string, any>);
@@ -744,6 +745,30 @@ test(
       });
 
       await t.test(
+        'the trust check always sees the owner message that started the task',
+        async () => {
+          aligned = false;
+          const origin = 'Archive the synthetic invoices from the fixture supplier.';
+          const turn = await begin(origin);
+          await db.pool.query(
+            "UPDATE messages SET created_at=now()-interval '2 days' WHERE id=(SELECT message_id FROM turns WHERE id=$1)",
+            [turn.turnId],
+          );
+          for (let index = 0; index < 6; index++)
+            await finish(
+              (await thread.submitUserMessage(`Synthetic aside ${index}`)).turnId,
+              'succeeded',
+            );
+          await trust.check(turn, 'GMAIL_FETCH_EMAILS', {});
+          const seen = reviews.at(-1)?.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(seen?.length, 6);
+          assert.equal(seen?.[0], origin);
+          assert.equal(seen?.at(-1), 'Synthetic aside 5');
+          await finish(turn.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
         async () => {
           aligned = false;
@@ -780,8 +805,12 @@ test(
             'outsider/r',
           ];
           assert.match(
-            appActionConfirmation('CONNECTED_CLI', { argv: command }, 'background'),
-            /--repo outsider\/r/,
+            appActionConfirmation(
+              'CONNECTED_CLI',
+              { argv: command, timeoutSeconds: 7200 },
+              'background',
+            ),
+            /--repo outsider\/r[\s\S]*Timeout: 7200 seconds/,
           );
           await trust.check(turn, 'CONNECTED_MCP_CALL', hidden);
           assert.match(JSON.stringify(reviews.at(-1)?.action.arguments), /C-OUTSIDER/);
@@ -1262,9 +1291,13 @@ test(
             const revised = await messages.submit('Update my preferences to be shorter.', [], {
               ...(explicit ? { replyToMessageId: (await stored(id)).confirmation_message_id } : {}),
             });
-            assert.equal((await row(revised.turnId)).source, 'user');
+            const resumed = await row(revised.turnId);
+            assert.equal(resumed.source, 'user');
             assert.equal((await stored(id)).status, 'expired');
-            assert.equal(await turnStatus(origin.turnId), 'cancelled');
+            assert.equal(await turnStatus(origin.turnId), explicit ? 'waiting' : 'cancelled');
+            assert.equal(resumed.background, explicit);
+            assert.equal(resumed.parent_turn_id, explicit ? origin.turnId : null);
+            if (explicit) assert.equal(resumed.session_id, (await row(origin.turnId)).session_id);
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(
@@ -1302,6 +1335,8 @@ test(
             { replyToMessageId: confirmationMessageId },
           );
           assert.equal((await row(result.turnId)).source, 'user');
+          assert.equal((await row(result.turnId)).parent_turn_id, origin.turnId);
+          assert.equal(await turnStatus(origin.turnId), 'running');
           assert.equal((await stored(id)).status, 'expired');
           assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
@@ -2188,11 +2223,23 @@ test(
           };
           const first = await ask();
           const before = replies.length;
+          assert.deepEqual(await approvals.chat.answer({ ...first.input, hasAttachments: true }), {
+            approvalId: first.id,
+          });
+          assert.equal(replies.length, before);
+          replyAnswers['reader down'] = 'fail';
+          const outage = { ...first.input, text: 'reader down' };
+          const unread = await approvals.chat.answer(outage);
+          assert.equal(unread, undefined);
           assert.equal(
-            await approvals.chat.answer({ ...first.input, hasAttachments: true }),
+            await transaction(
+              (client) => approvals.chat.accept(client, { ...outage, answer: unread }),
+              db.pool,
+            ),
             undefined,
           );
-          assert.equal(replies.length, before);
+          assert.equal((await stored(first.id)).status, 'pending');
+          delete replyAnswers['reader down'];
           const answer = await approvals.chat.answer(first.input);
           assert.deepEqual(answer, { approvalId: first.id, approved: true });
           assert.deepEqual(replies.at(-1), { reply });
@@ -2490,6 +2537,26 @@ test(
             await personal.manage('history_search', { query: 'BoundarySecretKeyword' }),
             { turns: [], messages: [] },
           );
+          const ownThread = await thread.activeThread(db.pool, ownerId);
+          const tied = new Date('2026-01-01T10:00:00.123456Z');
+          const pageIds = Array.from({ length: 17 }, () => randomUUID());
+          for (const id of pageIds)
+            await db.pool.query(
+              'INSERT INTO messages(id,owner_id,role,text,thread_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+              [id, ownerId, 'user', 'PagedHistoryKeyword', ownThread.id, tied],
+            );
+          const first = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+          })) as { messages: Array<{ id: string }> };
+          const second = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+            before: first.messages.at(-1)!.id,
+          })) as { messages: Array<{ id: string }> };
+          assert.deepEqual(
+            [...first.messages, ...second.messages].map((row) => row.id).sort(),
+            [...pageIds].sort(),
+          );
+          await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [pageIds]);
 
           const job = async (id: string) =>
             (

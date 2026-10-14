@@ -129,14 +129,25 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return memory.forget(args.path);
     }
     if (action === 'history_search') {
-      const query = z.string().min(1).max(200).parse(args.query);
+      const { query, before } = z
+        .object({ query: z.string().min(1), before: z.uuid().optional() })
+        .parse(args);
+      const cursor = before
+        ? (
+            await pool.query<{ at: Date }>(
+              'SELECT created_at AS at FROM messages WHERE id=$1 AND owner_id=$2 UNION ALL SELECT created_at FROM turns WHERE id=$1 AND owner_id=$2 LIMIT 1',
+              [before, ownerId],
+            )
+          ).rows[0]
+        : undefined;
+      if (before && !cursor) throw new Error('This history result is unavailable.');
       const turns = await pool.query(
-        `SELECT u.id,left(u.prompt,200) AS title,u.status,u.source,u.created_at,split_part(u.channel,':',1) AS channel FROM turns u WHERE u.owner_id=$1 AND ${activeThreadSql('u')} AND to_tsvector('simple',u.prompt) @@ plainto_tsquery('simple',$2) ORDER BY u.created_at DESC LIMIT 15`,
-        [ownerId, query],
+        `SELECT u.id,left(u.prompt,200) AS title,u.status,u.source,u.created_at,split_part(u.channel,':',1) AS channel FROM turns u WHERE u.owner_id=$1 AND ${activeThreadSql('u')} AND to_tsvector('simple',u.prompt) @@ plainto_tsquery('simple',$2) AND ($3::timestamptz IS NULL OR (u.created_at,u.id)<($3,$4::uuid)) ORDER BY u.created_at DESC,u.id DESC LIMIT 15`,
+        [ownerId, query, cursor?.at ?? null, before ?? null],
       );
       const messages = await pool.query(
-        `SELECT m.role,m.text,m.turn_id,split_part(COALESCE(u.channel,'web'),':',1) AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND to_tsvector('simple',m.text) @@ plainto_tsquery('simple',$2) ORDER BY m.created_at DESC LIMIT 15`,
-        [ownerId, query],
+        `SELECT m.id,m.role,m.text,m.turn_id,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND to_tsvector('simple',m.text) @@ plainto_tsquery('simple',$2) AND ($3::timestamptz IS NULL OR (m.created_at,m.id)<($3,$4::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT 15`,
+        [ownerId, query, cursor?.at ?? null, before ?? null],
       );
       return { turns: turns.rows, messages: messages.rows };
     }

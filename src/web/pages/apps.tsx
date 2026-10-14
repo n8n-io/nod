@@ -50,13 +50,18 @@ type Discovery = {
     endpoint?: string;
     command?: string;
     auth: string;
-    envName?: string;
+    env?: string[];
     source?: { npm?: string; pypi?: string; url?: string; sha256?: string };
     testPath?: string;
     scope?: string;
     clientIdRequired?: boolean;
   }>;
 };
+
+function discoverySettings(discovery: Discovery | null | undefined) {
+  const names = discovery?.paths.find((path) => path.kind === 'cli')?.env;
+  return names && names.length > 1 ? names : undefined;
+}
 
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
@@ -477,6 +482,7 @@ export function Apps({
     if (!discoveryId || savingDiscovery) return;
     const form = event.currentTarget;
     const values = new FormData(form);
+    const names = discoverySettings(discovery);
     setSavingDiscovery(true);
     setDiscoveryError('');
     try {
@@ -484,14 +490,16 @@ export function Apps({
         method: 'POST',
         body: JSON.stringify({
           accountName: values.get('accountName'),
-          token: values.get('token'),
+          token: names
+            ? Object.fromEntries(names.map((name) => [name, values.get(`setting:${name}`)]))
+            : values.get('token'),
         }),
       });
       form.reset();
       window.location.assign('/');
     } catch (cause) {
-      const token = form.elements.namedItem('token');
-      if (token instanceof HTMLInputElement) token.value = '';
+      for (const input of form.querySelectorAll('input[type="password"]'))
+        if (input instanceof HTMLInputElement) input.value = '';
       setDiscoveryError(errorMessage(cause));
       setSavingDiscovery(false);
     }
@@ -1140,17 +1148,19 @@ export function Apps({
               <Field label="Account name">
                 <Input name="accountName" required maxLength={200} autoComplete="off" />
               </Field>
-              <Field label="Access token">
-                <Input
-                  name="token"
-                  type="password"
-                  required
-                  minLength={8}
-                  maxLength={8192}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </Field>
+              {(discoverySettings(discovery) ?? ['token']).map((name) => (
+                <Field key={name} label={name === 'token' ? 'Access token' : name}>
+                  <Input
+                    name={name === 'token' ? 'token' : `setting:${name}`}
+                    type="password"
+                    required
+                    minLength={8}
+                    maxLength={8192}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field>
+              ))}
               <Button
                 type="submit"
                 disabled={

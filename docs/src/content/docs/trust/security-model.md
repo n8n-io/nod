@@ -45,7 +45,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 ### Secrets
 
 - No tool returns a saved password, code or card to the model.
-- Otto is told never to ask for a password, code, card or API key in chat; it opens private entry instead. While a verification code or a card's security code is pending, a code you send by itself in the conversation that asked for it is caught before the model sees it, and so is a card code labeled CVV, CVC or security code, as in "my CVC is 123". Other labels and unlabeled numbers in other messages reach the model. Any other secret you type into chat reaches the model.
+- Otto is told never to ask for a password, code, card or API key in chat; it opens private entry instead. While a verification code is pending in the conversation that asked for it, a message that ends with its only 4–8 digit number (digits 0–9) is taken as the code, whatever the wording around it, and a message with a code-length number anywhere else is refused. While a card's security code is pending, only a code sent by itself or labeled CVV, CVC or security code, as in "my CVC is 123", is taken, and any other message with a 3- or 4-digit number is refused. A code sent as a reply to a closed request, or by itself until 10 minutes after Otto starts on a newer message, is refused too. None of these reach the model. Digits in other scripts and any other secret you type into chat reach the model.
 - Known secret values are removed from tool output and masked in screenshots.
 - Provider keys never enter the workspace, the browser or a prompt.
 

@@ -1,13 +1,9 @@
 import { browserErrorMessage, type BrowserErrorCode } from '../../shared/browser-errors.ts';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { z } from 'zod';
-import {
-  BrowserActionError,
-  browserDownloadBytes,
-  browserRequestBytes,
-  browserUploadBytes,
-  type Computer,
-} from '../../ports/computer.ts';
+import { BrowserActionError, type Computer } from '../../ports/computer.ts';
+import { fileBytes } from '../../shared/files.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 import { browserUrl } from '../agent-browser/network.ts';
@@ -17,8 +13,10 @@ import {
   browserCardInput,
   browserRequest,
   browserResponse,
+  chunkFrame,
   imageBytes,
   responseBytes,
+  transferBytes,
   viewFrame,
   type BrowserCall,
   type BrowserMetadata,
@@ -33,7 +31,6 @@ export function createBridgeComputer(options: {
   launch(input: BrowserCall): CommandProcess;
   available?(input: BrowserCall): boolean;
   timeoutMs?: number;
-  openTimeoutMs?: number;
   drainTimeoutMs?: number;
 }): Computer & { quiesce(): Promise<boolean> } {
   let disposed = false;
@@ -73,7 +70,11 @@ export function createBridgeComputer(options: {
     }
   }
 
-  function call(input: BrowserCall, signal?: AbortSignal): Promise<unknown> {
+  function call(
+    input: BrowserCall,
+    signal?: AbortSignal,
+    transfer: { data?: Uint8Array; chunks?: Buffer[] } = {},
+  ): Promise<unknown> {
     signal?.throwIfAborted();
     const request = browserRequest.parse({
       ...input,
@@ -81,8 +82,6 @@ export function createBridgeComputer(options: {
       namespace: options.namespace,
     });
     const encoded = JSON.stringify({ type: 'request', request }) + '\n';
-    if (Buffer.byteLength(encoded) > browserRequestBytes)
-      return Promise.reject(new Error('The browser request is too large.'));
     const available = options.available?.(input) !== false;
     if (input.method !== 'dispose' && (disposed || uncertain || !available)) {
       if (
@@ -93,7 +92,7 @@ export function createBridgeComputer(options: {
           (input.method === 'act' && input.input.action === 'open'))
       ) {
         if (input.method === 'act') browserUrl(input.input.url ?? '');
-        return recover().then(() => call(input, signal));
+        return recover().then(() => call(input, signal, transfer));
       }
       return Promise.reject(
         new Error(
@@ -115,16 +114,13 @@ export function createBridgeComputer(options: {
         );
       }
       let output = '';
-      let bytes = 0;
+      let received = 0;
       let response: BrowserResponse | undefined;
       let settled = false;
       let cancelling = false;
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
-      const timeoutMs =
-        input.method === 'act' && input.input.action === 'open'
-          ? (options.openTimeoutMs ?? options.timeoutMs)
-          : options.timeoutMs;
-      const timer = timeoutMs === undefined ? undefined : setTimeout(() => cancel(), timeoutMs);
+      const timer =
+        options.timeoutMs === undefined ? undefined : setTimeout(() => cancel(), options.timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
         clearTimeout(drainTimer);
@@ -154,23 +150,34 @@ export function createBridgeComputer(options: {
       child.stderr.resume();
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
-        bytes += Buffer.byteLength(chunk);
-        if (bytes > responseBytes || response) return unavailable();
         output += chunk;
-        const end = output.indexOf('\n');
-        if (end < 0) return;
-        try {
-          if (output.slice(end + 1)) throw new Error();
-          response = browserResponse.parse(JSON.parse(output.slice(0, end)));
-          if (response.id !== request.id) throw new Error();
-          output = '';
-        } catch {
-          unavailable();
+        for (let end = output.indexOf('\n'); end >= 0; end = output.indexOf('\n')) {
+          const line = output.slice(0, end);
+          output = output.slice(end + 1);
+          if (Buffer.byteLength(line) > responseBytes) return unavailable();
+          try {
+            if (response) throw new Error();
+            const value = JSON.parse(line);
+            const part = chunkFrame.safeParse(value);
+            if (part.success) {
+              const bytes = Buffer.from(part.data.chunk, 'base64');
+              received += bytes.length;
+              if (!transfer.chunks || part.data.id !== request.id || received > fileBytes)
+                throw new Error();
+              transfer.chunks.push(bytes);
+              continue;
+            }
+            response = browserResponse.parse(value);
+            if (response.id !== request.id) throw new Error();
+          } catch {
+            return unavailable();
+          }
         }
+        if (Buffer.byteLength(output) > responseBytes) unavailable();
       });
       child.on('close', (code) => {
         if (settled) return;
-        if (code !== 0 || !response) return unavailable();
+        if (code !== 0 || !response || output) return unavailable();
         settled = true;
         cleanup();
         updateMetadata(response.metadata, order, input);
@@ -187,7 +194,19 @@ export function createBridgeComputer(options: {
         }
         reject(new Error('The workspace browser could not complete this action. Try again.'));
       });
-      child.stdin.write(encoded);
+      void (async () => {
+        child.stdin.write(encoded);
+        const data = transfer.data ?? new Uint8Array();
+        for (let offset = 0; offset < data.length; offset += transferBytes) {
+          if (settled || cancelling) return;
+          const line = {
+            type: 'data',
+            id: request.id,
+            data: Buffer.from(data.subarray(offset, offset + transferBytes)).toString('base64'),
+          };
+          if (!child.stdin.write(JSON.stringify(line) + '\n')) await once(child.stdin, 'drain');
+        }
+      })().catch(unavailable);
       if (signal?.aborted) cancel();
     });
     pending.add(result);
@@ -292,30 +311,25 @@ export function createBridgeComputer(options: {
     },
     view,
     upload: async (id, input, signal) => {
-      if (!input.bytes.length || input.bytes.length > browserUploadBytes)
+      if (!input.bytes.length || input.bytes.length > fileBytes)
         throw new Error('The browser file is too large.');
       return observationSchema.parse(
         await call(
           {
             method: 'upload',
             threadId: threadIdentity(id),
-            input: {
-              selector: input.selector,
-              name: input.name,
-              data: Buffer.from(input.bytes).toString('base64'),
-            },
+            input: { selector: input.selector, name: input.name, size: input.bytes.length },
           },
           signal,
+          { data: input.bytes },
         ),
       );
     },
     async download(id, input, signal) {
+      const chunks: Buffer[] = [];
       const result = z
         .object({
-          data: z
-            .string()
-            .min(4)
-            .max(Math.ceil(browserDownloadBytes / 3) * 4),
+          size: z.number().int().min(1).max(fileBytes),
           name: z
             .string()
             .min(1)
@@ -327,16 +341,13 @@ export function createBridgeComputer(options: {
             .regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/),
         })
         .strict()
-        .parse(await call({ method: 'download', threadId: threadIdentity(id), input }, signal));
-      if (result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data))
-        throw new Error('The browser file is unavailable.');
-      const bytes = Buffer.from(result.data, 'base64');
-      if (
-        !bytes.length ||
-        bytes.length > browserDownloadBytes ||
-        bytes.toString('base64') !== result.data
-      )
-        throw new Error('The browser file is unavailable.');
+        .parse(
+          await call({ method: 'download', threadId: threadIdentity(id), input }, signal, {
+            chunks,
+          }),
+        );
+      const bytes = Buffer.concat(chunks);
+      if (bytes.length !== result.size) throw new Error('The browser file is unavailable.');
       return { bytes, name: result.name, mimeType: result.mimeType };
     },
     currentPage: async (id) =>
@@ -389,8 +400,8 @@ export function createBridgeComputer(options: {
           ) ?? undefined
       );
     },
-    hold: async (id, until) => {
-      await call({ method: 'hold', threadId: threadIdentity(id), until });
+    hold: async (id, held) => {
+      await call({ method: 'hold', threadId: threadIdentity(id), held });
     },
     close: async (id) => {
       await call({ method: 'close', threadId: threadIdentity(id) });

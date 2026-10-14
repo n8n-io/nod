@@ -1,7 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
-import { interviewLabels, lastQuestion, type InterviewResponse } from '../shared/onboarding.ts';
+import {
+  interviewAnswerChars,
+  interviewLabels,
+  lastQuestion,
+  type InterviewResponse,
+} from '../shared/onboarding.ts';
 import { line, unsafe } from './memory-tree.ts';
 import type { MemoryService } from './memory.ts';
 
@@ -21,10 +26,10 @@ question: first think about what they actually told you, then ask the one thing 
 Examples of the tone only, never copy them: answer "Otto public launch" -> {"ack":"Ooh, a public launch. That's a big moment!","question":"When are you hoping to go live, and what would a great launch look like?"}; answer "building an open source n8n alternative" -> {"ack":"Nice, and open source too. That's a fun one.","question":"What's the first real milestone you're chasing with it?"}; answer "I run a small pottery studio" -> {"ack":"A pottery studio, I love that.","question":"What are you hoping to get done there over the next few months?"}.
 Talk like a friendly person, not a form: never drill into details such as how often something happens, where it comes up, who asks or which tool they use. Plain everyday words, no lists, no emoji, no dashes. Never ask for passwords, codes, API keys or any other credentials.`;
 const reply = z.object({ ack: z.string(), question: z.string() });
-const turnInput = z.object({ answers: z.array(line(600)).min(1).max(2) }).strict();
-const saveInput = z.object({ answers: z.tuple([line(580), line(580), line(580)]) }).strict();
+const answer = line(interviewAnswerChars);
+const turnInput = z.object({ answers: z.array(answer).min(1).max(2) }).strict();
+const saveInput = z.object({ answers: z.tuple([answer, answer, answer]) }).strict();
 
-const words = (text: string) => text.split(' ').length;
 const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 function interviewTurn(raw: unknown): InterviewResponse | undefined {
@@ -32,9 +37,8 @@ function interviewTurn(raw: unknown): InterviewResponse | undefined {
   if (!parsed.success) return;
   const ack = clean(parsed.data.ack);
   const question = clean(parsed.data.question);
-  if (!question || question.length > 200 || words(question) > 30 || unsafe(question)) return;
-  const fits = ack.length <= 120 && words(ack) <= 16 && !unsafe(ack);
-  return { ack: fits ? ack : '', question };
+  if (!question || unsafe(question)) return;
+  return { ack: unsafe(ack) ? '' : ack, question };
 }
 
 export function createOnboardingInterview(options: {

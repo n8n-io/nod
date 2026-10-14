@@ -64,9 +64,9 @@ stateDiagram-v2
 
 ## Messages you send while Otto works
 
-The composer never blocks. After each Pi step, a running chat turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close.
+The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace. Images reach the model with the message when the model reads images and they fit the [image limits](/how-it-works/agent-runtime/); others stay workspace files marked as not shown. A reply carries the message it answers. Those messages move to the running turn, and their own turns close.
 
-A message with attachments, a reply target or another channel stops the take. It and every message after it stay queued and run as their own turns. Background turns never take queued messages.
+A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Background turns never take queued messages.
 
 ## Waiting and resuming
 
@@ -106,7 +106,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.
-- **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, sign in, pay, or open saved browser sessions. A paused turn cannot start another subagent.
+- **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay, or open saved browser sessions. A paused turn cannot start another subagent.
 - **Browsers.** A subagent's browser is deleted when it finishes.
 - **Files.** Each subagent starts in `.otto/runs/<run ID>` inside the shared workspace. It returns complete file paths to its parent.
 - **Outcomes.** Model failures and incomplete responses return as errors. They do not count as successful empty answers.
@@ -117,9 +117,9 @@ A session opens its browser on its first browser call, so a session that never b
 
 - A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most four browsers live at once. Other sessions can wait for a browser. At that limit, a new browser replaces the least recently used one that has been idle for five minutes, which closes and keeps its profile until it's used again.
-- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. One waiting for you stays open for 30 minutes.
-- When no browser can close, a new one waits up to two minutes for a free slot, then the browser call fails as busy. **Stop** cancels the wait at once.
+- The browser container keeps four browsers live at once. At that limit, a new browser replaces the least recently used one that has been idle for five minutes. A browser waiting for you is never replaced during its 30-minute hold. The replaced browser closes and keeps its profile until it's used again.
+- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. Browsers don't close just because they're idle.
+- When no browser can close yet, a new one waits for a free slot until its session stops. **Stop** cancels the wait at once.
 
 ## Stop and failures
 

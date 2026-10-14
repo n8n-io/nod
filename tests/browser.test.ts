@@ -865,6 +865,37 @@ test('browser requests wait for native completion without a second execution dea
   }
 });
 
+test('browser files larger than one protocol message stream through the bridge both ways', async () => {
+  const file = Buffer.alloc(13 * 1024 * 1024 + 7);
+  for (let index = 0; index < file.length; index += 4099) file[index] = index % 251;
+  const uploaded: Buffer[] = [];
+  const bridge = await harness({
+    computer: fakeComputer({
+      download: async () => ({ bytes: file, name: 'export.zip', mimeType: 'application/zip' }),
+      upload: async (_id, input) => {
+        uploaded.push(Buffer.from(input.bytes));
+        return { text: 'Uploaded', url: 'https://example.test/' };
+      },
+    }),
+  });
+  try {
+    const computer = bridge.client('/synthetic/transfer');
+    const downloaded = await computer.download('fixture', {});
+    assert.equal(downloaded.name, 'export.zip');
+    assert.ok(downloaded.bytes.equals(file));
+    const result = await computer.upload('fixture', {
+      selector: '#file',
+      name: 'export.zip',
+      bytes: file,
+    });
+    assert.equal(result.text, 'Uploaded');
+    assert.equal(uploaded.length, 1);
+    assert.ok(uploaded[0]!.equals(file));
+  } finally {
+    await bridge.close();
+  }
+});
+
 test('a timed out snapshot is not resent and its queue remains fenced until close is acknowledged', async () => {
   const f = await transportFixture();
   const closeStarted = deferred();
@@ -1399,14 +1430,13 @@ test('discarding a thread closes its browser and deletes only its throwaway data
   }
 });
 
-async function wedgedBrowser(options: { idleTimeoutMs?: number } = {}) {
+async function wedgedBrowser() {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
   let failClose = true;
   const computer = createBrowserFixture({
     dataRoot: directory,
-    ...options,
     run: async (executable, args, input) => {
       const action = args[args.indexOf('--idle-timeout') + 2];
       commands.push(action);
@@ -1446,27 +1476,6 @@ test('failed interruption cleanup blocks actions until the next open retries the
     );
     assert.equal(commands.slice(count).at(-1), 'close');
     wedged.repair();
-    const reopened = await computer.act('fixture', {
-      action: 'open',
-      url: 'https://1.1.1.1/login',
-    });
-    assert.equal(reopened.url, 'https://1.1.1.1/login');
-  } finally {
-    await wedged.cleanup();
-  }
-});
-
-test('calls rejected by a wedged browser do not keep it from idling out', async () => {
-  const wedged = await wedgedBrowser({ idleTimeoutMs: 40 });
-  const { computer, commands } = wedged;
-  try {
-    wedged.repair();
-    const count = commands.length;
-    for (const deadline = Date.now() + 3000; !commands.slice(count).includes('close');) {
-      assert.ok(Date.now() < deadline, 'the idle sweep never closed the wedged browser');
-      await assert.rejects(computer.act('fixture', { action: 'snapshot' }));
-      await delay(5);
-    }
     const reopened = await computer.act('fixture', {
       action: 'open',
       url: 'https://1.1.1.1/login',
@@ -1578,8 +1587,8 @@ test('every session drives its own browser, so background work never waits for t
       discard: async (id) => {
         discarded.push(id);
       },
-      hold: async (id, until) => {
-        if (until !== null) held.push(id);
+      hold: async (id, value) => {
+        if (value) held.push(id);
       },
     }),
     workspace: fakeWorkspace(),
@@ -1659,7 +1668,7 @@ test('every session drives its own browser, so background work never waits for t
   }
 });
 
-test('at the browser cap only a browser idle past the window and not held makes room, and a new one waits until then', async () => {
+test('at the browser cap a new browser waits for one idle past the window and never evicts a held one', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({
@@ -1667,25 +1676,29 @@ test('at the browser cap only a browser idle past the window and not held makes 
     run: fixture.run,
     maxLiveSessions: 2,
     evictIdleMs: 3000,
-    slotWaitMs: 1000,
   });
   const open = (id: string, signal?: AbortSignal) =>
     computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
   const pages = () => [...fixture.pages.keys()].sort();
   try {
     await open('chat');
+    await computer.hold('chat', true);
     await open('subagent');
-    await assert.rejects(open('scheduled'), /The browser sessions are busy/);
-    assert.deepEqual(pages(), ['chat', 'subagent']);
     const stop = new AbortController();
     const stopped = open('event', stop.signal);
     await delay(200);
     stop.abort();
     await assert.rejects(stopped, { name: 'AbortError' });
     assert.deepEqual(pages(), ['chat', 'subagent']);
-    await computer.hold('chat', Date.now() + 60_000);
-    await delay(3200);
     await open('scheduled');
+    assert.deepEqual(pages(), ['chat', 'scheduled']);
+    await computer.hold('scheduled', true);
+    await delay(3100);
+    const waiting = new AbortController();
+    const blocked = open('later', waiting.signal);
+    await delay(700);
+    waiting.abort();
+    await assert.rejects(blocked, { name: 'AbortError' });
     assert.deepEqual(pages(), ['chat', 'scheduled']);
   } finally {
     await computer.dispose();
@@ -1703,7 +1716,6 @@ test('Stop ends a browser slot wait queued behind a slow close and leaves no pha
     run: fixture.run,
     maxLiveSessions: 1,
     evictIdleMs: 1000,
-    slotWaitMs: 1000,
     onDaemonCommand: async (command) => {
       if (slowClose && command.action === 'close') await closing.promise;
     },
@@ -1968,10 +1980,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     return process as unknown as ChildProcessWithoutNullStreams;
   };
   const clients: Computer[] = [];
-  function client(
-    dataRoot: string,
-    options: { timeoutMs?: number; openTimeoutMs?: number; drainTimeoutMs?: number } = {},
-  ) {
+  function client(dataRoot: string, options: { timeoutMs?: number; drainTimeoutMs?: number } = {}) {
     const value = createContainerBrowserComputer({ dataRoot, spawn: launch, ...options });
     clients.push(value);
     return value;
@@ -3752,6 +3761,44 @@ test('chat request submits once under StrictMode and keeps the pending message v
   }
 });
 
+test('a long paste in a browser handoff arrives whole in requests under the body limit', async () => {
+  const bodies: string[] = [];
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/browser-handoff') bodies.push(String(options?.body));
+    return Response.json({ ok: true });
+  });
+  try {
+    await view.showFrame();
+    const text = '漢字'.repeat(150_000);
+    const paste = new view.dom.window.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', { value: { getData: () => text } });
+    await act(async () => {
+      view.element('.browser-handoff-screen').dispatchEvent(paste);
+    });
+    for (
+      let attempt = 0;
+      attempt < 100 &&
+      bodies
+        .flatMap((body) => JSON.parse(body).inputs)
+        .map((input: { text: string }) => input.text)
+        .join('') !== text;
+      attempt++
+    )
+      await act(async () => delay(10));
+    assert.ok(bodies.length > 1);
+    assert.ok(bodies.every((body) => Buffer.byteLength(body) < 256 * 1024));
+    assert.equal(
+      bodies
+        .flatMap((body) => JSON.parse(body).inputs)
+        .map((input: { text: string }) => input.text)
+        .join(''),
+      text,
+    );
+  } finally {
+    await view.close();
+  }
+});
+
 test('chat request waits for model readiness before consuming and submitting once', async () => {
   const state = requestedChatState();
   const pending = deferred<Response>();
@@ -3981,7 +4028,6 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
       {
         id: requestId,
         turnId: state.messages[0].turnId!,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
         kind: 'payment',
       },
     ];
@@ -4874,7 +4920,7 @@ test('session failures retry local bootstrap without offering hosted sign-in or 
         }
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+          fields: [], savedEntries: [],
         });
         throw new Error('Unexpected fixture request: ' + path);
       };
@@ -4972,7 +5018,7 @@ test('native Settings and feedback preserve the active credential form', async (
         });
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+          fields: [], savedEntries: [],
         });
         throw new Error('Unexpected fixture request: ' + path);
       };

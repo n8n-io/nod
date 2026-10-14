@@ -43,7 +43,7 @@ Model requests go only to the provider the user connects. App data goes only to 
 | Saved logins and cards             | PostgreSQL                                 | AES-256-GCM, bound to owner, record and purpose | Until removed       |
 | Model and app keys users save      | PostgreSQL                                 | AES-256-GCM, bound to owner, record and purpose | Until removed       |
 | Server-managed model and app keys  | Server configuration                       | Not stored by Otto; never sent to the sandbox   | Until unset         |
-| Vault activity                     | PostgreSQL                                 | Owner-scoped, no secret values                  | 90 days             |
+| Vault activity                     | PostgreSQL                                 | Owner-scoped, no secret values                  | No automatic expiry |
 | Model costs and app actions        | PostgreSQL                                 | Owner-scoped                                    | Permanent           |
 | Memory                             | A private file outside the workspace       | Learns only from the user's own messages        | Until forgotten     |
 | Workspace files, browser profiles  | Local volumes, or R2 checkpoints if hosted | Separate containers per owner                   | Until removed       |

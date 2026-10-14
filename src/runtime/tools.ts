@@ -2,8 +2,7 @@ import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebo
 import { Value } from '@sinclair/typebox/value';
 import { appConfirmation, type SkillLibrary } from '../ports/agent.ts';
 import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
-import { browserDownloadBytes } from '../ports/computer.ts';
-import { browserUploadBytes } from '../ports/computer.ts';
+import { fileBytes } from '../shared/files.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { vaultInvitation } from './communication.ts';
@@ -29,14 +28,14 @@ export const personalActions = [
 const uuid = Type.String({
   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 });
-const fieldSelector = Type.String({ minLength: 1, maxLength: 500 });
+const fieldSelector = Type.String({ minLength: 1 });
 const cardExpiryField = Type.Union([
   fieldSelector,
   Type.Object(
     {
       selector: fieldSelector,
-      format: Type.String({ minLength: 1, maxLength: 100 }),
-      locale: Type.Optional(Type.String({ maxLength: 35 })),
+      format: Type.String({ minLength: 1 }),
+      locale: Type.Optional(Type.String()),
     },
     { additionalProperties: false },
   ),
@@ -101,8 +100,8 @@ export const scheduleObservation = Type.Union([
     {
       status: Type.Literal('verified'),
       sourceUrl: Type.String(),
-      value: Type.String({ maxLength: 300 }),
-      summary: Type.String({ maxLength: 500 }),
+      value: Type.String(),
+      summary: Type.String(),
     },
     { additionalProperties: false },
   ),
@@ -111,22 +110,21 @@ export const scheduleObservation = Type.Union([
       status: Type.Literal('unavailable'),
       sourceUrl: Type.String(),
       value: Type.Null(),
-      summary: Type.String({ maxLength: 500 }),
+      summary: Type.String(),
     },
     { additionalProperties: false },
   ),
 ]);
 
-const taskNow = Type.String({ minLength: 1, maxLength: 200 });
+const taskNow = Type.String({ minLength: 1 });
 const taskWaits = Type.Array(
   Type.Object(
     {
-      who: Type.String({ minLength: 1, maxLength: 80 }),
-      via: Type.String({ minLength: 1, maxLength: 40 }),
+      who: Type.String({ minLength: 1 }),
+      via: Type.String({ minLength: 1 }),
     },
     { additionalProperties: false },
   ),
-  { maxItems: 10 },
 );
 const taskNextCheck = Type.String({
   pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$',
@@ -142,8 +140,8 @@ export const toolDefinitions = {
       Type.Object(
         {
           action: Type.Literal('read'),
-          name: Type.String({ minLength: 1, maxLength: 64 }),
-          file: Type.Optional(Type.String({ maxLength: 128 })),
+          name: Type.String({ minLength: 1 }),
+          file: Type.Optional(Type.String()),
         },
         { additionalProperties: false },
       ),
@@ -159,10 +157,10 @@ export const toolDefinitions = {
   ),
   delegate: defineTool(
     'delegate',
-    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
+    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
     Type.Object({
-      title: Type.String({ minLength: 1, maxLength: 120 }),
-      instruction: Type.String({ minLength: 1, maxLength: 4000 }),
+      title: Type.String({ minLength: 1 }),
+      instruction: Type.String({ minLength: 1 }),
     }),
   ),
   ask_user: defineTool(
@@ -175,12 +173,12 @@ export const toolDefinitions = {
     'Occasionally react to a user message with one emoji (web only, one per message, five-minute cooldown). null removes it. Never a substitute for an answer or permission.',
     Type.Object({
       messageId: Type.String({ pattern: '^[0-9a-fA-F-]{36}$' }),
-      reaction: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
+      reaction: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
     }),
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. waitMs waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?, amount?} (amount in pixels, default 600); evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. waitMs waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -211,7 +209,7 @@ export const toolDefinitions = {
       ]),
       url: Type.Optional(Type.String()),
       script: Type.Optional(Type.String()),
-      tabId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+      tabId: Type.Optional(Type.String({ minLength: 1 })),
       selector: Type.Optional(Type.String()),
       targetSelector: Type.Optional(Type.String()),
       x: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
@@ -231,37 +229,38 @@ export const toolDefinitions = {
       key: Type.Optional(Type.String()),
       load: Type.Optional(literals(['load', 'domcontentloaded', 'networkidle'])),
       direction: Type.Optional(literals(['up', 'down'])),
+      amount: Type.Optional(Type.Integer({ minimum: 1 })),
       waitMs: Type.Optional(Type.Integer({ minimum: 0 })),
       offset: Type.Optional(Type.Integer({ minimum: 0 })),
-      name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+      name: Type.Optional(Type.String({ minLength: 1 })),
     }),
   ),
   sign_in: defineTool(
     'sign_in',
     'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Read the full sign-in page through snapshots or screenshots and navigate login choices yourself. Use the method and account the user chose, or a uniquely applicable saved login; ask when methods or accounts remain ambiguous. A website default is not a user choice. A saved login applies only to the current exact origin or an observed link to the visible sign-in provider, never an unrelated entry or a shared parent domain. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId, the manage_apps connectionId of a saved login, to choose it; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer, then call sign_in again with a fresh snapshot. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
-      origin: Type.String({ minLength: 1, maxLength: 2048 }),
-      label: Type.String({ minLength: 1, maxLength: 100 }),
+      origin: Type.String({ minLength: 1 }),
+      label: Type.String({ minLength: 1 }),
       kind: literals(['identifier', 'password', 'otp']),
       usernameSelector: Type.Optional(fieldSelector),
       passwordSelector: Type.Optional(
-        Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1, maxItems: 100 })]),
+        Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1 })]),
       ),
       submitSelector: Type.Optional(fieldSelector),
       emailCode: Type.Optional(Type.Boolean()),
-      emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
+      emailRecipient: Type.Optional(Type.String()),
       savedLoginId: Type.Optional(uuid),
-      message: Type.String({ minLength: 1, maxLength: 300 }),
-      action: Type.String({ minLength: 1, maxLength: 60 }),
+      message: Type.String({ minLength: 1 }),
+      action: Type.String({ minLength: 1 }),
     }),
   ),
   pay: defineTool(
     'pay',
     'Pay at the checkout on the current page with a Vault card. You never see the card: Otto enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. For another expiry layout, use {selector, format, locale?}: M or MM for the numeric month, MMM or MMMM for its short or full name, and YY or YYYY for the year. For example, format can be YYYY-MM or MMM with locale en. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Otto shows the user the checkout and asks for a yes or the card’s security code, which you never see. Stop and wait. Pass submitSelector for the control that submits the payment. Otto enters and submits in one private operation and keeps the live page. Check the result; do not submit again. Finish all other checkout fields first. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
-      amount: Type.String({ pattern: '^\\d{1,9}(\\.\\d{1,3})?$' }),
-      currency: Type.String({ minLength: 3, maxLength: 3 }),
-      card: Type.Optional(Type.String({ maxLength: 100 })),
+      amount: Type.String(),
+      currency: Type.String(),
+      card: Type.Optional(Type.String()),
       submitSelector: fieldSelector,
       fields: Type.Intersect([
         Type.Object({
@@ -280,7 +279,7 @@ export const toolDefinitions = {
     'payment_setting',
     "Turn Do it for me on or off for a Vault card when the user asks. On: Otto keeps the card's security code from the next payment, then the user's yes in the Otto app is enough to pay. Off: Otto deletes the code and asks for it each time. card is the card the user named, by name or last four digits.",
     Type.Object({
-      card: Type.Optional(Type.String({ maxLength: 100 })),
+      card: Type.Optional(Type.String()),
       doItForMe: Type.Boolean(),
     }),
   ),
@@ -291,15 +290,15 @@ export const toolDefinitions = {
       Type.Object(
         {
           action: Type.Literal('connect'),
-          url: Type.String({ minLength: 1, maxLength: 2048 }),
-          label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+          url: Type.String({ minLength: 1 }),
+          label: Type.Optional(Type.String({ minLength: 1 })),
         },
         { additionalProperties: false },
       ),
       Type.Object(
         {
           action: Type.Literal('use'),
-          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          url: Type.String({ minLength: 1 }),
           connectionId: uuid,
         },
         { additionalProperties: false },
@@ -307,7 +306,7 @@ export const toolDefinitions = {
       Type.Object(
         {
           action: Type.Literal('save'),
-          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          url: Type.String({ minLength: 1 }),
           connectionId: uuid,
           signedIn: Type.Literal(true),
         },
@@ -317,19 +316,19 @@ export const toolDefinitions = {
   ),
   apps: defineTool(
     'apps',
-    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 15 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Files that an action returns are saved privately in the workspace as {workspaceFile, name, mimeType, size}, and you see returned images. Read them again with read; share one with share_file.',
+    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 90 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Files that an action returns are saved privately in the workspace as {workspaceFile, name, mimeType, size}, and you see returned images. Read them again with read; share one with share_file.',
     Type.Object({
-      action: Type.String({ maxLength: 150 }),
+      action: Type.String(),
       args: Type.Record(Type.String(), Type.Unknown()),
     }),
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list {query?} saved accounts and access paths; set query to the website or service to include its saved logins: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or CLI, then propose {service, proposal} to give the user a private setup link. A CLI path names the source Otto installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture.',
+    'list {query?} saved accounts and access paths; set query to the website or service to include its saved logins: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or CLI, then propose {service, proposal} to give the user a private setup link. A CLI path names the source Otto installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture, and env, the credential variables it reads, such as [GITHUB_TOKEN] or [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]; each name ends in TOKEN, KEY, SECRET, PASSWORD, _ID or _SID, and a CLI with several is proposed on its own.',
     Type.Object({
       action: literals(['list', 'discover', 'connect', 'propose']),
-      service: Type.Optional(Type.String({ maxLength: 80 })),
-      query: Type.Optional(Type.String({ maxLength: 200 })),
+      service: Type.Optional(Type.String()),
+      query: Type.Optional(Type.String()),
       connectionId: Type.Optional(uuid),
       newAccount: Type.Optional(
         Type.Boolean({
@@ -338,31 +337,31 @@ export const toolDefinitions = {
       ),
       proposal: Type.Optional(
         Type.Object({
-          service: Type.String({ maxLength: 40 }),
-          name: Type.String({ maxLength: 80 }),
+          service: Type.String(),
+          name: Type.String(),
           connectionId: Type.Optional(Type.String()),
-          setupUrl: Type.Optional(Type.String({ maxLength: 2048 })),
-          setupText: Type.Optional(Type.String({ maxLength: 500 })),
+          setupUrl: Type.Optional(Type.String()),
+          setupText: Type.Optional(Type.String()),
           paths: Type.Array(
             Type.Union([
               Type.Object({
                 kind: Type.Literal('http'),
-                endpoint: Type.String({ maxLength: 2048 }),
+                endpoint: Type.String(),
                 auth: Type.Optional(literals(['bearer', 'x-api-key'])),
-                testPath: Type.String({ minLength: 1, maxLength: 500 }),
+                testPath: Type.String({ minLength: 1 }),
               }),
               Type.Object({
                 kind: Type.Literal('mcp'),
-                endpoint: Type.String({ maxLength: 2048 }),
+                endpoint: Type.String(),
                 auth: Type.Optional(literals(['bearer', 'x-api-key', 'oauth'])),
-                scope: Type.Optional(Type.String({ maxLength: 500 })),
+                scope: Type.Optional(Type.String()),
                 clientIdRequired: Type.Optional(Type.Boolean()),
               }),
               Type.Object({
                 kind: Type.Literal('cli'),
                 command: Type.String({ minLength: 1, maxLength: 64 }),
                 auth: Type.Optional(Type.Literal('env')),
-                envName: Type.String({ minLength: 3, maxLength: 80 }),
+                env: Type.Array(Type.String(), { minItems: 1 }),
                 source: Type.Union([
                   Type.Object({ npm: Type.String({ minLength: 1, maxLength: 512 }) }),
                   Type.Object({ pypi: Type.String({ minLength: 1, maxLength: 512 }) }),
@@ -373,7 +372,7 @@ export const toolDefinitions = {
                 ]),
               }),
             ]),
-            { minItems: 1, maxItems: 4 },
+            { minItems: 1 },
           ),
         }),
       ),
@@ -381,7 +380,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 600 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
+    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 4000 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query, before?} returns the newest matching turns and messages; before, the id of a result, returns matches older than it; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -395,8 +394,8 @@ export const toolDefinitions = {
       Type.Object(
         {
           action: Type.Literal('start'),
-          title: Type.String({ minLength: 1, maxLength: 120 }),
-          doneWhen: Type.String({ minLength: 1, maxLength: 300 }),
+          title: Type.String({ minLength: 1 }),
+          doneWhen: Type.String({ minLength: 1 }),
           now: taskNow,
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
@@ -418,7 +417,7 @@ export const toolDefinitions = {
           action: Type.Literal('finish'),
           id: uuid,
           status: literals(['done', 'cancelled']),
-          result: Type.String({ minLength: 1, maxLength: 500 }),
+          result: Type.String({ minLength: 1 }),
         },
         { additionalProperties: false },
       ),
@@ -429,13 +428,13 @@ export const toolDefinitions = {
     'Send a workspace file to the user as an attachment. Check the file first; a successful call already delivers it.',
     Type.Object({
       path: Type.String(),
-      name: Type.Optional(Type.String({ maxLength: 200 })),
+      name: Type.Optional(Type.String()),
     }),
   ),
   create_audio: defineTool(
     'create_audio',
     'Turn text into speech and send the audio to the user.',
-    Type.Object({ text: Type.String({ minLength: 1, maxLength: 3000 }) }),
+    Type.Object({ text: Type.String({ minLength: 1 }) }),
   ),
 };
 
@@ -546,14 +545,14 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
           signal,
         );
         signal.throwIfAborted();
-        if (!file.bytes.length || file.bytes.length > browserDownloadBytes)
+        if (!file.bytes.length || file.bytes.length > fileBytes)
           throw new Error('Browser file delivery exceeds the download limit.');
         return context.publishBrowserFile(file);
       }
       if (action === 'upload') {
         if (!context.readWorkspaceFile) throw new Error('Browser file upload is unavailable.');
         if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
-        const bytes = await context.readWorkspaceFile(rest.path, browserUploadBytes);
+        const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
         return pageText(
           await computer.upload(
             browserId,

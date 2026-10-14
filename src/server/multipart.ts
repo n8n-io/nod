@@ -1,5 +1,6 @@
 import Busboy from '@fastify/busboy';
 import type { FastifyRequest } from 'fastify';
+import { fileBytes } from '../shared/files.ts';
 
 type UploadedFile = { bytes: Buffer; filename: string; mimetype: string };
 
@@ -15,10 +16,9 @@ function formError(statusCode = 400) {
 }
 
 export function createMultipartReader(options: {
-  maxFileSize: number;
   verifiedBody?: (request: FastifyRequest) => Buffer | undefined;
 }) {
-  const limits = { fileSize: options.maxFileSize, files: 1, fields: 5 };
+  const limits = { fileSize: fileBytes, files: 1, fields: 5 };
   return {
     limits,
     async readFile(request: FastifyRequest): Promise<UploadedFile | undefined> {

@@ -20,7 +20,7 @@ export function createCloudflareAdapters(options: {
     ownerId,
     generation,
     workspaceRoot,
-    browserTimeoutMs = 300_000,
+    browserTimeoutMs,
     drainTimeoutMs = 30_000,
     transportGraceMs = 300_000,
     fetch: requestFetch,
@@ -86,13 +86,13 @@ export function createCloudflareAdapters(options: {
   return {
     computer: {
       ...computer,
-      async hold(threadId, until) {
+      async hold(threadId, held) {
         if (
           browserUsed &&
           !browserDisposed &&
           (await cloudflareBrowserLive({ generation, fetch: requestFetch }))
         )
-          await computer.hold(threadId, until);
+          await computer.hold(threadId, held);
       },
       async dispose() {
         if (browserUsed) await computer.dispose();

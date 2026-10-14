@@ -110,7 +110,6 @@ export async function evalImages(environment: Record<string, string | undefined>
     const built = await runProcess('docker', ['build', '-q', '-f', dockerfile, '-t', tag, '.'], {
       cwd: repository,
       timeoutMs: 1_800_000,
-      maxBytes: 64 * 1024 * 1024,
     });
     if (built.exitCode)
       throw new Error(

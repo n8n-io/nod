@@ -17,19 +17,19 @@ import type { CaptureAnalytics } from './analytics.ts';
 const queue = 'scheduled-task';
 const timingSchema = z.object({
   kind: z.enum(['once', 'recurring']).default('recurring'),
-  cron: z.string().trim().min(1).max(100).nullable().optional(),
+  cron: z.string().trim().min(1).nullable().optional(),
   runAt: z.iso.datetime({ offset: true }).nullable().optional(),
-  timeZone: z.string().trim().min(1).max(100),
+  timeZone: z.string().trim().min(1),
 });
 const observationFields = {
-  sourceUrl: z.url().refine((value) => new URL(value).protocol === 'https:'),
-  summary: z.string().trim().min(1).max(500),
+  sourceUrl: z.url({ protocol: /^https?$/ }),
+  summary: z.string().trim().min(1),
 };
 const verifiedObservationSchema = z
   .object({
     status: z.literal('verified'),
     ...observationFields,
-    value: z.string().trim().min(1).max(300),
+    value: z.string().trim().min(1),
   })
   .strict();
 const observationSchema = z.discriminatedUnion('status', [
@@ -38,8 +38,8 @@ const observationSchema = z.discriminatedUnion('status', [
 ]);
 const createSchema = timingSchema
   .extend({
-    title: z.string().trim().min(1).max(100),
-    prompt: z.string().trim().min(1).max(6000),
+    title: z.string().trim().min(1),
+    prompt: z.string().trim().min(1),
     baselineObservation: verifiedObservationSchema.optional(),
   })
   .strict();

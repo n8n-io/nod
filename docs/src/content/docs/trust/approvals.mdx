@@ -15,12 +15,12 @@ Background work, such as on a new email or a check of an app without events, has
 
 The checker is your selected model at its fastest setting. It checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
 
-| It sees                                                 | It never sees                            |
-| ------------------------------------------------------- | ---------------------------------------- |
-| Your last five messages from the past day               | Tool results, web pages, emails or files |
-| The Otto message your latest one answered               | Anything Otto read while working         |
-| A scheduled run's instruction, instead of your messages | Task cards you tapped on your first chat |
-| The action and its arguments as Otto sends them         | Other people's words as yours            |
+| It sees                                                                                       | It never sees                            |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| For a task you started, your last five messages from the past day and the one that started it | Tool results, web pages, emails or files |
+| The Otto message your latest one answered                                                     | Anything Otto read while working         |
+| A scheduled run's instruction, instead of your messages                                       | Task cards you tapped on your first chat |
+| The action and its arguments as Otto sends them                                               | Other people's words as yours            |
 
 Only your words carry authority. A web page or email can't argue for an action, because the checker never reads it.
 
@@ -43,7 +43,7 @@ If the checker can't answer, for example without a model provider key, Otto asks
 
 ## The confirmation
 
-The question shows the action, the account that will run it, the fields of the request and why Otto is asking. Long values are shortened, and a very long request ends with a count of the fields left out.
+The question shows the action, the account that will run it, every field of the request in full and why Otto is asking.
 
 ```text title="Example confirmation"
 Gmail: send email?
@@ -60,8 +60,8 @@ Reply yes to go ahead, no to skip it, or tell me what to change.
 ```
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
-- The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale".
-- A yes with a change or condition, a question or anything else closes the question and ends the task that asked it, and Otto treats your message as a new request. So does a reply to a question that was already answered or whose task has ended.
+- The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
+- A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and Otto treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
 - Within one task, including any subagents it starts, Otto asks one question at a time. While it waits for your answer, app actions that task started after the question don't run, and Otto can try them again after you answer. Separate tasks, such as two scheduled runs, can each wait on their own question.
 

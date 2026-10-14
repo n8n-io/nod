@@ -4,8 +4,8 @@ import { defaultPreferences } from './preferences.ts';
 
 function poolSize(value: string | undefined, fallback: number) {
   const size = value === undefined ? fallback : Number(value);
-  if (!Number.isSafeInteger(size) || size < 1 || size > 12)
-    throw new Error('The database pool size must be between 1 and 12.');
+  if (!Number.isSafeInteger(size) || size < 1)
+    throw new Error('The database pool size must be a positive whole number.');
   return size;
 }
 

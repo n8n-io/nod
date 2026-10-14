@@ -54,7 +54,7 @@ Provider keys stay in the Node gateway and tenant processes. They never enter th
   <Card title="Derived keys" icon="padlock">
     `OTTO_MASTER_KEY` stays in the gateway. Each tenant gets only the keys derived for its own user,
     including the secret that checks the gateway's signed requests. It never gets the gateway's
-    control or sign-in credentials.
+    control or sign-in credentials, or the Composio webhook secret.
   </Card>
 </CardGrid>
 
@@ -88,7 +88,9 @@ sequenceDiagram
 | Expiry               | 30 seconds after signing                                                                            |
 | Developer capability | Whether you're in `OTTO_DEVELOPER_IDS`. Only developers reach the standalone `/api/browser` routes. |
 
-The gateway forwards only the content type, accept and range headers. For streams such as chat events, it rechecks your session while the stream stays open.
+The gateway forwards only the content type, accept and range headers. For streams such as chat events, it rechecks your session while the stream stays open. A Google session ends after seven days without use.
+
+The gateway checks each Composio, Telegram and WhatsApp webhook, then forwards it to its owner's tenant in a webhook envelope. The tenant accepts Composio events only through that envelope and only for its own owner.
 
 ## Your browser and workspace
 
@@ -98,9 +100,9 @@ Both containers start on first use and save checkpoints to private R2, under `<e
 | ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Checkpoints | When it goes idle, which closes its pages                               | About 20 seconds after its last command, and before it sleeps, stops or is drained |
 | Saves       | Cookies, Local Storage, IndexedDB and Service Worker data; skips caches | `/home/node/state`, without `__pycache__` and `.cache` folders                     |
-| Size limit  | 1 GiB uncompressed, 512 MiB per file, 100,000 entries                   | The same                                                                           |
+| Size limit  | 1 GiB uncompressed and 100,000 entries                                  | The same                                                                           |
 
-While a conversation turn waits on you for a question, approval or credential request, a running browser is held for up to 30 minutes so its pages survive. The next turn or a reset releases it. A hold never starts a stopped browser.
+While a conversation turn waits on you for a question, approval or credential request, a running browser is held for up to 30 minutes, so its pages survive and its container stays awake. After that, the container may sleep and close the pages. The next turn or a reset releases the hold sooner. A hold never starts a stopped browser.
 
 A workspace too large to save keeps running on its previous checkpoint, and every command still runs. The model's next `bash` output starts with the sizes, the largest files and what to delete. The unsaved changes are discarded when the workspace sleeps, stops or is drained, and the next `bash` command says so.
 

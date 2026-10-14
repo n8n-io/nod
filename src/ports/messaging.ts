@@ -11,7 +11,8 @@ export interface MessagingChannel {
 export interface MessagingAttachment {
   name: string;
   mimeType: string;
-  bytes: Uint8Array;
+  size: number;
+  read(): Promise<Uint8Array>;
 }
 
 export interface InboundMessage {

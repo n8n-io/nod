@@ -1,21 +1,17 @@
 import { z } from 'zod';
 import type { AgentImage } from '../ports/agent.ts';
-import type { IntegrationFile } from '../ports/integrations.ts';
+import { IntegrationDownload, type IntegrationFile } from '../ports/integrations.ts';
 
 const viewableImages = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export const workspaceFileInput = z
   .object({
     workspaceFile: z.string().min(1).max(4096),
-    mimeType: z
-      .string()
-      .max(200)
-      .regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/),
+    mimeType: z.string().regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/),
     name: z
       .string()
       .trim()
       .min(1)
-      .max(160)
       .regex(/^[^/\\\u0000-\u001f\u007f]+$/)
       .optional(),
     size: z.number().int().nonnegative().optional(),
@@ -87,6 +83,7 @@ export async function saveIntegrationFiles(
 ): Promise<{ value: unknown; images: AgentImage[] }> {
   const images: AgentImage[] = [];
   async function visit(item: unknown): Promise<unknown> {
+    if (item instanceof IntegrationDownload) return visit(await item.start());
     if (isIntegrationFile(item)) {
       const file = { name: item.name, mimeType: item.mimeType, size: item.bytes.byteLength };
       const workspaceFile = await save(item);

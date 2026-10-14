@@ -34,6 +34,7 @@ import {
   readPiSessionEntries,
   rebaseAt,
   removedCredential,
+  removedImage,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
@@ -313,8 +314,8 @@ test('messages taken after a Pi turn reach the next request together and not aft
   const replies: string[] = [];
   const batches = [
     [
-      { id: randomUUID(), text: 'Also check the second fixture' },
-      { id: randomUUID(), text: 'And the third fixture' },
+      { id: randomUUID(), text: 'Also check the second fixture', attachments: [] },
+      { id: randomUUID(), text: 'And the third fixture', attachments: [] },
     ],
   ];
   let takes = 0;
@@ -410,7 +411,7 @@ test('messages taken after a Pi turn reach the next request together and not aft
     assert.deepEqual(replies, ['Answer 1.', 'Answer 2.']);
 
     question = true;
-    batches.push([{ id: randomUUID(), text: 'Sent while asking' }]);
+    batches.push([{ id: randomUUID(), text: 'Sent while asking', attachments: [] }]);
     assert.equal(
       (await runtime.runTurn({ ...context, turnId: randomUUID(), prompt: 'Ask me' })).status,
       'waiting_user',
@@ -1645,15 +1646,15 @@ test('bash rewrites inside the workspace and never retries an executed command',
     { code: 1, replacement: '', expected: 'original' },
     { code: 42, replacement: 'bash job.sh filtered', expected: 'original' },
     { code: 0, replacement: '', expected: 'original' },
-    { code: 2, replacement: '', expected: 'denied' },
+    { code: 2, replacement: 'bash job.sh filtered', expected: 'original' },
   ]) {
     await writeFile(join(directory, 'rewrite-code'), String(code));
     await writeFile(join(directory, 'rewrite-output'), replacement);
     await writeFile(join(directory, 'executions'), '');
     const output = await run('bash', { command: 'git status' });
     assert.match(output, new RegExp(expected));
-    assert.match(output, new RegExp(`Command exited with code ${code === 2 ? 126 : 7}`));
-    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), code === 2 ? '' : 'run\n');
+    assert.match(output, /Command exited with code 7/);
+    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
   }
   for (const name of ['npm', 'python3'])
     await writeFile(join(bin, name), '#!/bin/sh\nbash job.sh original\n', { mode: 0o755 });
@@ -1805,6 +1806,43 @@ function context(directory: string): RuntimeContext {
   };
 }
 
+test('an attached photo reaches a model that reads images and is listed as omitted for one that does not', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-images-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const photo = join(directory, 'photo.png');
+  for (const readsImages of [true, false]) {
+    const prompts: Array<{ text: string; images: number }> = [];
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async () => ({
+          resumed: false,
+          readsImages,
+          abort() {},
+          dispose() {},
+          prompt: async (text, images) => {
+            prompts.push({ text, images: images.length });
+          },
+        }),
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace({ readArtifact: async () => new Uint8Array([137, 80, 78, 71]) }),
+    });
+    try {
+      const result = await runtime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        attachments: [{ path: photo, mimeType: 'image/png' }],
+      });
+      assert.equal(result.status, 'succeeded');
+      assert.equal(prompts[0]!.images, readsImages ? 1 : 0);
+      assert.equal(prompts[0]!.text.includes('"imagePreview":"omitted"'), !readsImages);
+    } finally {
+      await runtime.dispose();
+    }
+  }
+});
+
 test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -1870,6 +1908,7 @@ test('delegated subagents run in parallel, each in its own browser, and answer a
       'browser_session',
       'ask_user',
       'send_message',
+      'manage_apps',
     ])
       assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];
@@ -3376,5 +3415,35 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('screenshots from a long turn are pruned from the saved session instead of filling it', async () => {
+  const f = await fixture();
+  try {
+    const durable = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: f.directory,
+    });
+    const image = (index: number) => `${index}`.padEnd(4 * 1024 * 1024, 'A');
+    for (let index = 0; index < 20; index++) {
+      durable.manager.appendMessage({
+        role: 'toolResult',
+        toolCallId: `shot-${index}`,
+        toolName: 'browser',
+        content: [{ type: 'image', data: image(index), mimeType: 'image/png' }],
+        details: {},
+        isError: false,
+        timestamp: index,
+      });
+      await durable.checkpoint();
+    }
+    const saved = await savedText(f);
+    assert.ok(Buffer.byteLength(saved) < 64 * 1024 * 1024);
+    assert.ok(saved.includes(removedImage));
+    assert.ok(saved.includes(image(19)));
+  } finally {
+    await f.close();
   }
 });

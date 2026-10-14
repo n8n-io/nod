@@ -271,8 +271,7 @@ export function createComputerLifecycle(options: {
         const expected = identity(owner, input.generation);
         const id = ownerIdentity(input.id);
         const state = await prepare(expected);
-        if (state.commands?.includes(id) || (options.role === 'workspace' && active.size))
-          throw new RuntimeControlError(409);
+        if (state.commands?.includes(id)) throw new RuntimeControlError(409);
         for (const previous of state.commands ?? [])
           await options.claimCommand(expected, ownerIdentity(previous));
         if (!(await options.claimCommand(expected, id))) throw new RuntimeControlError(409);
@@ -307,9 +306,9 @@ export function createComputerLifecycle(options: {
           if (input.code !== 0) throw unavailable();
           await assertCurrent(loaded);
           if (!options.running()) throw unavailable();
-          if (options.role === 'workspace' && loaded.phase === 'dirty')
-            await write({ ...loaded, phase: 'unsaved' });
           active.delete(input.id);
+          if (options.role === 'workspace' && loaded.phase === 'dirty' && !active.size)
+            await write({ ...loaded, phase: 'unsaved' });
           if (loaded.phase === 'unsaved') settle();
         } catch {
           await uncertain();

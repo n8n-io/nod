@@ -141,7 +141,7 @@ export function createDeploymentVerifier(options: {
         if (!(await options.claimNonce(claims.requestId, claims.expiresAt))) throw new Error();
       } else {
         for (const [id, expiry] of accepted) if (expiry <= time) accepted.delete(id);
-        if (accepted.has(claims.requestId) || accepted.size >= 1024) throw new Error();
+        if (accepted.has(claims.requestId)) throw new Error();
         accepted.set(claims.requestId, claims.expiresAt);
       }
       return input;

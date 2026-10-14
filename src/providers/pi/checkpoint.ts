@@ -186,6 +186,36 @@ function scrub<T>(value: T, secrets: string[]): T {
   return value;
 }
 
+function withoutOldImages<
+  T extends { type: string; message?: { role: string; content?: unknown } },
+>(rows: T[]): T[] {
+  const parts = (row: T) =>
+    row.type === 'message' &&
+    row.message?.role === 'toolResult' &&
+    Array.isArray(row.message.content)
+      ? (row.message.content as Array<{ type: string }>)
+      : [];
+  let count = rows.reduce(
+    (total, row) => total + parts(row).filter((part) => part.type === 'image').length,
+    0,
+  );
+  return rows.map((row) =>
+    parts(row).some((part) => part.type === 'image')
+      ? {
+          ...row,
+          message: {
+            ...row.message,
+            content: parts(row).map((part) =>
+              part.type === 'image' && count-- > keptImages
+                ? { type: 'text', text: removedImage }
+                : part,
+            ),
+          },
+        }
+      : row,
+  );
+}
+
 export function openLocalSession(directory: string) {
   let manager = SessionManager.continueRecent(directory, directory);
   const file = manager.getSessionFile();
@@ -343,10 +373,13 @@ export async function createPiCheckpoint(options: {
       try {
         await cleanup();
         const all = manager.getEntries();
-        const fresh = rewrite || !parts.length || parts.length >= maxParts;
-        const rows = fresh ? [{ ...manager.getHeader() }, ...all] : all.slice(persisted);
+        let fresh = rewrite || !parts.length || parts.length >= maxParts;
+        let output = chunks(fresh ? [] : all.slice(persisted));
+        if (!fresh && output.reduce((total, part) => total + part.byteLength, stored) > maximum)
+          fresh = true;
+        if (fresh) output = chunks([{ ...manager.getHeader() }, ...withoutOldImages(all)]);
         let size = fresh ? 0 : stored;
-        for (const bytes of chunks(rows)) {
+        for (const bytes of output) {
           size += bytes.byteLength;
           if (size > maximum) throw failure();
           const id = randomUUID();

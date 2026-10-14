@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { publicUrl } from '../agent-browser/network.ts';
 import type { DiscoveredTransport } from '../../ports/discovered.ts';
 import { appFile, mcpFiles } from '../app-files.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 const textType =
   /^$|^text\/|[/+]json\b|[/+]xml\b|^application\/(x-www-form-urlencoded|javascript)\b/i;
@@ -27,11 +28,13 @@ function failureText(content: unknown) {
   return (text || JSON.stringify(content ?? null)).slice(0, 4000);
 }
 
+const responseBytes = Math.ceil(fileBytes / 3) * 4 + 1024 * 1024;
+
 export async function safeRemoteFetch(
   input: string | URL | Request,
   init?: RequestInit,
   dependencies = { validate: publicUrl, request: httpsRequest },
-  maximumRequestBytes = 1024 * 1024,
+  maximumRequestBytes = fileBytes,
   redirects = 5,
 ): Promise<Response> {
   const prepared = new Request(input, init);
@@ -67,7 +70,6 @@ export async function safeRemoteFetch(
         method: prepared.method,
         headers: Object.fromEntries(prepared.headers),
         signal,
-        maxHeaderSize: 16_384,
         lookup: (_host, options, callback) => {
           if (options.all) callback(null, [{ address, family: isIP(address) }]);
           else callback(null, address, isIP(address));
@@ -113,7 +115,7 @@ export async function safeRemoteFetch(
         let size = 0;
         incoming.on('data', (chunk: Buffer) => {
           size += chunk.byteLength;
-          if (size > 64 * 1024 * 1024)
+          if (size > responseBytes)
             incoming.destroy(new Error('The connection response is too large.'));
         });
         incoming.on('error', reject);

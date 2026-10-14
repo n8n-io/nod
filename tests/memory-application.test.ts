@@ -13,12 +13,13 @@ import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { repair } from '../src/server/memory-lint.ts';
 import { applyReflect } from '../src/server/memory-ops.ts';
 import {
-  archive,
   emptyTree,
+  fits,
+  freeSlug,
   indexLayout,
-  maxArchive,
   parse,
   render,
+  slug,
   type Entry,
   type Tree,
 } from '../src/server/memory-tree.ts';
@@ -599,19 +600,26 @@ test(
       );
       assert.deepEqual(await notices(), []);
 
-      const full = JSON.parse(await memoryFile());
-      const kept = 300;
-      for (let index = full.entries.length; index < kept; index++)
-        full.entries.push({
-          area: 'lessons',
-          slug: `filler-${index}`,
-          text: `Synthetic filler lesson ${index}.`,
-          origin: 'stated',
-          updated: new Date().toISOString(),
-          edited: new Date().toISOString(),
-          sources: [],
-        });
-      await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(full));
+      const full = parse(new TextEncoder().encode(await memoryFile()));
+      let filled = 0;
+      const filler = (words: number) => ({
+        area: 'lessons' as const,
+        slug: `filler-${filled}`,
+        text: `Synthetic filler ${filled++} ${'lesson '.repeat(words)}`.trim(),
+        origin: 'stated' as const,
+        updated: new Date().toISOString(),
+        edited: new Date().toISOString(),
+        sources: [],
+      });
+      for (let words = 500; words > 0; words = Math.floor(words / 2))
+        for (;;) {
+          full.entries.push(filler(words));
+          if (fits(full)) continue;
+          full.entries.pop();
+          break;
+        }
+      const kept = full.entries.length;
+      await writeFile(join(objects, 'memory', 'MEMORY.md'), render(full));
       const legacy = async () => {
         await pool.query(
           "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
@@ -709,36 +717,53 @@ test('the memory file round-trips, skips unsafe or invalid entries and reads old
   assert.deepEqual([consolidated.entries, consolidated.archive], [[coffee], [merged]]);
 });
 
-test('the archive keeps only the newest entries and a full memory file sheds it before refusing a save', () => {
+test('generated slugs stay valid after a thousand collisions', () => {
+  const base = `${'a'.repeat(42)}-bcdef`;
   const tree = treeOf();
-  for (let index = 0; index < maxArchive + 3; index++) {
-    const note = entry({ slug: `note-${index}`, text: `Synthetic note ${index}.` });
-    tree.entries.push(note);
-    archive(tree, note, 'expired', when);
+  for (let index = 0; index < 1001; index++) {
+    const next = freeSlug(tree, 'about', base);
+    assert.ok(slug.safeParse(next).success, next);
+    tree.entries.push(entry({ slug: next, text: `Synthetic note ${index}.` }));
   }
-  assert.equal(tree.archive.length, maxArchive);
-  assert.deepEqual(
-    [tree.archive[0].slug, tree.archive.at(-1)?.slug],
-    ['note-3', `note-${maxArchive + 2}`],
-  );
+  assert.equal(new Set(tree.entries.map((item) => item.slug)).size, 1001);
+});
 
+test('a full memory file sheds the oldest archive entries before refusing a save', () => {
   const large = (index: number) =>
     entry({ slug: `fact-${index}`, text: `${index} `.padEnd(600, 'x') });
   const crowded = treeOf(...Array.from({ length: 320 }, (_, index) => large(index)));
-  crowded.archive = Array.from({ length: maxArchive }, (_, index) => ({
+  crowded.archive = Array.from({ length: 60 }, (_, index) => ({
     ...large(1000 + index),
     archived: when,
     reason: 'expired' as const,
   }));
   const kept = parse(render(crowded));
   assert.equal(kept.entries.length, 320);
-  assert.ok(kept.archive.length > 0 && kept.archive.length < maxArchive);
+  assert.ok(kept.archive.length > 0 && kept.archive.length < 60);
   assert.deepEqual(
     kept.archive.map((item) => item.slug),
     crowded.archive.slice(-kept.archive.length).map((item) => item.slug),
   );
   crowded.entries.push(...Array.from({ length: 15 }, (_, index) => large(2000 + index)));
-  assert.throws(() => render(crowded), /The memory file is full\./);
+  assert.throws(() => render(crowded), /Memory is full\./);
+  const before = crowded.entries.length;
+  applyReflect(
+    crowded,
+    [
+      {
+        op: 'add',
+        area: 'about',
+        slug: 'overflow',
+        text: 'Plays the cello on weekends.',
+        m: [1],
+        quote: 'cello',
+        sensitive: false,
+      },
+    ],
+    [{ id: ids[0], text: 'I play the cello on weekends.' }],
+    when,
+  );
+  assert.equal(crowded.entries.length, before);
 });
 
 test('the prompt index is stable JSON data, hides tentative entries and degrades under budget', () => {
@@ -935,7 +960,7 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
   const many = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'].map(
     (word) => add('about', `fact-${word}`, `Distinct ${word} fact.`, [1], 'bullet points'),
   );
-  assert.equal(applyReflect(treeOf(), many, messages, when), 6);
+  assert.equal(applyReflect(treeOf(), many, messages, when), many.length);
   const sensitive = {
     ...add('about', 'health', 'Has asthma.', [1], 'bullet points'),
     sensitive: true,
@@ -989,10 +1014,10 @@ test('the onboarding interview sends answers only as data, caps the reply and sa
     (requests[0].input as { answers: Array<{ text: string }> }).answers.map((item) => item.text),
     ['Running a synthetic studio.', planted],
   );
-  reply = { ack: 'synthetic '.repeat(20).trim(), question: 'Who asks?' };
+  reply = { ack: 'Store key is sk-fixturefixture1234.', question: 'Who asks?' };
   assert.deepEqual((await ask(['A synthetic plan.'])).json(), { ack: '', question: 'Who asks?' });
   for (const broken of [
-    { ack: 'Noted.', question: 'word '.repeat(60) },
+    { ack: 'Noted.', question: 'Is your key sk-fixturefixture1234?' },
     { ack: 'Noted.' },
     new Error('The synthetic model is offline.'),
   ]) {

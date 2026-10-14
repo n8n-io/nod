@@ -368,7 +368,8 @@ export function createPiAgent(options: {
           result?.action !== 'end' &&
           ['stop', 'toolUse'].includes(turn.message.stopReason)
         )
-          for (const text of await input.nextMessages()) await session.steer(text);
+          for (const message of await input.nextMessages())
+            await session.steer(message.text, message.images);
         return result ?? undefined;
       };
       if (durable) {
@@ -486,11 +487,8 @@ export function createPiAgent(options: {
       active.set(session, dispose);
       return {
         resumed,
+        readsImages: model.input.includes('image'),
         async prompt(text, images) {
-          if (images.length && !model.input.includes('image'))
-            throw new Error(
-              'The selected model cannot read images. Choose a model with image support.',
-            );
           try {
             await session.prompt(text, { images, expandPromptTemplates: false });
           } finally {

@@ -106,6 +106,7 @@ describe('runtime host', () => {
         UNLISTED_OPERATOR_SECRET: 'synthetic-unlisted-secret',
         DATABASE_URL: 'postgresql://operator:private@db.example.test/control',
         OPENAI_API_KEY: 'synthetic-server-provider-key',
+        COMPOSIO_WEBHOOK_SECRET: 'synthetic-webhook-secret',
         COMPUTER_PROVIDER: 'e2b',
         OTTO_FEEDBACK_ENABLED: 'false',
         OTTO_FEEDBACK_URL: 'https://feedback.example.test/intake',
@@ -464,11 +465,15 @@ describe('runtime host', () => {
         'AUTH_SECRET',
         'GOOGLE_CLIENT_SECRET',
         'UNLISTED_OPERATOR_SECRET',
+        'COMPOSIO_WEBHOOK_SECRET',
       ])
         assert.equal(configuration.environment[key], undefined);
+      assert.equal(configuration.environment.OTTO_COMPOSIO_WEBHOOKS, 'gateway');
       assert.equal(
         Object.values(configuration.environment).some((value) =>
-          /synthetic-(master-key|auth-secret|google-secret|unlisted-secret)/.test(value),
+          /synthetic-(master-key|auth-secret|google-secret|unlisted-secret|webhook-secret)/.test(
+            value,
+          ),
         ),
         false,
       );

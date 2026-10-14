@@ -30,7 +30,7 @@ if (
     port < 1 ||
     port > 65_535 ||
     publicOrigin !== `http://127.0.0.1:${port}` ||
-    !/^[A-Za-z0-9_-]{43,128}$/.test(desktopAccess.token) ||
+    !/^[A-Za-z0-9_-]{43,}$/.test(desktopAccess.token) ||
     !isAbsolute(process.env.OTTO_DATA_ROOT || '') ||
     (process.env.OTTO_WEB_ROOT !== undefined && !isAbsolute(process.env.OTTO_WEB_ROOT)))
 )

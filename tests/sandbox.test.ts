@@ -194,12 +194,6 @@ test('runtime subprocesses do not inherit provider keys and stop at bounds', asy
       runProcess(process.execPath, ['-e', 'setTimeout(()=>{},5000)'], { timeoutMs: 30 }),
       /limit/,
     );
-    await assert.rejects(
-      runProcess(process.execPath, ['-e', 'process.stdout.write("x".repeat(10000))'], {
-        maxBytes: 100,
-      }),
-      /limit/,
-    );
   } finally {
     if (previous === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previous;
@@ -401,6 +395,19 @@ test('output overflow and timeout drain the remote command before rejecting', as
     } finally {
       await f.close();
     }
+  }
+});
+
+test('a command timeout beyond the timer limit still lets the command run', async () => {
+  const f = await local();
+  try {
+    const result = await f.run(['python3', '-c', 'import time;time.sleep(0.3);print("done")'], {
+      timeoutMs: 2 ** 32,
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.toString().trim(), 'done');
+  } finally {
+    await f.close();
   }
 });
 
@@ -607,12 +614,18 @@ test('artifact descriptor reads reject symlinks, special files and oversized dat
     await writeFile(join(f.directory, 'private'), 'synthetic outside value');
     await symlink(join(f.directory, 'private'), join(base, 'linked'));
     await symlink(f.directory, join(base, 'linked-directory'));
-    const read = (path: string, maxBytes = 100) =>
+    const read = (path: string, maxBytes = 100, offset = 0, identity?: string) =>
       f.run(['python3', '-c', artifactReadProgram], {
-        input: JSON.stringify({ base, path, maxBytes }),
-        maxBytes,
+        input: JSON.stringify({ base, path, maxBytes, offset, identity }),
+        maxBytes: maxBytes + 1024,
       });
-    assert.deepEqual((await read('nested/ok')).stdout, Buffer.from([0, 255, 4]));
+    const ok = (await read('nested/ok')).stdout;
+    const identity = ok.subarray(0, ok.indexOf(10)).toString();
+    assert.deepEqual(ok.subarray(ok.indexOf(10) + 1), Buffer.from([0, 255, 4]));
+    const tail = (await read('nested/ok', 100, 1, identity)).stdout;
+    assert.deepEqual(tail.subarray(tail.indexOf(10) + 1), Buffer.from([255, 4]));
+    await writeFile(join(base, 'nested', 'ok'), Buffer.from([1, 2, 3, 4]));
+    assert.notEqual((await read('nested/ok', 100, 3, identity)).exitCode, 0);
     for (const path of [
       'linked',
       'linked-directory/private',
@@ -708,7 +721,7 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     },
   });
   try {
-    const bytes = Buffer.alloc(1024 * 1024 + 13);
+    const bytes = Buffer.alloc(16 * 1024 * 1024 + 13);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
     await workspace.writeArtifact('fixture', 'nested/file.bin', bytes);
     assert.deepEqual(
@@ -728,8 +741,8 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     );
     assert.equal(launches, before);
     await assert.rejects(
-      workspace.writeArtifact('fixture', 'too-large', Buffer.alloc(15 * 1024 * 1024 + 1)),
-      /15 MB/,
+      workspace.readArtifact('fixture', 'nested/file.bin', bytes.length - 1),
+      /workspace file operation failed/,
     );
   } finally {
     await workspace.dispose();
@@ -1064,7 +1077,7 @@ test('checkpoints leave out regenerable caches and keep browser site data', asyn
   }
 });
 
-test('an oversized checkpoint reports its size, entries and largest files instead of an archive', async () => {
+test('an oversized checkpoint fails with its size, entries and largest files instead of an archive', async () => {
   const f = await fixture();
   try {
     await mkdir(join(f.source, 'workspace', 'thread'), { recursive: true });
@@ -1076,7 +1089,6 @@ test('an oversized checkpoint reports its size, entries and largest files instea
     for (const [args, limit] of [
       [['--max-bytes', '8192'], 'bytes'],
       [['--max-entries', '4'], 'entries'],
-      [['--max-file-bytes', '8999'], 'file'],
     ] as const) {
       const captured = await f.create(...args);
       assert.equal(captured.code, 0, limit);
@@ -1091,7 +1103,6 @@ test('an oversized checkpoint reports its size, entries and largest files instea
       ]);
       if (limit === 'bytes') assert.ok(report.bytes > report.max_bytes);
       if (limit === 'entries') assert.equal(report.max_entries, 4);
-      if (limit === 'file') assert.equal(report.max_file_bytes, 8999);
     }
     for (let index = 0; index < 30; index++)
       await writeFile(join(f.source, `file-${index}`), 'synthetic');

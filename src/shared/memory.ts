@@ -1,4 +1,5 @@
 export const memoryAreas = ['about', 'preferences', 'people', 'routines', 'lessons'] as const;
+export const noteChars = 4000;
 
 export type MemoryArea = (typeof memoryAreas)[number];
 export type MemoryStatus = 'stated' | 'observed' | 'tentative';

@@ -2,6 +2,7 @@ import { createHash, createHmac, hkdfSync, randomUUID, timingSafeEqual } from 'n
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { fileBytes } from '../shared/files.ts';
 
 const envelope = z
   .object({
@@ -12,7 +13,7 @@ const envelope = z
     nonce: z.uuid(),
     expiresAt: z.number().int(),
     method: z.enum(['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'HEAD', 'OPTIONS']),
-    target: z.string().min(1).max(8192).startsWith('/'),
+    target: z.string().min(1).startsWith('/'),
     bodyHash: z.string().regex(/^[a-f0-9]{64}$/),
     developer: z.boolean(),
     kind: z.enum(['user', 'webhook', 'wake', 'deployment']),
@@ -23,8 +24,7 @@ export type RuntimeClaims = z.infer<typeof envelope>;
 export const runtimeHeader = 'x-otto-runtime';
 
 export function canonicalRequestPath(target: string): string | null {
-  if (target.length > 8192 || !target.startsWith('/') || /[\\#\u0000-\u0020\u007f]/.test(target))
-    return null;
+  if (!target.startsWith('/') || /[\\#\u0000-\u0020\u007f]/.test(target)) return null;
   const path = target.split('?')[0];
   if (
     path.includes('%') ||
@@ -98,7 +98,7 @@ export function verifyRuntimeSignature(
   method: string,
   target: string,
 ): RuntimeClaims | null {
-  if (typeof token !== 'string' || token.length > 16_384) return null;
+  if (typeof token !== 'string') return null;
   const [payload, signature, extra] = token.split('.');
   if (!payload || !signature || extra !== undefined) return null;
   const expected = createHmac('sha256', Buffer.from(options.secret, 'base64url'))
@@ -143,8 +143,11 @@ export function createRuntimeVerifier(options: {
     const claims = verifyRuntimeSignature(options, token, method, target);
     if (!claims || claims.generation !== options.generation) return null;
     const time = now();
-    for (const [nonce, expires] of accepted) if (expires <= time) accepted.delete(nonce);
-    if (accepted.has(claims.nonce) || accepted.size >= 20_000) return null;
+    for (const [nonce, expires] of accepted) {
+      if (expires > time) break;
+      accepted.delete(nonce);
+    }
+    if (accepted.has(claims.nonce)) return null;
     accepted.set(claims.nonce, claims.expiresAt);
     return claims;
   }
@@ -197,7 +200,7 @@ export function registerRuntimeAccess(
     for await (const chunk of payload) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.length;
-      if (size > 16 * 1024 * 1024) {
+      if (size > fileBytes + 1024 * 1024) {
         reply.code(413).send({ error: 'This request is too large.' });
         return Readable.from([]);
       }

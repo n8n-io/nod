@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import {
   ChannelSetupFailure,
+  telegramUserId,
   type ChannelSetupConfiguration,
   type ChannelSetupVerifier,
   type ChannelAccountRegistry,
@@ -27,13 +28,10 @@ const summarySchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9_]{1,64}$/)
     .optional(),
-  allowedUserId: z
-    .string()
-    .regex(/^[1-9]\d{0,15}$/)
-    .optional(),
+  allowedUserId: z.string().regex(telegramUserId).optional(),
   pairingCandidate: z
     .object({
-      id: z.string().regex(/^[1-9]\d{0,15}$/),
+      id: z.string().regex(telegramUserId),
       name: z.string().min(1).max(200),
       username: z
         .string()
@@ -44,15 +42,15 @@ const summarySchema = z.object({
   pairingExpiresAt: z.iso.datetime().optional(),
 });
 const candidateSchema = z.object({
-  senderId: z.string().regex(/^[1-9]\d{0,15}$/),
+  senderId: z.string().regex(telegramUserId),
   senderName: z.string().min(1).max(200),
   senderUsername: z
     .string()
     .regex(/^[A-Za-z0-9_]{1,64}$/)
     .optional(),
-  accountId: z.string().min(1).max(256),
-  messageId: z.string().min(1).max(256),
-  threadId: z.string().min(1).max(1024),
+  accountId: z.string().min(1),
+  messageId: z.string().min(1),
+  threadId: z.string().min(1),
   sentAt: z.iso.datetime(),
 });
 type TelegramPairingCandidate = z.infer<typeof candidateSchema>;
@@ -603,10 +601,7 @@ export async function createChannelSettings(
         bind(
           z
             .object({
-              allowedUserId: z
-                .string()
-                .trim()
-                .regex(/^[1-9]\d{0,15}$/),
+              allowedUserId: z.string().trim().regex(telegramUserId),
             })
             .strict()
             .parse(request.body).allowedUserId,

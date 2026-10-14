@@ -45,6 +45,7 @@ import {
   type E2BSandbox,
 } from '../src/providers/e2b/client.ts';
 import { createE2BAdapters } from '../src/providers/e2b/index.ts';
+import { launchE2BCommand } from '../src/providers/e2b/transport.ts';
 import { createCloudflareRuntimeTransport } from '../src/providers/runtime-host/cloudflare.ts';
 import { createComputerShutdownConfirmation } from '../src/providers/runtime-host/computer-shutdown.ts';
 import { fakeComputer } from './runtime-fixtures.ts';
@@ -709,6 +710,58 @@ test('E2B uncertain connections persist a fence and do not expose SDK errors', a
   }
 });
 
+test('E2B output streams past 32 MiB while read and fences only when the reader stalls', async () => {
+  const run = async (read: boolean) => {
+    let fenced = false;
+    let finish = () => {};
+    const allocation = {
+      onFence: () => () => {},
+      fence: () => {
+        fenced = true;
+      },
+      acquire: async () => ({
+        release: () => {},
+        sandbox: {
+          start: async (input: { stdout(data: string): void }) => {
+            const chunk = 'x'.repeat(1024 * 1024);
+            setImmediate(async () => {
+              for (let index = 0; index < 40 && !fenced; index++) {
+                input.stdout(chunk);
+                await delay(1);
+              }
+              finish();
+            });
+            return {
+              sendStdin: async () => {},
+              closeStdin: async () => {},
+              disconnect: async () => {},
+              wait: () =>
+                new Promise<{ exitCode: number }>((resolve) => {
+                  finish = () => resolve({ exitCode: 0 });
+                }),
+            };
+          },
+        },
+      }),
+    } as unknown as Parameters<typeof launchE2BCommand>[0];
+    const child = launchE2BCommand(allocation, 'workspace', 'fixture');
+    let received = 0;
+    if (read) child.stdout.on('data', (chunk: Buffer) => (received += chunk.length));
+    const outcome = await new Promise<string>((resolve) => {
+      child.on('close', () => resolve('closed'));
+      child.on('error', () => resolve('failed'));
+    });
+    return { outcome, fenced, received };
+  };
+  assert.deepEqual(await run(true), {
+    outcome: 'closed',
+    fenced: false,
+    received: 40 * 1024 * 1024,
+  });
+  const stalled = await run(false);
+  assert.deepEqual([stalled.outcome, stalled.fenced], ['failed', true]);
+});
+
 test('E2B allocation refuses competing leases and fences failed lease renewal', async () => {
   const state = allocationStore();
   let rejectUpdates = false;
@@ -976,8 +1029,8 @@ async function cloudflareFixture() {
           return { status: 'submitted' };
         },
         currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
-        hold: async (threadId, until) => {
-          calls.push({ namespace: selected, method: 'hold', input: { threadId, until } });
+        hold: async (threadId, held) => {
+          calls.push({ namespace: selected, method: 'hold', input: { threadId, held } });
         },
         dispose: async () => {
           calls.push({ namespace: selected, method: 'dispose' });
@@ -1194,15 +1247,15 @@ test('Cloudflare browser holds reach a running browser only and never start one'
     },
   });
   try {
-    await adapters.computer.hold('same-task', Date.now() + 60_000);
+    await adapters.computer.hold('same-task', true);
     assert.equal(statuses.length + f.launches.length, 0);
     await adapters.computer.act('same-task', { action: 'open', url: 'https://example.test/' });
-    await adapters.computer.hold('same-task', 123);
+    await adapters.computer.hold('same-task', true);
     live = false;
-    await adapters.computer.hold('same-task', null);
+    await adapters.computer.hold('same-task', false);
     assert.deepEqual(
       f.calls.filter((call) => call.method === 'hold').map((call) => call.input),
-      [{ threadId: 'same-task', until: 123 }],
+      [{ threadId: 'same-task', held: true }],
     );
     assert.equal(f.launches.length, 2);
     assert.deepEqual(

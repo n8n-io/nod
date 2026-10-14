@@ -33,7 +33,7 @@ export function checkpointTooLarge(output: Uint8Array, display: (path: string) =
   } catch {
     return undefined;
   }
-  const counts = ['bytes', 'max_bytes', 'entries', 'max_entries', 'max_file_bytes'];
+  const counts = ['bytes', 'max_bytes', 'entries', 'max_entries'];
   if (
     !report ||
     typeof report !== 'object' ||
@@ -70,12 +70,6 @@ export function checkpointTooLarge(output: Uint8Array, display: (path: string) =
           `it holds ${over}${report.entries} files, folders and links, over the ${report.max_entries} limit`,
         ]
       : []),
-    ...largest
-      .filter(([, bytes]) => bytes > report.max_file_bytes)
-      .map(
-        ([path, bytes]) =>
-          `${path} is ${amount(bytes)}, over the ${amount(report.max_file_bytes)} limit for one file`,
-      ),
   ];
   if (!reasons.length) return undefined;
   return new CheckpointTooLarge(

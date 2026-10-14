@@ -21,13 +21,13 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     options.pool.query(
       `SELECT id,role,text,turn_id,created_at FROM messages
        WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
-       ORDER BY created_at DESC,id DESC LIMIT 31`,
+       ORDER BY created_at,id`,
       values,
     ),
     options.pool.query(
       `SELECT id,source,status,error,background,waiting_reason,created_at,started_at,finished_at FROM turns
        WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
-       ORDER BY created_at DESC,id DESC LIMIT 21`,
+       ORDER BY created_at,id`,
       values,
     ),
   ]);
@@ -47,14 +47,11 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     coverage: {
       hours: 24,
       toolTraceSource: 'saved-session',
-      maximumMessages: 30,
-      maximumTurns: 20,
-      maximumToolRecords: 60,
-      truncated: messages.rows.length > 30 || turns.rows.length > 20 || toolTrace.truncated,
+      truncated: false,
     },
-    messages: messages.rows.slice(0, 30).map(redact).reverse(),
-    turns: turns.rows.slice(0, 20).map(redact).reverse(),
-    trace: toolTrace.rows
+    messages: messages.rows.map(redact),
+    turns: turns.rows.map(redact),
+    trace: toolTrace
       .map((row) =>
         redact(
           ['sign_in', 'get_credential'].includes(String(row.name))
@@ -64,12 +61,24 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
       )
       .reverse(),
   };
+  const lists = [report.messages, report.turns, report.trace];
   let encoded = JSON.stringify(report, null, 2);
-  while (Buffer.byteLength(encoded) > feedbackLimits.reportBytes) {
-    const largest = [report.messages, report.turns, report.trace].sort(
-      (a, b) => Buffer.byteLength(JSON.stringify(b)) - Buffer.byteLength(JSON.stringify(a)),
-    )[0];
-    largest.shift();
+  while (
+    Buffer.byteLength(encoded) > feedbackLimits.reportBytes &&
+    lists.some((list) => list.length)
+  ) {
+    const sizes = lists.map((list) => list.map((item) => Buffer.byteLength(JSON.stringify(item))));
+    const totals = sizes.map((list) => list.reduce((sum, size) => sum + size, 0));
+    let excess = Buffer.byteLength(encoded) - feedbackLimits.reportBytes;
+    const dropped = lists.map(() => 0);
+    while (excess > 0) {
+      const index = totals.indexOf(Math.max(...totals));
+      if (dropped[index] >= lists[index].length) break;
+      const size = sizes[index][dropped[index]++];
+      totals[index] -= size;
+      excess -= size;
+    }
+    lists.forEach((list, index) => list.splice(0, dropped[index]));
     report.coverage.truncated = true;
     encoded = JSON.stringify(report, null, 2);
   }
@@ -84,7 +93,6 @@ function record(value: unknown): RecordValue | undefined {
 
 function savedToolTrace(entries: unknown[], now: number) {
   const calls = new Map<string, RecordValue>();
-  let truncated = false;
   const privateTools = new Set([
     'sign_in',
     'get_credential',
@@ -114,10 +122,6 @@ function savedToolTrace(entries: unknown[], now: number) {
       if (typeof tool?.id !== 'string' || !tool.id || typeof tool.name !== 'string') continue;
       let call = calls.get(tool.id);
       if (!call) {
-        if (calls.size >= 60) {
-          truncated = true;
-          continue;
-        }
         call = { id: tool.id, kind: 'tool', name: tool.name, status: 'unknown' };
         calls.set(tool.id, call);
       }
@@ -147,7 +151,7 @@ function savedToolTrace(entries: unknown[], now: number) {
       }
     }
   }
-  return { rows: [...calls.values()], truncated };
+  return [...calls.values()];
 }
 
 function savedCredentialValues(entries: unknown[]): string[] {

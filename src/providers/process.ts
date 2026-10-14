@@ -5,8 +5,7 @@ export interface ProcessOptions {
   env?: NodeJS.ProcessEnv;
   input?: string;
   signal?: AbortSignal;
-  timeoutMs?: number | null;
-  maxBytes?: number;
+  timeoutMs?: number;
 }
 
 export function serviceEnvironment(): NodeJS.ProcessEnv {
@@ -43,30 +42,22 @@ export function runProcess(
     });
     const chunks: Buffer[] = [];
     const errors: Buffer[] = [];
-    let size = 0;
     let stopped = false;
-    const maxBytes = options.maxBytes ?? 64 * 1024;
     const stop = () => {
       stopped = true;
       child.kill('SIGKILL');
     };
-    const timer =
-      options.timeoutMs === null ? undefined : setTimeout(stop, options.timeoutMs ?? 30_000);
+    const timer = options.timeoutMs === undefined ? undefined : setTimeout(stop, options.timeoutMs);
     const abort = () => stop();
     options.signal?.addEventListener('abort', abort, { once: true });
-    const capture = (target: Buffer[], chunk: Buffer) => {
-      if (size < maxBytes) target.push(chunk.subarray(0, maxBytes - size));
-      size += chunk.length;
-      if (size > maxBytes) stop();
-    };
-    child.stdout.on('data', (chunk) => capture(chunks, chunk));
-    child.stderr.on('data', (chunk) => capture(errors, chunk));
+    child.stdout.on('data', (chunk) => chunks.push(chunk));
+    child.stderr.on('data', (chunk) => errors.push(chunk));
     child.on('error', () => reject(new Error('The required runtime executable is unavailable.')));
     child.on('close', (code) => {
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', abort);
       if (options.signal?.aborted) return reject(new Error('Task cancelled.'));
-      if (stopped) return reject(new Error('Runtime command exceeded its time or output limit.'));
+      if (stopped) return reject(new Error('Runtime command exceeded its time limit.'));
       resolve({
         stdout: Buffer.concat(chunks).toString('utf8'),
         stderr: Buffer.concat(errors).toString('utf8'),

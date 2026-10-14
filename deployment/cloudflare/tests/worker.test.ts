@@ -210,28 +210,17 @@ function signedRequest(
   return new Request(url, { ...init, headers });
 }
 
-test('public ingress removes actor credentials and never dispatches internal control or bootstrap', async () => {
+test('public ingress sends API requests only to the gateway and never dispatches container control', async () => {
   const { env, calls } = fixture();
   const ordinary = await worker.fetch(
     new Request('https://otto.example.test/api/state', {
-      headers: {
-        'x-otto-runtime': 'forged',
-        'x-otto-runtime-extra': 'forged',
-        cookie: 'session=fixture',
-      },
+      headers: { cookie: 'session=fixture' },
     }),
     env,
   );
   assert.equal(await ordinary.text(), 'gateway');
-  assert.equal(calls[0].request?.headers.has('x-otto-runtime'), false);
-  assert.equal(calls[0].request?.headers.has('x-otto-runtime-extra'), false);
   assert.equal(calls[0].request?.headers.get('cookie'), 'session=fixture');
-  for (const path of [
-    '/runtime/start',
-    '/runtime/stop',
-    '/api/internal/channels/claim',
-    '/__otto/start',
-  ])
+  for (const path of ['/runtime/start', '/runtime/stop', '/__otto/start'])
     assert.equal(
       (await worker.fetch(new Request(`https://otto.example.test${path}`), env)).status,
       404,

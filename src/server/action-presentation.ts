@@ -44,12 +44,6 @@ const reasons: Record<TrustReason, string> = {
   unrequested: 'I could not confirm that you asked for exactly this.',
 };
 
-function abbreviated(value: string, limit: number) {
-  return value.length > limit
-    ? `${value.slice(0, limit)}… (${value.length - limit} more characters)`
-    : value;
-}
-
 function label(key: string) {
   return key
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -89,7 +83,7 @@ function argument(value: string) {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-export function actionDetails(action: string, args: Record<string, unknown>, limit: number) {
+function actionDetails(action: string, args: Record<string, unknown>) {
   const payload = actionPayload(action, args);
   const fields = leaves(
     payload === args
@@ -115,28 +109,19 @@ export function actionDetails(action: string, args: Record<string, unknown>, lim
               [
                 'command',
                 (Array.isArray(args.argv) ? args.argv : [])
-                  .map((item) => argument(abbreviated(String(item), limit)))
+                  .map((item) => argument(String(item)))
                   .join(' '),
               ],
+              ...(args.timeoutSeconds === undefined
+                ? []
+                : [['timeout', `${String(args.timeoutSeconds)} seconds`] as [string, string]]),
             ]
           : [];
   return [
     ...target,
-    ...[
-      ...fields.filter(([, value]) => value.length <= 200),
-      ...fields.filter(([, value]) => value.length > 200),
-    ].map(([name, value]): [string, string] => [name, abbreviated(value, limit)]),
+    ...fields.filter(([, value]) => value.length <= 200),
+    ...fields.filter(([, value]) => value.length > 200),
   ].map(([name, value]): [string, string] => [`${name[0]!.toUpperCase()}${name.slice(1)}`, value]);
-}
-
-function fitted(render: (limit: number) => string[], limits: number[], budget: number) {
-  const size = (lines: string[]) => lines.join('\n\n').length;
-  const lines = render(limits.find((limit) => size(render(limit)) <= budget) ?? limits.at(-1)!);
-  let total = -2;
-  const shown = lines.filter((line, index) => (total += line.length + 2) <= budget || !index);
-  return shown.length < lines.length
-    ? [...shown, `…and ${lines.length - shown.length} more fields`]
-    : shown;
 }
 
 export function actionTitle(action: string) {
@@ -158,15 +143,9 @@ export function appActionConfirmation(
 ) {
   const { app, label } = actionTitle(action);
   const title = app ? `${app}: ${label}` : label;
-  const details = fitted(
-    (limit) =>
-      actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`),
-    [1500, 600, 200, 60],
-    4800,
-  );
   const body = [
-    ...(account ? [`Account: ${plain(abbreviated(account, 300))}`] : []),
-    ...details,
+    ...(account ? [`Account: ${plain(account)}`] : []),
+    ...actionDetails(action, args).map(([name, value]) => `${plain(name)}: ${plain(value)}`),
   ].join('\n\n');
   return `${title}?${body ? `\n\n${body}` : ''}\n\nWhy I'm asking: ${reasons[reason]}\n\nReply yes to go ahead, no to skip it, or tell me what to change.`;
 }
