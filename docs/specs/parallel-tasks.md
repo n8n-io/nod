@@ -166,13 +166,20 @@ UI rules from the step 5 screenshot check:
 - The preview header and the artifact card in a bubble have a hover state: `box-shadow: 0 0 0 1px var(--border)`.
 - On the Tasks page, **Show in chat** and **Schedule task** are in one row, with the same button style.
 
+Rules from step 6 (UI check of the real app):
+
+- "Below 640 px" is the width of the chat column, not of the window. Thus the phone rules also apply on a desktop when the side panel makes the chat narrow.
+- When an open task has no now line and no steps, the card shows no summary line. It never shows the status a second time.
+- On a phone, the time and the more button of a bubble with a card are below the bubble. The next bubble keeps space for them, so they never cover it.
+- A Done preview in the chat shows the result text, although the result is also a message below it. Thus the card is complete on the Tasks page and in the chat.
+
 ### 4.6 Tasks strip
 
 The strip is above the composer. It shows when 2 or more tasks are open, or when one task needs the owner. Each chip shows the status icon and the title, and has a small Stop button for that task. The status is in the icon, the tone and the accessible name, not in visible text. A click on the chip scrolls the chat to the "On it" message and opens its preview.
 
 - The strip shows at most 3 chips, in the order Needs you, Working, Waiting, Queued. More tasks give a "+N" chip that opens the Tasks page.
 - Below 640 px, the strip is one summary chip, for example "4 tasks · 1 needs you", that opens the Tasks page.
-- **Stop all** shows only when 2 or more tasks are open.
+- **Stop all** shows only when 2 or more tasks are open. The same rule applies on the Tasks page. With one open task, its own **Stop task** is sufficient, and the composer Stop stops the chat.
 - A Stop button is at least 32 px (40 px below 640 px).
 - The chip row never clips a chip.
 
@@ -245,7 +252,9 @@ Rules from step 5 (WP-25):
 - Telegram webhooks are registered again once for each new set of `allowed_updates` (a version in the channel summary), not at each start. The registration never blocks startup, and a failure does not skip the other rows. A webhook set up by hand in `.env` is not changed; the docs tell those owners to allow `callback_query`.
 - After an answer, a close or the 24-hour expiry, an edit removes Yes and No from a Telegram confirmation. WhatsApp cannot edit, so its buttons stay, and a late press runs nothing.
 - **Stop task** is a button only on Telegram. On WhatsApp the owner replies "stop", because a button cannot be removed when the task ends.
-- A press goes through the same checks as a message. A WhatsApp press is saved as a receipt before it runs, so a repeated delivery runs once. A WhatsApp press that runs nothing gets a short text reply without a turn.
+- A press goes through the same checks as a message. A press (Telegram and WhatsApp) is saved as a receipt before it runs, so a repeated delivery runs nothing. A WhatsApp press that runs nothing gets a short text reply without a turn.
+- Rules from step 6: a repeated Telegram press still gets an answer (`answerCallbackQuery`), so the button stops loading. When a press fails after its receipt is saved, Otto answers the press with a short note to try again in Otto and tells the provider that the delivery succeeded, because a retry can never run the press.
+- The live Telegram preview uses the same summary line as the web card. For example, a Queued task says "Starts when another task finishes".
 - A confirmation longer than 4096 characters (Telegram) or 1024 characters (WhatsApp) goes without buttons; the owner replies yes or no.
 - An "On it" message sent before the upgrade gets no live preview.
 - The outbox asks for task data only for the messages it sends, and the edit queue asks for open tasks in its own query.
@@ -342,6 +351,7 @@ The `brief` of `start_task` is the model's working brief and becomes the prompt 
 - Pending reuse is scoped by session. Two tasks with the same action get two approvals.
 - An answer from another channel uses the approval ID. The resume keeps `tasks.channel`.
 - A pending task confirmation expires after 24 hours. Closing or stopping a task declines its pending approvals (WP-06).
+- `approvals.run` reads the task and the schedule instruction before it marks the approval as executing. Thus a failed lookup never makes an action uncertain when nothing ran (step 6).
 
 ### 5.7 Browser, Vault and payments
 
@@ -352,7 +362,7 @@ The `brief` of `start_task` is the model's working brief and becomes the prompt 
 - A reopened task gets a new browser generation. Its saved logins still work. Its old page state is gone (WP-22).
 - Only a later turn in the same session supersedes a Vault, OTP or payment-code wait. A chat message never expires a task's sign-in (WP-18).
 - The browser view and the handoff routes take a session. A waiting task can hand its browser to the owner. **Done** resumes the task (WP-21).
-- Handoff rules from step 4: the stream, input and navigate routes need a session whose latest turn waits on a question. The view and screen routes (the Browser page) check only the owner, the thread and the task, and the credential-entry pause, so the page can show a running task's browser. **Done** is an ordinary owner message that replies to the task question; there is no Done route. Only the chat and tasks hand over a browser; schedule and event sessions do not. The routes use the session ID in lowercase. The time of the last handoff action is kept in server memory for each session and is removed when the session's browser is deleted.
+- Handoff rules from step 4: the stream, input and navigate routes need a session whose latest turn waits on a question. The view and screen routes (the Browser page) check only the owner, the thread and the task, and the credential-entry pause, so the page can show a running task's browser. **Done** is an ordinary owner message that replies to the task question; there is no Done route. Only the chat and tasks hand over a browser; schedule and event sessions do not. The routes use the session ID in lowercase. The time of the last handoff action is kept in server memory for each session and is removed when the session's browser is deleted. A discard of an old browser generation deletes nothing, so it keeps the handoff time (step 6).
 - Payments stay local-only. Hosted mode refuses saved-card payments, as today.
 
 ### 5.8 Workspace
@@ -381,7 +391,7 @@ Rules from step 4:
 
 - `/api/state` gets `state.tasks`: open tasks and recent closed tasks, keyed by `onItMessageId`, with title, status, steps, step index, now line, question, approval ID, result message ID, artifact, cost (`costUsd`), error, waiting for and next check. `state.tasks` stays an array, and the client indexes it by `onItMessageId`.
 - The state tells the web app if `OTTO_TASKS` is on. When it is off, the web app hides the task settings (progress mode).
-- The client no longer aborts an in-flight `/api/state`. It marks the state dirty and fetches once more. The server throttles tool-event refreshes for each session and sends a targeted `task` event for silent preview changes (WP-23).
+- A refresh never aborts an in-flight `/api/state`. It marks the state dirty and fetches once more. Each request still stops after a timeout of 30 seconds. The server throttles tool-event refreshes for each session and sends a targeted `task` event for silent preview changes (WP-23).
 
 ### 5.11 Failure, restart, reset and retention
 
@@ -1243,7 +1253,8 @@ Risks for main as it is now (022b9960), with the work package that removes each 
 | R35 | Removing the report cards (WP-19) removes the card for work that waits for other people.                                                                                                       | A chased reply has no status and no check.                                                                   | Medium | WP-29                         |
 | R36 | A late chat-turn cleanup in a second server process could unpin the pin of a newer chat turn, because a chat Stop does not change the chat's browser generation.                               | The newer chat turn's browser can be closed at the cap. Only multi-process deployments are affected.         | Low    | Accepted (step 4)             |
 | R37 | The retention job holds a task row lock while it deletes files (up to 30 s). A reply to that task waits under the thread lock.                                                                 | Rare stall of one owner's thread writes for up to 30 s.                                                      | Low    | Accepted (step 4)             |
-| R38 | Vault code compares database times (`turns.started_at`, `vault_uses.created_at`) with the server clock (`Date.now()`, `credential_entered_at`). Exists on main.                                | When the clocks differ, a fill can be refused, or the once-only check of an automatic code can miss a fill.  | Medium | S5-FIX (one clock)            |
+| R38 | Vault code compares database times (`turns.started_at`, `vault_uses.created_at`) with the server clock (`Date.now()`, `credential_entered_at`). Exists on main.                                | When the clocks differ, a fill can be refused, or the once-only check of an automatic code can miss a fill.  | Medium | S5-FIX                        |
+| R39 | The expiry of a Vault request and of an account selection is written from the server clock and compared with the database clock (`now()`) in SQL. Exists on main.                              | When the clocks differ, a request expires too early or stays open too long.                                  | Medium | S6-FIX                        |
 
 ## 8. Invariants to keep
 
@@ -1341,6 +1352,7 @@ flowchart LR
 | 3    | WP-16, WP-06, WP-08, WP-10, WP-20, WP-22, WP-29 | Routing, answers, Stop, steering, lifecycle, reopen and waiting for other people. After this step, Gate A: the team turns the flag on                                                                   |
 | 4    | WP-14, WP-13, WP-21, WP-09, WP-11, WP-27        | Web preview, strip and Tasks page, check-ins, task browser handoff, folders, channel reply targets and docs. After this step, Gate B: web testers                                                       |
 | 5    | WP-25, WP-26, WP-28, WP-30                      | Telegram live preview and buttons, PDF artifacts, the #253 leftovers and evals. After this step, Gate C: Telegram testers                                                                               |
+| 6    | S5-FIX, UI-FIX, S6-FIX                          | Follow-ups of the step 5 review and of the screenshot check in the real app. No new work packages                                                                                                       |
 
 Every step ends with `pnpm run check`, `pnpm test` with a disposable PostgreSQL, `pnpm run test:integration` and `pnpm run build`. A step with docs changes also runs `pnpm --dir docs build`. A step with eval changes also runs `pnpm --dir evals run check` and `pnpm --dir evals test`. Report fixtures, UI checks and live checks separately.
 
