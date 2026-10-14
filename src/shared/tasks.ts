@@ -33,7 +33,7 @@ export function taskSummary(task: Task) {
   if (task.status === 'stopped') return `Stopped after ${minutes(task)} min`;
   if (task.status === 'failed')
     return plain(task.error ?? '') || `Failed after ${minutes(task)} min`;
-  if (task.status === 'waiting' && !task.now)
+  if (task.status === 'waiting' && !task.now && task.waitingFor.length)
     return `Waiting on ${task.waitingFor.map((wait) => wait.who).join(', ')}`;
   return task.now || task.steps[task.stepIndex] || '';
 }
