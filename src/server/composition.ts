@@ -1,6 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
@@ -11,7 +10,7 @@ import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
-import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
+import { hasWorkspaceFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { RelevanceClassifier } from '../ports/relevance.ts';
@@ -63,6 +62,7 @@ import { createApp, forgetHandoff } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
+import { logFailure } from './failure-log.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
@@ -488,8 +488,9 @@ async function initializeApplication(
   const discard = computer.discard?.bind(computer);
   if (discard)
     computer.discard = async (id, generation) => {
-      forgetHandoff(id);
-      await discard(id, generation);
+      const deleted = await discard(id, generation);
+      if (deleted !== false) forgetHandoff(id);
+      return deleted;
     };
   const curator = ledger.curator(memoryCurator);
   const onboardingCurator = adapters.onboardingCurator
@@ -664,19 +665,7 @@ async function initializeApplication(
                       folder: provenance.folder,
                     });
                     await ledger.action(provenance.turnId, action, args);
-                    const write = workspace.writeArtifact?.bind(workspace);
-                    const save =
-                      write &&
-                      (async (file: { name: string; bytes: Uint8Array }) => {
-                        const name = `${randomUUID()}-${basename(file.name)}`;
-                        await write(
-                          provenance.threadId,
-                          inFolder(provenance.folder, name),
-                          file.bytes,
-                        );
-                        return name;
-                      });
-                    return (await saveIntegrationFiles(result, save)).value;
+                    return result;
                   })(),
     async (action, args) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
@@ -687,6 +676,7 @@ async function initializeApplication(
     },
     async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
     (reply) => trust.answer(reply),
+    workspace.writeArtifact?.bind(workspace),
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
@@ -1209,7 +1199,9 @@ async function initializeApplication(
       },
     });
     channels.registerRoutes(app);
-    await channelSettings?.recover();
+    void channelSettings
+      ?.recover()
+      .catch((cause: unknown) => logFailure('channel_recovery_failed', cause));
   }
   await onboardingSuggestions.initialize();
   let closingConsumers: Promise<void> | undefined;

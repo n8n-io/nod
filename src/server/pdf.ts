@@ -44,10 +44,41 @@ function pdfText(value: string) {
   return `(${bytes.join('')})`;
 }
 
-export const textWidth = (text: string, size: number) =>
-  ([...text].reduce((sum, char) => sum + ({ '.': 278, '<': 584, '-': 333 }[char] ?? 556), 0) *
-    size) /
-  1000;
+const helvetica = [
+  278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+  556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667,
+  611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+  667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500,
+  222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+];
+const helveticaBold = [
+  278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+  556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667,
+  611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+  667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556,
+  278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
+];
+const narrow: Record<string, number> = {
+  '•': 350,
+  '€': 556,
+  '‘': 278,
+  '’': 278,
+  '“': 500,
+  '”': 500,
+};
+
+function glyphWidth(char: string, font: PdfText[3]) {
+  if (font === 3) return 600;
+  const code = (char.normalize('NFD')[0] ?? char).charCodeAt(0);
+  return (
+    (code >= 32 && code < 127
+      ? (font === 2 ? helveticaBold : helvetica)[code - 32]
+      : narrow[char]) ?? 1000
+  );
+}
+
+export const textWidth = (text: string, size: number, font: PdfText[3] = 1) =>
+  ([...text].reduce((sum, char) => sum + glyphWidth(char, font), 0) * size) / 1000;
 
 export function pdfFile(pages: PdfText[][]) {
   const objects = [
@@ -85,16 +116,39 @@ export function pdfFile(pages: PdfText[][]) {
   return Buffer.from(body, 'latin1');
 }
 
-const chunks = (text: string, width: number) =>
-  text.match(new RegExp(`.{1,${Math.max(width, 8)}}`, 'gu')) ?? [''];
+function chunks(text: string, width: number, size: number, font: PdfText[3]) {
+  const parts = [''];
+  let used = 0;
+  for (const char of text) {
+    const wide = textWidth(char, size, font);
+    if (parts.at(-1) && used + wide > width) {
+      parts.push('');
+      used = 0;
+    }
+    parts[parts.length - 1] += char;
+    used += wide;
+  }
+  return parts;
+}
 
-function wrap(text: string, width: number) {
+function wrap(text: string, width: number, size: number, font: PdfText[3]) {
+  const space = textWidth(' ', size, font);
   return text.split('\n').flatMap((part) => {
     const lines = [''];
-    for (const piece of part.split(/\s+/).flatMap((word) => (word ? chunks(word, width) : [])))
-      if (!lines.at(-1)) lines[lines.length - 1] = piece;
-      else if (lines.at(-1)!.length + 1 + piece.length > width) lines.push(piece);
-      else lines[lines.length - 1] += ` ${piece}`;
+    let used = 0;
+    for (const piece of part
+      .split(/\s+/)
+      .flatMap((word) => (word ? chunks(word, width, size, font) : []))) {
+      const wide = textWidth(piece, size, font);
+      if (lines.at(-1) && used + space + wide <= width) {
+        lines[lines.length - 1] += ` ${piece}`;
+        used += space + wide;
+      } else {
+        if (lines.at(-1)) lines.push(piece);
+        else lines[lines.length - 1] = piece;
+        used = wide;
+      }
+    }
     return lines;
   });
 }
@@ -111,8 +165,9 @@ function inline(node: Markdown): string {
     : text;
 }
 
-function renderMarkdown(markdown: string) {
-  if ([...markdown].some((char) => /\p{L}/u.test(char) && !encoded(char))) return undefined;
+function renderMarkdown(input: string) {
+  const markdown = input.normalize('NFC');
+  if ([...markdown].some((char) => /[\p{L}\p{M}]/u.test(char) && !encoded(char))) return undefined;
   const pages: PdfText[][] = [[]];
   let y = 790;
   const line = (x: number, size: number, font: PdfText[3], text: string) => {
@@ -123,11 +178,10 @@ function renderMarkdown(markdown: string) {
     pages.at(-1)!.push([x, y, size, font, text]);
     y -= size * 1.4;
   };
-  const room = (x: number, size: number, font: PdfText[3]) =>
-    Math.floor((539 - x) / (size * (font === 1 ? 0.55 : 0.6)));
+  const room = (x: number) => Math.max(539 - x, 40);
   const write = (text: string, x: number, size = 10, font: PdfText[3] = 1, marker = '') => {
-    const indent = textWidth(marker, size);
-    wrap(text, room(x + indent, size, font)).forEach((part, index) =>
+    const indent = textWidth(marker, size, font);
+    wrap(text, room(x + indent), size, font).forEach((part, index) =>
       line(index ? x + indent : x, size, font, index ? part : marker + part),
     );
   };
@@ -142,7 +196,7 @@ function renderMarkdown(markdown: string) {
       y -= marker ? 2 : 6;
     } else if (node.type === 'code') {
       for (const source of (node.value ?? '').replace(/\t/g, '    ').split('\n'))
-        for (const part of chunks(source, room(x, 9, 3))) line(x, 9, 3, part);
+        for (const part of chunks(source, room(x), 9, 3)) line(x, 9, 3, part);
       y -= 6;
     } else if (node.type === 'list')
       children.forEach((item, index) =>

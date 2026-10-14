@@ -108,6 +108,7 @@ test(
     let agentDisposed = false;
     let analyticsClosed = 0;
     const replies: object[] = [];
+    const acks: Array<{ pressId: string; text?: string }> = [];
     const adapters: ApplicationAdapters = {
       onboardingCurator: {
         id: 'fixture',
@@ -194,21 +195,24 @@ test(
             ],
             receive: async (request) => {
               const body = JSON.parse(Buffer.from(request.body).toString());
+              const sender = {
+                channelId: 'telegram',
+                accountId: '42',
+                senderId: '123',
+                threadId: 'telegram:123',
+                sentAt: new Date(),
+              };
               return {
                 status: 200,
                 body: { ok: true },
-                messages: [
-                  {
-                    channelId: 'telegram',
-                    accountId: '42',
-                    senderId: '123',
-                    messageId: String(body.id),
-                    threadId: 'telegram:123',
-                    text: body.text,
-                    sentAt: new Date(),
-                  },
-                ],
+                ...(body.data
+                  ? { presses: [{ ...sender, pressId: String(body.id), data: body.data }] }
+                  : { messages: [{ ...sender, messageId: String(body.id), text: body.text }] }),
               };
+            },
+            ack: async (input) => {
+              acks.push(input);
+              return true;
             },
             post: async (message) => {
               sent.push(message.text);
@@ -388,6 +392,7 @@ test(
         'submitted',
       );
       const taskQuestions: string[] = [];
+      const taskIds: string[] = [];
       for (const title of ['Synthetic task one', 'Synthetic task two']) {
         const [taskId, turnId, messageId, id] = [
           randomUUID(),
@@ -416,6 +421,7 @@ test(
           [id, source.owner_id, first.thread_id, turnId, { preferences: title }, messageId],
         );
         taskQuestions.push(id);
+        taskIds.push(taskId);
       }
       assert.equal((await send(12, 'sure, go ahead')).statusCode, 200);
       await application.channels!.drain();
@@ -435,6 +441,36 @@ test(
           )
         ).rows[0].session_id,
         first.thread_id,
+      );
+      const press = (id: number, data: string) =>
+        application.app.inject({
+          method: 'POST',
+          url: '/api/webhooks/telegram',
+          headers: { 'content-type': 'application/json' },
+          payload: { id, data },
+        });
+      const turnCount = async () =>
+        (await pool.query('SELECT count(*)::int AS count FROM turns')).rows[0].count;
+      const turnsBeforePresses = await turnCount();
+      assert.equal((await press(13, `a:${approvalId}:y`)).statusCode, 200);
+      assert.equal(acks.at(-1)?.pressId, '13');
+      assert.ok(acks.at(-1)?.text);
+      assert.equal(await turnCount(), turnsBeforePresses);
+      assert.equal((await press(14, `s:${taskIds[0]}`)).statusCode, 200);
+      assert.deepEqual(acks.at(-1), { channelId: 'telegram', accountId: '42', pressId: '14' });
+      assert.deepEqual(
+        (
+          await pool.query(
+            `SELECT t.state,u.status,a.status AS approval FROM tasks t
+             JOIN turns u ON u.session_id=t.id JOIN approvals a ON a.turn_id=u.id
+             WHERE t.id=ANY($1::uuid[]) ORDER BY t.title`,
+            [taskIds],
+          )
+        ).rows.map((row) => [row.state === 'stopped', row.status, row.approval]),
+        [
+          [true, 'cancelled', 'declined'],
+          [false, 'waiting', 'pending'],
+        ],
       );
       const disabled = await application.app.inject({
         method: 'DELETE',

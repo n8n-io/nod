@@ -106,7 +106,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
     );
 }
 
-async function sessionEvents(sessionRoot: string, captured: Set<string | undefined>) {
+export async function sessionEvents(sessionRoot: string, captured: Set<string | undefined>) {
   const entries: any[] = [];
   for (const thread of await readdir(sessionRoot).catch(() => [] as string[])) {
     if (captured.has(thread)) continue;
@@ -292,13 +292,11 @@ export async function collect(options: {
     replyToMessageId: row.reply_to,
   }));
   const tasks = (
-    await stack.pool
-      .query(
-        `SELECT id,title,state,to_jsonb(tasks)->>'source_message_id' AS source,
-           to_jsonb(tasks)->>'on_it_message_id' AS on_it,to_jsonb(tasks)->>'result_message_id' AS result
-         FROM tasks ORDER BY created_at, id`,
-      )
-      .catch(() => ({ rows: [] as any[] }))
+    await stack.pool.query(
+      `SELECT id,title,state,to_jsonb(tasks)->>'source_message_id' AS source,
+         to_jsonb(tasks)->>'on_it_message_id' AS on_it,to_jsonb(tasks)->>'result_message_id' AS result
+       FROM tasks ORDER BY created_at, id`,
+    )
   ).rows
     .filter((row) => row.on_it)
     .map((row): TaskRecord => ({

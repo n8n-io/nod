@@ -336,6 +336,12 @@ test(
       assert.equal((await save(1, '987:synthetic_token')).statusCode, 400);
       assert.equal(registrations.length, 1);
       assert.equal(await settings[0].recover(), true);
+      assert.equal(registrations.length, 1);
+      await db.pool.query(
+        "UPDATE channel_settings SET summary=summary-'webhookVersion' WHERE owner_id='owner-one'",
+      );
+      assert.equal(await settings[0].recover(), true);
+      assert.equal(await settings[0].recover(), true);
       assert.deepEqual(registrations, [registrations[0], registrations[0]]);
       assert.equal(claims.get('987'), 'owner-one');
       assert.equal((await settings[1].status()).channels.length, 0);
@@ -1998,14 +2004,18 @@ test(
     });
     const app = Fastify();
     const results: string[] = [];
+    let lookupFails = false;
     const channels = await createChannels(pool, {
       ownerId,
       appOrigin: 'https://otto.example',
       transport: createChatSdkTransport(pool, telegramEnvironment),
-      taskMessages: async () => ({
-        tasks: results.map((resultMessageId) => ({ resultMessageId }) as Task),
-        confirmations: [],
-      }),
+      taskMessages: async () => {
+        if (lookupFails) throw new Error('Synthetic task lookup failure.');
+        return {
+          tasks: results.map((resultMessageId) => ({ resultMessageId }) as Task),
+          confirmations: [],
+        };
+      },
       resolveAttachments: async (threadId, ids) => {
         if (holdResolve) {
           markResolveStarted();
@@ -2139,7 +2149,7 @@ test(
       assert.deepEqual(Buffer.from(sent.at(-1)!.file), videoBytes);
 
       const report = await storeArtifact(
-        Buffer.from('# Synthetic report\n\nThe **total** is 42.'),
+        Buffer.from('# Synthetic report\n\nThe **total** is 42.\n\nCafe\u0301 notes.'),
         'report.md',
         'text/markdown',
         threadId,
@@ -2161,20 +2171,37 @@ test(
       );
       const pdf = Buffer.from(resultFile.file).toString('latin1');
       assert.match(pdf, /^%PDF-1\.4\n/);
-      assert.match(pdf, /\(Synthetic report\) Tj[\s\S]*\(The total is 42\.\) Tj/);
+      assert.match(
+        pdf,
+        /\(Synthetic report\) Tj[\s\S]*\(The total is 42\.\) Tj[\s\S]*\(Caf\u00e9 notes\.\) Tj/,
+      );
       assert.deepEqual(await state(result), { state: 'sent', reason: null });
       assert.deepEqual(await providerIds(result), [`123456:${first + 1}`, `123456:${first + 2}`]);
 
       failDocument = true;
-      const halfResult = await addReply(turnId, [report], 'The report is updated.', onIt);
+      const notes = await storeArtifact(
+        Buffer.from('# Synthetic notes'),
+        'notes.markdown',
+        'text/x-markdown',
+        threadId,
+      );
+      filePaths.push(join(dataRoot, 'artifacts', notes.id));
+      const halfResult = await addReply(turnId, [notes], 'The report is updated.', onIt);
       results.push(halfResult);
       const onItId = first;
       first = sent.length + 101;
       await channels.drain();
       const [halfText, halfFile] = sent.slice(first - 101);
       assert.deepEqual(
-        [halfText.caption, halfText.reply, halfFile.method, halfFile.reply, sent.length],
-        ['The report is updated.', onItId, 'sendDocument', first, first - 99],
+        [
+          halfText.caption,
+          halfText.reply,
+          halfFile.method,
+          halfFile.name,
+          halfFile.reply,
+          sent.length,
+        ],
+        ['The report is updated.', onItId, 'sendDocument', 'notes.pdf', first, first - 99],
       );
       assert.equal((await state(halfResult)).state, 'uncertain');
       assert.deepEqual(await providerIds(halfResult), [`123456:${first}`]);
@@ -2307,6 +2334,14 @@ test(
       await channels.drain();
       assert.equal((await state(textOnly)).state, 'sent');
       assert.doesNotMatch(fallback[1], /\/api\/artifacts\//);
+      assert.match(fallback[1], /in Otto/);
+      lookupFails = true;
+      const unknown = await addReply(turnId, [report], 'The report is ready again.', onIt);
+      await channels.drain();
+      lookupFails = false;
+      assert.equal((await state(unknown)).state, 'sent');
+      assert.doesNotMatch(fallback[2], /\/api\/artifacts\//);
+      assert.match(fallback[2], /in Otto/);
     } finally {
       releaseResolve();
       await app.close();

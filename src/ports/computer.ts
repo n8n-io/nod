@@ -155,7 +155,7 @@ export interface Computer {
   unpin?(threadId: string, generation?: number): Promise<void>;
   unpinAll?(): Promise<void>;
   close(threadId: string): Promise<void>;
-  discard?(threadId: string, generation?: number): Promise<void>;
+  discard?(threadId: string, generation?: number): Promise<boolean | void>;
   dispose(): Promise<void>;
   status(): string;
 }

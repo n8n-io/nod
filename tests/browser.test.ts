@@ -2445,13 +2445,14 @@ test('pins and discard reach the namespace computer of the same thread only, and
     await computer.pin!('quiet');
     await computer.unpin!('quiet');
     assert.equal(fixture.launches.length, 0);
-    await computer.pin!('task');
+    const generation = await computer.pin!('task');
     await computer.act('task', { action: 'snapshot' });
     await computer.act('task', { action: 'snapshot' });
     await computer.pin!('chat');
     await computer.unpin!('chat');
     await computer.unpin!('task');
-    await computer.discard!('task');
+    assert.equal(await computer.discard!('task'), true);
+    assert.equal(await computer.discard!('task', generation as number), false);
     assert.deepEqual(fixture.instance('/synthetic/discard').calls, [
       { method: 'pin', input: 'task' },
       { method: 'act', input: { action: 'snapshot' } },

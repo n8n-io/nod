@@ -4008,6 +4008,20 @@ test(
     await begin('direct-email');
     assert.equal(await fill('direct-email'), true);
     assert.equal(await fill('direct-email'), false);
+    const serverNow = Date.now;
+    for (const skew of [-10 * 60_000, 10 * 60_000]) {
+      const clock = t.mock.method(Date, 'now', () => serverNow.call(Date) + skew);
+      try {
+        await start(`saved-skew-${skew}`);
+        await begin(`direct-skew-${skew}`);
+        for (const id of [`saved-skew-${skew}`, `direct-skew-${skew}`]) {
+          assert.equal(await fill(id), true, id);
+          assert.equal(await fill(id), false, id);
+        }
+      } finally {
+        clock.mock.restore();
+      }
+    }
     await begin('prior-challenge-email');
     emails = [{ ...message, receivedAt: Date.now() - 2 * 60_000 }];
     const attemptsBeforePriorChallenge = injected.length;

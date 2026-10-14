@@ -87,6 +87,7 @@ export function createChatSdkSetupVerifier(
     return z.record(z.string(), z.unknown()).parse(await response.json());
   }
   return {
+    webhookVersion: 1,
     async verify(provider, input): ReturnType<ChannelSetupVerifier['verify']> {
       try {
         if (provider === 'telegram') {

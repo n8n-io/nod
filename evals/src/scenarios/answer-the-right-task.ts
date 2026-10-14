@@ -127,16 +127,16 @@ export default scenario({
     await session.settle();
     const first = await session.task(dinner.messageId);
     const second = await session.task(haircut.messageId);
-    world.asked = [Boolean(first?.lastMessageId), Boolean(second?.lastMessageId)];
-    if (!first?.lastMessageId || !second?.lastMessageId) return;
+    world.asked = [Boolean(first?.questionId), Boolean(second?.questionId)];
+    if (!first?.questionId || !second?.questionId) return;
     world.dinnerTask = first.id;
     world.answered = Date.now();
     world.firstAnswer = (
-      await session.send('The later one, please.', { replyTo: first.lastMessageId })
+      await session.send('The later one, please.', { replyTo: first.questionId })
     ).messageId;
     await session.settle();
     world.haircutWaitedForItsAnswer = !at(world.bookings, world.haircut).length;
-    await session.send('The earlier one works.', { replyTo: second.lastMessageId });
+    await session.send('The earlier one works.', { replyTo: second.questionId });
     await session.settle();
   },
   evidence(_run, world) {

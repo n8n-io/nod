@@ -15,7 +15,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
@@ -23,7 +23,6 @@ import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
-import { inFolder } from '../src/ports/thread-identity.ts';
 test('the confirmation question omits internal identifiers', () => {
   const question = actionConfirmation(
     'OTTO_schedule_update',
@@ -204,7 +203,8 @@ test(
     let executionGate: Promise<void> | undefined;
     let executionResult:
       ((context: ApprovalExecutionContext, args: Record<string, unknown>) => unknown) | undefined;
-    const directories: string[] = [];
+    const workspaces = await mkdtemp(join(tmpdir(), 'otto-confirmed-files-'));
+    const directories: string[] = [workspaces];
     let approvals: Awaited<ReturnType<typeof createApprovals>>;
     const headers = {
       host: `localhost:${port}`,
@@ -363,6 +363,11 @@ test(
         },
         async (turn, action, args) => !(await trust.check(turn, action, args)).confirm,
         (reply) => trust.answer(reply),
+        async (threadId, path, bytes) => {
+          const target = join(workspaces, threadId, path);
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, bytes);
+        },
       );
       messages = thread.createUserMessageService({ confirmAction: approvals.chat });
       personal.registerRoutes(app);
@@ -1129,43 +1134,31 @@ test(
         }
       });
 
-      await t.test(
-        'a confirmed task action reads its relative file from the task folder, not the workspace root',
-        async () => {
-          const workspace = await mkdtemp(join(tmpdir(), 'otto-confirmed-folder-'));
-          directories.push(workspace);
-          const started = await startTask('Email the synthetic report to the team.');
-          await mkdir(join(workspace, 'tasks', started.taskId), { recursive: true });
-          await writeFile(join(workspace, 'report.txt'), 'synthetic root file');
-          await writeFile(
-            join(workspace, 'tasks', started.taskId, 'report.txt'),
-            'synthetic task file',
+      await t.test('a confirmed task action saves its result file in the task folder', async () => {
+        const started = await startTask('Download the synthetic report from my drive.');
+        const id = await propose(started.turn, 'GOOGLEDRIVE_DOWNLOAD_FILE', {
+          file_id: 'synthetic-report',
+        });
+        await finish(started.turn.turnId);
+        await confirm(id, true);
+        const bytes = Buffer.from('synthetic report');
+        executionResult = () => ({
+          file: { name: '../report.pdf', mimeType: 'application/pdf', bytes },
+        });
+        try {
+          await execute(id);
+          const saved = (await stored(id)).result.file;
+          assert.equal(saved.size, bytes.byteLength);
+          assert.deepEqual(
+            await readFile(
+              join(workspaces, started.turn.threadId, 'tasks', started.taskId, saved.workspaceFile),
+            ),
+            bytes,
           );
-          const id = await propose(started.turn, 'GMAIL_SEND_EMAIL', {
-            ...email('team@example.test'),
-            attachment: { workspaceFile: 'report.txt' },
-          });
-          await finish(started.turn.turnId);
-          await confirm(id, true);
-          executionResult = (context, args) =>
-            readFile(
-              join(
-                workspace,
-                inFolder(
-                  context.folder,
-                  (args.attachment as { workspaceFile: string }).workspaceFile,
-                ),
-              ),
-              'utf8',
-            );
-          try {
-            await execute(id);
-            assert.equal((await stored(id)).result, 'synthetic task file');
-          } finally {
-            executionResult = undefined;
-          }
-        },
-      );
+        } finally {
+          executionResult = undefined;
+        }
+      });
 
       await t.test(
         'a memory save the checker matches to the request runs directly once without a confirmation',
@@ -2005,6 +1998,12 @@ test(
               .map((item) => item.id)
               .sort();
           assert.deepEqual(await buttons(x, y), [x, y].sort());
+          assert.deepEqual(
+            (await tasks.channelMessages([await onIt(a.taskId)])).tasks.map((task) => task.id),
+            [a.taskId],
+          );
+          const open = (await tasks.channelMessages([], true)).tasks.map((task) => task.id);
+          assert.ok(open.includes(a.taskId) && open.includes(b.taskId));
           for (const text of ['Yes.', 'What is on my synthetic calendar?']) {
             const sent = await messages.submit(text);
             assert.equal(await session(sent.turnId), sent.threadId);

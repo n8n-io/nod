@@ -1068,20 +1068,24 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     ownerId: string,
     lock = '',
   ) {
-    const { rows } = await database.query<{ id: string; started_at: Date | null }>(
-      `SELECT u.id,u.started_at FROM turns u JOIN threads th ON th.id=u.thread_id
+    const { rows } = await database.query<{ id: string; started_at: Date | null; now: Date }>(
+      `SELECT u.id,u.started_at,clock_timestamp() AS now FROM turns u JOIN threads th ON th.id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3 AND u.status='running' AND th.archived_at IS NULL${lock}`,
       [turn.turnId, ownerId, turn.threadId],
     );
-    return rows.length === 1 ? rows[0] : undefined;
+    return rows.length === 1 ? { ...rows[0], skew: Date.now() - rows[0].now.getTime() } : undefined;
   }
 
-  function emailCodeSince(selected: SelectionRow | undefined, turnStarted?: Date | null) {
-    const now = Date.now();
-    const start = (selected ? selected.credential_entered_at : turnStarted)?.getTime();
+  function emailCodeSince(
+    selected: SelectionRow | undefined,
+    turn?: { started_at: Date | null; now: Date },
+  ) {
+    if (!turn) return;
+    const now = turn.now.getTime();
+    const start = (selected ? selected.credential_entered_at : turn.started_at)?.getTime();
     if (!start || start > now) return;
     if (!selected) return Math.max(start, now - 5 * 60_000);
-    if (now - start <= 5 * 60_000 && selected.expires_at.getTime() > now) return start;
+    if (now - start <= 5 * 60_000 && selected.expires_at.getTime() > Date.now()) return start;
   }
 
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
@@ -1132,7 +1136,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       loginLabel?: string;
       expiresAt: Date;
       blocked: boolean;
-      enteredAt?: number;
+      enteredAt?: Date | null | 'now';
       kind?: 'identifier' | 'password';
     },
   ) {
@@ -1143,7 +1147,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     });
     await database.query(
       `INSERT INTO credential_account_selections(id,root_turn_id,owner_id,origin,entry_id,ciphertext,blocked,expires_at,login_label,credential_entered_at,kind)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(root_turn_id,owner_id,origin) DO UPDATE
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $12 THEN clock_timestamp() ELSE $10::timestamptz END,$11)
+       ON CONFLICT(root_turn_id,owner_id,origin) DO UPDATE
        SET id=excluded.id,entry_id=excluded.entry_id,ciphertext=excluded.ciphertext,blocked=excluded.blocked,expires_at=excluded.expires_at,login_label=excluded.login_label,credential_entered_at=excluded.credential_entered_at,kind=excluded.kind`,
       [
         entry.id,
@@ -1155,8 +1160,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         value.blocked,
         value.expiresAt,
         value.loginLabel ?? '',
-        value.enteredAt === undefined ? null : new Date(value.enteredAt),
+        value.enteredAt === 'now' ? null : (value.enteredAt ?? null),
         value.kind ?? 'identifier',
+        value.enteredAt === 'now',
       ],
     );
   }
@@ -1433,7 +1439,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 selected.credential_entered_at?.getTime() !== source.enteredAt
               : selected !== undefined) ||
             source.code.receivedAt <
-              (emailCodeSince(selected, active?.started_at) ?? Infinity) - 30_000 ||
+              (emailCodeSince(selected, active) ?? Infinity) + (active?.skew ?? 0) - 30_000 ||
             !(await source.code.current(client))
           )
             throw new VaultError('This verification step changed.', 409);
@@ -1530,7 +1536,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               username: secret.username,
               expiresAt: selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
               blocked: false,
-              enteredAt: selected?.credential_entered_at?.getTime(),
+              enteredAt: selected?.credential_entered_at,
             });
             return false;
           }
@@ -1609,7 +1615,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             expiresAt:
               request?.expires_at ?? selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
             blocked: source.kind === 'form' && input.kind === 'password',
-            enteredAt: Date.now(),
+            enteredAt: 'now',
             kind: input.kind,
           });
           if (request && source.kind === 'form' && entryId)
@@ -1783,9 +1789,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const origin = credentialOrigin(raw.origin);
       const started = await currentTurn(pool, turn, ownerId);
       const root = started ? await rootTurn(pool, turn, ownerId) : undefined;
-      if (!root) return false;
+      if (!started || !root) return false;
       const selected = await selection(root, ownerId, origin);
-      const enteredAt = emailCodeSince(selected, started?.started_at);
+      const enteredAt = emailCodeSince(selected, started);
       if (!enteredAt) return false;
       if (await automaticUse(pool, root, origin, 'otp', null, enteredAt)) return false;
       const fresh = await inspectRequest(browserOf(turn), raw);
@@ -1799,7 +1805,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const code = await Promise.race([
         options
           .emailCode(
-            { recipient: username, origin, after: enteredAt - 30_000, before: Date.now() },
+            {
+              recipient: username,
+              origin,
+              after: enteredAt + started.skew - 30_000,
+              before: Date.now(),
+            },
             signal,
           )
           .catch(() => undefined),

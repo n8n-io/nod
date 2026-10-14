@@ -21,7 +21,9 @@ export interface Session {
     text: string,
     options?: { replyTo?: string },
   ): Promise<{ turnId: string; messageId: string }>;
-  task(requestId: string): Promise<{ id: string; lastMessageId?: string } | undefined>;
+  task(
+    requestId: string,
+  ): Promise<{ id: string; lastMessageId?: string; questionId?: string } | undefined>;
   sayTogether(texts: string[]): Promise<void>;
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
@@ -260,15 +262,26 @@ export function createSession(options: {
       return post('/api/messages', { text, replyToMessageId: sendOptions?.replyTo });
     },
     async task(requestId) {
+      const latest = (waiting: boolean) => `(SELECT m.id FROM messages m
+        JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+        WHERE u.session_id=t.id AND u.owner_id=t.owner_id AND m.role='assistant' AND m.text<>''
+          ${waiting ? "AND u.status='waiting' AND u.waiting_reason IN ('question','approval')" : ''}
+        ORDER BY m.created_at DESC,m.id DESC LIMIT 1)`;
       const row = (
         await pool.query(
-          `SELECT t.id,(SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE u.session_id=t.id
-             AND m.role='assistant' AND m.text<>'' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last
-           FROM tasks t WHERE t.source_message_id=$1`,
-          [requestId],
+          `SELECT t.id,${latest(false)} AS last,${latest(true)} AS question
+           FROM tasks t JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
+           WHERE t.source_message_id=$1 AND t.thread_id=$2`,
+          [requestId, await thread()],
         )
       ).rows[0];
-      return row && { id: row.id as string, lastMessageId: row.last ?? undefined };
+      return (
+        row && {
+          id: row.id as string,
+          lastMessageId: row.last ?? undefined,
+          questionId: row.question ?? undefined,
+        }
+      );
     },
     async sayTogether(texts) {
       for (const text of texts) {

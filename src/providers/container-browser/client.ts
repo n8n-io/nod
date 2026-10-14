@@ -503,10 +503,11 @@ export function createBridgeComputer(options: {
     },
     discard: async (id, generation) => {
       const threadId = threadIdentity(id);
-      if (generation !== undefined && generation !== generationOf(threadId)) return;
+      if (generation !== undefined && generation !== generationOf(threadId)) return false;
       generations.set(threadId, generationOf(threadId) + 1);
       await call({ method: 'discard', threadId });
       screens.delete(threadId);
+      return true;
     },
     dispose: () => {
       disposing ??= (async () => {

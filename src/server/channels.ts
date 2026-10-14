@@ -74,7 +74,7 @@ interface ChannelOptions {
     action: { approvalId: string; approved: boolean } | { taskId: string },
     channel: string,
   ) => Promise<unknown>;
-  taskMessages?: (messageIds: string[]) => Promise<TaskMessages>;
+  taskMessages?: (messageIds: string[], open?: boolean) => Promise<TaskMessages>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -173,10 +173,9 @@ function liveMessage(messageId: string, text: string, previews: boolean, view: T
 }
 
 async function documentPdf(file: MessagingAttachment): Promise<MessagingAttachment> {
-  const bytes =
-    file.mimeType === 'text/markdown'
-      ? await markdownPdf(Buffer.from(file.bytes).toString('utf8'))
-      : undefined;
+  const bytes = ['text/markdown', 'text/x-markdown'].includes(file.mimeType)
+    ? await markdownPdf(Buffer.from(file.bytes).toString('utf8'))
+    : undefined;
   return bytes
     ? {
         name: `${file.name.replace(/\.(?:md|markdown)$/i, '')}.pdf`,
@@ -294,23 +293,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let drainRequested = false;
   let lastError: string | null = null;
 
-  async function replyWithoutTurn(
-    client: PoolClient,
-    inbox: ChannelIdentity & {
-      sourceId: string;
-      threadId: string;
-      sentAt: Date | string;
-      text: string;
-    },
-    compose: (
-      threadId: string | null,
-    ) =>
-      | Promise<{ text: string; attachments?: Artifact[] }>
-      | { text: string; attachments?: Artifact[] }
-      | undefined,
-  ) {
+  type Receipt = ChannelIdentity & {
+    sourceId: string;
+    threadId: string;
+    sentAt: Date | string;
+    text: string;
+  };
+
+  async function saveReceipt(database: Pick<PoolClient, 'query'>, inbox: Receipt) {
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
-    const receipt = await client.query(
+    const receipt = await database.query(
       `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,owner_id,channel)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'discarded',$9,$10) ON CONFLICT(source_id) DO NOTHING`,
       [
@@ -326,7 +318,21 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         conversationChannel(inbox),
       ],
     );
-    if (!receipt.rowCount) return;
+    return Boolean(receipt.rowCount);
+  }
+
+  async function replyWithoutTurn(
+    client: PoolClient,
+    inbox: Receipt,
+    compose: (
+      threadId: string | null,
+    ) =>
+      | Promise<{ text: string; attachments?: Artifact[] }>
+      | { text: string; attachments?: Artifact[] }
+      | undefined,
+    saved = false,
+  ) {
+    if (!saved && !(await saveReceipt(client, inbox))) return;
     const thread: string | null = options.activeThread
       ? (await options.activeThread(client)).id
       : ((
@@ -500,17 +506,15 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
     if (closed || replacing || !permitted(identity) || sentAt.getTime() > Date.now() + 300000)
       return;
-    const sourceId = `channel:${channelId}:${accountId}:${pressId}`;
+    const inbox = {
+      ...identity,
+      sourceId: `channel:${channelId}:${accountId}:${pressId}`,
+      threadId,
+      sentAt,
+      text: data,
+    };
     try {
-      if (
-        (
-          await pool.query('SELECT 1 FROM channel_inbox WHERE source_id=$1 AND owner_id=$2', [
-            sourceId,
-            ownerId,
-          ])
-        ).rowCount
-      )
-        return;
+      if (!(await saveReceipt(pool, inbox))) return;
       const match = pressData.exec(data);
       let note = match && options.press ? undefined : 'This button no longer works.';
       if (match && options.press)
@@ -524,14 +528,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           if (typeof status !== 'number' || status >= 500 || !(cause instanceof Error)) throw cause;
           note = cause.message;
         }
-      if (await transport.ack?.({ channelId, accountId, pressId, ...(note ? { text: note } : {}) }))
-        return;
-      await inTransaction((client) =>
-        replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text: data }, () =>
-          note ? { text: note } : undefined,
-        ),
-      );
-      if (note) void drain();
+      const acked = await transport.ack?.({
+        channelId,
+        accountId,
+        pressId,
+        ...(note ? { text: note } : {}),
+      });
+      if (acked || !note) return;
+      const reply = { text: note };
+      await inTransaction((client) => replyWithoutTurn(client, inbox, () => reply, true));
+      void drain();
     } catch (cause) {
       logFailure('channel_press_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
@@ -713,10 +719,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         continue;
       }
-      const view = await options.taskMessages?.([row.message_id]).catch(() => undefined);
-      const taskResult = Boolean(
-        view?.tasks.some((task) => task.resultMessageId === row.message_id),
-      );
+      const view = await options.taskMessages?.([row.message_id]).catch(() => null);
+      const taskResult =
+        view === null ||
+        Boolean(view?.tasks.some((task) => task.resultMessageId === row.message_id));
       let attachments: MessagingAttachment[] | undefined;
       let privateLinks: { name: string; url: string }[] = [];
       const canDeliverAttachments = channels.find(
@@ -845,7 +851,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         [ownerId, ...values],
       );
     const rows = (await select(`(NOT e.final OR e.state='pending')`)).rows;
-    const view = await options.taskMessages(rows.map((row) => row.message_id));
+    const view = await options.taskMessages(
+      rows.map((row) => row.message_id),
+      true,
+    );
     const reopened = view.tasks.flatMap((task) =>
       task.onItMessageId &&
       isOpenTask(task) &&

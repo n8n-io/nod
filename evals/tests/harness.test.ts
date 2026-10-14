@@ -24,7 +24,7 @@ import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
-import { requireBackgroundPrompts, type Run } from '../src/trace.ts';
+import { requireBackgroundPrompts, sessionEvents, type Run } from '../src/trace.ts';
 import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
@@ -1490,6 +1490,24 @@ test('missing executed background captures are measurement errors, not isolation
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
+});
+
+test('the trace reads the chat transcript and skips saved task sessions, which are captured as background turns', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-eval-sessions-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const entry = (text: string) =>
+    `${JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text }] } })}\n`;
+  for (const [session, text] of [
+    ['chat', 'Chat reply.'],
+    ['task', 'Task reply.'],
+  ]) {
+    await mkdir(join(root, session));
+    await writeFile(join(root, session, 'session.jsonl'), entry(text));
+  }
+  const texts = (await sessionEvents(root, new Set(['task']))).map(
+    (item) => item.message.content[0].text,
+  );
+  assert.deepEqual(texts, ['Chat reply.']);
 });
 
 test('fake calendar updates preserve identity and reject invalid times without mutation', async () => {

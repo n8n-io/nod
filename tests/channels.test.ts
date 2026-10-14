@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { channelReply, createChannels } from '../src/server/channels.ts';
@@ -1362,6 +1363,7 @@ test(
     const stale = randomUUID();
     const taskId = randomUUID();
     const pressed: unknown[] = [];
+    let hold: Promise<void> | undefined;
     const transport = createChatSdkTransport(pool, fixtureEnv);
     const app = Fastify();
     const channels = await createChannels(pool, {
@@ -1374,6 +1376,7 @@ test(
       },
       press: async (action, channel) => {
         pressed.push({ action, channel: channel.split(':')[0] });
+        await hold;
         if ('approvalId' in action && action.approvalId !== known)
           throw Object.assign(new Error('This confirmation is already handled.'), {
             statusCode: 409,
@@ -1477,8 +1480,18 @@ test(
 
       await tap('wamid.fixture-stale', `a:${stale}:y`);
       await tap('wamid.fixture-stale', `a:${stale}:y`);
+      let release!: () => void;
+      hold = new Promise((resolve) => {
+        release = resolve;
+      });
+      const first = tap('wamid.fixture-twice', `a:${known}:n`);
+      while (pressed.length < 5) await delay(5);
+      const repeat = tap('wamid.fixture-twice', `a:${known}:n`);
+      await Promise.race([repeat, delay(200)]);
+      release();
+      await Promise.all([first, repeat]);
       await channels.drain();
-      assert.equal(pressed.length, 4);
+      assert.equal(pressed.length, 5);
       const notes = calls.filter((call) => call.url.includes('graph.facebook.com'));
       assert.equal(notes.length, 1);
       assert.match(JSON.stringify(notes[0].body), /already handled/);
@@ -1492,12 +1505,14 @@ test(
         channelId: 'telegram',
         accountId: '987',
         threadId: 'telegram:123456',
-        text: 'Send the **email**?',
+        text: 'Send the **email** with the [report](https://example.test/report)?',
         replyTo: '123456:101',
         buttons,
       });
       assert.equal(sent.editable, true);
       const question = calls.at(-1)!.body;
+      assert.match(String(question.text), /\[report\]\(https:\/\/example\.test\/report\)/);
+      assert.equal(question.parse_mode, 'MarkdownV2');
       assert.deepEqual(question.reply_markup, {
         inline_keyboard: [buttons.map(({ id, title }) => ({ text: title, callback_data: id }))],
       });
@@ -1548,6 +1563,22 @@ test(
         transport.edit!({ ...edit, channelId: 'whatsapp', accountId: '555000' }),
       );
       assert.equal(calls.filter((call) => call.url.endsWith('/editMessageText')).length, 2);
+      edits.push(
+        Response.json(
+          { ok: false, error_code: 400, description: "Bad Request: can't parse entities" },
+          { status: 400 },
+        ),
+        Response.json({ ok: true, result: true }),
+      );
+      await transport.edit!({ ...edit, text: 'See the [report](https://example.test/report).' });
+      const [formatted, plain] = calls
+        .filter((call) => call.url.endsWith('/editMessageText'))
+        .slice(2)
+        .map((call) => call.body);
+      assert.match(String(formatted.text), /\[report\]\(https:\/\/example\.test\/report\)/);
+      assert.equal(formatted.parse_mode, 'MarkdownV2');
+      assert.equal(plain.text, 'See the report (https://example.test/report).');
+      assert.equal(plain.parse_mode, undefined);
     } finally {
       await app.close();
       await pool.end();

@@ -21,6 +21,7 @@ const summarySchema = z.object({
   accountHandle: z.string().max(200).optional(),
   mode: z.enum(['polling', 'webhook']).optional(),
   webhookStatus: z.enum(['registered', 'manual_setup', 'registration_pending']).optional(),
+  webhookVersion: z.number().int().nonnegative().optional(),
   webhookUrl: z.url().max(2048).optional(),
   pairedUser: z.string().min(1).max(200).optional(),
   pairedUsername: z
@@ -268,32 +269,40 @@ export async function createChannelSettings(
     if (!options.verifier.register) throw new ChannelSetupFailure('activation_pending');
     await options.apply(await environment());
     await options.verifier.register(provider, configuration);
+    return registered(provider);
+  }
+  async function registered(provider: ChannelProvider) {
     const result = await pool.query<Pick<SettingsRow, 'summary'>>(
-      `UPDATE channel_settings SET summary=jsonb_set(summary,'{webhookStatus}','"registered"'),updated_at=now() WHERE owner_id=$1 AND provider=$2 AND enabled=true RETURNING summary`,
-      [owner, provider],
+      `UPDATE channel_settings SET summary=jsonb_set(jsonb_set(summary,'{webhookStatus}','"registered"'),'{webhookVersion}',to_jsonb($3::int)),updated_at=now() WHERE owner_id=$1 AND provider=$2 AND enabled=true RETURNING summary`,
+      [owner, provider, options.verifier.webhookVersion ?? 0],
     );
     return summarySchema.parse(result.rows[0]?.summary);
   }
   async function recover() {
     return exclusive(async () => {
-      const recovered = await reconcileClaims();
+      let recovered = await reconcileClaims();
       const { rows } = await pool.query<SettingsRow>(
         `SELECT * FROM channel_settings WHERE owner_id=$1 AND enabled=true
            AND (summary->>'webhookStatus'='registration_pending' OR (provider='telegram'
-             AND summary->>'mode'='webhook' AND summary->>'webhookStatus'='registered'))`,
-        [owner],
+             AND summary->>'mode'='webhook' AND summary->>'webhookStatus'='registered'
+             AND COALESCE((summary->>'webhookVersion')::int,0)<$2))`,
+        [owner, options.verifier.webhookVersion ?? 0],
       );
       for (const row of rows) {
         try {
+          const provider = providerSchema.parse(row.provider);
           const configuration = {
             environment: open(await encryptionKey(), owner, row),
             summary: summarySchema.parse(row.summary),
           };
-          if (configuration.summary.webhookStatus === 'registered')
-            await options.verifier.register?.('telegram', configuration);
-          else await activate(providerSchema.parse(row.provider), configuration);
+          if (configuration.summary.webhookStatus !== 'registered')
+            await activate(provider, configuration);
+          else if (options.verifier.register) {
+            await options.verifier.register(provider, configuration);
+            await registered(provider);
+          }
         } catch {
-          return false;
+          recovered = false;
         }
       }
       return recovered;

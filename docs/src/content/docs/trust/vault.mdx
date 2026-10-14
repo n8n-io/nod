@@ -73,7 +73,7 @@ A yes covers that website and account for the rest of that request, including th
 
 ## Verification codes
 
-When a website emails you a code, Otto can fetch it privately from your connected mailbox. The server checks the sender, recipient, time and account before entering it, and the model never sees it. Otherwise, enter the code in the private form, or reply with it in the chat where Otto asked, including Telegram or WhatsApp. Otto submits it privately and keeps it out of the chat history. Verification emails Otto reads through your apps come back without their content.
+When a website emails you a code, Otto can fetch it privately from your connected mailbox. The server checks the sender, recipient, time and account before entering it, and the model never sees it. It compares the sign-in time, the turn's start and earlier code entries on the database's clock, so a server clock that runs fast or slow can't refuse a code or let one fill twice. Otherwise, enter the code in the private form, or reply with it in the chat where Otto asked, including Telegram or WhatsApp. Otto submits it privately and keeps it out of the chat history. Verification emails Otto reads through your apps come back without their content.
 
 A code request from a task, a schedule or other background work stays open while you chat. A request from the chat closes when you send something else. If more than one sign-in waits for a code, Otto doesn't guess: reply with the code to a message from the work you want to finish, in the app where Otto asked.
 

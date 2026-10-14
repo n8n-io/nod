@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import type { PoolClient } from 'pg';
 import { pool, transaction } from './db.ts';
 import { ownerId } from './config.ts';
@@ -16,7 +17,8 @@ import { isReversiblePlanAction } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { sessionOfMessageSql, taskOfTurn, taskSessionSql, turnChain } from './turn-chain.ts';
-import { taskFolder } from '../ports/thread-identity.ts';
+import { inFolder, taskFolder } from '../ports/thread-identity.ts';
+import { saveIntegrationFiles } from './integration-files.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -117,6 +119,7 @@ export async function createApprovals(
   preflight?: (action: string, args: Record<string, unknown>) => Promise<void>,
   decide?: (turn: TurnRef, action: string, args: Record<string, unknown>) => Promise<boolean>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
+  writeFile?: (threadId: string, path: string, bytes: Uint8Array) => Promise<void>,
 ) {
   await pool.query(`CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
@@ -134,7 +137,7 @@ export async function createApprovals(
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 
-  async function run(approval: Record<string, any>) {
+  async function run(approval: Record<string, any>, folder?: string) {
     try {
       let sourceTurnId: string | undefined;
       if (isReversiblePlanAction(approval.action) && approval.source_message_id) {
@@ -147,15 +150,23 @@ export async function createApprovals(
         if (!source?.turn_id) throw new Error('The schedule instruction is unavailable.');
         sourceTurnId = source.turn_id;
       }
-      const task = await taskOfTurn(pool, ownerId, approval.execution_turn_id);
       const result = await execute(approval.action, approval.args, {
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
         sourceMessageId: approval.source_message_id,
         ...(sourceTurnId ? { sourceTurnId } : {}),
-        ...(task ? { folder: taskFolder(task.id) } : {}),
+        ...(folder ? { folder } : {}),
       });
-      const snapshot = JSON.parse(JSON.stringify(result ?? null));
+      const saved = await saveIntegrationFiles(
+        result,
+        writeFile &&
+          (async (file) => {
+            const name = `${randomUUID()}-${basename(file.name)}`;
+            await writeFile(approval.thread_id, inFolder(folder, name), file.bytes);
+            return name;
+          }),
+      );
+      const snapshot = JSON.parse(JSON.stringify(saved.value ?? null));
       await pool.query(
         "UPDATE approvals SET status='completed',result=$2 WHERE id=$1 AND owner_id=$3 AND status='executing'",
         [approval.id, JSON.stringify(snapshot), ownerId],
@@ -268,6 +279,7 @@ export async function createApprovals(
             cached: false as const,
             approval: pending,
             question: pending.question as string,
+            task,
           };
       }
       const direct = allowed;
@@ -318,14 +330,14 @@ export async function createApprovals(
           ],
         )
       ).rows[0];
-      return { cached: false as const, approval, question };
+      return { cached: false as const, approval, question, task };
     });
     if (proposal.cached) return proposal.result;
     if (proposal.question) {
       refresh();
       return { requiresConfirmation: true, question: proposal.question };
     }
-    return run(proposal.approval);
+    return run(proposal.approval, proposal.task ? taskFolder(proposal.task.id) : undefined);
   }
 
   async function confirmationFor(
@@ -522,13 +534,14 @@ export async function createApprovals(
       ).rows[0];
       if (!selected) return undefined;
       await preflight?.(selected.action, selected.args);
+      const task = await taskOfTurn(client, ownerId, turnId);
       signal.throwIfAborted();
       await client.query("UPDATE approvals SET status='executing' WHERE id=$1", [selected.id]);
-      return selected;
+      return { selected, folder: task ? taskFolder(task.id) : undefined };
     });
     if (!approval) return undefined;
-    const result = await run(approval);
-    const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(result) ?? 'null')}`;
+    const result = await run(approval.selected, approval.folder);
+    const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.selected.action} result`, JSON.stringify(result) ?? 'null')}`;
     signal.throwIfAborted();
     return { prompt };
   }

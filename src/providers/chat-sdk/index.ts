@@ -2,8 +2,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   Chat,
   ConsoleLogger,
-  markdownToPlainText,
   parseMarkdown,
+  root,
+  text as textNode,
+  toPlainText,
+  walkAst,
   type AdapterPostableMessage,
 } from 'chat';
 import { createTelegramAdapter } from '@chat-adapter/telegram';
@@ -113,6 +116,16 @@ function keyboard(buttons: MessagingButton[]) {
       ? [buttons.map((button) => ({ text: button.title, callback_data: button.id }))]
       : [],
   };
+}
+
+function plainText(markdown: string) {
+  return toPlainText(
+    walkAst(parseMarkdown(markdown), (node) => {
+      if (node.type !== 'link') return node;
+      const label = toPlainText(root(node.children));
+      return textNode(label && label !== node.url ? `${label} (${node.url})` : node.url);
+    }),
+  );
 }
 
 function sameSecret(actual: string | undefined, expected: string) {
@@ -246,6 +259,21 @@ export function createChatSdkTransport(
       status: reply.error_code ?? response.status,
       description: reply.description ?? '',
     });
+  }
+  async function telegramText(method: string, body: Record<string, unknown>, markdown: string) {
+    const plain = plainText(markdown);
+    if (plain.length > 4096) return telegramCall(method, { ...body, text: plain.slice(0, 4096) });
+    try {
+      return await telegramCall(method, {
+        ...body,
+        text: telegram!.renderFormatted(parseMarkdown(markdown)),
+        parse_mode: 'MarkdownV2',
+      });
+    } catch (error) {
+      if (!/can't parse entities/i.test(String((error as { description?: unknown }).description)))
+        throw error;
+      return telegramCall(method, { ...body, text: plain });
+    }
   }
   async function whatsappButtons(input: {
     threadId: string;
@@ -533,24 +561,27 @@ export function createChatSdkTransport(
       const attachments = input.attachments ?? [];
       if (input.buttons && !attachments.length) {
         if (input.channelId === 'telegram' && telegram) {
-          const text = markdownToPlainText(input.text);
-          if (text.trim() && text.length <= 4096) {
+          const plain = plainText(input.text);
+          if (plain.trim() && plain.length <= 4096) {
             const sent = z
               .object({ message_id: z.number().int(), chat: z.object({ id: z.number().int() }) })
               .parse(
-                await telegramCall('sendMessage', {
-                  chat_id: telegram.decodeThreadId(input.threadId).chatId,
-                  text,
-                  ...(input.buttons.length ? { reply_markup: keyboard(input.buttons) } : {}),
-                  ...(input.replyTo
-                    ? {
-                        reply_parameters: {
-                          message_id: Number(input.replyTo.split(':').at(-1)),
-                          allow_sending_without_reply: true,
-                        },
-                      }
-                    : {}),
-                }),
+                await telegramText(
+                  'sendMessage',
+                  {
+                    chat_id: telegram.decodeThreadId(input.threadId).chatId,
+                    ...(input.buttons.length ? { reply_markup: keyboard(input.buttons) } : {}),
+                    ...(input.replyTo
+                      ? {
+                          reply_parameters: {
+                            message_id: Number(input.replyTo.split(':').at(-1)),
+                            allow_sending_without_reply: true,
+                          },
+                        }
+                      : {}),
+                  },
+                  input.text,
+                ),
               );
             return { ids: [`${sent.chat.id}:${sent.message_id}`], editable: true };
           }
@@ -630,12 +661,15 @@ export function createChatSdkTransport(
     async edit(input) {
       if (input.channelId !== 'telegram' || !telegram || !ready(input.channelId, input.accountId))
         throw new Error('This channel cannot edit messages.');
-      await telegramCall('editMessageText', {
-        chat_id: telegram.decodeThreadId(input.threadId).chatId,
-        message_id: Number(input.messageId.split(':').at(-1)),
-        text: markdownToPlainText(input.text).slice(0, 4096),
-        reply_markup: keyboard(input.buttons),
-      }).catch((error: unknown) => {
+      await telegramText(
+        'editMessageText',
+        {
+          chat_id: telegram.decodeThreadId(input.threadId).chatId,
+          message_id: Number(input.messageId.split(':').at(-1)),
+          reply_markup: keyboard(input.buttons),
+        },
+        input.text,
+      ).catch((error: unknown) => {
         if (
           !/message is not modified/i.test(String((error as { description?: unknown }).description))
         )

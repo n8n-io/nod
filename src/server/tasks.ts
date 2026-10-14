@@ -130,6 +130,7 @@ export function createTasks(options: {
     openOnly = false,
     taskId: string | null = null,
     messageIds: string[] | null = null,
+    withOpen = false,
   ) {
     return (
       await pool.query<Row>(
@@ -157,9 +158,9 @@ export function createTasks(options: {
            AND (NOT $3::boolean OR t.state IN ('queued','open','waiting'))
            AND ($4::uuid IS NULL OR t.id=$4)
            AND ($5::uuid[] IS NULL OR t.on_it_message_id=ANY($5) OR t.result_message_id=ANY($5)
-             OR t.state IN ('queued','open','waiting'))
+             OR ($6::boolean AND t.state IN ('queued','open','waiting')))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
-        [ownerId, threadId, openOnly, taskId, messageIds],
+        [ownerId, threadId, openOnly, taskId, messageIds, withOpen],
       )
     ).rows;
   }
@@ -211,9 +212,9 @@ export function createTasks(options: {
     return (await rows(threadId ?? null)).map(view);
   }
 
-  async function channelMessages(messageIds: string[]) {
+  async function channelMessages(messageIds: string[], open = false) {
     const [tasks, confirmations] = await Promise.all([
-      rows(null, false, null, messageIds),
+      rows(null, false, null, messageIds, open),
       pool.query<{ id: string; messageId: string }>(
         `SELECT a.id,a.confirmation_message_id AS "messageId" FROM approvals a
          JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id

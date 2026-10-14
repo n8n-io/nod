@@ -320,6 +320,7 @@ export interface ChannelSetupSummary {
   accountHandle?: string;
   mode?: 'polling' | 'webhook';
   webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
+  webhookVersion?: number;
   webhookUrl?: string;
   pairedUser?: string;
   pairedUsername?: string;

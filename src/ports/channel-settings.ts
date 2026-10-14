@@ -4,6 +4,7 @@ export interface ChannelSetupConfiguration {
   summary: ChannelSetupSummary;
 }
 export interface ChannelSetupVerifier {
+  webhookVersion?: number;
   verify(provider: ChannelProvider, input: unknown): Promise<ChannelSetupConfiguration>;
   register?(provider: ChannelProvider, configuration: ChannelSetupConfiguration): Promise<void>;
 }
