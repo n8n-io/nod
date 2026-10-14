@@ -143,7 +143,10 @@ export function createRuntimeVerifier(options: {
     const claims = verifyRuntimeSignature(options, token, method, target);
     if (!claims || claims.generation !== options.generation) return null;
     const time = now();
-    for (const [nonce, expires] of accepted) if (expires <= time) accepted.delete(nonce);
+    for (const [nonce, expires] of accepted) {
+      if (expires > time) break;
+      accepted.delete(nonce);
+    }
     if (accepted.has(claims.nonce)) return null;
     accepted.set(claims.nonce, claims.expiresAt);
     return claims;
