@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { EditorContent, useEditor } from '@tiptap/react';
 import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } from 'lucide-react';
 import type { Artifact, Message } from '../../shared/contracts';
+import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
 import { createComposerExtensions } from '../lib/composer-editor';
 import { EditorFormatting } from './editor-formatting';
@@ -138,8 +139,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setError('Attach up to 20 files per message.');
       return;
     }
-    if (files.some((file) => file.size > 15 * 1024 * 1024)) {
-      setError('Each file must be 15 MB or smaller.');
+    if (files.some((file) => file.size > fileBytes)) {
+      setError(`Each file must be ${fileBytes / 1024 / 1024} MB or smaller.`);
       return;
     }
     const items: DraftAttachment[] = files.map((file) => {

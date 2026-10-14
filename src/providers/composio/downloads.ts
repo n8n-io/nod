@@ -1,8 +1,8 @@
 import { publicUrl, type AddressResolver } from '../agent-browser/network.ts';
 import { requestPublicPreview, type PreviewRequest } from '../public-web/link-preview.ts';
-import { appFile, appFileBytes } from '../app-files.ts';
-
-const maximumFiles = 10;
+import { appFile } from '../app-files.ts';
+import { IntegrationDownload } from '../../ports/integrations.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 async function interrupted<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();
@@ -39,7 +39,7 @@ export function createComposioFiles(
           request({
             ...resolved,
             signal,
-            maxBytes: appFileBytes,
+            maxBytes: fileBytes,
             metadata: false,
             purpose: 'download',
           }),
@@ -57,7 +57,6 @@ export function createComposioFiles(
     throw new Error('Too many file redirects.');
   }
   return async (result: unknown, signal: AbortSignal): Promise<unknown> => {
-    let files = 0;
     const visit = async (value: unknown): Promise<unknown> => {
       if (typeof value === 'string' && value.includes('"s3url"'))
         try {
@@ -74,21 +73,22 @@ export function createComposioFiles(
             Object.entries(record).map(async ([key, item]) => [key, await visit(item)]),
           ),
         );
-      const name = record.name ?? new URL(record.s3url, 'https://invalid').pathname;
+      const url = record.s3url;
+      const name = record.name ?? new URL(url, 'https://invalid').pathname;
       const mimeType = record.mimetype ?? record.mimeType;
-      if (++files > maximumFiles)
-        return { name, mimeType, error: 'Not downloaded: too many files in one result.' };
-      try {
-        const operation = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-        return appFile(name, mimeType, await download(record.s3url, operation));
-      } catch (error) {
-        signal.throwIfAborted();
-        return {
-          name,
-          mimeType,
-          error: `The file could not be downloaded: ${(error instanceof Error ? error.message : String(error)).replace(/https?:\/\/\S+/g, '[file URL]')}`,
-        };
-      }
+      return new IntegrationDownload(async () => {
+        try {
+          const operation = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+          return appFile(name, mimeType, await download(url, operation));
+        } catch (error) {
+          signal.throwIfAborted();
+          return {
+            name,
+            mimeType,
+            error: `The file could not be downloaded: ${(error instanceof Error ? error.message : String(error)).replace(/https?:\/\/\S+/g, '[file URL]')}`,
+          };
+        }
+      });
     };
     return visit(result);
   };

@@ -9,6 +9,13 @@ import { createVault } from '../src/server/vault.ts';
 import { channelConfiguration, createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 
+const attachment = (name: string, mimeType: string, text: string) => ({
+  name,
+  mimeType,
+  size: Buffer.byteLength(text),
+  read: async () => Buffer.from(text),
+});
+
 const fixtureEnv = {
   TELEGRAM_ENABLED: 'true',
   TELEGRAM_BOT_TOKEN: '987:fixture-not-live',
@@ -642,9 +649,7 @@ test(
       }),
       resolveAttachments: async (thread, ids) => {
         resolved.push([thread, ...ids]);
-        return [
-          { name: 'otto-memory.md', mimeType: 'text/markdown', bytes: Buffer.from('# Memory\n') },
-        ];
+        return [attachment('otto-memory.md', 'text/markdown', '# Memory\n')];
       },
       submit: async (_text, sourceId) => {
         submitted.push(sourceId);
@@ -940,7 +945,7 @@ test(
         assert.equal(resolvedThreadId, threadId);
         if (ids.length !== 1 || ids[0] !== whatsappFileId)
           throw new Error('Attachment unavailable.');
-        return [{ name: 'research.csv', mimeType: 'text/csv', bytes: Buffer.from('A,B\n1,2\n') }];
+        return [attachment('research.csv', 'text/csv', 'A,B\n1,2\n')];
       },
       subscribe: () => () => {},
       intervalMs: 600000,
@@ -1163,7 +1168,7 @@ test(
         resolveAttachments: async (_threadId, ids) => {
           if (ids.length !== 1 || ids[0] !== whatsappFileId)
             throw new Error('Attachment unavailable.');
-          return [{ name: 'research.csv', mimeType: 'text/csv', bytes: Buffer.from('A,B\n1,2\n') }];
+          return [attachment('research.csv', 'text/csv', 'A,B\n1,2\n')];
         },
         transport: createChatSdkTransport(pool, {
           ...fixtureEnv,

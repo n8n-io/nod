@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { publicUrl } from '../agent-browser/network.ts';
 import type { DiscoveredTransport } from '../../ports/discovered.ts';
 import { appFile, mcpFiles } from '../app-files.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 const textType =
   /^$|^text\/|[/+]json\b|[/+]xml\b|^application\/(x-www-form-urlencoded|javascript)\b/i;
@@ -31,7 +32,7 @@ export async function safeRemoteFetch(
   input: string | URL | Request,
   init?: RequestInit,
   dependencies = { validate: publicUrl, request: httpsRequest },
-  maximumRequestBytes = 1024 * 1024,
+  maximumRequestBytes = fileBytes,
   redirects = 5,
 ): Promise<Response> {
   const prepared = new Request(input, init);

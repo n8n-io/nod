@@ -3,12 +3,8 @@ import { mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../../ports/object-storage.ts';
-import {
-  maxObjectBytes,
-  objectFailure,
-  objectKey,
-  objectLimit,
-} from '../../ports/object-storage-validation.ts';
+import { objectFailure, objectKey, objectLimit } from '../../ports/object-storage-validation.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 export function createFilesystemObjectStore(root: string): PrivateObjectStore {
   const directory = resolve(root);
@@ -74,8 +70,8 @@ export function createFilesystemObjectStore(root: string): PrivateObjectStore {
     read,
     write: (key, bytes, { expectedVersion }) =>
       exclusive(key, async () => {
-        if (bytes.byteLength > maxObjectBytes) throw objectFailure();
-        const current = await read(key, maxObjectBytes);
+        if (bytes.byteLength > fileBytes) throw objectFailure();
+        const current = await read(key, fileBytes);
         if ((current?.version ?? null) !== expectedVersion) throw new ObjectStoreConflict();
         const temporary = path(key) + '.' + randomUUID();
         try {
@@ -103,7 +99,7 @@ export function createFilesystemObjectStore(root: string): PrivateObjectStore {
       }),
     remove: (key, options) =>
       exclusive(key, async () => {
-        const current = await read(key, maxObjectBytes);
+        const current = await read(key, fileBytes);
         if (options?.expectedVersion !== undefined && current?.version !== options.expectedVersion)
           throw new ObjectStoreConflict();
         await rm(path(key), { force: true });

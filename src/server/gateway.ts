@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AuthenticatedSession, AuthenticationProvider } from '../ports/authentication.ts';
 import type { TenantRuntimeHost } from '../ports/tenant-runtime.ts';
@@ -10,6 +10,7 @@ import { createDeploymentControl, deploymentHeader } from './deployment-control.
 import { deploymentBodyLimit, deploymentPath } from './deployment-auth.ts';
 import type { Analytics } from './analytics.ts';
 import { loopbackHost } from '../shared/loopback.ts';
+import { fileBytes } from '../shared/files.ts';
 
 function privateRuntimeResponse(response: Response, artifact = false) {
   const headers = new Headers();
@@ -400,7 +401,7 @@ export async function createGateway(options: {
       });
     }
   }
-  app.all('/api/*', async (request, reply) => {
+  async function forward(request: FastifyRequest, reply: FastifyReply) {
     const session = await accounts.requirePrincipal(request, reply);
     if (!session) return;
     const url = new URL(request.url, origin);
@@ -461,7 +462,18 @@ export async function createGateway(options: {
         intervalMs: options.sessionCheckIntervalMs ?? 5_000,
       });
     return sendFetchResponse(reply, result);
-  });
+  }
+  app.post(
+    '/api/uploads',
+    {
+      bodyLimit: fileBytes + 1024 * 1024,
+      onRequest: async (request, reply) => {
+        if (!(await accounts.requirePrincipal(request, reply))) return reply;
+      },
+    },
+    forward,
+  );
+  app.all('/api/*', forward);
   app.addHook('onClose', async () => options.runtimes.close());
   return app;
 }

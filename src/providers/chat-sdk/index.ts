@@ -370,8 +370,8 @@ export function createChatSdkTransport(
         throw new Error('This channel does not support attachment delivery.');
       if (
         attachments.length > 10 ||
-        attachments.reduce((total, file) => total + file.bytes.byteLength, 0) > 15 * 1024 * 1024 ||
-        attachments.some((file) => !file.bytes.byteLength)
+        attachments.reduce((total, file) => total + file.size, 0) > 15 * 1024 * 1024 ||
+        attachments.some((file) => !file.size)
       )
         throw new Error('Attachments exceed the delivery limit.');
       await bot.initialize();
@@ -387,15 +387,15 @@ export function createChatSdkTransport(
             {
               type:
                 ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
-                file.bytes.byteLength <= 10 * 1024 * 1024
+                file.size <= 10 * 1024 * 1024
                   ? 'image'
                   : file.mimeType === 'video/mp4'
                     ? 'video'
                     : 'file',
-              data: Buffer.from(file.bytes),
+              data: Buffer.from(await file.read()),
               name: file.name,
               mimeType: file.mimeType,
-              size: file.bytes.byteLength,
+              size: file.size,
             },
           ],
         });

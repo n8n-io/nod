@@ -49,13 +49,13 @@ The workspace can reach the internet. Code that Otto runs there can download fil
 
 ## Give Otto files
 
-- **Attach them in chat.** You can attach up to 20 files per message, each 15 MB or smaller. Otto gets a copy in the workspace and sees images directly.
+- **Attach them in chat.** You can attach up to 20 files per message, each 90 MB or smaller. Otto gets a copy in the workspace and sees images directly.
 - **From your apps.** Files from a connected app, such as an email attachment, are saved privately in the workspace.
 - **From the web.** Files that Otto downloads in its [browser](/use/browser/) go into the workspace.
 
 ## Get files from Otto
 
-When Otto shares a file, it appears as an attachment in chat, up to 15 MB. Select it to preview or download it.
+When Otto shares a file, it appears as an attachment in chat, up to 90 MB. Select it to preview or download it.
 
 Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
 

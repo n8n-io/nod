@@ -2,6 +2,7 @@ import { createHash, createHmac, hkdfSync, randomUUID, timingSafeEqual } from 'n
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { fileBytes } from '../shared/files.ts';
 
 const envelope = z
   .object({
@@ -197,7 +198,7 @@ export function registerRuntimeAccess(
     for await (const chunk of payload) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.length;
-      if (size > 16 * 1024 * 1024) {
+      if (size > fileBytes + 1024 * 1024) {
         reply.code(413).send({ error: 'This request is too large.' });
         return Readable.from([]);
       }

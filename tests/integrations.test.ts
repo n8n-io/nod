@@ -38,6 +38,7 @@ import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import type { Connection } from '../src/shared/contracts.ts';
+import { fileBytes } from '../src/shared/files.ts';
 import { fakeComputer, fakeWorkspace, fakeExecution } from './runtime-fixtures.ts';
 
 function fakeProvider(session: IntegrationSession): IntegrationProvider {
@@ -3386,10 +3387,10 @@ test(
     ] as const)
       await assert.rejects(f.service.execute(owner, 'GMAIL_SEND_EMAIL', input, current));
     assert.equal(stored.size, uploadCount);
-    files.set('report.pdf', Buffer.alloc(15 * 1024 * 1024));
+    files.set('report.pdf', Buffer.alloc(fileBytes));
     await assert.rejects(
       f.service.execute('local-development', 'GMAIL_SEND_EMAIL', args, turn),
-      /too large|15 MB/,
+      /too large|between 1 byte/,
     );
     assert.equal(delivered.length, 1);
     assert.equal(stored.size, uploadCount);

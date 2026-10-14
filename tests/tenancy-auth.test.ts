@@ -183,6 +183,28 @@ describe('gateway', () => {
     assert.equal(f.calls.length, 0);
   });
 
+  test('gateway takes file-sized bodies only as uploads from signed-in users', async () => {
+    const f = await fixture();
+    try {
+      const big = Buffer.alloc(20 * 1024 * 1024, 1);
+      const post = (url: string, headers: Record<string, string>) =>
+        f.app.inject({
+          method: 'POST',
+          url,
+          headers: { ...headers, origin, 'content-type': 'application/octet-stream' },
+          payload: big,
+        });
+      assert.equal((await post('/api/uploads', { host })).statusCode, 401);
+      assert.equal(f.calls.length, 0);
+      assert.equal((await post('/api/messages', f.headers())).statusCode, 413);
+      assert.equal(f.calls.length, 0);
+      assert.equal((await post('/api/uploads', f.headers())).statusCode, 200);
+      assert.equal(f.calls.at(-1)!.body.length, big.length);
+    } finally {
+      await f.app.close();
+    }
+  });
+
   test('gateway routes two signed users only by their cookie identity and strips client routing credentials', async () => {
     const f = await fixture();
     try {
@@ -1559,7 +1581,8 @@ describe('signed multipart', () => {
         }
       });
       const { createApp } = await import('../src/server/app.ts');
-      const { localArtifacts, maxFileSize } = await import('../src/server/artifacts.ts');
+      const { localArtifacts } = await import('../src/server/artifacts.ts');
+      const { fileBytes } = await import('../src/shared/files.ts');
       const { pool } = await import('../src/server/db.ts');
       const writes: { bytes: Buffer; name: string; mimeType: string }[] = [];
       const app = await createApp({
@@ -1648,18 +1671,18 @@ describe('signed multipart', () => {
                 bytes: Buffer.from('value'),
               })),
             ]),
-            form([{ ...upload, bytes: Buffer.alloc(maxFileSize + 1) }]),
-            Buffer.alloc(16 * 1024 * 1024 + 1),
+            form([{ ...upload, bytes: Buffer.alloc(fileBytes + 1) }]),
+            Buffer.alloc(fileBytes + 1024 * 1024 + 1),
           ]) {
             assert.equal((await send('/api/uploads', body)).status, 413);
             assert.equal(writes.length, before);
           }
           const accepted = await send(
             '/api/uploads',
-            form([{ ...upload, bytes: Buffer.alloc(maxFileSize) }]),
+            form([{ ...upload, bytes: Buffer.alloc(fileBytes) }]),
           );
           assert.equal(accepted.status, 200);
-          assert.equal(writes.at(-1)!.bytes.length, maxFileSize);
+          assert.equal(writes.at(-1)!.bytes.length, fileBytes);
         },
       );
     },

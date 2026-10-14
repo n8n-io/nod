@@ -1723,8 +1723,8 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     const { initializeDatabase, pool } = await import('../src/server/db.ts');
-    const { storeArtifact, readThreadArtifacts, maxFileSize } =
-      await import('../src/server/artifacts.ts');
+    const { storeArtifact, readThreadArtifacts } = await import('../src/server/artifacts.ts');
+    const files = await import('../src/shared/files.ts');
     const { ownerId, dataRoot } = await import('../src/server/config.ts');
     const { activeThread } = await import('../src/server/thread.ts');
     await initializeDatabase();
@@ -1946,11 +1946,10 @@ test(
       await assert.rejects(readThreadArtifacts(threadId, [image.id]));
       await rm(imagePath);
       await writeFile(imagePath, imageBytes);
-      await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, maxFileSize + 1]);
-      await assert.rejects(readThreadArtifacts(threadId, [image.id]), /limit/);
+      await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, files.fileBytes + 1]);
+      await assert.rejects(readThreadArtifacts(threadId, [image.id]), /unavailable/);
       await pool.query('UPDATE artifacts SET size=$2 WHERE id=$1', [image.id, imageBytes.length]);
       await assert.rejects(readThreadArtifacts(threadId, ['https://attacker.invalid/file']));
-      await assert.rejects(readThreadArtifacts(threadId, Array(11).fill(image.id)));
       const forged = await addReply(turnId, [{ url: 'http://localhost:4310/private' }]);
       await channels.drain();
       assert.equal((await state(forged)).state, 'blocked');

@@ -317,7 +317,7 @@ export const toolDefinitions = {
   ),
   apps: defineTool(
     'apps',
-    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 15 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Files that an action returns are saved privately in the workspace as {workspaceFile, name, mimeType, size}, and you see returned images. Read them again with read; share one with share_file.',
+    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 90 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Files that an action returns are saved privately in the workspace as {workspaceFile, name, mimeType, size}, and you see returned images. Read them again with read; share one with share_file.',
     Type.Object({
       action: Type.String({ maxLength: 150 }),
       args: Type.Record(Type.String(), Type.Unknown()),

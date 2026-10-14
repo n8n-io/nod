@@ -50,9 +50,9 @@ Nothing comes from the workspace user's files or settings. A program that the mo
 
 ## Send and receive files
 
-To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them. Files in one action can total 15 MB. If the action waits for your approval, the attachment can't change in the meantime.
+To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them. Files in one action can total 90 MB. If the action waits for your approval, the attachment can't change in the meantime.
 
-Files that apps send back are saved privately in the workspace. Otto sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until Otto shares it.
+Files that apps send back, up to 90 MB each, are saved privately in the workspace one at a time. Otto sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until Otto shares it.
 
 MCP servers, APIs and CLIs use their own upload methods.
 

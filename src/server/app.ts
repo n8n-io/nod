@@ -16,7 +16,7 @@ import {
   runtimeGeneration,
 } from './config.ts';
 import { events, type ServerEvent } from './events.ts';
-import { artifactView, maxFileSize, localArtifacts, type ArtifactService } from './artifacts.ts';
+import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
   activeThread,
   reactToAssistantMessage,
@@ -118,10 +118,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     });
   else if (desktopAccess && dependencies.admission)
     registerWorkAdmission(app, dependencies.admission);
-  const uploads = createMultipartReader({
-    maxFileSize,
-    verifiedBody: runtimeAccess?.takeBody,
-  });
+  const uploads = createMultipartReader({ verifiedBody: runtimeAccess?.takeBody });
   app.setErrorHandler((error, _request, reply) => {
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;

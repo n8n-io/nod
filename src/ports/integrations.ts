@@ -20,6 +20,9 @@ export interface IntegrationFile {
   mimeType: string;
   bytes: Uint8Array;
 }
+export class IntegrationDownload {
+  constructor(readonly start: () => Promise<unknown>) {}
+}
 export interface IntegrationSearch {
   tools: unknown;
   suggestions: Array<{ useCase: string; primaryToolSlugs: string[] }>;

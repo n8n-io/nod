@@ -36,7 +36,7 @@ import {
   uploadWorkspaceFiles,
   workspaceFileSchemas,
 } from './integration-files.ts';
-import { maxFileSize } from './artifacts.ts';
+import { fileBytes } from '../shared/files.ts';
 import {
   normalizedEmail,
   verificationCode,
@@ -1227,7 +1227,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (hasWorkspaceFiles(args)) {
       const read = options.readWorkspaceFile;
       if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
-      let remaining = maxFileSize;
+      let remaining = fileBytes;
       args = (await withAccountSession(ownerId, [row], signal, async (session) => {
         if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
         return uploadWorkspaceFiles(
@@ -1235,10 +1235,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           async (input) => {
             signal?.throwIfAborted();
             if (!remaining)
-              throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+              throw new IntegrationError(
+                `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+              );
             const bytes = await read(turn, input.workspaceFile, remaining);
             if (!bytes.byteLength || bytes.byteLength > remaining)
-              throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+              throw new IntegrationError(
+                `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+              );
             remaining -= bytes.byteLength;
             signal?.throwIfAborted();
             return {
