@@ -156,7 +156,8 @@ export function createTasks(options: {
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
            AND (NOT $3::boolean OR t.state IN ('queued','open','waiting'))
            AND ($4::uuid IS NULL OR t.id=$4)
-           AND ($5::uuid[] IS NULL OR t.on_it_message_id=ANY($5) OR t.state IN ('queued','open','waiting'))
+           AND ($5::uuid[] IS NULL OR t.on_it_message_id=ANY($5) OR t.result_message_id=ANY($5)
+             OR t.state IN ('queued','open','waiting'))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
         [ownerId, threadId, openOnly, taskId, messageIds],
       )

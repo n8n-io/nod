@@ -129,7 +129,7 @@ A task you start from [Telegram or WhatsApp](/use/channels/) replies there.
 - A confirmation has **Yes** and **No** buttons. Reply to any of the task's messages to add to it, or yes or no to answer a confirmation.
 - To stop a task at once, select **Stop task** under "On it" in Telegram, or in the Otto app. A "stop" reply asks the task to stop at its next step. See [Stop a task](#stop-a-task).
 - Sign-in forms, payment approvals and taking over the browser need the Otto app. Payment approvals have no buttons in a chat app. The task carries on in the chat app after you finish there.
-- Telegram gets the task's files as documents. WhatsApp gets no files, so open Otto to get them.
+- Telegram gets the task's document as a PDF that replies to its result, and other files as they are. WhatsApp gets no files, so open Otto to get them. See [Documents from tasks](/use/channels/#documents-from-tasks).
 - More than 24 hours after your last WhatsApp message, Otto can't write to WhatsApp. The task's later messages then show only in Otto.
 
 ## Find tasks on the Tasks page

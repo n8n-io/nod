@@ -85,6 +85,7 @@ export interface MessagingTransport {
     threadId: string;
     text: string;
     attachments?: MessagingAttachment[];
+    filesReplyToText?: boolean;
     replyTo?: string;
     buttons?: MessagingButton[];
   }): Promise<{ ids: string[]; editable?: boolean }>;

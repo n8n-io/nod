@@ -573,7 +573,8 @@ export function createChatSdkTransport(
         throw new Error('Attachments exceed the delivery limit.');
       await bot.initialize();
       const thread = bot.thread(input.threadId);
-      const separateText = input.text.length > 900;
+      const separateText =
+        input.text.length > 900 || Boolean(input.filesReplyToText && input.text.trim());
       const messages: AdapterPostableMessage[] = attachments.length
         ? [
             ...(separateText ? [{ markdown: input.text }] : []),
@@ -604,7 +605,11 @@ export function createChatSdkTransport(
       const ids: string[] = [];
       try {
         for (const message of messages) {
-          const replyTo = ids.length ? undefined : input.replyTo;
+          const replyTo = !ids.length
+            ? input.replyTo
+            : input.filesReplyToText && separateText
+              ? ids[0]
+              : undefined;
           const sent = replyTo
             ? await thread.reply(replyTo, message).catch((error: unknown) => {
                 if (!declined(error)) throw error;

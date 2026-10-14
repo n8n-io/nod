@@ -1899,7 +1899,7 @@ const telegramEnvironment = {
 };
 
 test(
-  'Telegram sends owned artifact bytes through Chat SDK and does not replay partial delivery or read foreign paths',
+  'Telegram sends owned artifact bytes through Chat SDK, a task result document as a PDF reply to the result, and does not replay partial delivery or read foreign paths',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const schema = `test_channel_media_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
@@ -1920,6 +1920,7 @@ test(
       name: string;
       caption: string;
       chat: string;
+      reply?: number;
     }> = [];
     let failDocument = false;
     let limited: string[] = [];
@@ -1935,20 +1936,32 @@ test(
           });
         assert.match(
           target,
-          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video)$/,
+          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video|Message|RichMessage)$/,
         );
-        assert.ok(init?.body instanceof FormData);
-        const body = init.body;
-        const media = body.get('photo') ?? body.get('document') ?? body.get('video');
-        assert.ok(media instanceof File);
         const method = target.split('/').at(-1)!;
-        sent.push({
-          method,
-          file: new Uint8Array(await media.arrayBuffer()),
-          name: media.name,
-          caption: String(body.get('caption') ?? ''),
-          chat: String(body.get('chat_id')),
-        });
+        if (init?.body instanceof FormData) {
+          const body = init.body;
+          const media = body.get('photo') ?? body.get('document') ?? body.get('video');
+          assert.ok(media instanceof File);
+          sent.push({
+            method,
+            file: new Uint8Array(await media.arrayBuffer()),
+            name: media.name,
+            caption: String(body.get('caption') ?? ''),
+            chat: String(body.get('chat_id')),
+            reply: JSON.parse(String(body.get('reply_parameters') ?? '{}')).message_id,
+          });
+        } else {
+          const body = JSON.parse(String(init?.body));
+          sent.push({
+            method,
+            file: new Uint8Array(),
+            name: '',
+            caption: body.text ?? body.rich_message?.markdown ?? '',
+            chat: String(body.chat_id),
+            reply: body.reply_parameters?.message_id,
+          });
+        }
         if (method === 'sendDocument' && failDocument)
           throw new Error('Possibly accepted by provider');
         if (limited[0] === method) {
@@ -1984,10 +1997,15 @@ test(
       releaseResolve = resolve;
     });
     const app = Fastify();
+    const results: string[] = [];
     const channels = await createChannels(pool, {
       ownerId,
       appOrigin: 'https://otto.example',
       transport: createChatSdkTransport(pool, telegramEnvironment),
+      taskMessages: async () => ({
+        tasks: results.map((resultMessageId) => ({ resultMessageId }) as Task),
+        confirmations: [],
+      }),
       resolveAttachments: async (threadId, ids) => {
         if (holdResolve) {
           markResolveStarted();
@@ -2013,11 +2031,16 @@ test(
     });
     channels.registerRoutes(app);
     const filePaths: string[] = [];
-    const addReply = async (turnId: string, attachments: unknown[], text = 'Here is the file.') => {
+    const addReply = async (
+      turnId: string,
+      attachments: unknown[],
+      text = 'Here is the file.',
+      replyTo: string | null = null,
+    ) => {
       const id = randomUUID();
       await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments) VALUES($1,$2,'assistant',$3,(SELECT thread_id FROM turns WHERE id=$4),$4,$5)",
-        [id, ownerId, text, turnId, JSON.stringify(attachments)],
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'assistant',$3,(SELECT thread_id FROM turns WHERE id=$4),$4,$5,$6)",
+        [id, ownerId, text, turnId, JSON.stringify(attachments), replyTo],
       );
       return id;
     };
@@ -2114,6 +2137,68 @@ test(
       assert.equal((await state(clip)).state, 'sent');
       assert.equal(sent.at(-1)!.method, 'sendVideo');
       assert.deepEqual(Buffer.from(sent.at(-1)!.file), videoBytes);
+
+      const report = await storeArtifact(
+        Buffer.from('# Synthetic report\n\nThe **total** is 42.'),
+        'report.md',
+        'text/markdown',
+        threadId,
+      );
+      filePaths.push(join(dataRoot, 'artifacts', report.id));
+      const onIt = await addReply(turnId, [], 'On it.');
+      const result = await addReply(turnId, [report], 'The report is ready.', onIt);
+      results.push(result);
+      let first = sent.length + 101;
+      await channels.drain();
+      const [onItSent, resultText, resultFile] = sent.slice(first - 101);
+      assert.deepEqual(
+        [onItSent.caption, resultText.caption, resultText.reply],
+        ['On it.', 'The report is ready.', first],
+      );
+      assert.deepEqual(
+        [resultFile.method, resultFile.name, resultFile.caption, resultFile.reply],
+        ['sendDocument', 'report.pdf', '', first + 1],
+      );
+      const pdf = Buffer.from(resultFile.file).toString('latin1');
+      assert.match(pdf, /^%PDF-1\.4\n/);
+      assert.match(pdf, /\(Synthetic report\) Tj[\s\S]*\(The total is 42\.\) Tj/);
+      assert.deepEqual(await state(result), { state: 'sent', reason: null });
+      assert.deepEqual(await providerIds(result), [`123456:${first + 1}`, `123456:${first + 2}`]);
+
+      failDocument = true;
+      const halfResult = await addReply(turnId, [report], 'The report is updated.', onIt);
+      results.push(halfResult);
+      const onItId = first;
+      first = sent.length + 101;
+      await channels.drain();
+      const [halfText, halfFile] = sent.slice(first - 101);
+      assert.deepEqual(
+        [halfText.caption, halfText.reply, halfFile.method, halfFile.reply, sent.length],
+        ['The report is updated.', onItId, 'sendDocument', first, first - 99],
+      );
+      assert.equal((await state(halfResult)).state, 'uncertain');
+      assert.deepEqual(await providerIds(halfResult), [`123456:${first}`]);
+      await channels.drain();
+      assert.equal(sent.length, first - 99);
+      failDocument = false;
+
+      const nested = await storeArtifact(
+        Buffer.from(`${'>'.repeat(20_000)} x`),
+        'nested.md',
+        'text/markdown',
+        threadId,
+      );
+      filePaths.push(join(dataRoot, 'artifacts', nested.id));
+      const deep = await addReply(turnId, [nested], 'The nested report is ready.', onIt);
+      results.push(deep);
+      first = sent.length + 101;
+      await channels.drain();
+      const [deepText, deepFile] = sent.slice(first - 101);
+      assert.deepEqual(
+        [deepText.caption, deepText.reply, deepFile.method, deepFile.name, deepFile.reply],
+        ['The nested report is ready.', onItId, 'sendDocument', 'nested.md', first],
+      );
+      assert.deepEqual(await state(deep), { state: 'sent', reason: null });
 
       limited = ['sendDocument'];
       const throttled = await addReply(turnId, [document], '');
@@ -2217,6 +2302,11 @@ test(
       assert.match(fallback[0], /https:\/\/otto\.example\/api\/artifacts\//);
       assert.match(fallback[0], /screenshot\.png/);
       assert.doesNotMatch(fallback[0], /Attachments are available in Otto/);
+      const textOnly = await addReply(turnId, [report], 'The report is ready.', onIt);
+      results.push(textOnly);
+      await channels.drain();
+      assert.equal((await state(textOnly)).state, 'sent');
+      assert.doesNotMatch(fallback[1], /\/api\/artifacts\//);
     } finally {
       releaseResolve();
       await app.close();

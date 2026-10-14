@@ -19,6 +19,7 @@ Otto replies in the app you wrote from. A message from Telegram gets its answer 
 | Works on a laptop    | Yes. Otto checks for new messages itself. | Needs a public HTTPS address that reaches Otto               |
 | Who can message Otto | Only the Telegram account you pair        | Only the number you enter                                    |
 | Files from Otto      | Sent as documents                         | Not sent. Open Otto to get them.                             |
+| A task's document    | A PDF that replies to the task's result   | Not sent. Open Otto to read it.                              |
 | Task buttons         | **Yes**, **No** and **Stop task**         | **Yes** and **No**                                           |
 | When Otto can write  | Any time                                  | Only within 24 hours of your last message                    |
 
@@ -108,6 +109,15 @@ Replies work as they do in the Otto app. To reply to a message, swipe it or sele
 - **Replies Otto can't match.** A reply to a message Otto can't find in the current conversation, such as one from before a reset, arrives as an ordinary message.
 
 If the chat app refuses the reply link, Otto sends the message without it. If Telegram asks Otto to slow down, Otto waits as long as Telegram asks and sends the message again, keeping its messages to you in order. Otto never sends a message twice when it can't tell whether the first one arrived.
+
+## Documents from tasks
+
+When a [task](/use/tasks/)'s result is a document, such as a report, Telegram gets the result first and then the document as a PDF that replies to it. A PDF document arrives as it is. Other files of the result also reply to it.
+
+- **How Otto makes the PDF.** Otto's server turns the task's Markdown file into a plain PDF: headings, paragraphs, lists, quotes, tables and code. It doesn't fetch the pictures or pages the document links to. A picture shows as its description, and a link shows its address after the text.
+- **When you get the Markdown file instead.** A document arrives as the Markdown file when it has letters the PDF can't show, such as Cyrillic, Greek or Chinese, when it's larger than about 200 KB, or when Otto can't turn it into a PDF within a few seconds. It also does when the PDFs would make the files too large to send.
+- **If the send fails.** When the result arrives but the document doesn't, Otto doesn't send either of them again. Open the task in Otto to get the document.
+- **On WhatsApp.** Otto sends no files and no links to them. The result ends with a note that its file is in Otto.
 
 ## Buttons
 

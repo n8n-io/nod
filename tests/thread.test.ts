@@ -2014,6 +2014,12 @@ test(
             [delivered?.resultMessageId, delivered?.artifact?.id],
             [result.id, result.attachments[0].id],
           );
+          assert.equal(
+            (await tasks.channelMessages([result.id])).tasks.find(
+              (task) => task.resultMessageId === result.id,
+            )?.id,
+            asking.taskId,
+          );
 
           const stopping = await start('task-mode-stop');
           const stopped = await row(stopping.taskId);

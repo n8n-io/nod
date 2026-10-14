@@ -6,6 +6,7 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { logFailure } from './failure-log.ts';
+import { markdownPdf } from './pdf.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import {
   MessagingPartialSend,
@@ -169,6 +170,20 @@ function liveMessage(messageId: string, text: string, previews: boolean, view: T
         final: false,
       }
     : undefined;
+}
+
+async function documentPdf(file: MessagingAttachment): Promise<MessagingAttachment> {
+  const bytes =
+    file.mimeType === 'text/markdown'
+      ? await markdownPdf(Buffer.from(file.bytes).toString('utf8'))
+      : undefined;
+  return bytes
+    ? {
+        name: `${file.name.replace(/\.(?:md|markdown)$/i, '')}.pdf`,
+        mimeType: 'application/pdf',
+        bytes,
+      }
+    : file;
 }
 
 export function channelReply(
@@ -698,6 +713,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         continue;
       }
+      const view = await options.taskMessages?.([row.message_id]).catch(() => undefined);
+      const taskResult = Boolean(
+        view?.tasks.some((task) => task.resultMessageId === row.message_id),
+      );
       let attachments: MessagingAttachment[] | undefined;
       let privateLinks: { name: string; url: string }[] = [];
       const canDeliverAttachments = channels.find(
@@ -719,8 +738,15 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           );
           if (resolved.length !== unique.length)
             throw new Error('Attachment delivery is unavailable.');
-          if (canDeliverAttachments) attachments = resolved;
-          else if (appOrigin)
+          if (canDeliverAttachments) {
+            const documents: MessagingAttachment[] = [];
+            for (const file of resolved)
+              documents.push(taskResult ? await documentPdf(file) : file);
+            attachments =
+              documents.reduce((total, file) => total + file.bytes.byteLength, 0) > 15 * 1024 * 1024
+                ? resolved
+                : documents;
+          } else if (appOrigin && !taskResult)
             privateLinks = unique.map(({ id }, index) => ({
               name: resolved[index].name,
               url: `${appOrigin}/api/artifacts/${id}`,
@@ -741,18 +767,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         continue;
       }
       const live =
-        options.taskMessages && !row.attachments?.length
-          ? await options
-              .taskMessages([row.message_id])
-              .then((view) =>
-                liveMessage(
-                  row.message_id,
-                  row.text,
-                  Boolean(channels.find((channel) => channel.id === row.provider)?.edits),
-                  view,
-                ),
-              )
-              .catch(() => undefined)
+        view && !row.attachments?.length
+          ? liveMessage(
+              row.message_id,
+              row.text,
+              Boolean(channels.find((channel) => channel.id === row.provider)?.edits),
+              view,
+            )
           : undefined;
       const text = channelReply(
         live?.text ?? row.text,
@@ -768,6 +789,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           threadId: row.thread_id,
           text,
           ...(attachments ? { attachments } : {}),
+          ...(attachments && taskResult ? { filesReplyToText: true } : {}),
           ...(row.reply_to ? { replyTo: row.reply_to } : {}),
           ...(live ? { buttons: live.buttons } : {}),
         });
