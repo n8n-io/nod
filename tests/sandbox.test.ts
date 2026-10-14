@@ -44,6 +44,7 @@ import {
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
 import { workspaceNetwork } from '../scripts/e2e-workspace.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
+import { fileBytes } from '../src/shared/files.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'otto-local-directories-'));
@@ -607,12 +608,18 @@ test('artifact descriptor reads reject symlinks, special files and oversized dat
     await writeFile(join(f.directory, 'private'), 'synthetic outside value');
     await symlink(join(f.directory, 'private'), join(base, 'linked'));
     await symlink(f.directory, join(base, 'linked-directory'));
-    const read = (path: string, maxBytes = 100) =>
+    const read = (path: string, maxBytes = 100, offset = 0, identity?: string) =>
       f.run(['python3', '-c', artifactReadProgram], {
-        input: JSON.stringify({ base, path, maxBytes }),
-        maxBytes,
+        input: JSON.stringify({ base, path, maxBytes, offset, identity }),
+        maxBytes: maxBytes + 1024,
       });
-    assert.deepEqual((await read('nested/ok')).stdout, Buffer.from([0, 255, 4]));
+    const ok = (await read('nested/ok')).stdout;
+    const identity = ok.subarray(0, ok.indexOf(10)).toString();
+    assert.deepEqual(ok.subarray(ok.indexOf(10) + 1), Buffer.from([0, 255, 4]));
+    const tail = (await read('nested/ok', 100, 1, identity)).stdout;
+    assert.deepEqual(tail.subarray(tail.indexOf(10) + 1), Buffer.from([255, 4]));
+    await writeFile(join(base, 'nested', 'ok'), Buffer.from([1, 2, 3, 4]));
+    assert.notEqual((await read('nested/ok', 100, 3, identity)).exitCode, 0);
     for (const path of [
       'linked',
       'linked-directory/private',
@@ -708,7 +715,7 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     },
   });
   try {
-    const bytes = Buffer.alloc(1024 * 1024 + 13);
+    const bytes = Buffer.alloc(16 * 1024 * 1024 + 13);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
     await workspace.writeArtifact('fixture', 'nested/file.bin', bytes);
     assert.deepEqual(
@@ -728,8 +735,12 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     );
     assert.equal(launches, before);
     await assert.rejects(
-      workspace.writeArtifact('fixture', 'too-large', Buffer.alloc(15 * 1024 * 1024 + 1)),
-      /15 MB/,
+      workspace.writeArtifact('fixture', 'too-large', Buffer.alloc(fileBytes + 1)),
+      /between 1 byte/,
+    );
+    await assert.rejects(
+      workspace.readArtifact('fixture', 'nested/file.bin', bytes.length - 1),
+      /workspace file operation failed/,
     );
   } finally {
     await workspace.dispose();

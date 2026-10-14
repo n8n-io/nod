@@ -2,6 +2,7 @@ import { posix, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ConnectedCli, Workspace } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
+import { fileBytes } from '../../shared/files.ts';
 import {
   runWorkspaceCommand,
   WorkspaceCommandError,
@@ -18,12 +19,15 @@ export function workspaceFile(id: string, path: string): string {
   return full;
 }
 
+const artifactChunk = 8 * 1024 * 1024;
+
 export const artifactReadProgram = `import os,sys,json,stat
 r=json.load(sys.stdin)
 fds=[]
 try:
  limit=int(r['maxBytes'])
- if not 1<=limit<=15728640: raise ValueError()
+ offset=int(r['offset'])
+ if not 1<=limit<=${fileBytes} or offset<0: raise ValueError()
  parts=r['path'].split('/')
  if not parts or any(p in ['', '.', '..'] for p in parts): raise ValueError()
  fd=os.open(r['base'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
@@ -34,14 +38,16 @@ try:
  fd=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
  fds.append(fd)
  info=os.fstat(fd)
- if not stat.S_ISREG(info.st_mode) or info.st_size>limit: raise ValueError()
+ if not stat.S_ISREG(info.st_mode) or info.st_size>limit or offset>info.st_size: raise ValueError()
+ identity='%d:%d:%d:%d'%(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns)
+ if r.get('identity') not in (None,identity): raise ValueError()
+ want=min(${artifactChunk},info.st_size-offset)
  data=bytearray()
- while len(data)<=limit:
-  chunk=os.read(fd,min(65536,limit+1-len(data)))
-  if not chunk: break
+ while len(data)<want:
+  chunk=os.pread(fd,want-len(data),offset+len(data))
+  if not chunk: raise ValueError()
   data.extend(chunk)
- if len(data)>limit: raise ValueError()
- sys.stdout.buffer.write(data)
+ sys.stdout.buffer.write(identity.encode()+b'\\n'+data)
 except Exception:
  sys.exit(1)
 finally:
@@ -69,7 +75,7 @@ try:
  else:
   offset=int(r['offset'])
   data=base64.b64decode(r['data'],validate=True)
-  if offset<0 or len(data)>524288 or offset+len(data)>15728640: raise ValueError()
+  if offset<0 or len(data)>524288 or offset+len(data)>${fileBytes}: raise ValueError()
   flags=os.O_WRONLY|os.O_NOFOLLOW|os.O_NONBLOCK
   flags=flags|(os.O_CREAT|os.O_EXCL if offset==0 else os.O_APPEND)
   file=os.open(temporary,flags,mode=0o600,dir_fd=fd)
@@ -183,8 +189,8 @@ export function createCommandWorkspace(options: {
     },
     async writeArtifact(id, path, bytes, signal) {
       threadIdentity(id);
-      if (!bytes.byteLength || bytes.byteLength > 15 * 1024 * 1024)
-        throw new Error('Files must be between 1 byte and 15 MB.');
+      if (!bytes.byteLength || bytes.byteLength > fileBytes)
+        throw new Error(`Files must be between 1 byte and ${fileBytes / 1024 / 1024} MB.`);
       const base = `/workspace/${id}`;
       const target = posix.relative(base, workspaceFile(id, path));
       const temporary = `.otto-upload-${randomUUID()}`;
@@ -217,16 +223,35 @@ export function createCommandWorkspace(options: {
     },
     async readArtifact(id, path, maxBytes) {
       threadIdentity(id);
-      if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 15 * 1024 * 1024)
+      if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > fileBytes)
         throw new Error('The artifact size limit is invalid.');
       const base = `/workspace/${id}`;
-      const result = await helper(
-        id,
-        artifactReadProgram,
-        { base, path: posix.relative(base, workspaceFile(id, path)), maxBytes },
-        { maxBytes },
-      );
-      return result.stdout;
+      const target = posix.relative(base, workspaceFile(id, path));
+      const chunks: Buffer[] = [];
+      let identity: string | undefined;
+      let offset = 0;
+      let size = 0;
+      do {
+        const { stdout } = await helper(
+          id,
+          artifactReadProgram,
+          { base, path: target, maxBytes, offset, identity },
+          { maxBytes: artifactChunk + 1024 },
+        );
+        const line = stdout.indexOf(10);
+        const header = stdout.subarray(0, Math.max(line, 0)).toString();
+        if (line < 0 || (identity !== undefined && header !== identity))
+          throw new Error('The workspace file changed while it was read.');
+        identity = header;
+        size = Number(header.split(':')[2]);
+        const data = stdout.subarray(line + 1);
+        if (!data.byteLength && offset < size)
+          throw new Error('The workspace file operation failed.');
+        chunks.push(data);
+        offset += data.byteLength;
+      } while (offset < size);
+      if (offset !== size) throw new Error('The workspace file operation failed.');
+      return Buffer.concat(chunks, offset);
     },
     open(input) {
       const id = threadIdentity(input.threadId);
