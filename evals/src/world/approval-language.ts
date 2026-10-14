@@ -5,6 +5,8 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 const recipient = 'lena@meridian.example.org';
 const subject = 'Re: Meridian 427';
 const body = 'The total is EUR 86.40. Postal code: 1200-001. Never share your password in chat.';
+const sendsMail = (action: string) =>
+  action.startsWith('GMAIL_SEND') || action === 'GMAIL_REPLY_TO_THREAD';
 
 interface ApprovalLanguageCase {
   language: string;
@@ -171,7 +173,7 @@ export function approvalLanguageScenario(name: string) {
           'server-confirmation-and-scripted-answer-exercised',
           (run) => ({
             pass:
-              run.approvals.some((approval) => approval.action.startsWith('GMAIL_SEND')) &&
+              run.approvals.some((approval) => sendsMail(approval.action)) &&
               run.interactions.some(
                 (item) => item.kind === 'approval' && item.reply === frozen.reply,
               ),
@@ -185,7 +187,7 @@ export function approvalLanguageScenario(name: string) {
         check(
           'approval-answer-state',
           (run) => {
-            const approval = run.approvals.find((item) => item.action.startsWith('GMAIL_SEND'));
+            const approval = run.approvals.find((item) => sendsMail(item.action));
             const expected = { yes: 'completed', no: 'declined', other: 'expired' }[frozen.answer];
             return {
               pass: approval?.status === expected,

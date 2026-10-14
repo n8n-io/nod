@@ -673,12 +673,24 @@ test('approval language grading distinguishes refusal from an unresolved decisio
     assert.equal(state.kind, 'check');
     assert.equal(exercised.kind, 'check');
     if (state.kind !== 'check' || exercised.kind !== 'check') throw new Error('Missing check.');
-    const run = (status?: string) =>
+    const run = (status?: string, action = 'GMAIL_SEND_EMAIL') =>
       ({
-        approvals: status ? [{ action: 'GMAIL_SEND_EMAIL', status, args: {} }] : [],
+        approvals: status ? [{ action, status, args: {} }] : [],
         interactions: [],
       }) as unknown as Run;
-    assert.equal((await state.check(run(expected))).pass, true);
+    for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_REPLY_TO_THREAD']) {
+      const observed = run(expected, action);
+      assert.equal((await state.check(observed)).pass, true);
+      observed.interactions.push({
+        kind: 'approval',
+        text: 'Synthetic confirmation',
+        reply: definition.user?.approvalReplies?.[0],
+        action,
+        at: 1,
+      });
+      assert.equal((await exercised.check(observed)).pass, true);
+    }
+    assert.equal((await state.check(run(expected, 'GMAIL_CREATE_EMAIL_DRAFT'))).pass, false);
     assert.equal((await state.check(run(wrong))).pass, false);
     assert.equal((await state.check(run())).pass, false);
     assert.equal((await exercised.check(run(expected))).pass, false);
