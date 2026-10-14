@@ -18,7 +18,7 @@ export function createOpenAISpeechProvider(options: {
       signal?.throwIfAborted();
       const response = await request('https://api.openai.com/v1/audio/speech', {
         method: 'POST',
-        signal,
+        signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]),
         headers: { ...headers(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: options.speechModel || 'gpt-4o-mini-tts',
