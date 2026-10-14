@@ -41,7 +41,11 @@ export function hostedEnvironment(
     invalid.add('OTTO_MASTER_KEY');
   if (values.LLM_PROVIDER && !['openai', 'anthropic'].includes(values.LLM_PROVIDER))
     invalid.add('LLM_PROVIDER');
-  if (values.OTTO_MAX_USERS && !/^[1-9][0-9]*$/.test(values.OTTO_MAX_USERS))
+  if (
+    values.OTTO_MAX_USERS &&
+    (!/^[1-9][0-9]*$/.test(values.OTTO_MAX_USERS) ||
+      !Number.isSafeInteger(Number(values.OTTO_MAX_USERS)))
+  )
     invalid.add('OTTO_MAX_USERS');
   try {
     const database = new URL(values.DATABASE_URL);
