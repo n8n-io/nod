@@ -5,12 +5,12 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
-      - 'public/fonts/n8nBaumer*'
+      - 'public/fonts/Geist*'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
       - 'docs/**'
-      - 'public/fonts/n8nBaumer*'
+      - 'public/fonts/Geist*'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 

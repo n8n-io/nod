@@ -1,14 +1,22 @@
 @font-face {
-  font-family: 'n8n Baumer Uniwidth';
-  src: url('../../../public/fonts/n8nBaumerUniwidth.woff2') format('woff2');
+  font-family: 'Geist';
+  src: url('../../../public/fonts/Geist-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'n8n Baumer Mono';
-  src: url('../../../public/fonts/n8nBaumerMono.woff2') format('woff2');
+  font-family: 'Geist';
+  src: url('../../../public/fonts/Geist-Italic-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../../../public/fonts/GeistMono-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -37,8 +45,8 @@
   --otto-pink-80: #5a0026;
   --otto-pink-90: #44001b;
 
-  --sl-font: 'n8n Baumer Uniwidth';
-  --sl-font-mono: 'n8n Baumer Mono';
+  --sl-font: 'Geist';
+  --sl-font-mono: 'Geist Mono';
   --sl-line-height: 1.7;
   --sl-content-width: 48rem;
   --sl-text-h1: 2rem;
@@ -870,7 +878,6 @@ pre.mermaid svg {
 
 .mermaid .cluster-label :is(.nodeLabel, p, span) {
   color: var(--otto-cluster-text) !important;
-  font-weight: 500;
 }
 
 .mermaid .node.accent :is(rect, circle, ellipse, polygon, path) {
@@ -880,7 +887,6 @@ pre.mermaid svg {
 
 .mermaid .node.accent :is(.nodeLabel, .nodeLabel p) {
   color: var(--otto-accent-text) !important;
-  font-weight: 500;
 }
 
 .mermaid .node.muted :is(rect, circle, ellipse, polygon, path) {
