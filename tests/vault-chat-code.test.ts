@@ -151,6 +151,7 @@ test(
         status?: string;
         reason?: string;
         superseded?: boolean;
+        supersededLongAgo?: boolean;
       } = {},
     ) {
       const owner = options.owner ?? ownerId;
@@ -180,12 +181,19 @@ test(
       );
       if (options.archived)
         await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
-      if (options.superseded)
+      if (options.superseded || options.supersededLongAgo) {
+        if (options.supersededLongAgo)
+          await db.pool.query(
+            "UPDATE turns SET created_at=now()-interval '20 minutes' WHERE id=$1",
+            [turnId],
+          );
         await db.pool.query(
-          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,started_at)
-           VALUES($1,$2,$3,'user','Later','running',clock_timestamp())`,
-          [randomUUID(), owner, threadId],
+          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,started_at,created_at)
+           VALUES($1,$2,$3,'user','Later','running',clock_timestamp(),
+             CASE WHEN $4 THEN now()-interval '11 minutes' ELSE clock_timestamp() END)`,
+          [randomUUID(), owner, threadId, Boolean(options.supersededLongAgo)],
         );
+      }
       return { threadId, turnId, requestId, messageId };
     }
     async function reset() {
@@ -656,8 +664,27 @@ test(
         ]) {
           await reset();
           await seed(options);
+          assert.equal((await send('The code is 791 483')).statusCode, 409);
+          assert.deepEqual(ordinary, [], JSON.stringify(options));
+          assert.equal(injected.length, 0);
+        }
+        for (const options of [
+          { supersededLongAgo: true },
+          { status: 'cancelled', supersededLongAgo: true },
+        ]) {
+          await reset();
+          const stale = await seed(options);
+          assert.equal(
+            (await send('791483', { replyToMessageId: stale.messageId })).statusCode,
+            409,
+          );
+          assert.equal((await send('Call me at 1530')).statusCode, 200);
           assert.equal((await send('The code is 791 483')).statusCode, 200);
-          assert.deepEqual(ordinary, ['The code is 791 483'], JSON.stringify(options));
+          assert.deepEqual(
+            ordinary,
+            ['Call me at 1530', 'The code is 791 483'],
+            JSON.stringify(options),
+          );
           assert.equal(injected.length, 0);
         }
         await reset();
