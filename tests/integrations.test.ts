@@ -36,6 +36,7 @@ import { createLedger } from '../src/server/ledger.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
 import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
+import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import type { Connection } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -969,7 +970,12 @@ async function appsFixture(
   listing: Partial<
     Pick<
       Parameters<typeof createIntegrations>[1],
-      'browserConnections' | 'browserAccounts' | 'wake' | 'readWorkspaceFile' | 'learnWritingStyle'
+      | 'browserConnections'
+      | 'browserAccounts'
+      | 'wake'
+      | 'readWorkspaceFile'
+      | 'learnWritingStyle'
+      | 'admission'
     >
   > = {},
 ) {
@@ -2505,7 +2511,9 @@ test(
   'inbox polling and verified webhooks share message receipts and retain exact source identities',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
-    const f = await appsFixture(t);
+    const admission = createWorkAdmission();
+    admission.pause();
+    const f = await appsFixture(t, {}, { admission });
     const selected = await f.connect('gmail');
     const metadata = {
       subject: 'Question about the upcoming planning review '.repeat(10),
@@ -2552,7 +2560,7 @@ test(
     await send('112233445566', 'foreign-subscription');
     assert.equal((await f.pool.query('SELECT * FROM integration_events')).rowCount, 0);
     await send('112233445566');
-    for (let attempt = 0; attempt < 100 && !f.wakes.length; attempt++) await delay(10);
+    await f.service.drain();
     assert.equal(f.wakes.length, 1);
     await send('112233445566');
     await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
@@ -2579,7 +2587,7 @@ test(
     assert.equal(receipts[1].poll_connection_id, selected.connectionId);
     assert.equal(receipts[1].trigger_id, null);
     await send('');
-    for (let attempt = 0; attempt < 100 && f.wakes.length < 3; attempt++) await delay(10);
+    await f.service.drain();
     assert.equal(f.wakes.length, 3);
     const calendar = await f.connect('googlecalendar');
     await f.app.inject({
@@ -2596,7 +2604,7 @@ test(
         data: { message_id: '334455667788', intent: 'inspect_message' },
       }),
     });
-    for (let attempt = 0; attempt < 100 && f.wakes.length < 4; attempt++) await delay(10);
+    await f.service.drain();
     assert.equal(f.wakes.length, 4);
     assert.equal(f.executed.length, 0);
   },
