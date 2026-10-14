@@ -1,3 +1,5 @@
+import { loopbackHost } from './loopback.ts';
+
 export type ImportedLogin = { label: string; origin: string; username: string; password: string };
 
 const columns = {
@@ -50,8 +52,7 @@ function origin(address: string) {
   try {
     const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(address) ? address : `https://${address}`);
     if (!['http:', 'https:'].includes(url.protocol)) return undefined;
-    const secure =
-      url.protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    const secure = url.protocol === 'https:' || loopbackHost(url.hostname);
     if (!secure) url.protocol = 'https:';
     return { origin: url.origin, secure };
   } catch {

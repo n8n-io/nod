@@ -7,9 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
-import type { TestContext } from 'node:test';
 import Fastify from 'fastify';
-import type { RuntimeContext } from '../../src/ports/agent.ts';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
@@ -18,6 +16,7 @@ import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, fisherLower, holm, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
+import { createCapture } from '../src/capture.ts';
 import { decide, promote } from '../src/gate.ts';
 import { grade } from '../src/grade.ts';
 import { check, type Scenario } from '../src/scenario.ts';
@@ -1203,9 +1202,59 @@ test('morning brief checks reject remembered preferences without a working daily
   run.replies[1] = '';
   assert.equal(await verdict('scheduled-run-delivered-a-brief'), false);
   assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] =
+    '- Standup: 08:45–09:15.\n- [Meridian review](https://www.google.com/calendar/event?eid=e6dcb8ffe4a29393): 10:30–11:30.\n- Priya 1:1: 12:30–13:00.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), true);
+  run.replies[1] =
+    '- **08:45–09:15:** Standup.\n- **10:30:** Meridian review.\n- **12:30:** Priya 1:1.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), true);
+  run.replies[1] = 'Standup at 10:30, Meridian review at 08:45, Priya 1:1 at 12:30.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] = 'Standup 8:45 a.m.\nMeridian review 10:30 a.m.\nPriya 1:1 12:30 pm';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), true);
+  run.replies[1] = 'Standup 08:45 PM\nMeridian review 10:30\nPriya 1:1 12:30';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] = 'Standup: 08:45–09:15.\nMeridian review: 10:30–11:30.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] = 'Standup: 08:45.\nPriya 1:1: 12:30.\nShip the Meridian identity by 11 November.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
   run.replies[1] = digest;
   run.interactions.push({ kind: 'approval', text: 'Should I schedule it?', reply: 'No', at: 0 });
   assert.equal(await verdict('no-extra-consent-or-clarification'), false);
+});
+
+test('caption approval is the explicit go-ahead, not any earlier answer', async () => {
+  const definition = (await import('../src/scenarios/video-to-three-platforms.ts')).default;
+  const world = definition.world({ now: () => 0 }) as ReturnType<typeof definition.world> & {
+    state: { posts: Array<{ platform: string; text: string; hash: string; at: number }> };
+  };
+  const run = {
+    userMessages: [
+      { at: 1_000, text: 'Post this video and show me the captions first.' },
+      { at: 2_000, text: 'Use the studio account.' },
+      { at: 3_000, text: 'Looks good, post them.' },
+    ],
+  } as unknown as Run;
+  const check = definition
+    .expect(world)
+    .filter((item) => item.kind === 'check')
+    .find((item) => item.id === 'nothing-was-posted-before-the-captions-were-approved')!;
+  world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 4_000 }];
+  assert.equal((await check.check(run)).pass, true);
+  world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 2_500 }];
+  assert.equal((await check.check(run)).pass, false);
+  run.userMessages = run.userMessages.slice(0, 2);
+  world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 4_000 }];
+  assert.equal((await check.check(run)).pass, false);
+  const presented = definition.user!.answers![0].when;
+  assert.equal(presented.test("I'll prepare captions and post them."), false);
+  assert.equal(presented.test('Should I use your logins for Shorts, TikTok and LinkedIn?'), false);
+  assert.equal(
+    presented.test(
+      'Shorts title: A first look at the studio\nTikTok caption: New home soon #design\nLinkedIn post: We are launching our studio site.\nPost all three?',
+    ),
+    true,
+  );
 });
 
 test('background calendar checks reject leaked context and repeated outside effects', async () => {
@@ -1285,129 +1334,108 @@ test('background calendar checks reject leaked context and repeated outside effe
   }
 });
 
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<void>((accept, decline) => {
-    resolve = accept;
-    reject = decline;
+test('the stack records tool calls, model usage and the main prompts of every turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-capture-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const capture = createCapture();
+  const usage = (id: string) => ({
+    type: 'model_usage' as const,
+    id,
+    provider: 'openai',
+    model: 'fixture',
+    inputTokens: 1,
+    outputTokens: 1,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 2,
+    costUsd: 0.01,
+    costSource: 'sdk_estimate' as const,
+    createdAt: new Date(0).toISOString(),
   });
-  return { promise, resolve, reject };
-}
-
-async function promptCaptureFixture(t: TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), 'eval-prompt-capture-'));
   const runtime = createAgentRuntime({
-    agent: {
-      open: async () => ({
+    agent: capture.agent({
+      open: async (options) => ({
         resumed: false,
-        prompt: async () => {},
         abort() {},
         dispose() {},
+        prompt: async () => {
+          const tool = (name: string) => options.tools.find((item) => item.name === name)!;
+          if (!options.tools.some((item) => item.name === 'delegate')) {
+            options.onEvent(usage('child'));
+            return;
+          }
+          options.onEvent(usage('main'));
+          await tool('apps').execute({ action: 'GMAIL_FETCH_EMAILS', args: {} });
+          await tool('browser').execute({ action: 'fill', selector: '@e1', text: 'private' });
+          await tool('manage_personal_context').execute({
+            action: 'memory_find',
+            args: { query: 'private' },
+          });
+          await tool('delegate').execute({ title: 'Part', instruction: 'Do one part.' });
+          await options.nextMessages!();
+        },
       }),
       dispose() {},
-    },
+    }),
     computer: fakeComputer(),
     workspace: fakeWorkspace(),
-    observationTimeoutMs: 50,
+    observe: capture.observe,
   });
-  t.after(async () => {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  });
-  const context: RuntimeContext = {
+  t.after(() => runtime.dispose());
+  await runtime.runTurn({
     threadId: 'capture-fixture',
     turnId: 'capture-fixture',
-    prompt: 'Inspect the synthetic receipt quietly.',
-    background: true,
+    prompt: 'Inspect the synthetic receipt.',
     history: [],
     workspacePath: directory,
     signal: t.signal,
     attachments: [],
     emit: async () => {},
-    delta: async () => {},
+    delta: () => {},
     reply: async () => {},
     publish: async () => {
       throw new Error('Not used');
     },
     requestCredential: async () => ({ filled: true }),
-    integration: async () => ({}),
-    manage: async () => ({}),
-  };
-  return { runtime, context };
-}
-
-test(
-  'a fast background turn settles prompt capture before trace collection',
-  { timeout: 5000 },
-  async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const { runtime, context } = await promptCaptureFixture(t);
-    const entered = deferred();
-    const capture = deferred();
-    let completed = false;
-    let recorded = false;
-    const running = runtime
-      .runTurn({
-        ...context,
-        inspectPrompt: async () => {
-          entered.resolve();
-          await capture.promise;
-          recorded = true;
-        },
-      })
-      .then((result) => {
-        completed = true;
-        return result;
-      });
-    try {
-      await entered.promise;
-      await setImmediate();
-      assert.equal(completed, false);
-      capture.resolve();
-      assert.equal((await running).status, 'succeeded');
-      assert.equal(recorded, true);
-    } finally {
-      capture.resolve();
-      await running;
-    }
-  },
-);
-
-test(
-  'optional prompt capture is bounded and cannot block cancellation or fail a turn',
-  { timeout: 5000 },
-  async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    for (const mode of ['timeout', 'cancel', 'dispose', 'reject'] as const) {
-      const { runtime, context } = await promptCaptureFixture(t);
-      const controller = new AbortController();
-      const entered = deferred();
-      const capture = deferred();
-      const running = runtime.runTurn({
-        ...context,
-        signal: AbortSignal.any([t.signal, controller.signal]),
-        inspectPrompt: async () => {
-          entered.resolve();
-          await capture.promise;
-        },
-      });
-      await entered.promise;
-      await setImmediate();
-      assert.equal(runtime.status().activeTurns, 1);
-      let disposing: Promise<void> | undefined;
-      if (mode === 'timeout') t.mock.timers.tick(50);
-      else if (mode === 'cancel') controller.abort();
-      else if (mode === 'dispose') disposing = runtime.dispose();
-      else capture.reject(new Error('Synthetic capture failure'));
-      await running;
-      await disposing;
-      assert.equal(runtime.status().activeTurns, 0);
-      capture.reject(new Error('Late synthetic capture failure'));
-      await setImmediate();
-    }
-  },
-);
+    integration: async () => ({ messages: ['Receipt'] }),
+    manage: async () => [{ text: 'Private note' }],
+    takeMessages: async () => [{ id: 'steer', text: 'Also check the total.' }],
+  });
+  assert.deepEqual(
+    capture.prompts.map((prompt) => [
+      prompt.turnId,
+      /Inspect the synthetic receipt|Also check the total/.exec(prompt.instruction)?.[0],
+    ]),
+    [
+      ['capture-fixture', 'Inspect the synthetic receipt'],
+      ['capture-fixture', 'Also check the total'],
+    ],
+  );
+  const events = capture.observations.map(({ turnId, event }) => {
+    assert.equal(turnId, 'capture-fixture');
+    return event.type === 'tool_start'
+      ? [event.type, event.name, event.input]
+      : event.type === 'tool_end'
+        ? [event.type, event.name, event.status, 'output' in event ? event.output : '-']
+        : [event.type, event.id];
+  });
+  assert.deepEqual(events, [
+    ['model_usage', 'main'],
+    ['tool_start', 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} }],
+    ['tool_end', 'apps', 'succeeded', { messages: ['Receipt'] }],
+    ['tool_start', 'browser', { action: 'fill', selector: '@e1', text: '[redacted]' }],
+    ['tool_end', 'browser', 'succeeded', 'URL: https://example.com\nFixture page'],
+    [
+      'tool_start',
+      'manage_personal_context',
+      { action: 'memory_find', args: '[private memory omitted]' },
+    ],
+    ['tool_end', 'manage_personal_context', 'succeeded', '-'],
+    ['tool_start', 'delegate', { title: 'Part', instruction: 'Do one part.' }],
+    ['model_usage', 'child'],
+    ['tool_end', 'delegate', 'succeeded', 'The subagent finished without an answer.'],
+  ]);
+});
 
 test('missing executed background captures are measurement errors, not isolation verdicts', () => {
   const turn = {

@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { transaction } from './transaction.ts';
 import { z } from 'zod';
 import type { ChannelAccountIdentity, ChannelAccountRegistry } from '../ports/channel-settings.ts';
 import type { TenantLease } from './tenants.ts';
@@ -86,9 +87,7 @@ export function createChannelAccountRegistry(options: {
   async function mutate(input: ChannelAccountIdentity, release: boolean, lease?: TenantLease) {
     return protect(async () => {
       const values = lease ? leasedIdentity(input, lease) : identity(input);
-      const client = await options.admin.connect();
-      try {
-        await client.query('BEGIN');
+      return transaction(async (client) => {
         await client.query("SET LOCAL lock_timeout='5s'");
         await client.query("SET LOCAL statement_timeout='5s'");
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -142,23 +141,15 @@ export function createChannelAccountRegistry(options: {
               );
           }
         }
-        await client.query('COMMIT');
         return claimed;
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw error;
-      } finally {
-        client.release();
-      }
+      }, options.admin);
     });
   }
 
   return {
     initialize: () =>
-      protect(async () => {
-        const client = await options.admin.connect();
-        try {
-          await client.query('BEGIN');
+      protect(() =>
+        transaction(async (client) => {
           await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
             `otto:channel-account-registry:${schema}`,
           ]);
@@ -181,14 +172,8 @@ export function createChannelAccountRegistry(options: {
             PRIMARY KEY(environment,provider,account_id,owner_id)
           )`);
           await client.query(`REVOKE ALL ON TABLE ${table},${revisions} FROM PUBLIC`);
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => {});
-          throw error;
-        } finally {
-          client.release();
-        }
-      }),
+        }, options.admin),
+      ),
     claim: (input) => mutate(input, false),
     release: async (input) => {
       await mutate(input, true);

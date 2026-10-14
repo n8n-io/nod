@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type pg from 'pg';
-import type { Stack } from './stack.ts';
+import { approvalOrder, type Stack } from './stack.ts';
 import type { UserScript } from './scenario.ts';
 import type { Simulator } from './judge.ts';
 
@@ -142,7 +142,7 @@ export function createSession(options: {
     if (turn?.status !== 'waiting') return undefined;
     const approval = (
       await pool.query(
-        "SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY expires_at DESC LIMIT 1",
+        `SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY ${await approvalOrder(pool)} DESC LIMIT 1`,
         [turn.id],
       )
     ).rows[0];

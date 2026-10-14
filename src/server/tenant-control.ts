@@ -12,6 +12,7 @@ import {
   verifyRuntimeSignature,
 } from './runtime-auth.ts';
 import { readRequestBody } from './request-body.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 
 export function createTenantControl(options: {
   masterKey: Uint8Array;
@@ -116,9 +117,7 @@ export function createTenantChannelRegistry(options: {
     origin.hash ||
     (origin.origin !== 'http://otto.control' &&
       origin.protocol !== 'https:' &&
-      !(
-        ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) && origin.protocol === 'http:'
-      ))
+      !(loopbackHost(origin.hostname) && origin.protocol === 'http:'))
   )
     throw new Error('The runtime control endpoint is invalid.');
   const send = options.fetch ?? fetch;

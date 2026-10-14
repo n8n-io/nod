@@ -47,6 +47,7 @@ import {
 import { createE2BAdapters } from '../src/providers/e2b/index.ts';
 import { createCloudflareRuntimeTransport } from '../src/providers/runtime-host/cloudflare.ts';
 import { createComputerShutdownConfirmation } from '../src/providers/runtime-host/computer-shutdown.ts';
+import { fakeComputer } from './runtime-fixtures.ts';
 
 const { hostedEnvironment } = await import(
   new URL('../scripts/start-hosted.mjs', import.meta.url).href
@@ -392,12 +393,9 @@ async function e2bFixture() {
   const worker = await startContainerBrowserWorker({
     socketPath,
     createComputer: () => {
-      let session: ReturnType<NonNullable<Computer['currentSession']>>;
       return {
-        currentSession: () => session,
-        status: () => 'Synthetic browser',
-        act: async (id, input, signal) => {
-          session = { threadId: id, lastActivityAt: new Date().toISOString() };
+        ...fakeComputer(),
+        act: async (_id, input, signal) => {
           calls.push({ method: 'act', input });
           await action?.();
           if (holdAction) {
@@ -421,12 +419,6 @@ async function e2bFixture() {
           origin: 'https://example.test',
           url: 'https://example.test/login',
         }),
-        hold: async () => {},
-        close: async () => {},
-        signOut: async () => {},
-        fillCard: async () => {},
-        cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
-        checkoutImage: async () => new Uint8Array(),
         dispose: async () => {
           await browserDisposal?.();
         },
@@ -670,8 +662,6 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
       ),
       true,
     );
-    assert.equal(first.computer.currentSession!()?.threadId, 'task-one');
-    assert.equal(second.computer.currentSession!()?.threadId, 'task-two');
   } finally {
     await Promise.all([
       first.computer.dispose(),
@@ -963,7 +953,7 @@ async function cloudflareFixture() {
     createComputer: (directory) => {
       const selected = basename(directory);
       return {
-        status: () => 'Synthetic browser',
+        ...fakeComputer(),
         act: async (_threadId, input, signal) => {
           calls.push({ namespace: selected, method: 'act', input });
           if (hold) {
@@ -986,11 +976,6 @@ async function cloudflareFixture() {
         hold: async (threadId, until) => {
           calls.push({ namespace: selected, method: 'hold', input: { threadId, until } });
         },
-        close: async () => {},
-        signOut: async () => {},
-        fillCard: async () => {},
-        cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
-        checkoutImage: async () => new Uint8Array(),
         dispose: async () => {
           calls.push({ namespace: selected, method: 'dispose' });
           if (failedDisposals > 0) {
@@ -1263,12 +1248,11 @@ test('browser disposal drains cancelled work and failed cleanup remains retryabl
   }
 });
 
-test('Cloudflare browser status follows an acknowledged explicit recovery', async () => {
+test('Cloudflare browser recovers only after an acknowledged explicit reopen', async () => {
   const f = await cloudflareFixture();
   const adapters = createCloudflareAdapters(f.options(ownerA));
   try {
     await adapters.computer.act('task', { action: 'snapshot' });
-    const ready = adapters.computer.status();
     f.breakRole('browser');
     await assert.rejects(
       adapters.computer.act('task', { action: 'click', selector: '#submit' }),
@@ -1286,7 +1270,6 @@ test('Cloudflare browser status follows an acknowledged explicit recovery', asyn
       f.calls.map(({ method }) => method),
       ['act', 'dispose', 'act'],
     );
-    assert.equal(adapters.computer.status(), ready);
   } finally {
     f.breakRole();
     await Promise.all([adapters.computer.dispose(), adapters.workspace.dispose()]);

@@ -9,6 +9,7 @@ import {
   Input,
   Notice,
 } from './ui';
+import { loopbackHost } from '../../shared/loopback';
 
 export function WebsiteSessionDialog({
   open,
@@ -51,8 +52,7 @@ export function WebsiteSessionDialog({
                 address.username ||
                 address.password ||
                 !['https:', 'http:'].includes(address.protocol) ||
-                (address.protocol === 'http:' &&
-                  !['localhost', '127.0.0.1', '[::1]'].includes(address.hostname))
+                (address.protocol === 'http:' && !loopbackHost(address.hostname))
               )
                 throw new Error();
             } catch {

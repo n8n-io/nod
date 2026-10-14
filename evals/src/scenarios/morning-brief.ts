@@ -6,15 +6,43 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 
 interface Meeting {
   summary: string;
+  keyword: string;
   offset: number;
   minutes: number;
 }
 
 const meetings: Meeting[] = [
-  { summary: 'Design standup', offset: 45, minutes: 30 },
-  { summary: 'Meridian rebrand review', offset: 150, minutes: 60 },
-  { summary: '1:1 with Priya', offset: 270, minutes: 30 },
+  { summary: 'Design standup', keyword: 'standup', offset: 45, minutes: 30 },
+  { summary: 'Meridian rebrand review', keyword: 'meridian', offset: 150, minutes: 60 },
+  { summary: '1:1 with Priya', keyword: 'priya', offset: 270, minutes: 30 },
 ];
+
+function clock(match: RegExpMatchArray) {
+  const hour = Number(match[1]);
+  const meridiem = (match[3] ?? match[4])?.toLowerCase();
+  const hours = meridiem ? (hour % 12) + (meridiem === 'p' ? 12 : 0) : hour;
+  return hours * 60 + Number(match[2]);
+}
+
+function listedAtItsTime(text: string, meeting: Meeting) {
+  return text.split('\n').some((line) => {
+    const times = [
+      ...line.matchAll(
+        /\b(\d{1,2})[:.](\d{2})(?:\s*([ap])\.?m\b\.?)?(?:\s*[–-]\s*\d{1,2}[:.]\d{2}(?:\s*([ap])\.?m\b\.?)?)?/gi,
+      ),
+    ].map((match) => ({ at: match.index, minutes: clock(match) }));
+    const lower = line.toLowerCase();
+    for (
+      let at = lower.indexOf(meeting.keyword);
+      at >= 0;
+      at = lower.indexOf(meeting.keyword, at + 1)
+    ) {
+      const nearest = times.toSorted((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
+      if (nearest?.minutes === 8 * 60 + meeting.offset) return true;
+    }
+    return false;
+  });
+}
 
 function mailbox(now: number, deadline: string): Mail[] {
   return [
@@ -175,7 +203,8 @@ export default scenario({
           const missing = meetings.filter(
             (meeting) =>
               !new RegExp(meeting.summary.replace(/[()]/g, '.'), 'i').test(text) &&
-              !new RegExp(meeting.summary.split(' ').slice(-2).join('.*'), 'i').test(text),
+              !new RegExp(meeting.summary.split(' ').slice(-2).join('.*'), 'i').test(text) &&
+              !listedAtItsTime(text, meeting),
           );
           return {
             pass: !missing.length,

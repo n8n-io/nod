@@ -2,11 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
-import {
-  classifyVerificationReply,
-  mayHoldSecurityCode,
-  securityCodeIn,
-} from '../shared/verification-code.ts';
+import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { waitingTurnSql } from './vault.ts';
 
@@ -22,7 +18,7 @@ interface VerificationInput {
 }
 
 type VerificationStatus = 'submitted' | 'invalid' | 'unavailable';
-const texts = {
+export const texts = {
   otp: {
     masked: 'Verification code sent securely.',
     pending: 'Verification code received securely.',
@@ -113,8 +109,7 @@ export async function createChatVerification(
       otp: reply.kind === 'code' ? reply.code : undefined,
       payment: options.submitPayment ? securityCodeIn(text) : undefined,
     };
-    const paymentLike = Boolean(options.submitPayment) && mayHoldSecurityCode(text);
-    if (reply.kind === 'ordinary' && !paymentLike && !input.verificationRequestId) return;
+    if (reply.kind === 'ordinary' && !codes.payment && !input.verificationRequestId) return;
     if (!codes.otp && !codes.payment && input.verificationRequestId)
       throw conflict('Send the code by itself.');
     const incompatible = Boolean(input.attachmentIds?.length || input.forceNew);
@@ -206,20 +201,24 @@ export async function createChatVerification(
       );
       if (!requests.rowCount) {
         if (input.verificationRequestId) throw conflict(unavailableMessage);
-        const waiting = await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
-          `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
-           WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$4
-             AND ((r.status='pending' AND r.expires_at>now()) OR $3::uuid IS NOT NULL OR
-               NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.owner_id=$1 AND newer.thread_id=$4
-                 AND newer.source='user' AND newer.id<>u.id AND newer.started_at>u.started_at))
-             AND ($3::uuid IS NULL OR r.turn_id=$3)
-             AND ((r.kind='payment' AND $5::boolean) OR (r.kind='otp' AND $6::boolean)) LIMIT 1`,
-          [options.ownerId, channel, turnId ?? null, thread.id, paymentLike, Boolean(codes.otp)],
-        );
-        const late = waiting.rows[0];
-        if (late)
+        const waiting = (
+          await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
+            `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
+             WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
+               AND r.status='pending' AND r.expires_at>now()
+               AND ((r.kind='payment' AND $4::boolean) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
+            [
+              options.ownerId,
+              channel,
+              thread.id,
+              Boolean(codes.payment),
+              reply.kind !== 'ordinary',
+            ],
+          )
+        ).rows[0];
+        if (waiting)
           throw conflict(
-            late.kind === 'payment' && late.channel !== channel
+            waiting.kind === 'payment' && waiting.channel !== channel
               ? 'Open the secure payment link in Otto. Otto did not use this code.'
               : unavailableMessage,
           );

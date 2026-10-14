@@ -24,6 +24,22 @@ export const defaultPreferences: Preferences = {
   quietStart: '22:00',
   quietEnd: '08:00',
 };
+export function isQuietTime(preferences: Preferences, now = new Date()) {
+  if (!preferences.quietHoursEnabled) return false;
+  const current = new Intl.DateTimeFormat('en-GB', {
+    timeZone: preferences.timeZone ?? 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(now);
+  const { quietStart, quietEnd } = preferences;
+  return (
+    quietStart !== quietEnd &&
+    (quietStart < quietEnd
+      ? current >= quietStart && current < quietEnd
+      : current >= quietStart || current < quietEnd)
+  );
+}
 function canonicalLocale(value: string) {
   try {
     const [locale] = Intl.getCanonicalLocales(value);

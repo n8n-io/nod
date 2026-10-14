@@ -4,6 +4,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { browserRequestBytes } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
+import { loopbackHost } from '../../shared/loopback.ts';
 
 const outputLimit = 32 * 1024 * 1024;
 const frameLimit = 22_000;
@@ -29,8 +30,7 @@ export function launchCloudflareCommand(options: {
       url.pathname !== '/' ||
       url.search ||
       url.hash ||
-      (url.origin !== 'http://otto.computer' &&
-        !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) ||
+      (url.origin !== 'http://otto.computer' && !loopbackHost(url.hostname)) ||
       !['browser', 'workspace'].includes(role) ||
       !/^[1-9]\d{0,18}$/.test(generation) ||
       (role === 'workspace' && !selectedThreadId) ||

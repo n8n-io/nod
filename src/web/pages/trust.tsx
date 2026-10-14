@@ -40,7 +40,7 @@ function money(value: number) {
 }
 
 function Summary({ week }: { week: TrustView['week'] }) {
-  if (!week.things && !week.spentUsd)
+  if (!week.things && !week.actions && !week.spentUsd)
     return <p className="statement-summary">Nothing yet this week.</p>;
   return (
     <p className="statement-summary">
@@ -49,10 +49,10 @@ function Summary({ week }: { week: TrustView['week'] }) {
         {formatNumber(week.things)} {week.things === 1 ? 'thing' : 'things'}
       </b>
       .{' '}
-      {week.reached > 0 && (
+      {week.actions > 0 && (
         <>
-          <b>{week.reached === 1 ? '1 reached someone' : `${week.reached} reached people`}</b>, all
-          on your say-so.{' '}
+          It used your apps{' '}
+          <b>{week.actions === 1 ? 'once' : `${formatNumber(week.actions)} times`}</b>.{' '}
         </>
       )}
       {week.spentUsd > 0 && (

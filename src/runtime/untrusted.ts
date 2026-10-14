@@ -5,12 +5,8 @@ export function resultText(result: AgentToolResult) {
   return result.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
 }
 
-export function delimit(
-  source: string,
-  result: AgentToolResult,
-  findings: string[],
-): AgentToolResult {
-  const { open, close } = untrustedParts(source, findings);
+export function delimit(source: string, result: AgentToolResult): AgentToolResult {
+  const { open, close } = untrustedParts(source);
   const content = result.content.map((part) =>
     part.type === 'text' ? { ...part, text: neutralised(part.text) } : part,
   );

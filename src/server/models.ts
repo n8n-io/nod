@@ -20,6 +20,7 @@ import { modelSource } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
+import { transaction } from './transaction.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
 const selectionSchema = z
@@ -125,22 +126,14 @@ export function createModelService(options: {
     run: (client: PoolClient) => Promise<T>,
     signal?: AbortSignal,
   ) {
-    const client = await database.connect();
     const lock = createHash('sha256').update(`model:${ownerId}:${id}`).digest().readBigInt64BE();
-    try {
-      signal?.throwIfAborted();
-      await client.query('BEGIN');
+    signal?.throwIfAborted();
+    return transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock($1)', [lock.toString()]);
       const result = await run(client);
       signal?.throwIfAborted();
-      await client.query('COMMIT');
       return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, database);
   }
   async function credential(id: string, client: Pool | PoolClient = database) {
     const row = (
@@ -586,10 +579,11 @@ export function createModelService(options: {
         id uuid PRIMARY KEY,owner_id text NOT NULL,provider text NOT NULL,method text NOT NULL,label text NOT NULL,
         status text NOT NULL DEFAULT 'connected',models jsonb NOT NULL,managed boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now()
       ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);
-      CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,host_id text NOT NULL,selection jsonb,selection_set boolean NOT NULL DEFAULT false);`);
+      CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,selection jsonb,selection_set boolean NOT NULL DEFAULT false);
+      ALTER TABLE model_settings DROP COLUMN IF EXISTS host_id;`);
       await database.query(
-        'INSERT INTO model_settings(owner_id,host_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
-        [ownerId, `urn:uuid:${randomUUID()}`],
+        'INSERT INTO model_settings(owner_id) VALUES($1) ON CONFLICT DO NOTHING',
+        [ownerId],
       );
       await reload();
       for (const row of rows) {

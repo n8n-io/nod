@@ -29,7 +29,11 @@ export function previewableUrl(value: string): string | null {
       host.includes(':')
     )
       return null;
-    if (/^(?:auth|login|accounts)\./i.test(host) || host === 'connect.composio.dev') return null;
+    if (
+      /^(?:auth|login|accounts)\./i.test(host) ||
+      ['connect.composio.dev', 'app.composio.dev'].includes(host)
+    )
+      return null;
     const decoded = decodeURIComponent(url.pathname + url.hash);
     if (
       /(?:^|\/)(?:vault|credentials|credential-requests|payments|payment-requests|approvals?|consent|reset|auth|oauth|authorize|login|signin|reset-password|password-reset|invite|invitation|unsubscribe|logout|signout|confirm|verify|activate)(?:\/|$|[?#])/i.test(
