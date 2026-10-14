@@ -223,7 +223,10 @@ test(
 
     const runs: RuntimeContext[] = [];
     const sessionGates = new Map<string, Promise<void>>();
-    const taken = new Map<string, Array<{ id: string; text: string }>>();
+    const taken = new Map<
+      string,
+      Awaited<ReturnType<NonNullable<RuntimeContext['takeMessages']>>>
+    >();
     const gates = new Map<string, () => void>();
     const hold = (prompt: string) =>
       new Promise<void>((resolve) => {
@@ -1042,7 +1045,7 @@ test(
       );
 
       await t.test(
-        'messages sent during a running turn join it in order until one needs its own turn',
+        'messages sent during a running turn join it in order with their files and replies',
         async () => {
           const provenance: Array<string | null> = [];
           const manage = dependencies.manage;
@@ -1055,7 +1058,10 @@ test(
             const first = await thread.submitUserMessage('steer-first', [], { channel: 'web' });
             await waitFor(() => Boolean(ran(first.turnId)));
             const second = await thread.submitUserMessage('joined second', [], { channel: 'web' });
-            const third = await thread.submitUserMessage('joined third', [], { channel: 'web' });
+            const third = await thread.submitUserMessage('joined third', [], {
+              channel: 'web',
+              replyToMessageId: first.messageId,
+            });
             const artifact = await storeArtifact(
               Buffer.from('synthetic later bytes'),
               'later.txt',
@@ -1064,31 +1070,35 @@ test(
             const fourth = await thread.submitUserMessage('attached fourth', [artifact], {
               channel: 'web',
             });
-            const fifth = await thread.submitUserMessage('queued fifth', [], { channel: 'web' });
             release('steer-first');
-            await waitFor(settled(fifth.turnId));
-            assert.deepEqual(taken.get(first.turnId), [
-              { id: second.messageId, text: 'joined second' },
-              { id: third.messageId, text: 'joined third' },
-            ]);
-            assert.deepEqual(provenance, [third.messageId]);
+            await waitFor(settled(first.turnId));
+            const joined = taken.get(first.turnId)!;
+            assert.deepEqual(
+              joined.map(({ id, text }) => ({ id, text })),
+              [
+                { id: second.messageId, text: 'joined second' },
+                { id: third.messageId, text: 'joined third' },
+                { id: fourth.messageId, text: 'attached fourth' },
+              ],
+            );
+            assert.equal(joined[1]!.replyTo?.id, first.messageId);
+            assert.equal(
+              await readFile(joined[2]!.attachments[0]!.path, 'utf8'),
+              'synthetic later bytes',
+            );
+            assert.deepEqual(provenance, [fourth.messageId]);
             const owners = (
               await db.pool.query('SELECT id,turn_id FROM messages WHERE id=ANY($1::uuid[])', [
-                [second.messageId, third.messageId, fourth.messageId, fifth.messageId],
+                [second.messageId, third.messageId, fourth.messageId],
               ])
             ).rows;
             assert.deepEqual(Object.fromEntries(owners.map((row) => [row.id, row.turn_id])), {
               [second.messageId]: first.turnId,
               [third.messageId]: first.turnId,
-              [fourth.messageId]: fourth.turnId,
-              [fifth.messageId]: fifth.turnId,
+              [fourth.messageId]: first.turnId,
             });
-            assert.equal(ran(second.turnId), undefined);
-            assert.equal(ran(third.turnId), undefined);
-            const order = runs.map((context) => context.turnId);
-            assert.ok(order.indexOf(first.turnId) < order.indexOf(fourth.turnId));
-            assert.ok(order.indexOf(fourth.turnId) < order.indexOf(fifth.turnId));
-            for (const turn of [first, second, third, fourth, fifth])
+            for (const turn of [second, third, fourth]) assert.equal(ran(turn.turnId), undefined);
+            for (const turn of [first, second, third, fourth])
               assert.equal(await turnStatus(turn.turnId), 'succeeded');
 
             block('steer-other');
@@ -1133,9 +1143,10 @@ test(
           assert.equal(await turnStatus(long.turnId), 'running');
           release('steer-long');
           await waitFor(settled(long.turnId));
-          assert.deepEqual(taken.get(long.turnId), [
-            { id: question.messageId, text: 'weather fixture' },
-          ]);
+          assert.deepEqual(
+            taken.get(long.turnId)!.map(({ id, text }) => ({ id, text })),
+            [{ id: question.messageId, text: 'weather fixture' }],
+          );
           const next = await thread.submitUserMessage('after jump fixture', [], {
             channel: 'web',
           });

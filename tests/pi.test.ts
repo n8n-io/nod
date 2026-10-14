@@ -312,8 +312,8 @@ test('messages taken after a Pi turn reach the next request together and not aft
   const replies: string[] = [];
   const batches = [
     [
-      { id: randomUUID(), text: 'Also check the second fixture' },
-      { id: randomUUID(), text: 'And the third fixture' },
+      { id: randomUUID(), text: 'Also check the second fixture', attachments: [] },
+      { id: randomUUID(), text: 'And the third fixture', attachments: [] },
     ],
   ];
   let takes = 0;
@@ -409,7 +409,7 @@ test('messages taken after a Pi turn reach the next request together and not aft
     assert.deepEqual(replies, ['Answer 1.', 'Answer 2.']);
 
     question = true;
-    batches.push([{ id: randomUUID(), text: 'Sent while asking' }]);
+    batches.push([{ id: randomUUID(), text: 'Sent while asking', attachments: [] }]);
     assert.equal(
       (await runtime.runTurn({ ...context, turnId: randomUUID(), prompt: 'Ask me' })).status,
       'waiting_user',
@@ -1594,6 +1594,43 @@ function context(directory: string): RuntimeContext {
     manage: async () => ({}),
   };
 }
+
+test('an attached photo reaches a model that reads images and is listed as omitted for one that does not', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-images-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const photo = join(directory, 'photo.png');
+  for (const readsImages of [true, false]) {
+    const prompts: Array<{ text: string; images: number }> = [];
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async () => ({
+          resumed: false,
+          readsImages,
+          abort() {},
+          dispose() {},
+          prompt: async (text, images) => {
+            prompts.push({ text, images: images.length });
+          },
+        }),
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace({ readArtifact: async () => new Uint8Array([137, 80, 78, 71]) }),
+    });
+    try {
+      const result = await runtime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        attachments: [{ path: photo, mimeType: 'image/png' }],
+      });
+      assert.equal(result.status, 'succeeded');
+      assert.equal(prompts[0]!.images, readsImages ? 1 : 0);
+      assert.equal(prompts[0]!.text.includes('"imagePreview":"omitted"'), !readsImages);
+    } finally {
+      await runtime.dispose();
+    }
+  }
+});
 
 test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));

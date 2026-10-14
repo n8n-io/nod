@@ -58,7 +58,13 @@ export function createCapture() {
               options.onEvent(event);
             },
             ...(nextMessages
-              ? { nextMessages: async () => (await nextMessages()).map(record) }
+              ? {
+                  nextMessages: async () =>
+                    (await nextMessages()).map((message) => ({
+                      ...message,
+                      text: record(message.text),
+                    })),
+                }
               : {}),
           });
           return { ...session, prompt: (text, images) => session.prompt(record(text), images) };

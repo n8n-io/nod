@@ -31,11 +31,12 @@ All totals come from these ledger rows. Missing prices stay unknown.
 
 ## Keeping the context small
 
-| Mechanism          | Rule                                                                                                                                                                                      |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller.                                                                                       |
-| Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps. The saved session keeps every screenshot. |
-| Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                 |
+| Mechanism          | Rule                                                                                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller.                                                                                                                        |
+| Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps.                                                                            |
+| Attached images    | PNG, JPEG and WebP images of up to 3.75 MiB each, and 16 MiB together per message, reach the model with the message. Others, and every image for a model that can't read images, stay workspace files marked as not shown. |
+| Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                                                  |
 
 ## Hosted transcript checkpoints
 
@@ -43,7 +44,7 @@ In hosted mode, each session transcript lives in private object storage. The det
 
 - **When:** before each tool, at turn boundaries and before completion.
 - **How:** each checkpoint uploads only new entries as an immutable part. A small manifest lists the parts and is written with compare-and-swap, so a stale writer can't overwrite a newer session.
-- **Size:** every 64 parts, the session is rewritten as chunks of at most 8 MiB, up to 64 MiB in total.
+- **Size:** every 64 parts, or when the next part would pass 64 MiB, the session is rewritten as chunks of at most 8 MiB with only the newest four screenshots. 64 MiB is the most a session can hold.
 - **Rebase:** a restored session over 8 MiB is rebased to what the model sees: the latest compaction, later messages and only the newest screenshots.
 
 In both modes, when a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."

@@ -25,7 +25,9 @@ import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
-const imageBytes = 5 * 1024 * 1024;
+const imageBytes = (5 * 1024 * 1024 * 3) / 4;
+const imageBudget = 16 * 1024 * 1024;
+const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const parentTools = new Set(['sign_in', 'pay', 'browser_session', 'ask_user', 'send_message']);
 const parallelTools = new Set([
   'delegate',
@@ -465,6 +467,47 @@ export function createAgentRuntime(dependencies: {
       const instruct = (instruction: string) =>
         `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
+      const root = resolve(context.workspacePath);
+      const inline = async (
+        attachments: RuntimeContext['attachments'],
+        budget = { left: imageBudget },
+      ) => {
+        const images: AgentImage[] = [];
+        const omitted = new Set<string>();
+        for (const attachment of attachments) {
+          if (!imageTypes.has(attachment.mimeType)) continue;
+          const path = resolve(attachment.path);
+          if (!path.startsWith(root + sep)) continue;
+          const limit = Math.min(imageBytes, budget.left);
+          try {
+            const bytes =
+              session?.readsImages !== false && limit > 0
+                ? Buffer.from(
+                    await dependencies.workspace.readArtifact(
+                      threadId,
+                      relative(root, path),
+                      limit,
+                      'attachment',
+                    ),
+                  )
+                : undefined;
+            signal.throwIfAborted();
+            if (!bytes || bytes.length > limit) omitted.add(attachment.path);
+            else {
+              budget.left -= bytes.length;
+              images.push({
+                type: 'image',
+                data: bytes.toString('base64'),
+                mimeType: attachment.mimeType,
+              });
+            }
+          } catch {
+            signal.throwIfAborted();
+            omitted.add(attachment.path);
+          }
+        }
+        return { images, omitted };
+      };
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
@@ -477,8 +520,15 @@ export function createAgentRuntime(dependencies: {
         shouldStop: () => stopped,
         nextMessages:
           takeMessages &&
-          (async () =>
-            (await takeMessages()).map((message) => instruct(steeredInstruction(message)))),
+          (async () => {
+            const budget = { left: imageBudget };
+            const messages = [];
+            for (const message of await takeMessages()) {
+              const { images, omitted } = await inline(message.attachments, budget);
+              messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
+            }
+            return messages;
+          }),
         onEvent: (event) => {
           if (event.type === 'message_start') {
             completeStream();
@@ -505,36 +555,8 @@ export function createAgentRuntime(dependencies: {
       session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
-      const images: AgentImage[] = [];
-      const omittedImages = new Set<string>();
-      const root = resolve(context.workspacePath);
-      for (const attachment of context.attachments) {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(attachment.mimeType)) continue;
-        const path = resolve(attachment.path);
-        if (!path.startsWith(root + sep)) continue;
-        try {
-          const bytes = Buffer.from(
-            await dependencies.workspace.readArtifact(
-              threadId,
-              relative(root, path),
-              imageBytes,
-              'attachment',
-            ),
-          );
-          signal.throwIfAborted();
-          if (bytes.length > imageBytes) omittedImages.add(attachment.path);
-          else
-            images.push({
-              type: 'image',
-              data: bytes.toString('base64'),
-              mimeType: attachment.mimeType,
-            });
-        } catch {
-          signal.throwIfAborted();
-          omittedImages.add(attachment.path);
-        }
-      }
-      await session!.prompt(instruct(firstInstruction(context, resumed, omittedImages)), images);
+      const { images, omitted } = await inline(context.attachments);
+      await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
       await pendingReplies;
       signal.throwIfAborted();
       if (modelFailed)
