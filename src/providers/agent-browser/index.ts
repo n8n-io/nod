@@ -360,6 +360,7 @@ export function createAgentBrowserComputer(options: {
                 !entry.closed &&
                 !entry.closing &&
                 !entry.injecting &&
+                !holding(entry) &&
                 Date.now() - entry.lastUsed >= evictIdleMs,
             )
             .sort(

@@ -1668,7 +1668,7 @@ test('every session drives its own browser, so background work never waits for t
   }
 });
 
-test('at the browser cap a new browser waits for one idle past the window and evicts unheld ones first', async () => {
+test('at the browser cap a new browser waits for one idle past the window and never evicts a held one', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({
@@ -1691,6 +1691,14 @@ test('at the browser cap a new browser waits for one idle past the window and ev
     await assert.rejects(stopped, { name: 'AbortError' });
     assert.deepEqual(pages(), ['chat', 'subagent']);
     await open('scheduled');
+    assert.deepEqual(pages(), ['chat', 'scheduled']);
+    await computer.hold('scheduled', true);
+    await delay(3100);
+    const waiting = new AbortController();
+    const blocked = open('later', waiting.signal);
+    await delay(700);
+    waiting.abort();
+    await assert.rejects(blocked, { name: 'AbortError' });
     assert.deepEqual(pages(), ['chat', 'scheduled']);
   } finally {
     await computer.dispose();
