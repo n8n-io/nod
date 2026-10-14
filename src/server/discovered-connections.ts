@@ -465,10 +465,7 @@ export async function createDiscoveredConnections(
   async function complete(id: string, input: unknown) {
     const { token: entered, accountName } = z
       .object({
-        token: z.union([
-          z.string().trim().min(8),
-          z.record(envName, z.string().trim().min(8)),
-        ]),
+        token: z.union([z.string().trim().min(8), z.record(envName, z.string().trim().min(8))]),
         accountName: z.string().trim().min(1).max(200),
       })
       .strict()
