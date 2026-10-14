@@ -17,6 +17,24 @@ const meetings: Meeting[] = [
   { summary: '1:1 with Priya', keyword: 'priya', offset: 270, minutes: 30 },
 ];
 
+function listedAtItsTime(text: string, meeting: Meeting) {
+  return text.split('\n').some((line) => {
+    const times = [...line.matchAll(/\b(\d{1,2})[:.](\d{2})(?:\s*[–-]\s*\d{1,2}[:.]\d{2})?/g)].map(
+      (match) => ({ at: match.index, minutes: Number(match[1]) * 60 + Number(match[2]) }),
+    );
+    const lower = line.toLowerCase();
+    for (
+      let at = lower.indexOf(meeting.keyword);
+      at >= 0;
+      at = lower.indexOf(meeting.keyword, at + 1)
+    ) {
+      const nearest = times.toSorted((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
+      if (nearest?.minutes === 8 * 60 + meeting.offset) return true;
+    }
+    return false;
+  });
+}
+
 function mailbox(now: number, deadline: string): Mail[] {
   return [
     {
@@ -177,13 +195,7 @@ export default scenario({
             (meeting) =>
               !new RegExp(meeting.summary.replace(/[()]/g, '.'), 'i').test(text) &&
               !new RegExp(meeting.summary.split(' ').slice(-2).join('.*'), 'i').test(text) &&
-              !text.split('\n').some((line) => {
-                const start = 8 * 60 + meeting.offset;
-                const time = new RegExp(
-                  `\\b0?${Math.floor(start / 60)}[:.]${String(start % 60).padStart(2, '0')}\\b`,
-                );
-                return line.toLowerCase().includes(meeting.keyword) && time.test(line);
-              }),
+              !listedAtItsTime(text, meeting),
           );
           return {
             pass: !missing.length,
