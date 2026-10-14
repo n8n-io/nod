@@ -70,14 +70,15 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     const sizes = lists.map((list) => list.map((item) => Buffer.byteLength(JSON.stringify(item))));
     const totals = sizes.map((list) => list.reduce((sum, size) => sum + size, 0));
     let excess = Buffer.byteLength(encoded) - feedbackLimits.reportBytes;
+    const dropped = lists.map(() => 0);
     while (excess > 0) {
       const index = totals.indexOf(Math.max(...totals));
-      if (!lists[index].length) break;
-      lists[index].shift();
-      const size = sizes[index].shift()!;
+      if (dropped[index] >= lists[index].length) break;
+      const size = sizes[index][dropped[index]++];
       totals[index] -= size;
       excess -= size;
     }
+    lists.forEach((list, index) => list.splice(0, dropped[index]));
     report.coverage.truncated = true;
     encoded = JSON.stringify(report, null, 2);
   }
