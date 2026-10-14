@@ -44,7 +44,7 @@ import { rootObject, toolDefinitions } from '../src/runtime/tools.ts';
 import { Type } from '@sinclair/typebox';
 import { createBrowserFixture as createAgentBrowserComputer } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
-import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { fakeComputer, fakeWorkspace, fakeExecution } from './runtime-fixtures.ts';
 
 // Pi sessions: abort/drain, credential pause and resume, native tools only via the sandbox.
 
@@ -99,8 +99,7 @@ test('Pi drains every session before reporting an abort failure and retries fail
   try {
     for (let index = 0; index < 2; index += 1)
       await agent.open({
-        threadId: randomUUID(),
-        turnId: randomUUID(),
+        ...fakeExecution(randomUUID(), randomUUID()),
         systemPrompt: 'fixture',
         ...sandbox,
         tools: [],
@@ -132,8 +131,7 @@ test('Pi drains every session before reporting an abort failure and retries fail
     assert.equal(events.length, 6);
     await assert.rejects(
       agent.open({
-        threadId: randomUUID(),
-        turnId: randomUUID(),
+        ...fakeExecution(randomUUID(), randomUUID()),
         systemPrompt: 'fixture',
         ...sandbox,
         tools: [],
@@ -149,158 +147,164 @@ test('Pi drains every session before reporting an abort failure and retries fail
   }
 });
 
-test('real Pi sessions persist a credential pause and resume without replaying chat history', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-'));
-  const id = 'test-' + randomUUID();
-  const replies: string[] = [];
-  const prompts: string[] = [];
-  let managed = 0;
-  let phase = 0;
-  const context: RuntimeContext = {
-    threadId: id,
-    turnId: randomUUID(),
-    prompt: 'Sign in to the fixture',
-    history: [{ role: 'user', text: 'Older fixture context' }],
-    workspacePath: directory,
-    signal: new AbortController().signal,
-    attachments: [],
-    emit: async () => {},
-    reply: async (text) => {
-      replies.push(text);
-    },
-    delta: () => {},
-    publish: async () => {
-      throw new Error('Not used');
-    },
-    requestCredential: async () => ({ url: '/credentials/fixture' }),
-    integration: async () => ({}),
-    manage: async () => {
-      managed += 1;
-      return {};
-    },
-  };
-  const factory: typeof createAgentSession = async (options) => {
-    assert.deepEqual(options?.resourceLoader?.getAgentsFiles().agentsFiles, []);
-    assert.deepEqual(
-      options?.resourceLoader
-        ?.getExtensions()
-        .extensions.flatMap((extension) => [...extension.tools.keys()]),
-      ['web_search', 'source_check', 'fetch_content', 'get_search_content', 'codemode'],
-    );
-    assert.equal(
-      options?.resourceLoader?.getSystemPrompt()?.includes('runtime-fixture-key'),
-      false,
-    );
-    const result = await createAgentSession(options);
-    result.session.agent.streamFunction = (model, request) => {
-      prompts.push(JSON.stringify(request.messages));
-      if (phase === 0 && prompts.length > 1) throw new Error('Fixture exceeded one turn');
-      const output: AssistantMessage = {
-        role: 'assistant',
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        timestamp: Date.now(),
-        responseId: `fixture-phase-${phase}`,
-        stopReason: phase === 0 ? 'toolUse' : 'stop',
-        content:
-          phase === 0
-            ? [
-                {
-                  type: 'toolCall',
-                  id: 'credential-call',
-                  name: 'sign_in',
-                  arguments: {
-                    origin: 'https://example.com',
-                    label: 'Example',
-                    kind: 'password',
-                    passwordSelector: '#password',
-                    submitSelector: '#submit',
-                    message: 'Example needs your password.',
-                    action: 'Add password',
-                  },
-                },
-                {
-                  type: 'toolCall',
-                  id: 'later-call',
-                  name: 'manage_personal_context',
-                  arguments: {
-                    action: 'schedule_create',
-                    args: { title: 'This should not execute' },
-                  },
-                },
-              ]
-            : [{ type: 'text', text: 'Resumed successfully.' }],
-        usage: {
-          input: phase === 0 ? 100 : 200,
-          output: 10,
-          cacheRead: 20,
-          cacheWrite: 5,
-          totalTokens: phase === 0 ? 135 : 235,
-          cost: {
-            input: 0.001,
-            output: 0.0008,
-            cacheRead: 0.0001,
-            cacheWrite: 0.0001,
-            total: 0.002,
-          },
+test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
+  for (const background of [false, true])
+    await t.test(background ? 'background session' : 'chat session', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'otto-pi-'));
+      const id = 'test-' + randomUUID();
+      const replies: string[] = [];
+      const prompts: string[] = [];
+      let managed = 0;
+      let phase = 0;
+      const context: RuntimeContext = {
+        threadId: id,
+        turnId: randomUUID(),
+        sessionId: background ? randomUUID() : id,
+        background,
+        prompt: 'Sign in to the fixture',
+        history: [{ role: 'user', text: 'Older fixture context' }],
+        workspacePath: directory,
+        signal: new AbortController().signal,
+        attachments: [],
+        emit: async () => {},
+        reply: async (text) => {
+          replies.push(text);
+        },
+        delta: () => {},
+        publish: async () => {
+          throw new Error('Not used');
+        },
+        requestCredential: async () => ({ url: '/credentials/fixture' }),
+        integration: async () => ({}),
+        manage: async () => {
+          managed += 1;
+          return {};
         },
       };
-      const stream = createAssistantMessageEventStream();
-      stream.push({ type: 'start', partial: output });
-      stream.push({ type: 'done', reason: phase === 0 ? 'toolUse' : 'stop', message: output });
-      return stream;
-    };
-    return result;
-  };
-  const runtime = createAgentRuntime({
-    agent: createPiAgent({
-      provider: 'openai',
-      apiKey: 'runtime-fixture-key',
-      sessionRoot: join(directory, 'sessions'),
-      createSession: factory,
-    }),
-    computer: fakeComputer({
-      currentPage: async () => ({
-        origin: 'https://example.com',
-        url: phase === 0 ? 'https://example.com/login' : 'https://example.com/account',
-      }),
-    }),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    assert.equal((await runtime.runTurn(context)).status, 'waiting_credentials');
-    assert.equal(managed, 0);
-    phase = 1;
-    assert.equal(
-      (
-        await runtime.runTurn({
-          ...context,
-          prompt: 'Secure entry completed',
-          history: [{ role: 'user', text: 'New context from the continuous conversation' }],
-        })
-      ).status,
-      'succeeded',
-    );
-    assert.equal(prompts.length, 2);
-    assert.equal(prompts[1].includes('Older fixture context'), true);
-    assert.equal(prompts[1].includes('Secure entry completed'), true);
-    assert.equal(prompts[1].includes('New context from the continuous conversation'), false);
-    assert.equal(
-      JSON.parse(prompts[1]).filter(
-        (item: { role: string; content: unknown }) =>
-          item.role === 'user' && JSON.stringify(item.content).includes('Older fixture context'),
-      ).length,
-      1,
-    );
-    assert.equal(prompts[1].includes('runtime-fixture-key'), false);
-    assert.equal(replies.length, 2);
-    assert.match(replies[0], /\[Add password\]\(\/credentials\/fixture\)/);
-    assert.equal(replies[1], 'Resumed successfully.');
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
+      const factory: typeof createAgentSession = async (options) => {
+        assert.deepEqual(options?.resourceLoader?.getAgentsFiles().agentsFiles, []);
+        assert.deepEqual(
+          options?.resourceLoader
+            ?.getExtensions()
+            .extensions.flatMap((extension) => [...extension.tools.keys()]),
+          ['web_search', 'source_check', 'fetch_content', 'get_search_content', 'codemode'],
+        );
+        assert.equal(
+          options?.resourceLoader?.getSystemPrompt()?.includes('runtime-fixture-key'),
+          false,
+        );
+        const result = await createAgentSession(options);
+        result.session.agent.streamFunction = (model, request) => {
+          prompts.push(JSON.stringify(request.messages));
+          if (phase === 0 && prompts.length > 1) throw new Error('Fixture exceeded one turn');
+          const output: AssistantMessage = {
+            role: 'assistant',
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            timestamp: Date.now(),
+            responseId: `fixture-phase-${phase}`,
+            stopReason: phase === 0 ? 'toolUse' : 'stop',
+            content:
+              phase === 0
+                ? [
+                    {
+                      type: 'toolCall',
+                      id: 'credential-call',
+                      name: 'sign_in',
+                      arguments: {
+                        origin: 'https://example.com',
+                        label: 'Example',
+                        kind: 'password',
+                        passwordSelector: '#password',
+                        submitSelector: '#submit',
+                        message: 'Example needs your password.',
+                        action: 'Add password',
+                      },
+                    },
+                    {
+                      type: 'toolCall',
+                      id: 'later-call',
+                      name: 'manage_personal_context',
+                      arguments: {
+                        action: 'schedule_create',
+                        args: { title: 'This should not execute' },
+                      },
+                    },
+                  ]
+                : [{ type: 'text', text: 'Resumed successfully.' }],
+            usage: {
+              input: phase === 0 ? 100 : 200,
+              output: 10,
+              cacheRead: 20,
+              cacheWrite: 5,
+              totalTokens: phase === 0 ? 135 : 235,
+              cost: {
+                input: 0.001,
+                output: 0.0008,
+                cacheRead: 0.0001,
+                cacheWrite: 0.0001,
+                total: 0.002,
+              },
+            },
+          };
+          const stream = createAssistantMessageEventStream();
+          stream.push({ type: 'start', partial: output });
+          stream.push({ type: 'done', reason: phase === 0 ? 'toolUse' : 'stop', message: output });
+          return stream;
+        };
+        return result;
+      };
+      const runtime = createAgentRuntime({
+        agent: createPiAgent({
+          provider: 'openai',
+          apiKey: 'runtime-fixture-key',
+          sessionRoot: join(directory, 'sessions'),
+          createSession: factory,
+        }),
+        computer: fakeComputer({
+          currentPage: async () => ({
+            origin: 'https://example.com',
+            url: phase === 0 ? 'https://example.com/login' : 'https://example.com/account',
+          }),
+        }),
+        workspace: fakeWorkspace(),
+      });
+      try {
+        assert.equal((await runtime.runTurn(context)).status, 'waiting_credentials');
+        assert.equal(managed, 0);
+        phase = 1;
+        assert.equal(
+          (
+            await runtime.runTurn({
+              ...context,
+              prompt: 'Secure entry completed',
+              history: [{ role: 'user', text: 'New context from the continuous conversation' }],
+            })
+          ).status,
+          'succeeded',
+        );
+        assert.equal(prompts.length, 2);
+        assert.equal(prompts[1].includes('Older fixture context'), true);
+        assert.equal(prompts[1].includes('Secure entry completed'), true);
+        assert.equal(prompts[1].includes('New context from the continuous conversation'), false);
+        assert.equal(
+          JSON.parse(prompts[1]).filter(
+            (item: { role: string; content: unknown }) =>
+              item.role === 'user' &&
+              JSON.stringify(item.content).includes('Older fixture context'),
+          ).length,
+          1,
+        );
+        assert.equal(prompts[1].includes('runtime-fixture-key'), false);
+        assert.equal(replies.length, background ? 1 : 2);
+        assert.match(replies[0], /\[Add password\]\(\/credentials\/fixture\)/);
+        if (!background) assert.equal(replies[1], 'Resumed successfully.');
+      } finally {
+        await runtime.dispose();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
 });
 
 test('messages taken after a Pi turn reach the next request together and not after a question', async () => {
@@ -355,6 +359,7 @@ test('messages taken after a Pi turn reach the next request together and not aft
   };
   const context: RuntimeContext = {
     threadId: 'test-' + randomUUID(),
+    sessionId: 'test-' + randomUUID(),
     turnId: randomUUID(),
     prompt: 'Check the first fixture',
     history: [],
@@ -452,8 +457,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
   });
   try {
     const session = await agent.open({
-      threadId: randomUUID(),
-      turnId: randomUUID(),
+      ...fakeExecution(randomUUID(), randomUUID()),
       systemPrompt: 'fixture',
       workspace,
       runTool: async (name, params, run) => {
@@ -586,8 +590,7 @@ test('codemode scripts reach only workspace and web tools, each call through the
   });
   try {
     const session = await agent.open({
-      threadId: randomUUID(),
-      turnId: randomUUID(),
+      ...fakeExecution(randomUUID(), randomUUID()),
       systemPrompt: 'fixture',
       workspace,
       runTool: async (name, _params, run) => {
@@ -1260,8 +1263,7 @@ test('real Pi awaits durable final checkpoints and restores a conversation in a 
   const final: string[] = [];
   try {
     const session = await first.open({
-      threadId: f.threadId,
-      turnId: randomUUID(),
+      ...fakeExecution(f.threadId, randomUUID()),
       systemPrompt: 'fixture',
       ...sandbox,
       tools: [],
@@ -1281,8 +1283,7 @@ test('real Pi awaits durable final checkpoints and restores a conversation in a 
     await first.dispose();
     await rm(join(f.directory, 'first'), { recursive: true, force: true });
     const restored = await second.open({
-      threadId: f.threadId,
-      turnId: randomUUID(),
+      ...fakeExecution(f.threadId, randomUUID()),
       systemPrompt: 'fixture',
       ...sandbox,
       tools: [],
@@ -1344,8 +1345,7 @@ test('real Pi persists its user message and tool call before a side effect and r
   });
   try {
     const session = await agent.open({
-      threadId: f.threadId,
-      turnId: randomUUID(),
+      ...fakeExecution(f.threadId, randomUUID()),
       systemPrompt: 'fixture',
       ...sandbox,
       shouldStop: () => false,
@@ -1435,8 +1435,7 @@ test('a restored durable session closes dangling tool calls before the next prom
   });
   try {
     const session = await agent.open({
-      threadId: f.threadId,
-      turnId: randomUUID(),
+      ...fakeExecution(f.threadId, randomUUID()),
       systemPrompt: 'fixture',
       ...sandbox,
       tools: [],
@@ -1783,6 +1782,7 @@ test('computer observations normalize controls, protect credentials and return c
 function context(directory: string): RuntimeContext {
   return {
     threadId: 'fixture',
+    sessionId: 'fixture',
     turnId: 'fixture',
     workspacePath: directory,
     prompt: 'Use the replacement tools',
@@ -1805,7 +1805,7 @@ function context(directory: string): RuntimeContext {
   };
 }
 
-test('delegated subagents run two at a time, each in its own browser, and answer as untrusted data', async (t) => {
+test('delegated subagents run in parallel, each in its own browser, and answer as untrusted data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const opened = new Map<string, string>();
@@ -1839,12 +1839,11 @@ test('delegated subagents run two at a time, each in its own browser, and answer
               tool('delegate').execute({ title: shop, instruction: `Price the drill on ${shop}.` }),
             ),
           );
-          for (let wait = 0; started.length < 2 && wait < 200; wait++) await setTimeout(5);
-          await setTimeout(50);
+          for (let wait = 0; started.length < 3 && wait < 200; wait++) await setTimeout(5);
           const first = [...started].sort();
           release();
           results = await pending;
-          assert.deepEqual(first, ['shop-a', 'shop-b']);
+          assert.deepEqual(first, ['shop-a', 'shop-b', 'shop-c']);
         },
       }),
       dispose() {},
@@ -1864,7 +1863,14 @@ test('delegated subagents run two at a time, each in its own browser, and answer
     const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
     assert.equal(result.status, 'succeeded');
     assert.deepEqual(started.sort(), ['shop-a', 'shop-b', 'shop-c']);
-    for (const name of ['delegate', 'sign_in', 'pay', 'browser_session'])
+    for (const name of [
+      'delegate',
+      'sign_in',
+      'pay',
+      'browser_session',
+      'ask_user',
+      'send_message',
+    ])
       assert.equal(childTools.includes(name), false);
     const browsers = [...opened.values()];
     assert.equal(new Set(browsers).size, 3);
@@ -1881,7 +1887,7 @@ test('delegated subagents run two at a time, each in its own browser, and answer
   }
 });
 
-test('a subagent that needs the owner pauses the whole turn', async (t) => {
+test('a subagent returns its question to the parent before the parent pauses', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-pause-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const replies: string[] = [];
@@ -1894,10 +1900,19 @@ test('a subagent that needs the owner pauses the whole turn', async (t) => {
         prompt: async () => {
           const tool = (name: string) => input.tools.find((item) => item.name === name)!;
           if (!input.tools.some((item) => item.name === 'delegate')) {
-            await tool('ask_user').execute({ question: 'Which date works for the table?' });
+            assert.equal(
+              input.tools.some((item) => item.name === 'ask_user'),
+              false,
+            );
+            input.onEvent({ type: 'final', text: 'Which date works for the table?' });
             return;
           }
-          await tool('delegate').execute({ title: 'Book', instruction: 'Book a table.' });
+          const answer = await tool('delegate').execute({
+            title: 'Book',
+            instruction: 'Book a table.',
+          });
+          assert.match(JSON.stringify(answer), /Which date works/);
+          await tool('ask_user').execute({ question: 'Which date works for the table?' });
         },
       }),
       dispose() {},
@@ -1916,6 +1931,80 @@ test('a subagent that needs the owner pauses the whole turn', async (t) => {
     assert.equal(result.status, 'waiting_user');
     assert.deepEqual(replies, ['Which date works for the table?']);
   } finally {
+    await runtime.dispose();
+  }
+});
+
+test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-delegate-stop-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let opened = 0;
+  let preparing = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => {
+        const child = Boolean(input.ephemeral);
+        if (child) opened++;
+        return {
+          resumed: false,
+          abort: () => release(),
+          dispose() {},
+          prompt: async () => {
+            if (child) {
+              await gate;
+              input.onEvent({ type: 'error' });
+              input.onEvent({ type: 'message_end', status: 'failed' });
+              return;
+            }
+            const delegate = input.tools.find((tool) => tool.name === 'delegate')!;
+            const pending = [1, 2, 3].map((number) =>
+              delegate.execute({ title: `Check ${number}`, instruction: 'Run a synthetic check.' }),
+            );
+            for (let wait = 0; preparing < 3 && wait < 200; wait++) await setTimeout(5);
+            assert.equal(preparing, 3);
+            await input.tools
+              .find((tool) => tool.name === 'ask_user')!
+              .execute({ question: 'Which source should I use?' });
+            const outcomes = await Promise.allSettled(pending);
+            assert.equal(opened, 2);
+            assert.ok(outcomes.every((outcome) => outcome.status === 'rejected'));
+            assert.ok(
+              outcomes
+                .slice(0, 2)
+                .every(
+                  (outcome) =>
+                    outcome.status === 'rejected' &&
+                    /subagent model request failed/.test(String(outcome.reason)),
+                ),
+            );
+          },
+        };
+      },
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({
+      open: () => ({
+        path: '/fixture/workspace',
+        instructions: 'Fixture workspace only.',
+        exec: async () => {
+          if (++preparing === 3) await gate;
+          return { exitCode: 0 };
+        },
+      }),
+    }),
+  });
+  try {
+    assert.equal(
+      (await runtime.runTurn({ ...context(directory), turnId: randomUUID() })).status,
+      'waiting_user',
+    );
+  } finally {
+    release();
     await runtime.dispose();
   }
 });
@@ -2081,8 +2170,7 @@ test('codemode heldout output preserves UTF-8 bytes and fails closed through the
       });
       try {
         await agent.open({
-          threadId: randomUUID(),
-          turnId: randomUUID(),
+          ...fakeExecution(randomUUID(), randomUUID()),
           systemPrompt: 'Independent synthetic fixture',
           workspace: {
             path: workspacePath,
@@ -3072,8 +3160,7 @@ test('Pi retries a transient provider error and the turn completes with the retr
   });
   try {
     const session = await agent.open({
-      threadId: randomUUID(),
-      turnId: randomUUID(),
+      ...fakeExecution(randomUUID(), randomUUID()),
       systemPrompt: 'Synthetic fixture',
       ...sandbox,
       tools: [],
@@ -3132,8 +3219,7 @@ test('old screenshots leave the model request in steps while the saved session k
   const threadId = randomUUID();
   try {
     const session = await agent.open({
-      threadId,
-      turnId: randomUUID(),
+      ...fakeExecution(threadId, randomUUID()),
       systemPrompt: 'Synthetic fixture',
       ...sandbox,
       tools: [
@@ -3230,12 +3316,11 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   const threadId = randomUUID();
   const open = (background = false) =>
     agent.open({
-      threadId,
-      turnId: randomUUID(),
+      ...fakeExecution(threadId, randomUUID()),
       systemPrompt: 'Fixture system',
       ...sandbox,
       tools: [],
-      background,
+      ephemeral: background,
       shouldStop: () => false,
       onEvent() {},
     });

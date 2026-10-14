@@ -16,7 +16,7 @@ flowchart LR
   server[Otto server<br/>provider keys · Vault]:::accent
   subgraph workspace[Workspace container]
     sandbox[Sandbox user<br/>runs Pi commands]
-    cli[otto-connected<br/>one CLI token]
+    cli[One user per CLI<br/>one CLI token each]
   end
   browser[Browser container<br/>Chromium · profiles]:::muted
   net([Internet])
@@ -72,7 +72,7 @@ Pi writes truncated output, codemode files and images, and extracted web PDFs to
 
 ## Connected CLIs
 
-A connected CLI runs as a separate user, `otto-connected`. Before each run, the supervisor installs the CLI's declared source into `/home/otto-connected/cli/<path id>` if it's missing. It refuses an install folder or executable that another user can write.
+Each connected CLI runs as its own Linux user, derived from its path ID, in group `otto-connected`. Before each run, the supervisor installs the CLI's declared source into `/var/tmp/otto-cli-<path id>`, a folder only that user can open, if it's missing. It refuses an install folder or executable that another user can write, and refuses to run if another CLI's install belongs to the same user. So one CLI can't change another's install or read its token.
 
 The CLI then runs with an environment built from scratch: a fixed `PATH`, a private temporary `HOME` and `XDG_CONFIG_HOME`, `LANG` and the one token variable. Nothing comes from the sandbox user's files or environment, so a program the model plants never receives the token. See [MCP, APIs and CLIs](/connect/mcp-api-cli/).
 
@@ -110,7 +110,9 @@ sequenceDiagram
   Note over Pi: Next turn takes a fresh snapshot
 ```
 
-- The handoff shows the chat's browser. Input is forwarded only while the latest chat turn waits on a question. Background sessions use their own browsers, so they never take it.
+- Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
+- **Done** replies to the question. It continues the session that asked, including a background session.
+- An upgrade keeps a waiting chat handoff linked to its existing browser.
 - One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.

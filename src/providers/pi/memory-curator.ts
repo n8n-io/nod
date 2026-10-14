@@ -90,8 +90,18 @@ export function createPiMemoryCurator(options: {
         );
         if (reply.usage?.totalTokens)
           report?.({
+            id: crypto.randomUUID(),
+            provider: model.provider,
             model: model.id,
+            ...piUsageMetrics(reply.usage),
+            status:
+              reply.stopReason === 'error'
+                ? 'failed'
+                : reply.stopReason === 'aborted'
+                  ? 'cancelled'
+                  : 'succeeded',
             costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
+            pricing: subscription ? 'unavailable' : piUsageMetrics(reply.usage).pricing,
           });
         return reply;
       };

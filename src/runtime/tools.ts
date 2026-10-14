@@ -159,7 +159,7 @@ export const toolDefinitions = {
   ),
   delegate: defineTool(
     'delegate',
-    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Two run at once and further calls wait for a slot. A subagent cannot delegate, sign in, pay or open saved browser sessions; do those yourself.",
+    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
     Type.Object({
       title: Type.String({ minLength: 1, maxLength: 120 }),
       instruction: Type.String({ minLength: 1, maxLength: 4000 }),
@@ -469,7 +469,8 @@ function pageText(page: BrowserObservation) {
 }
 
 export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
-  const { context, computer, pause, confirm, browserId } = turn;
+  const { context, computer, pause, confirm } = turn;
+  const { browserId } = turn.execution;
   const { signal } = context;
   const screenshot = async () => {
     const bytes = await computer.screenshot(browserId, signal);

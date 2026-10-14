@@ -149,7 +149,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
       );
       return { running: result.rows };
     });
-  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping"`;
+  const activeHandoff = `u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))`;
+  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping",
+    CASE WHEN ${activeHandoff}
+      THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
     if (!ids.length) return [];
     const result = await pool.query(
@@ -436,15 +440,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'credentials';
   }
-  async function handoffOpen(threadId: string) {
+  async function handoffBrowser(turnId: string) {
     const latest = await pool.query(
-      `SELECT u.status,u.waiting_reason FROM turns u
+      `SELECT u.handoff_browser_id FROM turns u
        JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND th.archived_at IS NULL
-       ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
-      [ownerId, threadId],
+       WHERE u.owner_id=$1 AND u.id=$2 AND th.archived_at IS NULL AND ${activeHandoff}`,
+      [ownerId, turnId],
     );
-    return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'question';
+    return latest.rows[0]?.handoff_browser_id as string | undefined;
   }
   const handoffClosed = 'The browser opens here when Otto hands it to you.';
   async function readBrowserScreen(reply: FastifyReply) {
@@ -473,22 +476,23 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return reply.type('image/png').send(screen);
   }
   app.get('/api/browser/screen', (_request, reply) => readBrowserScreen(reply));
-  app.get('/api/browser-handoff/stream', async (_request, reply) => {
+  app.get('/api/browser-handoff/stream', async (request, reply) => {
     const view = dependencies.computer?.view;
     if (!view) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const thread = await activeThread(pool);
-    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const { turnId } = z.object({ turnId: z.uuid() }).parse(request.query);
+    const browserId = await handoffBrowser(turnId);
+    if (!browserId) return reply.code(423).send({ error: handoffClosed });
     const controller = new AbortController();
     reply.raw.on('close', () => controller.abort());
-    const open = () => view(thread.id, controller.signal)[Symbol.asyncIterator]();
+    const open = () => view(browserId, controller.signal)[Symbol.asyncIterator]();
     let frames = open();
     let closed = false;
     let timedOut = false;
     const check = setInterval(
       () =>
-        void handoffOpen(thread.id).then(
+        void handoffBrowser(turnId).then(
           (open) => {
-            if (open) return;
+            if (open === browserId) return;
             closed = true;
             controller.abort();
           },
@@ -525,7 +529,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
             ? 'The browser view did not start. Try opening it again.'
             : "Otto's browser is not showing a page.",
         });
-      if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+      if ((await handoffBrowser(turnId)) !== browserId)
+        return reply.code(423).send({ error: handoffClosed });
       if (controller.signal.aborted) return;
       reply.hijack();
       streams.add(reply.raw);
@@ -561,15 +566,22 @@ export async function createApp(dependencies: AppDependencies = {}) {
     }
   });
   app.post('/api/browser-handoff', async (request, reply) => {
-    const body = z.object({ inputs: browserHandoffInputs }).strict().safeParse(request.body);
+    const body = z
+      .object({ turnId: z.uuid(), inputs: browserHandoffInputs })
+      .strict()
+      .safeParse(request.body);
     if (!body.success)
       return reply.code(400).send({ error: 'Send pointer, wheel, key or text input.' });
     const control = dependencies.computer?.control;
     if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const thread = await activeThread(pool);
-    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const browserId = await handoffBrowser(body.data.turnId);
+    if (!browserId) return reply.code(423).send({ error: handoffClosed });
     try {
-      for (const input of body.data.inputs) await control(thread.id, input);
+      for (const input of body.data.inputs) {
+        if ((await handoffBrowser(body.data.turnId)) !== browserId)
+          return reply.code(423).send({ error: handoffClosed });
+        await control(browserId, input);
+      }
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply
@@ -580,16 +592,16 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   app.post('/api/browser-handoff/navigate', async (request, reply) => {
     const body = z
-      .object({ action: z.enum(['back', 'reload']) })
+      .object({ turnId: z.uuid(), action: z.enum(['back', 'reload']) })
       .strict()
       .safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: 'Choose back or reload.' });
     const act = dependencies.computer?.act;
     if (!act) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const thread = await activeThread(pool);
-    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const browserId = await handoffBrowser(body.data.turnId);
+    if (!browserId) return reply.code(423).send({ error: handoffClosed });
     try {
-      await act(thread.id, { action: body.data.action });
+      await act(browserId, { action: body.data.action });
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply

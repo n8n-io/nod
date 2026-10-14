@@ -77,6 +77,11 @@ export async function initializeDatabase() {
       summary text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS turn_events_turn_time ON turn_events(turn_id,created_at);
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS run_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS parent_run_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS session_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS browser_id text;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS call_id uuid;
     CREATE TABLE IF NOT EXISTS messages (
       id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL,
       thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),
@@ -85,6 +90,16 @@ export async function initializeDatabase() {
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema=current_schema() AND table_name='turns' AND column_name='handoff_browser_id') THEN
+        ALTER TABLE turns ADD COLUMN handoff_browser_id text;
+        UPDATE turns u SET handoff_browser_id=u.session_id::text
+          WHERE NOT u.background AND u.status='waiting' AND u.waiting_reason='question'
+            AND (SELECT m.text FROM messages m WHERE m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant'
+              ORDER BY m.created_at DESC,m.id DESC LIMIT 1) LIKE '%](/browser)%';
+      END IF;
+    END $$;
     CREATE INDEX IF NOT EXISTS messages_owner_agent_reaction_time ON messages(owner_id,assistant_reacted_at DESC) WHERE assistant_reacted_at IS NOT NULL;
     CREATE TABLE IF NOT EXISTS artifacts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,

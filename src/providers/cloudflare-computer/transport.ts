@@ -13,7 +13,7 @@ export function launchCloudflareCommand(options: {
   role: 'browser' | 'workspace';
   generation: string;
   threadId?: string;
-  connected?: boolean;
+  connected?: number;
   session?: boolean;
   fetch?: typeof fetch;
   origin?: string;
@@ -293,7 +293,7 @@ export function launchCloudflareCommand(options: {
           id,
           role,
           ...(selectedThreadId && { threadId: selectedThreadId }),
-          ...(connected && { connected: true }),
+          ...(connected && { connected }),
           ...(session && { session: true }),
         }),
       },

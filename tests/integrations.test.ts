@@ -38,7 +38,7 @@ import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import type { Connection } from '../src/shared/contracts.ts';
-import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { fakeComputer, fakeWorkspace, fakeExecution } from './runtime-fixtures.ts';
 
 function fakeProvider(session: IntegrationSession): IntegrationProvider {
   return {
@@ -2023,6 +2023,7 @@ test(
     });
     const result = await runtime.runTurn({
       threadId,
+      sessionId: threadId,
       turnId,
       prompt: 'Connect my personal Gmail too, keeping my work account.',
       history: [],
@@ -3590,6 +3591,7 @@ async function searchFixture(
   });
   const context: RuntimeContext = {
     threadId,
+    sessionId: threadId,
     turnId,
     prompt: 'Get the synthetic Gmail label count without reading or changing messages.',
     history: [],
@@ -6754,7 +6756,7 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
@@ -6810,6 +6812,7 @@ test(
               options.onEvent({
                 type: 'provider_usage',
                 usage: {
+                  id: randomUUID(),
                   provider: 'openai',
                   category: 'agent',
                   operation: 'compaction',
@@ -6829,8 +6832,7 @@ test(
       for (const turnId of [chat, scheduled, foreign])
         await (
           await agent.open({
-            threadId: randomUUID(),
-            turnId,
+            ...fakeExecution(randomUUID(), turnId),
             systemPrompt: 'Synthetic prompt',
             tools: [],
             workspace: fakeWorkspace().open({
@@ -6853,7 +6855,7 @@ test(
             id: 'fixture',
             configured: true,
             curate: async (_request, _signal, report) => {
-              report?.({ model: 'fixture-small', costUsd: 0.05 });
+              report?.({ id: randomUUID(), model: 'fixture-small', costUsd: 0.05 });
               return {};
             },
           })
@@ -6948,7 +6950,7 @@ test(
         configured: true,
         curate: async (_request, _signal, report) => {
           modelRequests++;
-          report?.({ model: 'fixture-small', costUsd: 0.05 });
+          report?.({ id: randomUUID(), model: 'fixture-small', costUsd: 0.05 });
           return {};
         },
       });
@@ -6980,6 +6982,98 @@ test(
         "INSERT INTO model_usage(id,owner_id,cost_usd) VALUES('decimal-10','decimal-owner',0.1)",
       );
       assert.equal(await decimalLedger.limitReached(), true);
+      await limit(null);
+      const sessionId = randomUUID();
+      const childRunId = randomUUID();
+      const threadId = randomUUID();
+      const reviewId = randomUUID();
+      const childUsage = usage(chat, 0.2);
+      const rootUsage = usage(chat, 0.1);
+      const reviewed = ledger.curator({
+        id: 'fixture',
+        configured: true,
+        curate: async (_request, _signal, report) => {
+          report?.({ id: reviewId, provider: 'openai', model: 'fixture-review', costUsd: 0.05 });
+          return {};
+        },
+      });
+      const billed = ledger.agent({
+        open: async (input) => ({
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            const event = input.parentRunId ? childUsage : rootUsage;
+            input.onEvent(event);
+            input.onEvent(event);
+            if (input.parentRunId)
+              await reviewed.curate({
+                task: 'review',
+                instructions: 'Synthetic review',
+                input: {},
+              });
+          },
+        }),
+        dispose() {},
+      });
+      for (const runId of [chat, childRunId]) {
+        const execution = {
+          threadId,
+          sessionId,
+          turnId: chat,
+          runId,
+          browserId: runId === chat ? sessionId : runId,
+          ...(runId !== chat ? { parentRunId: chat } : {}),
+        };
+        const session = await billed.open({
+          ...execution,
+          systemPrompt: 'Synthetic prompt',
+          tools: [],
+          workspace: fakeWorkspace().open({
+            threadId,
+            workspacePath: '/fixture',
+            signal: new AbortController().signal,
+          }),
+          runTool: (_name, _params, run) => run(),
+          shouldStop: () => false,
+          onEvent() {},
+        });
+        await session.prompt('Synthetic request', []);
+        await session.dispose();
+      }
+      const usageIds = new Set([
+        rootUsage.type === 'model_usage' ? rootUsage.id : '',
+        childUsage.type === 'model_usage' ? childUsage.id : '',
+        reviewId,
+      ]);
+      const { rows: recorded } = await pool.query(
+        `SELECT id,run_id AS "runId",parent_run_id AS "parentRunId",session_id AS "sessionId",browser_id AS "browserId",details
+         FROM model_usage WHERE owner_id=$1 AND turn_id=$2 AND id=ANY($3::text[])`,
+        ['owner', chat, [...usageIds]],
+      );
+      assert.equal(recorded.length, 3);
+      assert.equal(
+        recorded.filter((item: { runId: string }) => item.runId === childRunId).length,
+        2,
+      );
+      assert.ok(recorded.every((item: { sessionId: string }) => item.sessionId === sessionId));
+      assert.equal(recorded.find((item) => item.runId === chat).browserId, sessionId);
+      assert.ok(
+        recorded
+          .filter((item) => item.runId === childRunId)
+          .every((item) => item.browserId === childRunId),
+      );
+      assert.equal(recorded.find((item: { id: string }) => item.id === reviewId).parentRunId, chat);
+      assert.equal(
+        recorded.find((item: { runId: string }) => item.runId === chat).details.inputTokens,
+        4,
+      );
+      assert.equal(Math.round((await ledger.messageCosts([chat]))[chat].costUsd! * 100) / 100, 0.9);
+      assert.equal(
+        (await pool.query("SELECT count(*)::int AS n FROM model_usage WHERE details ? 'costUsd'"))
+          .rows[0].n,
+        0,
+      );
     } finally {
       await app.close();
       await pool.end();

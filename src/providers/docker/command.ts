@@ -3,6 +3,7 @@ import {
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { serviceEnvironment } from '../process.ts';
 import type { ConnectedCli } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -22,7 +23,8 @@ def head(path,size):
  with open(path,'rb') as file: return file.read(size)
 try:
  shutil.rmtree(prefix,ignore_errors=True)
- os.makedirs(prefix+'/bin',0o700)
+ os.mkdir(prefix,0o700)
+ os.mkdir(prefix+'/bin',0o700)
  if 'npm' in source: run('npm','install','--global','--prefix',prefix,'--no-audit','--no-fund','--no-update-notifier',source['npm'])
  elif 'pypi' in source: run('pipx','install',source['pypi'],PIPX_HOME=prefix+'/pipx',PIPX_BIN_DIR=prefix+'/bin',PIPX_MAN_DIR=prefix+'/man')
  else:
@@ -64,7 +66,10 @@ except Exception as error:
 
 const cliInstallTimeoutMs = 600_000;
 
-export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil
+export const connectedUser = (cli: ConnectedCli) =>
+  20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
+
+export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
 line=sys.stdin.buffer.raw.readline(1048577)
 home=None
 def sealed(path):
@@ -90,8 +95,8 @@ try:
  else:
   install=float(r['installTimeoutMs'])/1000
   if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install<=3600: raise ValueError()
-  os.makedirs('cli',0o700,exist_ok=True)
-  prefix=sealed('cli')+'/'+cli['id']
+  prefix=sealed('.')+'/otto-cli-'+cli['id']
+  os.close(os.open(prefix+'.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600))
   home=tempfile.mkdtemp(prefix='otto-cli-')
   system='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   base={'HOME':home,'XDG_CONFIG_HOME':home+'/.config','LANG':'C.UTF-8'}
@@ -156,7 +161,9 @@ def group_running():
 for index,(args,child_env,seconds) in enumerate(steps):
  last=index==len(steps)-1
  try:
-  if last and cli is not None: sealed(args[0])
+  if cli is not None:
+   if any(os.lstat(path).st_uid==os.getuid() for path in glob.glob(os.path.dirname(prefix)+'/otto-cli-*') if not path.startswith(prefix)): raise ValueError()
+   if last: sealed(args[0])
  except (OSError,ValueError):
   output('stderr',b'The connected CLI install is not sealed. Propose it again.\\n')
   finish({'type':'exit','code':126,'reason':None})
@@ -241,9 +248,9 @@ export async function runWorkspaceCommand(options: {
           'exec',
           '-i',
           '--user',
-          options.cli ? 'otto-connected' : 'node',
+          options.cli ? `${connectedUser(options.cli)}:1002` : 'node',
           '--workdir',
-          options.cli ? '/home/otto-connected' : `/workspace/${id}`,
+          options.cli ? '/var/tmp' : `/workspace/${id}`,
           options.container,
           '/usr/bin/python3',
           '-I',

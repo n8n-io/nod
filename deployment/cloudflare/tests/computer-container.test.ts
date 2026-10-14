@@ -283,7 +283,7 @@ test('browser status never starts the computer and is live only while this contr
   assert.equal(await live(), false);
 });
 
-test('connected CLI commands run capability-free as otto-connected in its own home', async (t) => {
+test('connected CLI commands run capability-free as their own user in /var/tmp', async (t) => {
   const current = fixture('workspace', 'ready', true);
   const exit = deferred<number>();
   const calls: { args: string[]; options: ContainerExecOptions }[] = [];
@@ -297,7 +297,12 @@ test('connected CLI commands run capability-free as otto-connected in its own ho
     await current.computer.stopComputer(current.ownerId, '1');
     exit.resolve(137);
   });
-  for (const body of [{ connected: true, session: true }, { connected: 'yes' }]) {
+  for (const body of [
+    { connected: 20_000, session: true },
+    { connected: true },
+    { connected: 1002 },
+    { connected: 60_000 },
+  ]) {
     const refused = await current.request('/v1/commands', {
       method: 'POST',
       body: JSON.stringify({ id: randomUUID(), role: 'workspace', threadId: 'thread', ...body }),
@@ -310,7 +315,7 @@ test('connected CLI commands run capability-free as otto-connected in its own ho
       id: randomUUID(),
       role: 'workspace',
       threadId: 'thread',
-      connected: true,
+      connected: 31_234,
     }),
   });
   assert.equal(response.status, 201);
@@ -328,7 +333,7 @@ test('connected CLI commands run capability-free as otto-connected in its own ho
   ]);
   assert.deepEqual(
     { ...launched.options, signal: undefined },
-    { user: '1002:1002', cwd: '/home/otto-connected', stdin: 'pipe', signal: undefined },
+    { user: '31234:1002', cwd: '/var/tmp', stdin: 'pipe', signal: undefined },
   );
   assert.equal(
     calls.some((call) => call.args.some((arg) => arg.includes('state/workspace/thread'))),

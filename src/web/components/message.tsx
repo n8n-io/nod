@@ -36,12 +36,14 @@ export const MessageText = memo(function MessageText({
   connectedAppIds,
   onHandoffDone,
   handoffPaused,
+  handoffTurnId,
 }: {
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
   onHandoffDone?: () => Promise<void>;
   handoffPaused?: boolean;
+  handoffTurnId?: string;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
@@ -100,8 +102,13 @@ export const MessageText = memo(function MessageText({
             (action) => action.setup !== 'browser' && !connected(action.href),
           )}
         />
-        {onHandoffDone && actions.some((action) => action.setup === 'browser') && (
-          <BrowserHandoff onDone={onHandoffDone} paused={handoffPaused} />
+        {onHandoffDone && handoffTurnId && actions.some((action) => action.setup === 'browser') && (
+          <BrowserHandoff
+            key={handoffTurnId}
+            turnId={handoffTurnId}
+            onDone={onHandoffDone}
+            paused={handoffPaused}
+          />
         )}
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
@@ -385,6 +392,7 @@ export function MessageBubble({
                 connectedAppIds={connectedAppIds}
                 onHandoffDone={streaming ? undefined : onHandoffDone}
                 handoffPaused={handoffPaused}
+                handoffTurnId={message.turnId ?? undefined}
               />
             )}
           </div>
