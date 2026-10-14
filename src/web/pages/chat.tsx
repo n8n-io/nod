@@ -74,7 +74,7 @@ function TaskCards({
 }: {
   id: string;
   suggestions: TaskSuggestions;
-  status(task: SuggestedTask): 'idle' | 'working' | 'done';
+  status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'done';
   disabled: boolean;
   onStart(task: SuggestedTask): void;
 }) {
@@ -132,6 +132,8 @@ function TaskCards({
                       <LoaderCircle size={16} className="spin" aria-hidden="true" />
                       On it…
                     </span>
+                  ) : state === 'waiting' ? (
+                    <span className="task-state">Waiting for you</span>
                   ) : (
                     <span className="task-state">
                       <span className="task-check" aria-hidden="true">
@@ -309,6 +311,7 @@ export function Chat({
     const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
     if (!turn) return persistedIds.has(sent.id) ? 'done' : 'working';
     if (turn.status === 'succeeded') return 'done';
+    if (turn.status === 'waiting') return 'waiting';
     return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
   }
   const foregroundTurn = state.turns

@@ -1116,7 +1116,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       publish: async (path, name) => {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
-        const artifact = await current(() => artifacts.publishArtifact(threadId, path, name, read));
+        const artifact = await current((client) =>
+          artifacts.publishArtifact(threadId, path, name, read, client),
+        );
         await post('', [artifact]);
         return artifact;
       },

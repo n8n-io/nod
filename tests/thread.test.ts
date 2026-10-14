@@ -2628,6 +2628,28 @@ test(
           }
         },
       );
+      await t.test('a shared file is published on the turn connection', async () => {
+        const previousRead = dependencies.readArtifact;
+        const prompt = 'Share a file with one free connection fixture';
+        const taken: pg.PoolClient[] = [];
+        let submitted: SubmitMessageResponse | undefined;
+        try {
+          dependencies.readArtifact = async () => Buffer.from('synthetic report');
+          block(prompt);
+          submitted = await thread.submitUserMessage(prompt);
+          await waitFor(() => Boolean(ran(submitted!.turnId)));
+          const max = db.pool.options.max ?? 10;
+          while (max - (db.pool.totalCount - db.pool.idleCount) > 1)
+            taken.push(await db.pool.connect());
+          const artifact = await ran(submitted.turnId)!.publish('report.txt', 'report.txt');
+          assert.equal(artifact.name, 'report.txt');
+        } finally {
+          for (const client of taken) client.release();
+          dependencies.readArtifact = previousRead;
+          release(prompt);
+          if (submitted) await waitFor(settled(submitted.turnId));
+        }
+      });
       await t.test(
         'turn and schedule analytics keep outcomes while excluding prompts, raw failures and private identifiers',
         async () => {
