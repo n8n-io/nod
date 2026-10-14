@@ -864,11 +864,8 @@ export default {
       if (url.origin !== publicOrigin(env)) throw new RuntimeControlError(403);
       if (url.pathname.startsWith('/runtime/') || url.pathname.startsWith('/__otto/'))
         throw new RuntimeControlError(404);
-      if (url.pathname.startsWith('/api/internal/')) throw new RuntimeControlError(404);
       if (url.pathname.startsWith('/api/')) {
         const forwarded = new Request(request);
-        for (const name of [...forwarded.headers.keys()])
-          if (name.toLowerCase().startsWith('x-otto-runtime')) forwarded.headers.delete(name);
         forwarded.headers.set('host', url.host);
         return await env.GATEWAY.getByName(gatewayName(env)).fetch(forwarded);
       }

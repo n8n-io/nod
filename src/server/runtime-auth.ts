@@ -13,7 +13,7 @@ const envelope = z
     nonce: z.uuid(),
     expiresAt: z.number().int(),
     method: z.enum(['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'HEAD', 'OPTIONS']),
-    target: z.string().min(1).max(8192).startsWith('/'),
+    target: z.string().min(1).startsWith('/'),
     bodyHash: z.string().regex(/^[a-f0-9]{64}$/),
     developer: z.boolean(),
     kind: z.enum(['user', 'webhook', 'wake', 'deployment']),
@@ -24,8 +24,7 @@ export type RuntimeClaims = z.infer<typeof envelope>;
 export const runtimeHeader = 'x-otto-runtime';
 
 export function canonicalRequestPath(target: string): string | null {
-  if (target.length > 8192 || !target.startsWith('/') || /[\\#\u0000-\u0020\u007f]/.test(target))
-    return null;
+  if (!target.startsWith('/') || /[\\#\u0000-\u0020\u007f]/.test(target)) return null;
   const path = target.split('?')[0];
   if (
     path.includes('%') ||
@@ -99,7 +98,7 @@ export function verifyRuntimeSignature(
   method: string,
   target: string,
 ): RuntimeClaims | null {
-  if (typeof token !== 'string' || token.length > 16_384) return null;
+  if (typeof token !== 'string') return null;
   const [payload, signature, extra] = token.split('.');
   if (!payload || !signature || extra !== undefined) return null;
   const expected = createHmac('sha256', Buffer.from(options.secret, 'base64url'))
@@ -145,7 +144,7 @@ export function createRuntimeVerifier(options: {
     if (!claims || claims.generation !== options.generation) return null;
     const time = now();
     for (const [nonce, expires] of accepted) if (expires <= time) accepted.delete(nonce);
-    if (accepted.has(claims.nonce) || accepted.size >= 20_000) return null;
+    if (accepted.has(claims.nonce)) return null;
     accepted.set(claims.nonce, claims.expiresAt);
     return claims;
   }

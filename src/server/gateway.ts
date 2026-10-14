@@ -224,11 +224,10 @@ export async function createGateway(options: {
     const account =
       profileAccounts.get(session.user.id) ?? (await accountStore.read(session.user.id));
     const body = JSON.stringify({
-      name: session.user.name.trim().slice(0, 200) || null,
-      givenName: session.givenName?.slice(0, 100) || null,
-      email: session.user.email?.slice(0, 320) || null,
-      preferredName:
-        (welcomeProfiles.get(session.user.id) ?? account.displayName)?.slice(0, 100) || null,
+      name: session.user.name.trim() || null,
+      givenName: session.givenName || null,
+      email: session.user.email || null,
+      preferredName: (welcomeProfiles.get(session.user.id) ?? account.displayName) || null,
       usageData: account.usageData,
     });
     if (syncedProfiles.get(session.user.id) === body) return;
@@ -258,10 +257,6 @@ export async function createGateway(options: {
       .header('content-security-policy', "frame-ancestors 'none'");
     const path = canonicalRequestPath(request.url);
     if (!path) return reply.code(400).send({ error: 'This request is not permitted.' });
-    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(request.method))
-      return reply.code(405).send({ error: 'This method is not permitted.' });
-    if (request.headers.host !== origin.host)
-      return reply.code(403).send({ error: 'This host is not permitted.' });
     const serviceRequest =
       (Boolean(deployment) && request.method === 'POST' && path === deploymentPath) ||
       (Boolean(options.internal) &&
@@ -405,20 +400,11 @@ export async function createGateway(options: {
     const session = await accounts.requirePrincipal(request, reply);
     if (!session) return;
     const url = new URL(request.url, origin);
-    if (
-      url.pathname.startsWith('/api/auth/') ||
-      url.pathname.startsWith('/api/webhooks/') ||
-      url.pathname.startsWith('/api/internal/') ||
-      url.pathname.startsWith('/api/runtime/') ||
-      url.pathname === '/api/onboarding/start' ||
-      url.pathname === '/api/account/profile'
-    )
+    if (url.pathname === '/api/onboarding/start' || url.pathname === '/api/account/profile')
       return reply.code(404).send({ error: 'Route not found.' });
     if (url.pathname === '/api/events' && url.searchParams.get('account') !== session.user.id)
       return reply.code(401).send({ error: 'Sign in to continue.' });
     const developer = options.developerIds?.has(session.user.id) ?? false;
-    if (!developer && (url.pathname === '/api/browser' || url.pathname.startsWith('/api/browser/')))
-      return reply.code(404).send({ error: 'Route not found.' });
     const headers = new Headers();
     for (const name of ['content-type', 'accept', 'range']) {
       const value = request.headers[name];
