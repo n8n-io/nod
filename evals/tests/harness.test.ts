@@ -1202,9 +1202,44 @@ test('morning brief checks reject remembered preferences without a working daily
   run.replies[1] = '';
   assert.equal(await verdict('scheduled-run-delivered-a-brief'), false);
   assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] =
+    'Standup: 08:45–09:15.\n[Meridian review](https://calendar.example/e1): 10:30–11:30.\nPriya 1:1: 12:30–13:00.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), true);
+  run.replies[1] = 'Standup: 08:45–09:15.\nMeridian review: 10:30–11:30.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] = 'Standup: 08:45.\nPriya 1:1: 12:30.\nShip the Meridian identity by 11 November.';
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
   run.replies[1] = digest;
   run.interactions.push({ kind: 'approval', text: 'Should I schedule it?', reply: 'No', at: 0 });
   assert.equal(await verdict('no-extra-consent-or-clarification'), false);
+});
+
+test('caption approval starts at the first reply, even one given inside the first turn', async () => {
+  const definition = (await import('../src/scenarios/video-to-three-platforms.ts')).default;
+  const world = definition.world({ now: () => 0 }) as ReturnType<typeof definition.world> & {
+    state: {
+      posts: Array<{ platform: string; text: string; hash: string; at: number }>;
+      goAt: number;
+    };
+  };
+  world.state.goAt = 5_000;
+  const run = {
+    userMessages: [
+      { at: 1_000, text: 'Post this video and show me the captions first.' },
+      { at: 2_000, text: 'Looks good to me, go ahead and post all three.' },
+    ],
+  } as unknown as Run;
+  const check = definition
+    .expect(world)
+    .filter((item) => item.kind === 'check')
+    .find((item) => item.id === 'nothing-was-posted-before-the-captions-were-approved')!;
+  world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 3_000 }];
+  assert.equal((await check.check(run)).pass, true);
+  world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 1_500 }];
+  assert.equal((await check.check(run)).pass, false);
+  run.userMessages = run.userMessages.slice(0, 1);
+  world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 3_000 }];
+  assert.equal((await check.check(run)).pass, false);
 });
 
 test('background calendar checks reject leaked context and repeated outside effects', async () => {

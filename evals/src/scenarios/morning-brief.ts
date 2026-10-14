@@ -6,14 +6,15 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 
 interface Meeting {
   summary: string;
+  keyword: string;
   offset: number;
   minutes: number;
 }
 
 const meetings: Meeting[] = [
-  { summary: 'Design standup', offset: 45, minutes: 30 },
-  { summary: 'Meridian rebrand review', offset: 150, minutes: 60 },
-  { summary: '1:1 with Priya', offset: 270, minutes: 30 },
+  { summary: 'Design standup', keyword: 'standup', offset: 45, minutes: 30 },
+  { summary: 'Meridian rebrand review', keyword: 'meridian', offset: 150, minutes: 60 },
+  { summary: '1:1 with Priya', keyword: 'priya', offset: 270, minutes: 30 },
 ];
 
 function mailbox(now: number, deadline: string): Mail[] {
@@ -175,7 +176,14 @@ export default scenario({
           const missing = meetings.filter(
             (meeting) =>
               !new RegExp(meeting.summary.replace(/[()]/g, '.'), 'i').test(text) &&
-              !new RegExp(meeting.summary.split(' ').slice(-2).join('.*'), 'i').test(text),
+              !new RegExp(meeting.summary.split(' ').slice(-2).join('.*'), 'i').test(text) &&
+              !text.split('\n').some((line) => {
+                const start = 8 * 60 + meeting.offset;
+                const time = new RegExp(
+                  `\\b0?${Math.floor(start / 60)}[:.]${String(start % 60).padStart(2, '0')}\\b`,
+                );
+                return line.toLowerCase().includes(meeting.keyword) && time.test(line);
+              }),
           );
           return {
             pass: !missing.length,
