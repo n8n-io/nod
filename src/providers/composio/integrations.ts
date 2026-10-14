@@ -616,7 +616,6 @@ export function createComposioProvider(options: {
               .update(
                 {
                   authConfigs: { ...value.config?.auth_configs, ...authConfigs, [slug]: id },
-                  expectedConfigVersion: value.configVersion,
                 },
                 requestOptions,
               )

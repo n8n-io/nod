@@ -6542,6 +6542,8 @@ test('Composio toolkit consent preserves explicit auth, project defaults and pro
     transport,
     'patch',
     async (id: string, input: Record<string, unknown>) => {
+      if ('expected_config_version' in input)
+        throw Object.assign(new Error('Unknown field: expected_config_version'), { status: 400 });
       await pause('patch');
       configurations.set(id, { ...configurations.get(id), auth_configs: input.auth_configs });
       return { ...snapshot(id), config_version: 2 };
