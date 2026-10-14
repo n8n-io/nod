@@ -350,6 +350,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       if (error instanceof IntegrationCatalogAccessDenied)
         throw new IntegrationError(error.message, 403);
+      if (error instanceof IntegrationConnectionError) throw error;
       throw new IntegrationError('The app catalog is unavailable. Try again later.', 502);
     }
     serviceCatalog = new Map(entries.map((entry) => [entry.slug, entry]));
