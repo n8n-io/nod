@@ -187,7 +187,7 @@ export async function createBrowserConnections(
           { action: 'open', url: address.href, ...launch },
           signal,
         );
-        await browser.hold(browserOf(turn), Date.now() + 30 * 60_000);
+        await browser.hold(browserOf(turn), true);
         options.refresh?.();
         return { status: 'profile_opened' as const, connectionId: id, observation };
       } catch (error) {
@@ -229,7 +229,7 @@ export async function createBrowserConnections(
         );
         if (!saved.rowCount)
           throw new BrowserConnectionError('This browser connection is unavailable.');
-        await browser.hold(browserOf(turn), null);
+        await browser.hold(browserOf(turn), false);
         options.refresh?.();
         return { status: 'session_saved' as const, connectionId: row.id };
       }

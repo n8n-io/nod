@@ -117,9 +117,9 @@ A session opens its browser on its first browser call, so a session that never b
 
 - A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most four browsers live at once. Other sessions can wait for a browser. At that limit, a new browser replaces the least recently used one that has been idle for five minutes, which closes and keeps its profile until it's used again.
-- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. One waiting for you stays open for 30 minutes.
-- When no browser can close, a new one waits up to two minutes for a free slot, then the browser call fails as busy. **Stop** cancels the wait at once.
+- The browser container keeps four browsers live at once. At that limit, a new browser replaces one that has been idle for five minutes: first one that isn't waiting for you, then the least recently used. The replaced browser closes and keeps its profile until it's used again.
+- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. Browsers don't close just because they're idle.
+- When no browser can close yet, a new one waits for a free slot until its session stops. **Stop** cancels the wait at once.
 
 ## Stop and failures
 

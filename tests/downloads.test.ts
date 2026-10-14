@@ -19,16 +19,16 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { Composio } from '@composio/core';
 import pg from 'pg';
-import { browserDownloadBytes } from '../src/ports/computer.ts';
 import { IntegrationDownload } from '../src/ports/integrations.ts';
 import { ObjectStoreConflict } from '../src/ports/object-storage.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
 import {
   completedDownloads,
-  decodeDownload,
+  decodeDownloadChunk,
   downloadFile,
   readDownload,
 } from '../src/providers/agent-browser/downloads.ts';
+import { fileBytes } from '../src/shared/files.ts';
 import { mcpFiles } from '../src/providers/app-files.ts';
 import { createComposioFiles } from '../src/providers/composio/downloads.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
@@ -44,7 +44,6 @@ import { createArtifactService } from '../src/server/artifacts.ts';
 import { saveIntegrationFiles } from '../src/server/integration-files.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
-import { fileBytes } from '../src/shared/files.ts';
 
 async function createDownloadBrowser(root: string) {
   const socketPath = join(root, 'control.sock');
@@ -109,24 +108,22 @@ async function createDownloadBrowser(root: string) {
   };
 }
 
-test('browser file validation bounds encoded bytes and rejects unsafe metadata', async () => {
+test('browser file validation bounds bytes and rejects unsafe metadata', async () => {
   assert.deepEqual(
-    decodeDownload({ data: browserDownloadPdf.toString('base64'), mimeType: 'application/pdf' }),
+    downloadFile(
+      decodeDownloadChunk(browserDownloadPdf.toString('base64')),
+      undefined,
+      'text/plain',
+    ),
     {
       bytes: browserDownloadPdf,
       name: 'download.pdf',
       mimeType: 'application/pdf',
     },
   );
-  assert.throws(() =>
-    decodeDownload({
-      data: 'A'.repeat(Math.ceil(browserDownloadBytes / 3) * 4 + 4),
-      mimeType: 'application/pdf',
-    }),
-  );
-  assert.throws(() => decodeDownload({ data: 'Zh==', mimeType: 'application/pdf' }));
-  assert.throws(() => decodeDownload({ data: 'Zg==trailing', mimeType: 'application/pdf' }));
-  assert.throws(() => downloadFile(Buffer.alloc(browserDownloadBytes + 1)));
+  assert.throws(() => decodeDownloadChunk('Zh=='));
+  assert.throws(() => decodeDownloadChunk('Zg==trailing'));
+  assert.throws(() => downloadFile(Buffer.alloc(fileBytes + 1)));
   assert.throws(() => downloadFile(Buffer.alloc(0)));
   for (const name of ['../private', 'folder/file', 'folder\\file', '.', '..', 'file\nname'])
     assert.throws(() => downloadFile(browserDownloadPdf, name));
@@ -151,7 +148,7 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
     await writeFile(join(directory, 'later.pdf'), browserDownloadPdf);
     await utimes(join(directory, 'invoice.pdf'), new Date(1_000_000), new Date(1_000_000));
     assert.equal((await completedDownloads(directory))[0], 'later.pdf');
-    await writeFile(join(directory, 'large'), Buffer.alloc(browserDownloadBytes + 1));
+    await writeFile(join(directory, 'large'), Buffer.alloc(fileBytes + 1));
     await assert.rejects(readDownload(directory, 'large'));
     await symlink(directory, join(root, 'alias'));
     await assert.rejects(completedDownloads(join(root, 'alias')));

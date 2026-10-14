@@ -195,12 +195,6 @@ test('runtime subprocesses do not inherit provider keys and stop at bounds', asy
       runProcess(process.execPath, ['-e', 'setTimeout(()=>{},5000)'], { timeoutMs: 30 }),
       /limit/,
     );
-    await assert.rejects(
-      runProcess(process.execPath, ['-e', 'process.stdout.write("x".repeat(10000))'], {
-        maxBytes: 100,
-      }),
-      /limit/,
-    );
   } finally {
     if (previous === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previous;

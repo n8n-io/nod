@@ -976,8 +976,8 @@ async function cloudflareFixture() {
           return { status: 'submitted' };
         },
         currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
-        hold: async (threadId, until) => {
-          calls.push({ namespace: selected, method: 'hold', input: { threadId, until } });
+        hold: async (threadId, held) => {
+          calls.push({ namespace: selected, method: 'hold', input: { threadId, held } });
         },
         dispose: async () => {
           calls.push({ namespace: selected, method: 'dispose' });
@@ -1194,15 +1194,15 @@ test('Cloudflare browser holds reach a running browser only and never start one'
     },
   });
   try {
-    await adapters.computer.hold('same-task', Date.now() + 60_000);
+    await adapters.computer.hold('same-task', true);
     assert.equal(statuses.length + f.launches.length, 0);
     await adapters.computer.act('same-task', { action: 'open', url: 'https://example.test/' });
-    await adapters.computer.hold('same-task', 123);
+    await adapters.computer.hold('same-task', true);
     live = false;
-    await adapters.computer.hold('same-task', null);
+    await adapters.computer.hold('same-task', false);
     assert.deepEqual(
       f.calls.filter((call) => call.method === 'hold').map((call) => call.input),
-      [{ threadId: 'same-task', until: 123 }],
+      [{ threadId: 'same-task', held: true }],
     );
     assert.equal(f.launches.length, 2);
     assert.deepEqual(

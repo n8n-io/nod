@@ -731,7 +731,7 @@ test('sign-in method questions remain available without requesting credential va
 
 test('a browser hold that fails still posts the question and waits for the reply', async () => {
   const question = 'Which account should I use?';
-  const holds: Array<number | null> = [];
+  const holds: boolean[] = [];
   const result = await fixture(
     async (tools) => {
       await call(tools, 'browser', { action: 'open', url: 'https://example.com' });
@@ -740,8 +740,8 @@ test('a browser hold that fails still posts the question and waits for the reply
     {},
     {
       computer: fakeComputer({
-        hold: async (_id, until) => {
-          holds.push(until);
+        hold: async (_id, held) => {
+          holds.push(held);
           throw new Error('Browser unavailable.');
         },
       }),
@@ -749,7 +749,7 @@ test('a browser hold that fails still posts the question and waits for the reply
   );
   assert.equal(result.result.status, 'waiting_user');
   assert.deepEqual(result.replies, [question]);
-  assert.ok(holds.some((until) => until !== null));
+  assert.ok(holds.includes(true));
 });
 
 test(

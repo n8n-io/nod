@@ -23,7 +23,6 @@ const namedKeys = new Set([
   'PageDown',
 ]);
 const buttons = ['left', 'middle', 'right'] as const;
-const clamp = (value: number) => Math.max(-2000, Math.min(2000, Math.round(value)));
 
 export function BrowserHandoff({
   turnId,
@@ -61,7 +60,7 @@ export function BrowserHandoff({
   function flush(): Promise<void> {
     sending.current ??= (async () => {
       while (pending.current.length) {
-        const inputs = pending.current.splice(0, 100);
+        const inputs = pending.current.splice(0);
         try {
           await post('/api/browser-handoff', { turnId, inputs });
           setError('');
@@ -93,14 +92,10 @@ export function BrowserHandoff({
     else if (last?.type === 'wheel' && input.type === 'wheel')
       queued[queued.length - 1] = {
         type: 'wheel',
-        deltaX: clamp(last.deltaX + input.deltaX),
-        deltaY: clamp(last.deltaY + input.deltaY),
+        deltaX: last.deltaX + input.deltaX,
+        deltaY: last.deltaY + input.deltaY,
       };
-    else if (
-      last?.type === 'text' &&
-      input.type === 'text' &&
-      last.text.length + input.text.length <= 2000
-    )
+    else if (last?.type === 'text' && input.type === 'text')
       queued[queued.length - 1] = { type: 'text', text: last.text + input.text };
     else queued.push(input);
     void flush();
@@ -169,8 +164,7 @@ export function BrowserHandoff({
       .getData('text/plain')
       .replace(/\r\n?/g, '\n')
       .replace(/\n+$/, '');
-    for (let start = 0; start < text.length; start += 2000)
-      queue({ type: 'text', text: text.slice(start, start + 2000) });
+    if (text) queue({ type: 'text', text });
   }
 
   async function navigate(action: 'back' | 'reload') {
@@ -291,8 +285,8 @@ export function BrowserHandoff({
       const scale = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1;
       queue({
         type: 'wheel',
-        deltaX: clamp(event.deltaX * scale),
-        deltaY: clamp(event.deltaY * scale),
+        deltaX: Math.round(event.deltaX * scale),
+        deltaY: Math.round(event.deltaY * scale),
       });
     };
     element.addEventListener('wheel', wheel, { passive: false });

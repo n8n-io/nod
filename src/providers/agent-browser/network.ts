@@ -33,8 +33,6 @@ const systemResolver: AddressResolver = (host) => lookup(host, { all: true, verb
 
 async function publicAddress(hostname: string, resolver: AddressResolver) {
   const host = hostname.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || /\.(localhost|local|internal)$/i.test(host))
-    throw new Error('Private network destinations are blocked.');
   const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await resolver(host);
   if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address)))
     throw new Error('Private network destinations are blocked.');
@@ -107,7 +105,6 @@ export function createBrowserProxy(
               method: incoming.method,
               path: url.pathname + url.search,
               headers,
-              timeout: 600_000,
             },
             (response) => {
               outgoing.writeHead(response.statusCode ?? 502, response.headers);
@@ -115,7 +112,6 @@ export function createBrowserProxy(
             },
           );
           upstream.on('socket', track);
-          upstream.on('timeout', () => upstream.destroy());
           upstream.on('error', () => {
             if (!outgoing.headersSent) outgoing.writeHead(502);
             outgoing.end();
@@ -135,7 +131,6 @@ export function createBrowserProxy(
             port: Number(url.port || 443),
           });
           track(upstream);
-          upstream.setTimeout(600_000, () => upstream.destroy());
           upstream.on('close', () => {
             if (!upstream.readableEnded) socket.destroy();
           });
@@ -166,10 +161,8 @@ export function createBrowserProxy(
             method: incoming.method,
             path: url.pathname + url.search,
             headers,
-            timeout: 600_000,
           });
           upstream.on('socket', track);
-          upstream.on('timeout', () => upstream.destroy());
           upstream.on('error', () => socket.destroy());
           upstream.on('response', (response) => {
             socket.end(

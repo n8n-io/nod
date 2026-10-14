@@ -24,7 +24,6 @@ import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
 
-const holdMs = 30 * 60_000;
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 const inlineChars = 40_000;
 const imageBudget = 16 * 1024 * 1024;
@@ -180,7 +179,7 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (browsed) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
+      if (browsed) await computer.hold(browserId, true).catch(() => {});
       stopped = true;
       if (post && text) {
         if (context.waitForUser)
@@ -487,7 +486,7 @@ export function createAgentRuntime(dependencies: {
         return answer || 'The subagent finished without an answer.';
       };
       const tools = bind({ ...shared, execution, delegate }, async () => {
-        if (!browsed) await computer.hold(browserId, null).catch(() => {});
+        if (!browsed) await computer.hold(browserId, false).catch(() => {});
         browsed = true;
       });
       const instruct = (instruction: string) =>
