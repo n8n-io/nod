@@ -602,7 +602,6 @@ test('a workspace too large to save stays running and refuses the next model com
     max_bytes: 2 ** 30,
     entries: 12,
     max_entries: 100000,
-    max_file_bytes: 512 * 2 ** 20,
     complete: true,
     largest: [
       ['workspace/thread/synthetic-video.mp4', 2 * 2 ** 30],

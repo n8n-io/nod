@@ -499,8 +499,6 @@ export async function finishRuntime({
       '2g',
       '--cpus',
       '2',
-      '--tmpfs',
-      '/tmp:size=256m',
       '--volume',
       `${volumes.workspace}:/workspace`,
       '--volume',

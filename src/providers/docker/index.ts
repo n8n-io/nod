@@ -2,7 +2,6 @@ import { posix, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ConnectedCli, Workspace } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
-import { fileBytes } from '../../shared/files.ts';
 import {
   runWorkspaceCommand,
   WorkspaceCommandError,
@@ -27,7 +26,7 @@ fds=[]
 try:
  limit=int(r['maxBytes'])
  offset=int(r['offset'])
- if not 1<=limit<=${fileBytes} or offset<0: raise ValueError()
+ if limit<1 or offset<0: raise ValueError()
  parts=r['path'].split('/')
  if not parts or any(p in ['', '.', '..'] for p in parts): raise ValueError()
  fd=os.open(r['base'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
@@ -75,7 +74,7 @@ try:
  else:
   offset=int(r['offset'])
   data=base64.b64decode(r['data'],validate=True)
-  if offset<0 or len(data)>524288 or offset+len(data)>${fileBytes}: raise ValueError()
+  if offset<0 or len(data)>524288: raise ValueError()
   flags=os.O_WRONLY|os.O_NOFOLLOW|os.O_NONBLOCK
   flags=flags|(os.O_CREAT|os.O_EXCL if offset==0 else os.O_APPEND)
   file=os.open(temporary,flags,mode=0o600,dir_fd=fd)
@@ -189,8 +188,7 @@ export function createCommandWorkspace(options: {
     },
     async writeArtifact(id, path, bytes, signal) {
       threadIdentity(id);
-      if (!bytes.byteLength || bytes.byteLength > fileBytes)
-        throw new Error(`Files must be between 1 byte and ${fileBytes / 1024 / 1024} MB.`);
+      if (!bytes.byteLength) throw new Error('A file needs at least one byte.');
       const base = `/workspace/${id}`;
       const target = posix.relative(base, workspaceFile(id, path));
       const temporary = `.otto-upload-${randomUUID()}`;
@@ -223,7 +221,7 @@ export function createCommandWorkspace(options: {
     },
     async readArtifact(id, path, maxBytes) {
       threadIdentity(id);
-      if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > fileBytes)
+      if (!Number.isInteger(maxBytes) || maxBytes < 1)
         throw new Error('The artifact size limit is invalid.');
       const base = `/workspace/${id}`;
       const target = posix.relative(base, workspaceFile(id, path));
@@ -265,7 +263,7 @@ export function createCommandWorkspace(options: {
           const result = await command(id, ['bash', '-c', script], {
             input: stdin,
             signal: signal ? AbortSignal.any([signal, input.signal]) : input.signal,
-            timeoutMs: Math.max(1000, Math.min(timeoutMs, 3_600_000)),
+            timeoutMs: Math.max(1000, timeoutMs),
             onData: onData ?? (() => {}),
             session: notices,
           });
@@ -277,7 +275,7 @@ export function createCommandWorkspace(options: {
                 cli: ConnectedCli,
                 args: string[],
                 environment: Record<string, string>,
-                timeoutSeconds = 30,
+                timeoutSeconds = 3540,
               ) => {
                 const result = await supervise(
                   (signal) =>
@@ -285,7 +283,7 @@ export function createCommandWorkspace(options: {
                       cli,
                       environment,
                       signal,
-                      timeoutMs: Math.max(1, Math.min(timeoutSeconds, 3600)) * 1000,
+                      timeoutMs: Math.max(1, timeoutSeconds) * 1000,
                     }),
                   input.signal,
                 );

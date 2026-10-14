@@ -100,9 +100,9 @@ Both containers start on first use and save checkpoints to private R2, under `<e
 | ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Checkpoints | When it goes idle, which closes its pages                               | About 20 seconds after its last command, and before it sleeps, stops or is drained |
 | Saves       | Cookies, Local Storage, IndexedDB and Service Worker data; skips caches | `/home/node/state`, without `__pycache__` and `.cache` folders                     |
-| Size limit  | 1 GiB uncompressed, 512 MiB per file, 100,000 entries                   | The same                                                                           |
+| Size limit  | 1 GiB uncompressed and 100,000 entries                                  | The same                                                                           |
 
-While a conversation turn waits on you for a question, approval or credential request, a running browser is held for up to 30 minutes so its pages survive. The next turn or a reset releases it. A hold never starts a stopped browser.
+While a conversation turn waits on you for a question, approval or credential request, a running browser is held so its pages survive. For up to 30 minutes the hold also keeps the browser container from sleeping. The next turn or a reset releases it. A hold never starts a stopped browser.
 
 A workspace too large to save keeps running on its previous checkpoint, and every command still runs. The model's next `bash` output starts with the sizes, the largest files and what to delete. The unsaved changes are discarded when the workspace sleeps, stops or is drained, and the next `bash` command says so.
 

@@ -44,7 +44,6 @@ import {
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
 import { workspaceNetwork } from '../scripts/e2e-workspace.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
-import { fileBytes } from '../src/shared/files.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'otto-local-directories-'));
@@ -729,10 +728,6 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     );
     assert.equal(launches, before);
     await assert.rejects(
-      workspace.writeArtifact('fixture', 'too-large', Buffer.alloc(fileBytes + 1)),
-      /between 1 byte/,
-    );
-    await assert.rejects(
       workspace.readArtifact('fixture', 'nested/file.bin', bytes.length - 1),
       /workspace file operation failed/,
     );
@@ -1069,7 +1064,7 @@ test('checkpoints leave out regenerable caches and keep browser site data', asyn
   }
 });
 
-test('an oversized checkpoint reports its size, entries and largest files instead of an archive', async () => {
+test('an oversized checkpoint fails with its size, entries and largest files instead of an archive', async () => {
   const f = await fixture();
   try {
     await mkdir(join(f.source, 'workspace', 'thread'), { recursive: true });
@@ -1081,10 +1076,9 @@ test('an oversized checkpoint reports its size, entries and largest files instea
     for (const [args, limit] of [
       [['--max-bytes', '8192'], 'bytes'],
       [['--max-entries', '4'], 'entries'],
-      [['--max-file-bytes', '8999'], 'file'],
     ] as const) {
       const captured = await f.create(...args);
-      assert.equal(captured.code, 0, limit);
+      assert.equal(captured.code, 2, limit);
       assert.equal(captured.stdout.length, 0, limit);
       const report = JSON.parse(captured.stderr);
       assert.equal(report.entries, 4);
@@ -1096,7 +1090,6 @@ test('an oversized checkpoint reports its size, entries and largest files instea
       ]);
       if (limit === 'bytes') assert.ok(report.bytes > report.max_bytes);
       if (limit === 'entries') assert.equal(report.max_entries, 4);
-      if (limit === 'file') assert.equal(report.max_file_bytes, 8999);
     }
     for (let index = 0; index < 30; index++)
       await writeFile(join(f.source, `file-${index}`), 'synthetic');

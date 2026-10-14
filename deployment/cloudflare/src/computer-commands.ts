@@ -15,8 +15,6 @@ type Command = {
   generation: string;
   process?: ExecProcess;
   input?: WritableStreamDefaultWriter;
-  inputBytes: number;
-  outputBytes: number;
   output: ReadableStream<Uint8Array>;
   outputReader: ReadableStreamDefaultReader<Uint8Array>;
   writer: WritableStreamDefaultWriter<Uint8Array>;
@@ -29,11 +27,10 @@ type Command = {
   control: Promise<unknown>;
   signals: Promise<unknown>;
   readers: Set<ReadableStreamDefaultReader>;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
   authorizationTimer?: ReturnType<typeof setTimeout>;
 };
 
-const outputLimit = 32 * 1024 * 1024;
 const receiptLimit = 32;
 
 export function createComputerCommands(options: {
@@ -51,19 +48,17 @@ export function createComputerCommands(options: {
   const commands = new Map<string, Command>();
   const receipts = new Map<string, number>();
   const encoder = new TextEncoder();
-  const timeout = options.timeoutMs ?? 3_720_000;
+  const timeout = options.timeoutMs;
   const authorizationInterval = Math.min(options.authorizationIntervalMs ?? 1000, 1000);
   const receiptTimeout = Math.min(options.receiptTimeoutMs ?? 30_000, 30_000);
   if (
-    !Number.isFinite(timeout) ||
-    timeout <= 0 ||
+    (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) ||
     !Number.isFinite(authorizationInterval) ||
     authorizationInterval <= 0 ||
     !Number.isFinite(receiptTimeout) ||
     receiptTimeout <= 0
   )
     throw new RuntimeControlError(503);
-  const concurrency = options.role === 'browser' ? 32 : 1;
   let fenced = false;
   let fencing: Promise<void> | undefined;
 
@@ -187,8 +182,6 @@ export function createComputerCommands(options: {
         const next = await reader.read();
         if (next.done) break;
         if (!(next.value instanceof Uint8Array)) throw new RuntimeControlError(503);
-        command.outputBytes += next.value.byteLength;
-        if (command.outputBytes > outputLimit) throw new RuntimeControlError(413);
         for (let offset = 0; offset < next.value.byteLength; offset += 16 * 1024)
           await frame(command, {
             type,
@@ -268,13 +261,7 @@ export function createComputerCommands(options: {
       if (error instanceof RuntimeControlError) throw error;
       throw new RuntimeControlError(400);
     }
-    if (
-      fenced ||
-      commands.has(key(version, input.id)) ||
-      receipts.has(key(version, input.id)) ||
-      [...commands.values()].filter((entry) => !entry.terminal && !entry.failed).length >=
-        concurrency
-    )
+    if (fenced || commands.has(key(version, input.id)) || receipts.has(key(version, input.id)))
       throw new RuntimeControlError(409);
     const output = new TransformStream<Uint8Array, Uint8Array>();
     const writer = output.writable.getWriter();
@@ -282,8 +269,6 @@ export function createComputerCommands(options: {
     const command: Command = {
       id: input.id,
       generation: version,
-      inputBytes: 0,
-      outputBytes: 0,
       output: new ReadableStream<Uint8Array>(
         {
           async pull(controller) {
@@ -322,7 +307,7 @@ export function createComputerCommands(options: {
       control: Promise.resolve(),
       signals: Promise.resolve(),
       readers: new Set(),
-      timer: setTimeout(() => void fail(command), timeout),
+      timer: timeout === undefined ? undefined : setTimeout(() => void fail(command), timeout),
     };
     commands.set(key(version, input.id), command);
     void writer.closed.catch(() => fail(command));
@@ -390,10 +375,6 @@ export function createComputerCommands(options: {
   async function control(command: Command, action: string, body: Uint8Array) {
     if (action === 'input' && (command.completing || command.terminal || command.ended))
       throw new RuntimeControlError(409);
-    if (action === 'input') {
-      command.inputBytes += body.byteLength;
-      if (command.inputBytes > inputLimit) throw new RuntimeControlError(413);
-    }
     const signal = controlSignal(action, body);
     if (command.completing || command.terminal)
       return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

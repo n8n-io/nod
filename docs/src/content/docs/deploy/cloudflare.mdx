@@ -125,14 +125,14 @@ A checkpoint is a gzip tar of the workspace (`/home/node/state`) or the user's b
 
 | Limit                | Value                                                                          |
 | -------------------- | ------------------------------------------------------------------------------ |
-| Size                 | 1 GiB uncompressed, 512 MiB per file, 100,000 entries                          |
+| Size                 | 1 GiB uncompressed and 100,000 entries                                         |
 | Always skipped       | `__pycache__` and `.cache` folders, FIFOs and sockets                          |
 | Browser skips        | Chromium HTTP, code, GPU, shader, Dawn and CRX caches                          |
 | Browser keeps        | Cookies, Local Storage, IndexedDB and Service Worker data                      |
 | Browser saves when   | It goes idle, which closes its pages                                           |
 | Workspace saves when | About 20 seconds after the last command, and before it sleeps, stops or drains |
 
-When a conversation turn ends waiting for the user, the tenant holds a running browser for up to 30 minutes. The next turn or a reset releases it.
+When a conversation turn ends waiting for the user, the tenant holds its running browser. For up to 30 minutes, the hold keeps the browser container awake so its pages survive. The next turn or a reset releases it. Workspace commands from different sessions run side by side, and the workspace saves once all of them have finished.
 
 :::caution[Changes between checkpoints can be lost]
 If a workspace container is lost before its next checkpoint, recent changes are lost. The model is told on its next command.

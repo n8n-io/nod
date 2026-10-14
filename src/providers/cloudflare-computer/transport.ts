@@ -6,7 +6,6 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 import { loopbackHost } from '../../shared/loopback.ts';
 
-const outputLimit = 32 * 1024 * 1024;
 const frameLimit = 22_000;
 
 export function launchCloudflareCommand(options: {
@@ -54,7 +53,6 @@ export function launchCloudflareCommand(options: {
   let closed = false;
   let terminal: number | undefined;
   let outputEnded = false;
-  let outputBytes = 0;
   let pendingInput = 0;
   let signalRequests = Promise.resolve();
 
@@ -86,12 +84,12 @@ export function launchCloudflareCommand(options: {
     path: string,
     init: RequestInit,
     read: (response: Response) => Promise<T>,
-    timeout = 30_000,
+    timeout: number | null = 30_000,
   ): Promise<T> {
     if (closed) throw error();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    timer.unref();
+    const timer = timeout === null ? undefined : setTimeout(() => controller.abort(), timeout);
+    timer?.unref();
     try {
       const response = await requestFetch(origin + path, {
         ...init,
@@ -238,13 +236,10 @@ export function launchCloudflareCommand(options: {
     if (response.status !== 200 || !response.body) throw error();
     const reader = response.body.getReader();
     let pending = Buffer.alloc(0);
-    let wireBytes = 0;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        wireBytes += value.byteLength;
-        if (wireBytes > outputLimit * 2) throw error();
         pending = Buffer.concat([pending, value]);
         for (let newline = pending.indexOf(10); newline >= 0; newline = pending.indexOf(10)) {
           if (newline > frameLimit || terminal !== undefined) throw error();
@@ -262,13 +257,7 @@ export function launchCloudflareCommand(options: {
             /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(frame.data)
           ) {
             const bytes = Buffer.from(frame.data, 'base64');
-            outputBytes += bytes.length;
-            if (
-              bytes.length > 16 * 1024 ||
-              outputBytes > outputLimit ||
-              bytes.toString('base64') !== frame.data
-            )
-              throw error();
+            if (bytes.length > 16 * 1024 || bytes.toString('base64') !== frame.data) throw error();
             (frame.type === 'stdout' ? stdout : stderr).write(bytes);
           } else throw error();
         }
@@ -321,7 +310,7 @@ export function launchCloudflareCommand(options: {
     );
   });
   void ready
-    .then(() => request(`/v1/commands/${id}/output`, { method: 'GET' }, readOutput, 3_720_000))
+    .then(() => request(`/v1/commands/${id}/output`, { method: 'GET' }, readOutput, null))
     .catch(fail);
   return Object.assign(events, {
     stdin,

@@ -483,25 +483,22 @@ test('an output disconnect fences every concurrent browser command and cancels i
   }
 });
 
-test('stream overflow and deadline failures withhold terminal acknowledgement and fence reuse', async () => {
-  for (const overflow of [true, false]) {
-    const f = fixture({ timeoutMs: overflow ? 1000 : 25 });
-    const client = attachClient(f);
-    try {
-      client.process.stdin.end();
-      await eventual(() => f.processes.length === 1);
-      if (overflow) f.processes[0].stdout(new Uint8Array(32 * 1024 * 1024 + 1));
-      const terminal = await client.terminal;
-      assert.deepEqual(terminal, {
-        error: 'The remote computer connection did not finish safely.',
-      });
-      assert.equal(client.uncertain(), 1);
-      assert.equal(f.registry.uncertain, true);
-      assert.equal((await f.create()).status, 409);
-      assert.equal(f.completed.length, 0);
-    } finally {
-      await f.close();
-    }
+test('a deadline failure withholds terminal acknowledgement and fences reuse', async () => {
+  const f = fixture({ timeoutMs: 25 });
+  const client = attachClient(f);
+  try {
+    client.process.stdin.end();
+    await eventual(() => f.processes.length === 1);
+    const terminal = await client.terminal;
+    assert.deepEqual(terminal, {
+      error: 'The remote computer connection did not finish safely.',
+    });
+    assert.equal(client.uncertain(), 1);
+    assert.equal(f.registry.uncertain, true);
+    assert.equal((await f.create()).status, 409);
+    assert.equal(f.completed.length, 0);
+  } finally {
+    await f.close();
   }
 });
 
@@ -701,7 +698,7 @@ test('a late native launch is cancelled after the command deadline without retur
   }
 });
 
-test('exited commands still occupy capacity until their entire output stream closes', async () => {
+test('commands run side by side and stay active until their entire output stream closes', async () => {
   for (const role of ['browser', 'workspace'] as const) {
     const f = fixture({
       role,
@@ -712,18 +709,14 @@ test('exited commands still occupy capacity until their entire output stream clo
       },
     });
     try {
-      const count = role === 'browser' ? 32 : 1;
       const ids = [];
-      for (let index = 0; index < count; index++) ids.push(await create(f));
+      for (let index = 0; index < 3; index++) ids.push(await create(f));
       await delay(5);
-      assert.equal(f.registry.active, count);
-      assert.equal((await f.create()).status, 409);
+      assert.equal(f.registry.active, 3);
       const output = await f.request(`/v1/commands/${ids[0]}/output`);
       assert.deepEqual(JSON.parse(await output.text()), { type: 'exit', code: 0 });
-      assert.equal(f.registry.active, count - 1);
-      const next = await create(f);
-      assert.equal(f.registry.active, count);
-      for (const id of [...ids.slice(1), next]) {
+      assert.equal(f.registry.active, 2);
+      for (const id of ids.slice(1)) {
         const remaining = await f.request(`/v1/commands/${id}/output`);
         await remaining.text();
       }

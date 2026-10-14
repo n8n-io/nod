@@ -54,14 +54,14 @@ Both the workspace and browser containers drop all capabilities, set `no-new-pri
 | Container | Source install (`compose.yaml`)                      | Desktop app                                        |
 | --------- | ---------------------------------------------------- | -------------------------------------------------- |
 | Workspace | 8 GB memory, 4 CPUs, 4,096 processes                 | 2 GB memory, 2 CPUs, 1,024 processes               |
-| Browser   | 8 GB memory, 6 CPUs, 1,024 processes, read-only root | 2 GB memory, 2 CPUs, 768 processes, read-only root |
+| Browser   | 8 GB memory, 6 CPUs, 4,096 processes, read-only root | 2 GB memory, 2 CPUs, 768 processes, read-only root |
 
 ## The command supervisor
 
 Every command goes through a small supervisor inside the container, in [`src/providers/docker/command.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/docker/command.ts).
 
 - It owns the command's session and signals every process in it, even ones that left the process group.
-- It enforces the timeout: 59 minutes for `bash`, both by default and at most.
+- It enforces the timeout: 59 minutes for `bash` by default. The model can ask for longer.
 - It acknowledges when the command ends. If that acknowledgement is lost, the server fences the workspace: no more commands run until Otto restarts.
 
 ## Command output
