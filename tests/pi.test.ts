@@ -1708,6 +1708,87 @@ test('write refuses to replace a directory instead of moving the file into it', 
   assert.deepEqual(await readdir(join(root, 'workspace')), ['reports']);
 });
 
+test('each task works in its own folder of the thread workspace', async (t) => {
+  const { prefix, root, workspace, calls } = await hostSandbox(t);
+  const sessions = await mkdtemp(join(tmpdir(), 'otto-task-folder-'));
+  t.after(() => rm(sessions, { recursive: true, force: true }));
+  let captured: Parameters<typeof createAgentSession>[0] | undefined;
+  const pi = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: sessions,
+    createSession: async (options) => {
+      captured = options;
+      return createAgentSession(options);
+    },
+  });
+  const seen = new Map<string, { cwd?: string; pwd: string; ls: string }>();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => {
+        const session = await pi.open(input);
+        const options = captured!;
+        const native = async (name: string, params: Record<string, unknown>) =>
+          (
+            await options
+              .customTools!.find((tool) => tool.name === name)!
+              .execute(randomUUID(), params, undefined, undefined, undefined as never)
+          ).content
+            .map((part) => (part.type === 'text' ? part.text : ''))
+            .join('');
+        return {
+          resumed: false,
+          abort() {},
+          dispose: () => session.dispose(),
+          prompt: async () => {
+            await native('write', { path: 'notes.txt', content: input.sessionKey });
+            seen.set(input.sessionKey, {
+              cwd: options.cwd,
+              pwd: (await native('bash', { command: 'pwd' })).trim(),
+              ls: await native('ls', {}),
+            });
+            await input.tools
+              .find((tool) => tool.name === 'browser_flow')!
+              .execute({ action: 'list' });
+          },
+        };
+      },
+      dispose: () => pi.dispose(),
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({ open: () => workspace }),
+  });
+  const threadId = randomUUID();
+  const tasks = [randomUUID(), randomUUID()];
+  try {
+    for (const fields of [
+      ...tasks.map((taskId) => ({ sessionId: taskId, background: true, task: syntheticTask() })),
+      {},
+    ]) {
+      const turn = { ...context(sessions), ...fields, threadId, turnId: randomUUID() };
+      assert.equal((await runtime.runTurn(turn)).status, 'succeeded');
+    }
+  } finally {
+    await runtime.dispose();
+  }
+  for (const taskId of tasks) {
+    const folder = `${prefix}/workspace/tasks/${taskId}`;
+    assert.deepEqual(seen.get(taskId), { cwd: folder, pwd: folder, ls: 'notes.txt' });
+    assert.equal(
+      await readFile(join(root, 'workspace/tasks', taskId, 'notes.txt'), 'utf8'),
+      taskId,
+    );
+  }
+  assert.equal(seen.get(threadId)?.cwd, `${prefix}/workspace`);
+  assert.equal(seen.get(threadId)?.pwd, `${prefix}/workspace`);
+  assert.equal(await readFile(join(root, 'workspace/notes.txt'), 'utf8'), threadId);
+  assert.equal(
+    calls.filter(({ command }) => command.includes(`'${prefix}/.otto/browser-flows'`)).length,
+    3,
+  );
+  assert.equal(existsSync(prefix), false);
+});
+
 test('browser flows stay discoverable after a thread reset and stop when a page changes', async (t) => {
   const { prefix, root, workspace, run: nativeRun } = await hostSandbox(t);
   const actions: string[] = [];

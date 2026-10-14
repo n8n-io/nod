@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool, transaction } from './db.ts';
@@ -28,6 +28,7 @@ import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
+import { inFolder, taskFolder } from '../ports/thread-identity.ts';
 import { sessionOfMessageSql, taskSessionSql } from './turn-chain.ts';
 
 const queue = 'thread-drain';
@@ -49,6 +50,7 @@ export interface TurnRef {
   threadId: string;
   turnId: string;
   browserId?: string;
+  folder?: string;
 }
 export interface EnqueueTurnOptions {
   source: Exclude<TurnSource, 'user'>;
@@ -1234,6 +1236,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   try {
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
+    const confirmed = await dependencies.executeConfirmation?.(turnId, signal);
+    if (confirmed) turn.prompt = confirmed.prompt;
+    await ensureCurrent();
+    const loaded = await loadTurnContext(turn, dependencies);
+    let sourceMessageId = loaded.sourceMessageId;
+    const { task } = loaded;
+    const folder = task ? taskFolder(task.id) : '';
+    if (folder) ref.folder = folder;
     const stage = async (
       id: string,
       fileName: string,
@@ -1242,14 +1252,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     ) => {
       operation?.throwIfAborted();
       const name = `${id}-${basename(fileName)}`;
+      const path = posix.join(folder, name);
       if (dependencies.writeArtifact)
-        await dependencies.writeArtifact(threadId, name, bytes, operation);
-      else
-        await writeFile(join(workspacePath, name), bytes, {
+        await dependencies.writeArtifact(threadId, path, bytes, operation);
+      else {
+        await mkdir(join(workspacePath, folder), { recursive: true });
+        await writeFile(join(workspacePath, path), bytes, {
           mode: 0o600,
           flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
           signal: operation,
         });
+      }
       operation?.throwIfAborted();
       return name;
     };
@@ -1266,12 +1279,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation.throwIfAborted();
       return value;
     };
-    const confirmed = await dependencies.executeConfirmation?.(turnId, signal);
-    if (confirmed) turn.prompt = confirmed.prompt;
-    await ensureCurrent();
-    const loaded = await loadTurnContext(turn, dependencies);
-    let sourceMessageId = loaded.sourceMessageId;
-    const { task } = loaded;
     const shared: Artifact[] = [];
     const insert = (
       client: PoolClient,
@@ -1316,7 +1323,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         signal,
       );
       stagedFiles.set(upload.id, name);
-      attachments.push({ path: join(workspacePath, name), mimeType: upload.mime_type });
+      attachments.push({ path: join(workspacePath, folder, name), mimeType: upload.mime_type });
     }
     const describe = ({ attachments, ...row }: Record<string, any>): any => {
       const files = (Array.isArray(attachments) ? attachments : []) as StoredAttachment[];
@@ -1508,14 +1515,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       publish: async (path, name) => {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
-        const artifact = await current(() => artifacts.publishArtifact(threadId, path, name, read));
+        const artifact = await current(() =>
+          artifacts.publishArtifact(threadId, inFolder(folder, path), name, read),
+        );
         if (task) shared.push(artifact);
         else await post('', [artifact]);
         return artifact;
       },
       readWorkspaceFile:
         dependencies.readArtifact &&
-        fenced((path, maxBytes) => dependencies.readArtifact!(threadId, path, maxBytes)),
+        fenced((path, maxBytes) =>
+          dependencies.readArtifact!(threadId, inFolder(folder, path), maxBytes),
+        ),
       publishScreenshot: (bytes, name) => {
         const fileName =
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';

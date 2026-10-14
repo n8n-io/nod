@@ -220,7 +220,8 @@ export function createPiAgent(options: {
         if (durable) completedEvents.push(event);
         else input.onEvent(event);
       };
-      const sandboxTools = createSandbox(input.workspace, input.timeZone);
+      const cwd = input.cwd ?? input.workspace.path;
+      const sandboxTools = createSandbox(input.workspace, input.timeZone, cwd);
       const tools: ToolDefinition[] = [
         ...sandboxTools.map((definition): ToolDefinition => ({
           ...definition,
@@ -249,7 +250,7 @@ export function createPiAgent(options: {
         })),
       ];
       const extensionLoader = new DefaultResourceLoader({
-        cwd: input.workspace.path,
+        cwd,
         agentDir: directory,
         additionalExtensionPaths: [
           fileURLToPath(import.meta.resolve('pi-web-access/dist/index.js')),
@@ -338,7 +339,7 @@ export function createPiAgent(options: {
         : input.systemPrompt;
       const resumed = manager.buildSessionContext().messages.length > 0;
       const { session } = await (options.createSession ?? createAgentSession)({
-        cwd: input.workspace.path,
+        cwd,
         agentDir: directory,
         modelRuntime: runtime,
         model,

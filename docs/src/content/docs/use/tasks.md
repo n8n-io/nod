@@ -47,7 +47,9 @@ When an error or a restart ends a task, it closes as **Failed**, its browser clo
 
 ## How long a task keeps its work
 
-Otto deletes a task's browser when the task closes, and its transcript, its record of what it read and did, 30 days after the task closes. You can still reply to the task after that. It then starts again from your messages and its own messages, without the tool results it had before.
+Each task works in its own folder of Otto's [workspace](/use/workspace/#files-for-a-task). The files it makes and the files you attach to a reply to the task go there, so two tasks never overwrite each other's files.
+
+Otto deletes a task's browser when the task closes. It deletes the task's transcript, its record of what it read and did, and the task's folder 30 days after the task closes. You can still reply to the task after that. It then starts again from your messages and its own messages, without the tool results and files it had before.
 
 ## Three views
 

@@ -25,7 +25,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import type { WorkspaceSession } from '../src/ports/computer.ts';
-import { threadIdentity } from '../src/ports/thread-identity.ts';
+import { inFolder, taskFolder, threadIdentity } from '../src/ports/thread-identity.ts';
 import { isPublicAddress, publicUrl } from '../src/providers/agent-browser/network.ts';
 import {
   cliInstallProgram,
@@ -138,6 +138,22 @@ test('workspace paths cannot address host files or other task directories', () =
   ])
     assert.throws(() => workspaceFile('task-a', path));
   assert.throws(() => threadIdentity('../escape'));
+  const folder = taskFolder('task-1');
+  assert.equal(
+    workspaceFile('thread-a', inFolder(folder, 'report.txt')),
+    '/workspace/thread-a/tasks/task-1/report.txt',
+  );
+  assert.equal(
+    workspaceFile('thread-a', inFolder(folder, '../../shared.txt')),
+    '/workspace/thread-a/shared.txt',
+  );
+  assert.equal(
+    workspaceFile('thread-a', inFolder(folder, '/workspace/thread-a/shared.txt')),
+    '/workspace/thread-a/shared.txt',
+  );
+  for (const path of ['../../../thread-b/private.txt', '/workspace/thread-b/private.txt'])
+    assert.throws(() => workspaceFile('thread-a', inFolder(folder, path)));
+  for (const id of ['../../other', 'tasks/../../other', '']) assert.throws(() => taskFolder(id));
 });
 
 test('workspace artifact reads reject paths outside the container task', async () => {
@@ -682,6 +698,53 @@ test('an uncertain workspace operation cancels and drains commands already in fl
     acknowledge();
     await workspace.dispose();
     await Promise.allSettled([failed, drained]);
+  }
+});
+
+test('task folder removal stays in the task folder and a failed one keeps the workspace usable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-task-folder-'));
+  const requests: string[][] = [];
+  let fail = true;
+  const launch: WorkspaceCommandLauncher = () => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    child.stdin.once('data', (data) => {
+      requests.push(JSON.parse(data.toString()).args);
+      setImmediate(() => {
+        if (!fail) child.stdout.emit('data', '{"type":"exit","code":0,"reason":null}\n');
+        child.emit('close', fail ? 1 : 0);
+      });
+    });
+    return child as unknown as ReturnType<WorkspaceCommandLauncher>;
+  };
+  const workspace = createDockerWorkspace({
+    container: 'otto-workspace-fixture',
+    workspaceRoot: root,
+    spawn: launch,
+  });
+  const status = workspace.status();
+  try {
+    await workspace.removeTaskFolder!('thread-a', 'task-1');
+    assert.equal(requests.length, 0);
+    await mkdir(join(root, 'thread-a'));
+    await assert.rejects(workspace.removeTaskFolder!('thread-a', 'task-1'));
+    assert.equal(workspace.status(), status);
+    fail = false;
+    await workspace.removeTaskFolder!('thread-a', 'task-1');
+    assert.deepEqual(requests, [
+      ['rm', '-rf', '--', '/workspace/thread-a/tasks/task-1'],
+      ['rm', '-rf', '--', '/workspace/thread-a/tasks/task-1'],
+    ]);
+    for (const id of ['../thread-b', 'tasks/../..', ''])
+      await assert.rejects(workspace.removeTaskFolder!('thread-a', id));
+    assert.equal(requests.length, 2);
+  } finally {
+    await workspace.dispose();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

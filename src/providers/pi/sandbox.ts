@@ -202,7 +202,11 @@ export async function workspaceOutputs(
   };
 }
 
-export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
+export function createSandbox(
+  workspace: WorkspaceSession,
+  timeZone?: string,
+  cwd = workspace.path,
+) {
   async function check(script: string) {
     return (await run(workspace, script)).exitCode === 0;
   }
@@ -292,7 +296,6 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     if (exitCode) throw new Error(`Could not search ${root}.`);
     return output.toString('utf8').split('\0').filter(Boolean);
   };
-  const cwd = workspace.path;
   const tools = [
     createReadToolDefinition(cwd, {
       operations: {

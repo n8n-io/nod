@@ -59,11 +59,17 @@ When Otto shares a file, it appears as an attachment in chat, up to 15 MB. Selec
 
 Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
 
+## Files for a task
+
+Each [task](/use/tasks/) works in its own folder of the workspace, `tasks/<task ID>`. Files the task makes, files it gets from your apps or its browser, and files you attach to a reply to the task go there. Two tasks can use the same file name without overwriting each other.
+
+Files outside a task's folder stay shared by the chat and every task, so a task can still read them.
+
 ## How long files stay
 
-Files stay in the workspace for the whole conversation. Otto can come back to them days later.
+Files stay in the workspace for the whole conversation. Otto can come back to them days later. A task's folder is the exception: Otto deletes it 30 days after the task closes.
 
-In a development run, **Clear messages** gives Otto a new, empty workspace folder. Saved browser routines in `/workspace/.otto/browser-flows` stay. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
+In a development run, **Clear messages** gives Otto a new, empty workspace folder and deletes the folders of the conversation's tasks. Saved browser routines in `/workspace/.otto/browser-flows` stay. See [Start with an empty chat](/use/chat/#start-with-an-empty-chat).
 
 ## Related resources
 

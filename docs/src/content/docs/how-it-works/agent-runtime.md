@@ -46,7 +46,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 
 | Tool                                                                | What it does                                                                                        |
 | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                         |
+| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container, in a task's own folder for a task.      |
 | `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/).                         |
 | `send_message`                                                      | Sends a message now. The only delivery in background turns. Tasks and their subagents don't get it. |
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                     |

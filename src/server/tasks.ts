@@ -107,7 +107,7 @@ export function createTasks(options: {
   pool: Pool;
   ownerId: string;
   refresh?: () => void;
-  forgetSession?: (taskId: string) => Promise<void>;
+  forgetSession?: (taskId: string, threadId: string | null) => Promise<void>;
 }) {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
@@ -525,13 +525,15 @@ export function createTasks(options: {
     for (const id of ids) {
       try {
         await transaction(async (client) => {
-          const closed = await client.query(
-            `SELECT 1 FROM tasks t LEFT JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
-             WHERE t.id=$1 AND t.owner_id=$2 AND ${forgettable} FOR NO KEY UPDATE OF t`,
-            [id, ownerId],
-          );
-          if (!closed.rowCount) return;
-          await options.forgetSession?.(id);
+          const closed = (
+            await client.query<{ thread_id: string | null }>(
+              `SELECT t.thread_id FROM tasks t LEFT JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
+               WHERE t.id=$1 AND t.owner_id=$2 AND ${forgettable} FOR NO KEY UPDATE OF t`,
+              [id, ownerId],
+            )
+          ).rows[0];
+          if (!closed) return;
+          await options.forgetSession?.(id, closed.thread_id);
           await client.query('UPDATE tasks SET forgotten_at=now() WHERE id=$1 AND owner_id=$2', [
             id,
             ownerId,

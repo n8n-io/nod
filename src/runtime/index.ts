@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { relative, resolve, sep } from 'node:path';
+import { posix, relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import type {
   Agent,
@@ -13,9 +13,9 @@ import type {
   RuntimeResult,
   SkillLibrary,
 } from '../ports/agent.ts';
-import type { Computer, Workspace } from '../ports/computer.ts';
+import type { Computer, Workspace, WorkspaceSession } from '../ports/computer.ts';
 import { BrowserActionError, subagentBrowserPrefix } from '../ports/computer.ts';
-import { threadIdentity } from '../ports/thread-identity.ts';
+import { taskFolder, threadIdentity } from '../ports/thread-identity.ts';
 import { actionEffect } from '../shared/action-effect.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { createObservationQueue } from './observations.ts';
@@ -538,7 +538,22 @@ export function createAgentRuntime(dependencies: {
       if (typeof pinned === 'number') generation = pinned;
       signal.throwIfAborted();
       await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
-      const workspace = dependencies.workspace.open(context);
+      const opened = dependencies.workspace.open(context);
+      const cwd = context.task ? posix.join(opened.path, taskFolder(sessionId)) : opened.path;
+      let made: Promise<void> | undefined;
+      const workspace: WorkspaceSession =
+        cwd === opened.path
+          ? opened
+          : {
+              ...opened,
+              exec: async (script, options) => {
+                made ??= opened.exec(`mkdir -p -- '${cwd}'`, { signal }).then(({ exitCode }) => {
+                  if (exitCode) throw new Error('The task folder could not be created.');
+                });
+                await made;
+                return opened.exec(script, options);
+              },
+            };
       const browser: Computer = {
         ...computer,
         act: (id, action, actionSignal) =>
@@ -595,6 +610,7 @@ export function createAgentRuntime(dependencies: {
       const system = systemPrompt(workspace, dependencies.skills, {
         task: Boolean(context.task),
         dispatch: Boolean(context.startTask),
+        folder: context.task ? cwd : undefined,
       });
       const shared = {
         context,
@@ -647,6 +663,7 @@ export function createAgentRuntime(dependencies: {
             browsed = true;
           }).filter((tool) => !parentTools.has(tool.name)),
           workspace,
+          cwd,
           timeZone: context.timeZone,
           runTool: guard,
           shouldStop: () => stopped,
@@ -703,6 +720,7 @@ export function createAgentRuntime(dependencies: {
         systemContext: systemContext(context),
         tools,
         workspace,
+        cwd,
         timeZone: context.timeZone,
         runTool: guard,
         shouldStop: () => stopped || checkRecorded || taskEnded,

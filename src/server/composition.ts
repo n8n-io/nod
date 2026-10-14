@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
@@ -57,6 +57,8 @@ import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
+import { inFolder, taskFolder } from '../ports/thread-identity.ts';
+import { taskOfTurn } from './turn-chain.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
@@ -523,9 +525,10 @@ async function initializeApplication(
     pool,
     ownerId,
     refresh,
-    forgetSession: async (taskId) => {
+    forgetSession: async (taskId, threadId) => {
       await adapters.agent.forget?.(taskId);
       await computer.discard?.(taskId);
+      if (threadId) await workspace.removeTaskFolder?.(threadId, taskId);
     },
   });
   await tasks.initialize();
@@ -575,7 +578,12 @@ async function initializeApplication(
     readWorkspaceFile:
       workspace.readArtifact &&
       ((turn, path, maxBytes) =>
-        workspace.readArtifact!(turn.threadId, path, maxBytes, 'attachment')),
+        workspace.readArtifact!(
+          turn.threadId,
+          inFolder(turn.folder, path),
+          maxBytes,
+          'attachment',
+        )),
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
@@ -654,7 +662,12 @@ async function initializeApplication(
                       write &&
                       (async (file: { name: string; bytes: Uint8Array }) => {
                         const name = `${randomUUID()}-${basename(file.name)}`;
-                        await write(provenance.threadId, name, file.bytes);
+                        const task = await taskOfTurn(pool, ownerId, provenance.turnId);
+                        await write(
+                          provenance.threadId,
+                          task ? posix.join(taskFolder(task.id), name) : name,
+                          file.bytes,
+                        );
                         return name;
                       });
                     return (await saveIntegrationFiles(result, save)).value;

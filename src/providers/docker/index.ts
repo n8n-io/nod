@@ -1,7 +1,8 @@
+import { existsSync } from 'node:fs';
 import { posix, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ConnectedCli, Workspace } from '../../ports/computer.ts';
-import { threadIdentity } from '../../ports/thread-identity.ts';
+import { taskFolder, threadIdentity } from '../../ports/thread-identity.ts';
 import {
   runWorkspaceCommand,
   WorkspaceCommandError,
@@ -95,7 +96,7 @@ export function createDockerWorkspace(options: {
   workspaceRoot: string;
   spawn?: WorkspaceCommandLauncher;
 }): Workspace {
-  return createCommandWorkspace({
+  const workspace = createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
     status: `${options.container}; Linux · internet enabled`,
     instructions:
@@ -117,6 +118,13 @@ export function createDockerWorkspace(options: {
         spawn: options.spawn,
       }),
   });
+  return {
+    ...workspace,
+    async removeTaskFolder(id, taskId) {
+      if (existsSync(resolve(options.workspaceRoot, threadIdentity(id))))
+        await workspace.removeTaskFolder!(id, taskId);
+    },
+  };
 }
 
 type CommandInput = {
@@ -148,6 +156,7 @@ export function createCommandWorkspace(options: {
   async function supervise(
     run: (signal: AbortSignal) => Promise<CommandResult>,
     signal?: AbortSignal,
+    contained = false,
   ) {
     if (unavailable || disposed)
       throw new Error('The workspace is unavailable. Restart Otto before continuing.');
@@ -156,7 +165,7 @@ export function createCommandWorkspace(options: {
     try {
       return await operation;
     } catch (error) {
-      if (error instanceof WorkspaceCommandError && error.uncertain) {
+      if (error instanceof WorkspaceCommandError && error.uncertain && !contained) {
         unavailable = true;
         lifecycle.abort();
         await Promise.allSettled([...pending]);
@@ -230,6 +239,20 @@ export function createCommandWorkspace(options: {
         { maxBytes },
       );
       return result.stdout;
+    },
+    async removeTaskFolder(id, taskId) {
+      const folder = workspaceFile(id, taskFolder(taskId));
+      const result = await supervise(
+        (signal) =>
+          options.runCommand(id, ['rm', '-rf', '--', folder], {
+            signal,
+            timeoutMs: 30_000,
+            maxBytes: 4096,
+          }),
+        undefined,
+        true,
+      );
+      if (result.exitCode) throw new Error('The task folder could not be deleted.');
     },
     open(input) {
       const id = threadIdentity(input.threadId);

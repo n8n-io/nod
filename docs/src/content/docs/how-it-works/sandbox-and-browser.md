@@ -49,6 +49,14 @@ Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside 
 - Bash gets no host environment. It sets the owner's `TZ` when known.
 - No workspace file is loaded as instructions.
 
+Each task works in its own folder, `/workspace/<thread ID>/tasks/<task ID>`:
+
+- It's Pi's current directory, for the task and its subagents. The runtime creates it with a command inside the container when the task first uses the workspace, so a task turn that never runs a command doesn't wake the workspace.
+- Relative paths for `share_file`, browser uploads and app file inputs resolve there. Files the server copies in for the task, such as your attachments, app files and browser downloads, land there too.
+- `WorkspaceSession.path` stays the thread folder. The provider still checks the thread against it, and `.otto/outputs` and browser flows stay shared.
+- Every path still has to stay inside `/workspace/<thread ID>`. A task ID that isn't a plain identifier is refused before it becomes a path.
+- Reset deletes a task's folder at once, and the hourly retention job deletes it 30 days after the task closes. The deletion is one `rm` limited to 30 seconds. If it fails, the workspace stays usable and the next hourly run tries again. On a Docker install, a thread folder that's gone from the data folder has nothing to delete, so the server skips it.
+
 Both the workspace and browser containers drop all capabilities, set `no-new-privileges` and have these limits:
 
 | Container | Source install (`compose.yaml`)                      | Desktop app                                        |

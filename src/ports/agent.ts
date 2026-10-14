@@ -223,6 +223,7 @@ export interface AgentSessionOptions {
   systemContext?: string;
   tools: AgentTool[];
   workspace: WorkspaceSession;
+  cwd?: string;
   timeZone?: string;
   runTool(
     name: string,

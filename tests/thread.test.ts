@@ -128,6 +128,7 @@ test(
     const discarded: string[] = [];
     const discardedBrowsers: string[] = [];
     const forgottenSessions: string[] = [];
+    const forgottenThreads = new Map<string, string | null>();
     const failingForgets = new Set<string>();
     const forgetHooks = new Map<string, () => Promise<void>>();
     const planInputs: Array<{ owner: string; input: object }> = [];
@@ -178,10 +179,11 @@ test(
     const tasks = createTasks({
       pool: db.pool,
       ownerId,
-      forgetSession: async (id) => {
+      forgetSession: async (id, threadId) => {
         if (failingForgets.has(id)) throw new Error('Synthetic forget failure');
         await forgetHooks.get(id)?.();
         forgottenSessions.push(id);
+        forgottenThreads.set(id, threadId);
       },
     });
     await tasks.initialize();
@@ -294,6 +296,7 @@ test(
     const abortedPrompts = new Set<string>();
     const remoteUploads = new Map<string, Uint8Array>();
     const fileContexts = new Map<string, RuntimeContext>();
+    const folderRuns = new Map<string, unknown>();
     const integrationReads: string[] = [];
     const appResults = new Map<string, unknown>();
     const largeAppResult = {
@@ -324,7 +327,8 @@ test(
       requestCredential: async () => {
         throw new Error('Unused fixture');
       },
-      integration: async (_turn, action, _args, options) => {
+      integration: async (turn, action, _args, options) => {
+        if (action === 'SYNTHETIC_FOLDER_READ') return { folder: turn.folder ?? null };
         if (action === 'GMAIL_LIST_THREADS') return largeAppResult;
         if (action === 'SLACK_DOWNLOAD_SLACK_FILE')
           return {
@@ -509,6 +513,13 @@ test(
         }
         if (context.prompt === 'large-app-result-fixture') {
           appResults.set(context.prompt, await context.integration('GMAIL_LIST_THREADS', {}));
+          return { status: 'succeeded' };
+        }
+        if (context.prompt.startsWith('task-folder-')) {
+          for (const path of context.task ? ['report.txt', '../../shared.txt'] : ['report.txt'])
+            await context.publish(path);
+          await context.readWorkspaceFile!('page.png', 64);
+          folderRuns.set(context.prompt, await context.integration('SYNTHETIC_FOLDER_READ', {}));
           return { status: 'succeeded' };
         }
         if (context.prompt.endsWith('-file-fixture')) {
@@ -2004,6 +2015,64 @@ test(
         await waitFor(settledThread);
         await closeDispatched();
       });
+
+      await t.test(
+        'a task stages and reads files in its own folder, and the chat keeps the workspace root',
+        async () => {
+          await waitFor(settledThread);
+          const previousRead = dependencies.readArtifact;
+          const reads: string[] = [];
+          dependencies.readArtifact = async (_threadId, path) => {
+            reads.push(path);
+            return Buffer.from('synthetic task file');
+          };
+          try {
+            const chat = await thread.submitUserMessage('dispatch-status:task-folder-start', [], {
+              channel: 'web',
+            });
+            await waitFor(() => dispatched.has(chat.turnId));
+            const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
+            await waitFor(() => folderRuns.has('task-folder-start'));
+            const folder = `tasks/${taskId}`;
+            assert.deepEqual(reads, [`${folder}/report.txt`, 'shared.txt', `${folder}/page.png`]);
+            assert.deepEqual(folderRuns.get('task-folder-start'), { folder });
+
+            const artifact = await storeArtifact(
+              Buffer.from('synthetic reply attachment'),
+              'notes.txt',
+              'text/plain',
+            );
+            await waitFor(settledThread);
+            const reply = await thread.submitUserMessage('task-folder-reply', [artifact], {
+              channel: 'web',
+              replyToMessageId: onItMessageId,
+            });
+            await waitFor(settled(reply.turnId));
+            const routed = ran(reply.turnId)!;
+            const workspace = join(root, 'workspaces', chat.threadId);
+            const staged = join(workspace, folder, `${artifact.id}-notes.txt`);
+            assert.equal(routed.sessionId, taskId);
+            assert.deepEqual(
+              routed.attachments.map((item) => item.path),
+              [staged],
+            );
+            assert.equal(await readFile(staged, 'utf8'), 'synthetic reply attachment');
+            assert.ok(!(await readdir(workspace)).includes(`${artifact.id}-notes.txt`));
+
+            reads.length = 0;
+            const plain = await thread.submitUserMessage('task-folder-chat', [], {
+              channel: 'web',
+            });
+            await waitFor(settled(plain.turnId));
+            assert.deepEqual(reads, ['report.txt', 'page.png']);
+            assert.deepEqual(folderRuns.get('task-folder-chat'), { folder: null });
+          } finally {
+            dependencies.readArtifact = previousRead;
+          }
+          await waitFor(settledThread);
+          await closeDispatched();
+        },
+      );
 
       await t.test(
         'a waiting task wakes at its bounded planned check or at once for a reply, and fails like any task',
@@ -3841,6 +3910,10 @@ test(
         const first = forgottenSessions.length;
         await assert.rejects(tasks.expire(), /Synthetic forget failure/);
         assert.deepEqual(erased(first), [old, reclosed, reset].sort());
+        assert.deepEqual(
+          [forgottenThreads.get(reset), forgottenThreads.get(old)],
+          [archived, null],
+        );
         assert.deepEqual(await marked(), [
           'Old synthetic task',
           'Reclosed synthetic task',

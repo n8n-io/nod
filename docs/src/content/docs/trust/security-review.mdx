@@ -47,7 +47,7 @@ Model requests go only to the provider the user connects. App data goes only to 
 | Model costs and app actions        | PostgreSQL                                 | Owner-scoped                                    | Permanent           |
 | Memory                             | A private file outside the workspace       | Learns only from the user's own messages        | Until forgotten     |
 | Workspace files, browser profiles  | Local volumes, or R2 checkpoints if hosted | Separate containers per owner                   | Until removed       |
-| Task transcripts and browsers      | Local volumes, or R2 checkpoints if hosted | One saved Pi session and profile per task       | 30 days after close |
+| Task transcripts, browsers, files  | Local volumes, or R2 checkpoints if hosted | One Pi session, profile and folder per task     | 30 days after close |
 
 ## Threats and controls
 

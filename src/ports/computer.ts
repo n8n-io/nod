@@ -197,6 +197,7 @@ export interface Workspace {
     maxBytes: number,
     purpose?: 'attachment' | 'publication',
   ): Promise<Uint8Array>;
+  removeTaskFolder?(threadId: string, taskId: string): Promise<void>;
   open(input: { threadId: string; workspacePath: string; signal: AbortSignal }): WorkspaceSession;
   status(): string;
   dispose(): void | Promise<void>;
