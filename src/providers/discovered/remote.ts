@@ -28,6 +28,8 @@ function failureText(content: unknown) {
   return (text || JSON.stringify(content ?? null)).slice(0, 4000);
 }
 
+const responseBytes = Math.ceil(fileBytes / 3) * 4 + 1024 * 1024;
+
 export async function safeRemoteFetch(
   input: string | URL | Request,
   init?: RequestInit,
@@ -113,7 +115,7 @@ export async function safeRemoteFetch(
         let size = 0;
         incoming.on('data', (chunk: Buffer) => {
           size += chunk.byteLength;
-          if (size > 64 * 1024 * 1024)
+          if (size > responseBytes)
             incoming.destroy(new Error('The connection response is too large.'));
         });
         incoming.on('error', reject);
