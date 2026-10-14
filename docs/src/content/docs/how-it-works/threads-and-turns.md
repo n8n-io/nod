@@ -64,7 +64,7 @@ stateDiagram-v2
 
 ## Messages you send while Otto works
 
-The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace, and images reach the model with the message. A reply carries the message it answers. Those messages move to the running turn, and their own turns close.
+The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace. Images reach the model with the message when the model reads images and they fit the [image limits](/how-it-works/agent-runtime/); others stay workspace files marked as not shown. A reply carries the message it answers. Those messages move to the running turn, and their own turns close.
 
 A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Background turns never take queued messages.
 
