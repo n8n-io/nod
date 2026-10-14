@@ -334,7 +334,13 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
     app.put('/api/trust/limit', async (request) => {
       const { monthlyUsd } = z
-        .object({ monthlyUsd: z.number().min(1).nullable() })
+        .object({
+          monthlyUsd: z
+            .number()
+            .min(1)
+            .refine((value) => Number.isSafeInteger(Math.round(value * 100)))
+            .nullable(),
+        })
         .strict()
         .parse(request.body);
       if (monthlyUsd === null)

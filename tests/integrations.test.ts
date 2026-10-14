@@ -7062,11 +7062,12 @@ test(
       });
       assert.equal(await limit(null), null);
       assert.equal(await ledger.limitReached(), false);
-      assert.notEqual(
-        (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd: 0 } }))
-          .statusCode,
-        200,
-      );
+      for (const monthlyUsd of [0, 1e300])
+        assert.notEqual(
+          (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd } }))
+            .statusCode,
+          200,
+        );
       assert.equal(
         (await pool.query('SELECT count(*)::int AS n FROM spending_limits')).rows[0].n,
         0,
