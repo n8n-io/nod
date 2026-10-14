@@ -47,23 +47,23 @@ Today, Otto does long work in the chat session, and the owner sees little of it.
 
 ## 3. Terms
 
-| Term              | Meaning                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Chat              | The one conversation between the owner and Otto. Its session ID is the thread ID.                                               |
-| Conversation turn | A turn in the chat session. It answers, starts a task or routes a message to a task.                                            |
-| Quick answer      | An answer that a conversation turn gives without a task.                                                                        |
-| Task              | Work that runs in its own session (`tasks.id` = `turns.session_id`), started by `start_task` from a conversation turn.          |
-| Task session      | All turns whose `session_id` is a task ID. One turn runs at a time.                                                             |
-| Task turn         | One turn of a task session: the first turn, a resume, a routed owner reply or a scheduled check.                                |
-| "On it" message   | The first message of a task, posted by the server in the dispatch transaction, as a reply in the chat.                          |
-| Task preview      | The card inside the "On it" message bubble. Closed, it shows title, status, current step and the step bar. Open, it shows more. |
-| Task reply        | An Otto message with `reply_to_message_id` = the task's `on_it_message_id`.                                                     |
-| Check-in          | A task reply about a milestone, sent only through the `check_in` tool and only in Check-ins mode.                               |
-| Question          | A task reply that asks the owner for a decision. A confirmation is a question bound to one exact action.                        |
-| Result            | The last task reply of a run. In task mode, the final text of Pi becomes the result.                                            |
-| Artifact          | A document or page that Otto makes as a deliverable. It is attached to the result.                                              |
-| Progress mode     | The owner preference `check_ins` or `quiet`.                                                                                    |
-| Task authority    | The owner words that the trust check may use for a task: the frozen instruction and the owner messages routed to that task.     |
+| Term              | Meaning                                                                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat              | The one conversation between the owner and Otto. Its session ID is the thread ID.                                                                         |
+| Conversation turn | A turn in the chat session. It answers, starts a task or routes a message to a task.                                                                      |
+| Quick answer      | An answer that a conversation turn gives without a task.                                                                                                  |
+| Task              | Work that runs in its own session (`tasks.id` = `turns.session_id`), started by `start_task` from a conversation turn.                                    |
+| Task session      | All turns whose `session_id` is a task ID. One turn runs at a time.                                                                                       |
+| Task turn         | One turn of a task session: the first turn, a resume, a routed owner reply or a scheduled check.                                                          |
+| "On it" message   | The first message of a task, posted by the server in the dispatch transaction, as a reply in the chat.                                                    |
+| Task preview      | The card inside the "On it" message bubble. Closed, it shows title, status, current step and the step bar. Open, it shows more.                           |
+| Task reply        | An Otto message with `reply_to_message_id` = the task's `on_it_message_id`.                                                                               |
+| Check-in          | A task reply about a milestone, sent only through the `check_in` tool and only in Check-ins mode.                                                         |
+| Question          | A task reply that asks the owner for a decision. A confirmation is a question bound to one exact action.                                                  |
+| Result            | The last task reply of a run. In task mode, the final text of Pi becomes the result.                                                                      |
+| Artifact          | A document or page that Otto makes as a deliverable. It is attached to the result.                                                                        |
+| Progress mode     | The owner preference `check_ins` or `quiet`.                                                                                                              |
+| Task authority    | The owner words that the trust check may use for a task: the frozen instruction, the Otto message it answered and the owner messages routed to that task. |
 
 ## 4. Behaviour
 
@@ -91,7 +91,7 @@ Otherwise, the conversation turn gives a quick answer. A conversation turn can s
 
 A plain chat message never changes the status of a task. Only the task's own turns, Stop and reset change it.
 
-How the server gives the status (step 2): a task with a running turn is Working. Otherwise, a latest turn that is queued gives Queued, also for a resume that waits for a free slot. A latest turn that waits gives Needs you. An open task whose latest turn failed gives Failed, and one whose latest turn was cancelled gives Stopped, also before WP-08 and WP-20 write the state. A Failed or Stopped task is not in the chat's list of open tasks.
+How the server gives the status (step 2): a task with a running turn is Working. Otherwise, a latest turn that is queued gives Queued, also for a resume that waits for a free slot. A latest turn that waits gives Needs you. An open task whose latest turn failed gives Failed, and one whose latest turn was cancelled gives Stopped, also before WP-08 and WP-20 write the state. A Failed or Stopped task is not in the chat's list of open tasks. A closed state (Done, Stopped, Failed) wins over a turn that still runs, for example after `task_progress {stop}`. For a waiting task, a running turn wins: the task shows Working until that turn ends. A planned check that is due but has no free slot shows Queued.
 
 ### 4.3 Messages of a task
 
@@ -177,6 +177,8 @@ A deliverable result carries one artifact card inside the result bubble. On web,
 - On Telegram and WhatsApp before buttons exist, a reply "stop" to a task message is routed to the task. The task prompt tells Pi to end the task as stopped.
 
 Stop declines the task's pending confirmations, supersedes its pending Vault and payment requests, discards its browser and posts the stop note.
+
+The Stop on the Browser page stops only the session that the page shows. Until WP-21 that is always the chat, so it posts `{scope:'chat'}`. After WP-21 it calls the task's stop route when it shows a task's browser.
 
 ### 4.11 Limits
 
@@ -279,6 +281,9 @@ The `brief` of `start_task` is the model's working brief and becomes the prompt 
 ### 5.6 Answers and approvals
 
 - Every task question and confirmation is a reply to "On it".
+- A bare yes or no competes only with the other open task confirmations on the same channel. A text answer is bound to its channel: a reply target from another channel ends the question and goes to the task as an ordinary reply. Only an answer by approval ID works across channels.
+- A late yes to an expired task confirmation is attached to the task's waiting turn, so it is delivered on the task's channel and never counts as chat words.
+- An expired confirmation does not block `route_to_task` and is not shown in `state.tasks`.
 - A reply to any message of a task resolves to that task's one pending approval.
 - A button press carries the approval ID. It is owner-bound and pending-only. A stale press is a no-op and creates no turn.
 - A bare yes or no answers only when exactly one approval is pending and it is the newest message the owner saw. Otherwise, the conversation turn asks which task.
@@ -318,9 +323,12 @@ Each task gets a working folder `/workspace/<threadId>/tasks/<taskId>`. Only Pi'
 
 ### 5.11 Failure, restart, reset and retention
 
-- An interrupted or failed task turn closes the task as Failed and posts a failure note as a reply. Nothing reruns automatically. A reply opens the task again (WP-20).
-- Reset stops every task, closes them as Stopped, and deletes their saved sessions, folders, browser profiles and checkpoints.
-- Closed task transcripts and browser profiles are deleted 30 days after the task closes.
+- An interrupted or failed task turn closes the task as Failed and posts a failure note as a reply. Nothing reruns automatically. A reply opens the task again (WP-20). When an owner reply is already queued in the task's session, the task stays open, the note is posted, and the reply runs.
+- A finishing turn closes its task as Done only when no turn is queued in the same session.
+- Reset closes every task as Stopped without a stop note, because the thread is archived and a channel reply could no longer reach the task. It deletes their saved sessions, folders, browser profiles and checkpoints.
+- Closed task transcripts and browser profiles are deleted 30 days after the task closes, by an hourly job (`task-retention`) that marks each task with `forgotten_at`. The job checks again under the task row lock that the task is still closed before it deletes anything.
+- After Stop, the cleanup of the old turn must never unpin or discard the browser of a newer turn in the same session. Cleanup is bound to the browser generation of its own turn.
+- Lookups that ask whether a session is busy use the status of its turns, not the newest turn by `created_at`, because steering moves a message to the running turn and closes the taken turn.
 
 ### 5.12 Waiting for other people
 
@@ -779,6 +787,7 @@ Status on main: missing.
 **Design.**
 
 - submitUserMessage (src/server/thread.ts:~389-415): after assertReplyTarget and the confirmation check, resolve the task with SELECT t.* FROM tasks t WHERE owner_id=$ AND (t.on_it_message_id = $target OR t.id = (SELECT u.session_id FROM messages m JOIN turns u ON u.id = m.turn_id WHERE m.id = $target)).
+- Step 3 result: a routed turn uses tasks.channel and tasks.channel_source_id, the same rule as a resume. openTasks entries carry taskId, so the model can call route_to_task. route_to_task has the same read-only and onboarding exclusions as start_task. Routing of direct replies to existing tasks works also when the flag is off.
 - Use sessionOfMessage from WP-18 for this lookup, and extend chat-verification and messageFields so a code or a mask that targets 'On it' resolves to the task.
 - If a task matches, insert the turn with source 'user', background true, session_id = task.id and the inbound channel. Delivery stays on tasks.channel.
 - A closed task gets state 'open' again, subject to the cap.
@@ -1095,6 +1104,7 @@ Status on main: missing.
 - The check turn: source 'task', source_id 'task-check:<taskId>:<nextCheck ISO>' (idempotent), session_id = task ID, background true.
 - Status Waiting shows who and the next check time. A routed owner reply wakes the task at once and cancels the planned check.
 - An email or app event does not wake the task in this version.
+- Step 3 result: cancelTurns clears the source_id of a cancelled planned check, so a new plan for the same time is not blocked. A routed reply deletes queued planned checks. A routed reply wakes the task without waiting for the check time, but it still respects the limit of 3. A planned check queued for later does not make the task's saved browser session count as in use (src/server/browser-connections.ts).
 
 **Files.** `src/server/tasks.ts`, `src/server/thread.ts`, `src/server/db.ts`, `src/runtime/tools.ts`, `src/shared/contracts.ts`
 
