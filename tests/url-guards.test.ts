@@ -61,6 +61,7 @@ test('preview eligibility blocks local, credential, consent and token URLs befor
     'https://example.com/unsubscribe/opaque',
     'https://example.com/confirm/opaque',
     'https://connect.composio.dev/link/opaque',
+    'https://app.composio.dev/link/opaque',
     'https://accounts.google.com/o/oauth2',
     'https://auth.example.com/continue',
     'https://example.com/?access_token=private',

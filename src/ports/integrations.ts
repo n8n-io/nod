@@ -69,14 +69,43 @@ export class IntegrationCatalogAccessDenied extends Error {
     super('App discovery requires Toolkit read access on the Composio project key.');
   }
 }
-export class IntegrationAuthConfigurationError extends Error {
-  constructor(reason: 'permission' | 'ambiguous' | 'unavailable') {
+export class IntegrationConnectionError extends Error {
+  readonly statusCode: number;
+  constructor(
+    readonly reason: 'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable',
+    readonly phase: 'session' | 'auth_config' | 'link',
+  ) {
+    const access =
+      phase === 'auth_config'
+        ? 'Auth configs read access'
+        : 'Session management read and write access';
     super(
-      reason === 'permission'
-        ? 'Connecting Google apps requires Auth configs read access on the Composio project key. Ask your Otto administrator to update the key.'
-        : reason === 'ambiguous'
-          ? 'This app has multiple custom sign-in configurations. Ask your Otto administrator to select one.'
-          : "This app's custom sign-in configuration is unavailable. Ask your Otto administrator to enable it for sessions.",
+      reason === 'authorization'
+        ? `Composio rejected this key or its permissions. Create a key in the same Composio project with ${access}, then replace it in Otto and try again.`
+        : reason === 'permission'
+          ? `Connecting apps requires ${access} on the Composio project key. Create a key with that permission, then replace it in Otto and try again.`
+          : reason === 'rate_limit'
+            ? 'Composio is receiving too many requests. Wait a moment, then try connecting again.'
+            : reason === 'timeout'
+              ? 'Composio took too long to respond. Try connecting again.'
+              : 'Composio could not complete the connection. Try connecting again shortly.',
+    );
+    this.statusCode =
+      reason === 'authorization' || reason === 'permission'
+        ? 503
+        : reason === 'rate_limit'
+          ? 429
+          : reason === 'timeout'
+            ? 504
+            : 502;
+  }
+}
+export class IntegrationAuthConfigurationError extends Error {
+  constructor(reason: 'ambiguous' | 'unavailable') {
+    super(
+      reason === 'ambiguous'
+        ? 'This app has multiple custom sign-in configurations. Ask your Otto administrator to select one.'
+        : "This app's custom sign-in configuration is unavailable. Ask your Otto administrator to enable it for sessions.",
     );
   }
 }

@@ -4504,6 +4504,7 @@ test(
         return { ...session(id), config_version: 2 };
       },
     );
+    let consentOrigin = 'https://connect.composio.dev';
     let failure: 'provider' | 'url' | undefined;
     let cleanupFailure = false;
     t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
@@ -4527,7 +4528,7 @@ test(
         redirect_url:
           failure === 'url'
             ? 'https://untrusted.example/connect'
-            : 'https://connect.composio.dev/link/synthetic-consent',
+            : `${consentOrigin}/link/synthetic-consent`,
       };
     });
     t.mock.method(
@@ -4688,8 +4689,10 @@ test(
     );
     failure = undefined;
     cleanupFailure = true;
+    consentOrigin = 'https://app.composio.dev';
     const accepted = await connect();
     assert.equal(accepted.statusCode, 200);
+    assert.equal(accepted.json().url, 'https://app.composio.dev/link/synthetic-consent');
     assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 3);
     assert.equal(deleted.at(-1), created.at(-1)!.id);
   },
@@ -6181,6 +6184,116 @@ test('Composio account identity uses safe display metadata and account-bound pro
   assert.equal(profileSessions, 4);
 });
 
+test('Composio connection requests classify HTTP failures without repeating consent or exposing provider details', async (t) => {
+  const { createServer } = await import('node:http');
+  const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
+  let failure: { phase: string; status: number } | undefined;
+  let rejected = 0;
+  const server = createServer(async (request, response) => {
+    const path = new URL(request.url!, 'http://localhost').pathname;
+    const phase = path.endsWith('/auth_configs')
+      ? 'auth_config'
+      : path.endsWith('/link')
+        ? 'link'
+        : path.endsWith('/tool_router/session')
+          ? 'session'
+          : undefined;
+    response.setHeader('content-type', 'application/json');
+    if (failure && failure.phase === phase && phase) {
+      rejected++;
+      response.statusCode = failure.status;
+      response.end(JSON.stringify({ error: { message: 'synthetic-private-provider-body' } }));
+      return;
+    }
+    if (path.endsWith('/toolkits') || phase === 'auth_config') {
+      response.end(JSON.stringify({ items: [], next_cursor: null }));
+      return;
+    }
+    if (phase === 'session') {
+      let body = '';
+      for await (const chunk of request) body += chunk;
+      response.end(
+        JSON.stringify({
+          session_id: 'fixture-consent',
+          mcp: { type: 'http', url: `http://${request.headers.host}/tool_router/mcp/fixture` },
+          config: JSON.parse(body),
+          config_version: 1,
+        }),
+      );
+      return;
+    }
+    if (phase === 'link') {
+      response.end(
+        JSON.stringify({
+          connected_account_id: 'fixture-account',
+          redirect_url: 'https://connect.composio.dev/link/fixture',
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end('{}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  const address = server.address() as { port: number };
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    baseURL: `http://127.0.0.1:${address.port}`,
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const provider = createComposioProvider({ client });
+  const connect = async () => {
+    const session = await provider.createSession('fixture-owner', {});
+    return session.authorize('gmail', 'http://localhost:4310/api/apps/callback');
+  };
+  for (const phase of ['session', 'auth_config', 'link'] as const) {
+    for (const [status, reason] of [
+      [401, 'authorization'],
+      [403, 'permission'],
+      [429, 'rate_limit'],
+      [503, 'unavailable'],
+      [504, 'timeout'],
+    ] as const) {
+      failure = { phase, status };
+      const before = rejected;
+      await assert.rejects(connect(), (error: unknown) => {
+        assert.ok(error instanceof IntegrationConnectionError);
+        assert.equal(error.reason, reason);
+        assert.equal(error.phase, phase);
+        assert.doesNotMatch(String(error), /synthetic-private|fixture-key/);
+        assert.equal(error.cause, undefined);
+        return true;
+      });
+      if (phase !== 'auth_config') assert.equal(rejected, before + 1);
+    }
+  }
+  failure = undefined;
+  assert.equal((await connect()).accountId, 'fixture-account');
+  for (const [cause, reason] of [
+    [new APIConnectionError({ message: 'synthetic-private-network-detail' }), 'unavailable'],
+    [new APIConnectionTimeoutError(), 'timeout'],
+  ] as const) {
+    const create = t.mock.method(client.getClient().toolRouter.session, 'create', async () => {
+      throw cause;
+    });
+    await assert.rejects(connect(), (error: unknown) => {
+      assert.ok(error instanceof IntegrationConnectionError);
+      assert.equal(error.reason, reason);
+      assert.equal(error.cause, undefined);
+      assert.doesNotMatch(String(error), /synthetic-private/);
+      return true;
+    });
+    assert.equal(create.mock.callCount(), 1);
+    create.mock.restore();
+  }
+});
+
 test('Composio Google consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -6255,6 +6368,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
       return { ...snapshot(id), config_version: 2 };
     },
   );
+  let redirectUrl = 'https://connect.composio.dev/link/fixture';
   const link = t.mock.method(
     transport,
     'link',
@@ -6263,7 +6377,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
       await pause('link');
       return {
         connected_account_id: 'fixture-account',
-        redirect_url: 'https://connect.composio.dev/link/fixture',
+        redirect_url: redirectUrl,
       };
     },
   );
@@ -6290,6 +6404,28 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
   assert.equal(list.mock.callCount(), 6);
   assert.equal(patch.mock.callCount(), 5);
   assert.equal(configurations.get(fallback.id)?.auth_configs, undefined);
+  for (const origin of ['https://connect.composio.dev', 'https://app.composio.dev']) {
+    redirectUrl = `${origin}/link/fixture`;
+    assert.deepEqual(await fallback.authorize('gmail', callback), {
+      accountId: 'fixture-account',
+      url: redirectUrl,
+    });
+  }
+  for (const url of [
+    'https://untrusted.example/link/fixture',
+    'https://connect.composio.dev.untrusted.example/link/fixture',
+    'http://connect.composio.dev/link/fixture',
+    'https://connect.composio.dev:444/link/fixture',
+    'https://user:secret@connect.composio.dev/link/fixture',
+    'https://user:secret@app.composio.dev/link/fixture',
+    'javascript:alert(1)',
+    'not-a-url',
+    '',
+  ]) {
+    redirectUrl = url;
+    await assert.rejects(fallback.authorize('gmail', callback), /sign-in address is invalid/);
+  }
+  redirectUrl = 'https://connect.composio.dev/link/fixture';
   empty = false;
   for (const phase of ['list', 'patch', 'link'] as const) {
     paused = phase;
@@ -8275,3 +8411,74 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       else Reflect.deleteProperty(globalThis, key);
   }
 });
+
+test(
+  'connection failures expose bounded recovery errors and require a manual retry',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
+    const f = await appsFixture(t);
+    const authorize = f.session.authorize;
+    const privateValue = 'synthetic-private-provider-key';
+    let failure: Error | undefined;
+    let phase: 'session' | 'auth_config' | 'link' = 'session';
+    let sessions = 0;
+    let authorizations = 0;
+    f.provider.createSession = async () => {
+      sessions++;
+      if (failure && phase === 'session') throw failure;
+      return f.session;
+    };
+    f.session.authorize = async (...args) => {
+      authorizations++;
+      if (failure) throw failure;
+      return authorize(...args);
+    };
+    const connect = () =>
+      f.app.inject({
+        method: 'POST',
+        url: '/api/apps/gmail/connect',
+        payload: { returnTo: 'window' },
+      });
+    const pending = async () =>
+      Number((await f.pool.query('SELECT count(*) FROM app_connections')).rows[0].count);
+    for (const [reason, status] of [
+      ['authorization', 503],
+      ['permission', 503],
+      ['rate_limit', 429],
+      ['timeout', 504],
+      ['unavailable', 502],
+    ] as const) {
+      for (phase of ['session', 'auth_config', 'link'] as const) {
+        failure = Object.assign(new IntegrationConnectionError(reason, phase), {
+          cause: new Error(privateValue),
+          response: { body: privateValue },
+        });
+        const before = { sessions, authorizations };
+        const response = await connect();
+        assert.equal(response.statusCode, status);
+        assert.deepEqual(response.json(), { error: failure.message });
+        assert.doesNotMatch(response.body, new RegExp(privateValue));
+        assert.equal(sessions, before.sessions + 1);
+        assert.equal(authorizations, before.authorizations + (phase === 'session' ? 0 : 1));
+        assert.equal(await pending(), 0);
+      }
+    }
+    phase = 'session';
+    failure = Object.assign(new Error(privateValue), { statusCode: 401, code: privateValue });
+    const beforeFailure = sessions;
+    const unknown = await connect();
+    assert.equal(unknown.statusCode, 502);
+    assert.doesNotMatch(unknown.body, new RegExp(privateValue));
+    assert.deepEqual(Object.keys(unknown.json()), ['error']);
+    assert.equal(sessions, beforeFailure + 1);
+    assert.equal(await pending(), 0);
+    failure = undefined;
+    const retried = await connect();
+    assert.equal(retried.statusCode, 200, retried.body);
+    assert.equal(sessions, beforeFailure + 2);
+    assert.equal(new URL(retried.json().url).origin, 'https://consent.example.com');
+    assert.match(retried.json().attempt, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(await pending(), 1);
+  },
+);

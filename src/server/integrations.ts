@@ -8,6 +8,7 @@ import type { AppSetupStatus, Connection, VaultLoginEntry } from '../shared/cont
 import {
   IntegrationAuthConfigurationError,
   IntegrationCatalogAccessDenied,
+  IntegrationConnectionError,
   IntegrationInboxCursorExpired,
   type ConnectedApp,
   type IntegrationProvider,
@@ -1525,6 +1526,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       scope.setErrorHandler((error, _request, reply) => {
         const status =
           error instanceof IntegrationError ||
+          error instanceof IntegrationConnectionError ||
           error instanceof DiscoveredConnectionError ||
           error instanceof BrowserConnectionError
             ? error.statusCode
@@ -1536,6 +1538,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         reply.code(status).send({
           error:
             error instanceof IntegrationError ||
+            error instanceof IntegrationConnectionError ||
             error instanceof IntegrationAuthConfigurationError ||
             error instanceof DiscoveredConnectionError ||
             error instanceof BrowserConnectionError

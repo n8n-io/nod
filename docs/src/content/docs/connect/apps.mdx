@@ -38,10 +38,12 @@ flowchart TD
 | Session management     | Read and write | Create and delete sessions, and open sign-in links                  |
 | Session tool execution | Write only     | Find app actions, load their details and run them                   |
 | Toolkits               | Read only      | List the apps you can connect                                       |
-| Auth configs           | Read only      | Pick your custom Google sign-in setup                               |
+| Auth configs           | Read only      | Check and select your Google sign-in setup                          |
 | Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and fetch sign-in emails |
 
 If you set `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**.
+
+See Composio's [project key permissions](https://docs.composio.dev/reference/authenticating-to-composio/project-api-key-permissions) for the API operations each permission allows.
 
 :::caution[You can't edit a key's permissions]
 If a permission is missing, create a new key. A valid key with missing permissions can show an "Invalid API key" error.
@@ -50,6 +52,10 @@ If a permission is missing, create a new key. A valid key with missing permissio
 ## Add the key to Otto
 
 Otto checks the key with Composio and saves it encrypted with the Vault key.
+
+:::caution[A saved key can still lack sign-in access]
+The setup check doesn't test every permission needed to connect Gmail. Grant **Auth configs → Read only** and **Session management → Read and write**, along with the other permissions above.
+:::
 
 <Tabs syncKey="install">
 <TabItem label="Desktop app">
