@@ -420,6 +420,36 @@ test('messages taken after a Pi turn reach the next request together and not aft
     assert.equal(takes, 2);
     assert.equal(batches.length, 1);
     assert.equal(replies.at(-1), 'Which fixture?');
+
+    question = false;
+    batches.splice(0, batches.length, [{ id: randomUUID(), text: 'Also the fourth fixture' }]);
+    const results: string[] = [];
+    const task = {
+      ...context,
+      sessionId: randomUUID(),
+      background: true,
+      task: {
+        title: 'Synthetic fixture check',
+        request: 'Check the fixtures',
+        result: async (text: string) => {
+          results.push(text);
+        },
+      },
+    };
+    assert.equal((await runtime.runTurn({ ...task, turnId: randomUUID() })).status, 'succeeded');
+    assert.equal(takes, 4);
+    assert.ok(requests.at(-1)!.includes('Also the fourth fixture'));
+    assert.deepEqual(results, ['Answer 4.', 'Answer 5.']);
+
+    question = true;
+    batches.push([{ id: randomUUID(), text: 'Sent while the task asks' }]);
+    assert.equal(
+      (await runtime.runTurn({ ...task, turnId: randomUUID(), prompt: 'Ask me' })).status,
+      'waiting_user',
+    );
+    assert.equal(takes, 4);
+    assert.equal(batches.length, 1);
+    assert.equal(replies.at(-1), 'Which fixture?');
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });

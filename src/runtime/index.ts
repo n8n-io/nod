@@ -708,7 +708,7 @@ export function createAgentRuntime(dependencies: {
           takeMessages &&
           (async () =>
             (await takeMessages()).map((message) =>
-              instruct(steeredInstruction(message), 0, 'steer', true),
+              instruct(steeredInstruction(message, Boolean(context.task)), 0, 'steer', true),
             )),
         onEvent: (event) => {
           if (event.type === 'model_usage') void observe(event);

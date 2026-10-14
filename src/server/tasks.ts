@@ -14,7 +14,7 @@ import {
   type TaskTarget,
   type TurnRef,
 } from './thread.ts';
-import { turnChain } from './turn-chain.ts';
+import { turnChain, untakenTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 import { answered } from './trust.ts';
@@ -91,7 +91,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
          FROM tasks t
          LEFT JOIN messages r ON r.id=t.result_message_id AND r.owner_id=t.owner_id
          LEFT JOIN LATERAL (SELECT u.id,u.status,u.finished_at FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
-           ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
+           AND ${untakenTurnSql('u')} ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
            AND (NOT $3::boolean OR t.state IN ('queued','open'))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,

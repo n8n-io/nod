@@ -56,8 +56,10 @@ export function createTrust(options: {
   async function conversation(threadId: string, sessionId: string) {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date; moved: boolean }>(
-        `SELECT m.id,m.text,m.created_at,u.source='user' AND $3::uuid<>$2 AND NOT EXISTS (SELECT 1 FROM messages r
-           WHERE r.id=m.reply_to_message_id AND r.owner_id=m.owner_id AND ${sessionOfMessageSql('r')}=$3) AS moved
+        `SELECT m.id,m.text,m.created_at,$3::uuid<>$2 AND COALESCE((SELECT o.source FROM turns o
+           WHERE o.owner_id=m.owner_id AND o.session_id=$3 AND o.message_id=m.id LIMIT 1),u.source)='user'
+           AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.id=m.reply_to_message_id AND r.owner_id=m.owner_id
+             AND ${sessionOfMessageSql('r')}=$3) AS moved
          ${recent} AND ${own} AND m.role='user'
          AND m.text NOT IN (${tapped}) ORDER BY m.created_at DESC,m.id DESC LIMIT 5`,
         [ownerId, threadId, sessionId],

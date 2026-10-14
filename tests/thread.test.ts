@@ -530,7 +530,7 @@ test(
           return { status: 'succeeded' };
         }
         if (context.prompt === 'release-retry') failRelease = 1;
-        if (context.prompt === 'ask-question') {
+        if (context.prompt.endsWith('ask-question')) {
           await context.waitForUser!('Which account should I use?');
           return { status: 'waiting_user' };
         }
@@ -2266,6 +2266,130 @@ test(
             ['user', behind.taskId],
           );
           assert.equal(executed, executedBefore);
+          await waitFor(settledThread);
+          await closeDispatched();
+        },
+      );
+
+      await t.test(
+        'a running task takes the replies routed to it, and chat and task messages never steer each other',
+        async () => {
+          await waitFor(settledThread);
+          const { createTrust } = await import('../src/server/trust.ts');
+          const threadId = (await thread.activeThread(db.pool)).id;
+          const provenance = new Map<string, string | null>();
+          const manage = dependencies.manage;
+          dependencies.manage = async (turn, _action, _args, source) => {
+            provenance.set(turn.turnId, source.sourceMessageId);
+            return {};
+          };
+          const send = (text: string, replyToMessageId?: string) =>
+            thread.submitUserMessage(text, [], { channel: 'web', replyToMessageId });
+          try {
+            block('steer-ask-question');
+            const dispatch = await send('dispatch-status:steer-ask-question');
+            await waitFor(() => dispatched.has(dispatch.turnId));
+            const { taskId, onItMessageId } = dispatched.get(dispatch.turnId)!;
+            const taskTurn = (
+              await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId])
+            ).rows[0].id as string;
+            await waitFor(() => Boolean(ran(taskTurn)));
+            await waitFor(settled(dispatch.turnId));
+            await db.pool.query(
+              `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id)
+               VALUES($1,$2,'assistant','Shall I send the synthetic note?',$3,$4,$5)`,
+              [randomUUID(), ownerId, threadId, taskTurn, onItMessageId],
+            );
+            const correction = await send('Use the synthetic work account', onItMessageId);
+            routeTarget = taskId;
+            let moved: { turnId: string; messageId: string };
+            try {
+              moved = await send('routed-by-chat: yes, send it');
+              await waitFor(settled(moved.turnId));
+            } finally {
+              routeTarget = undefined;
+            }
+            const routed = (
+              await db.pool.query(
+                "SELECT id FROM turns WHERE session_id=$1 AND source='user' ORDER BY created_at,id",
+                [taskId],
+              )
+            ).rows.map((row) => row.id as string);
+            assert.equal(routed.length, 2);
+
+            block('steer-chat');
+            const chat = await send('steer-chat');
+            await waitFor(() => Boolean(ran(chat.turnId)));
+            const plain = await send('A plain synthetic chat follow-up');
+            release('steer-chat');
+            await waitFor(settled(chat.turnId));
+            assert.deepEqual(taken.get(chat.turnId), [
+              { id: plain.messageId, text: 'A plain synthetic chat follow-up' },
+            ]);
+            for (const id of routed) assert.equal(await turnStatus(id), 'queued');
+
+            release('steer-ask-question');
+            await waitFor(settled(taskTurn));
+            assert.equal(await turnStatus(taskTurn), 'waiting');
+            assert.deepEqual(taken.get(taskTurn), [
+              { id: correction.messageId, text: 'Use the synthetic work account' },
+              { id: moved.messageId, text: 'routed-by-chat: yes, send it' },
+            ]);
+            assert.equal(provenance.get(taskTurn), moved.messageId);
+            for (const id of routed) {
+              assert.equal(await turnStatus(id), 'succeeded');
+              assert.equal(ran(id), undefined);
+            }
+            assert.deepEqual(
+              (
+                await db.pool.query(
+                  'SELECT DISTINCT turn_id FROM messages WHERE id=ANY($1::uuid[])',
+                  [[correction.messageId, moved.messageId]],
+                )
+              ).rows,
+              [{ turn_id: taskTurn }],
+            );
+            assert.equal(
+              ((await request('GET', '/api/tasks')).json() as Task[]).find(
+                (task) => task.id === taskId,
+              )?.status,
+              'needs_you',
+            );
+
+            const reviews: Array<{
+              userMessages?: Array<{ text: string }>;
+              assistantMessageBeforeLatestUserMessage?: string;
+            }> = [];
+            const trust = createTrust({
+              pool: db.pool,
+              ownerId,
+              review: async (_instructions, input) => {
+                reviews.push(input as (typeof reviews)[number]);
+                return { run: false };
+              },
+            });
+            const note = { to: 'someone@example.test', body: 'Synthetic note' };
+            await trust.check({ threadId, turnId: taskTurn }, 'GMAIL_SEND_EMAIL', note);
+            await trust.check({ threadId, turnId: chat.turnId }, 'GMAIL_SEND_EMAIL', note);
+            assert.deepEqual(
+              [
+                reviews[0]!.userMessages?.map((item) => item.text),
+                reviews[0]!.assistantMessageBeforeLatestUserMessage,
+              ],
+              [['Use the synthetic work account', 'routed-by-chat: yes, send it'], undefined],
+            );
+            assert.ok(
+              !reviews[1]!.userMessages?.some((item) =>
+                ['Use the synthetic work account', 'routed-by-chat: yes, send it'].includes(
+                  item.text,
+                ),
+              ),
+            );
+          } finally {
+            release('steer-chat');
+            release('steer-ask-question');
+            dependencies.manage = manage;
+          }
           await waitFor(settledThread);
           await closeDispatched();
         },

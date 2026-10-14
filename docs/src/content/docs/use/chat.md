@@ -20,7 +20,7 @@ Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 You don't have to wait. The message box stays open while Otto works.
 
-A short follow-up, such as "also check Friday", joins the task that's running. Otto reads it before its next step. A message with attachments, a reply to a specific message or a message from another app waits in line and runs as its own request. A reply to a message of a [task](/use/tasks/) goes to that task instead.
+A short follow-up, such as "also check Friday", joins the task that's running. Otto reads it before its next step. A message with attachments, a reply to a specific message or a message from another app waits in line and runs as its own request. A reply to a message of a [task](/use/tasks/) goes to that task instead, and a working task reads it before its next step.
 
 ```mermaid
 flowchart LR

@@ -909,7 +909,7 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
         row.channel !== channel ||
         !row.message_id ||
         row.attachments.length ||
-        row.reply_to_message_id,
+        (row.reply_to_message_id && sessionId === thread.id),
     );
     const taken = end < 0 ? queued : queued.slice(0, end);
     if (!taken.length) return [];
@@ -962,8 +962,9 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           instruction: string;
           on_it_message_id: string;
           source_message_id: string;
+          read_only: boolean;
         }>(
-          `SELECT id,title,COALESCE(instruction,'') AS instruction,on_it_message_id,source_message_id
+          `SELECT id,title,COALESCE(instruction,'') AS instruction,on_it_message_id,source_message_id,read_only
            FROM tasks WHERE id=$1 AND owner_id=$2 AND thread_id=$3`,
           [turn.session_id, ownerId, threadId],
         )
@@ -1393,7 +1394,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           }
         : {}),
       takeMessages:
-        turn.background || turn.read_only
+        (turn.background && !task) || turn.read_only || task?.read_only
           ? undefined
           : async () => {
               if (signal.aborted) throw turnStopped();

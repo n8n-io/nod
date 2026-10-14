@@ -69,9 +69,11 @@ stateDiagram-v2
 
 ## Messages you send while Otto works
 
-The composer never blocks. After each Pi step, a running chat turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close.
+The composer never blocks. After each Pi step, a running chat or task turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close. A turn takes messages only from its own session, so a chat message never steers a task and a reply to a task never steers the chat.
 
-A message with attachments, a reply target or another channel stops the take. It and every message after it stay queued and run as their own turns. Background and read-only turns never take queued messages.
+A message with attachments or from another channel stops the take. It and every message after it stay queued and run as their own turns. In the chat, a reply target stops the take too. In a task it doesn't, because your messages reach a task as replies to it or as messages the chat moved there. A task turn reads them as corrections or additions to the task. Schedule, event and read-only turns never take queued messages.
+
+Steering reaches only the turn's own Pi session, never a running subagent. A subagent finishes its part without your message, and the turn reads the message at its next step, after the subagents of that step return.
 
 ## Waiting and resuming
 
@@ -134,7 +136,7 @@ The chat sees each task only through its "On it" message and its latest result. 
 
 Your reply to any message of a task goes to that task: its "On it" message, a question, a link or its result. The server finds the task from the message you replied to while it saves your message, and queues a `user` turn in the task's session. Every turn in a task's session is a background turn on the task's channel, so the task's answer goes where the task replies. A message without a reply target, or a reply to a chat message, stays in the chat.
 
-- **While the task works.** Your reply waits behind the running turn and runs after it. The task stays open until your reply has run. If the running turn stops the task first, your reply opens it again when it starts.
+- **While the task works.** The running turn takes your reply at its next step, as the chat takes a follow-up. See [Messages you send while Otto works](#messages-you-send-while-otto-works). A reply with attachments, or one that arrives after the turn's last step, waits behind the running turn and runs after it. The task stays open until your reply has run. If the running turn stops the task first, your reply opens it again when it starts.
 - **While the task waits for you.** Your reply starts the task's next turn. A yes or no that replies to the confirmation, or to any other message of a task with one open confirmation, answers it and queues a `resume` turn in the task's session. Any other reply cancels the task's open confirmations. A confirmation the task asks while an earlier reply of yours waits is cancelled too, and your yes or no to it reaches the task as an ordinary reply. So an action you were asked about can't run twice.
 - **After the task closed.** A reply to a done, stopped or failed task opens it again as **Queued**, in the same session and saved Pi session. It runs when fewer than three other tasks work.
 
@@ -180,6 +182,7 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
+- **Your messages.** A message the turn takes while it works goes to the turn, not to a running subagent.
 - **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser. Read-only turns and activity checks can't delegate.
 - **Browsers.** A subagent's browser is deleted when it finishes. Subagent browsers have their own two live slots, so a turn whose own browser holds a slot never waits on itself.
 

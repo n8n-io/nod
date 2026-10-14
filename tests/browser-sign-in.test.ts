@@ -26,7 +26,7 @@ test(
         'CREATE TABLE threads (id uuid PRIMARY KEY,owner_id text,status text,archived_at timestamptz)',
       );
       await pool.query(
-        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)',
+        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,background boolean NOT NULL DEFAULT false,started_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)',
       );
       const first = { threadId: randomUUID(), turnId: randomUUID() };
       const second = { threadId: randomUUID(), turnId: randomUUID() };
@@ -39,6 +39,11 @@ test(
           [turn.turnId, turn.threadId],
         );
       }
+      const take = (threadId: string) =>
+        pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,status) VALUES($1,'owner-a',$2,'succeeded')",
+          [randomUUID(), threadId],
+        );
       let cancelTurnId: string | undefined;
       let changeOrigin = false;
       const bindings: string[] = [];
@@ -138,6 +143,7 @@ test(
         [connectionId],
       );
       const checkedAt = (await service.list())[0].checkedAt;
+      await take(first.threadId);
       assert.deepEqual(
         await service.request(
           { action: 'use', url: 'https://example.test/account', connectionId },
@@ -243,6 +249,8 @@ test(
         [connectionId],
       );
       assert.equal((await service.sessions())[0]!.url, 'https://example.test/login');
+      await take(second.threadId);
+      await assert.rejects(service.disconnect(connectionId), /Stop the active work/);
       await pool.query("UPDATE turns SET status='completed' WHERE id=$1", [second.turnId]);
       await assert.rejects(
         service.request({ action: 'use', url: 'https://example.test/', connectionId }, second),

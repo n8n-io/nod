@@ -11,7 +11,7 @@ A task is long work that Otto hands off from the chat, so the chat stays free wh
 
 When Otto starts a task, it answers your message with a short "On it" message. The task's questions, confirmations from the [trust check](/trust/approvals/), sign-in and payment links, files and result reply to that message.
 
-To answer a task or add to it, reply to any of its messages. Your reply goes to that task, not the chat. While the task works, your reply waits and runs next. A reply to a done, stopped or failed task opens it again. When Otto sees that a message without a reply belongs to a task, it moves your message to that task word for word.
+To answer a task or add to it, reply to any of its messages. Your reply goes to that task, not the chat. While the task works, it reads your reply before its next step, as the chat does with a follow-up. A reply with files waits and runs next. A reply to a done, stopped or failed task opens it again. When Otto sees that a message without a reply belongs to a task, it moves your message to that task word for word.
 
 Up to three tasks work at the same time. When three are working, a new task waits as **Queued** until one of them finishes or stops to ask you something. So does a task you answer or open again while three others work. A task that waits for your answer doesn't take a place, and the chat and your schedules never wait for tasks.
 

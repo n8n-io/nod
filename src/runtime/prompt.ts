@@ -147,6 +147,9 @@ export function firstInstruction(
   )}${mode === 'conversation' || mode === 'task' ? `\n\n${replyStyle}` : ''}`;
 }
 
-export function steeredInstruction(message: { id: string; text: string }) {
-  return `The user sent currentInstruction while you were working. It may add to, change or replace the request in progress, or be a separate request. Answer a separate request now, then continue the work in progress.\nRequest data (JSON):\n${JSON.stringify({ messageId: message.id, currentInstruction: message.text })}\n\n${replyStyle}`;
+export function steeredInstruction(message: { id: string; text: string }, task = false) {
+  const rule = task
+    ? 'The user sent currentInstruction to this task while you were working. Treat it as a correction or addition to this task: adjust the work in progress and continue it. When it asks to stop this task, stop as the task rules say.'
+    : 'The user sent currentInstruction while you were working. It may add to, change or replace the request in progress, or be a separate request. Answer a separate request now, then continue the work in progress.';
+  return `${rule}\nRequest data (JSON):\n${JSON.stringify({ messageId: message.id, currentInstruction: message.text })}\n\n${replyStyle}`;
 }
