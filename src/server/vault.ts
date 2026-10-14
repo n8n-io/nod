@@ -410,7 +410,8 @@ function metadata(entry: EntryRow, username?: string): VaultLoginEntry {
 function normalizedCardNumber(value: string) {
   if (!/^[0-9 -]+$/.test(value)) throw new VaultError('Check the card number.');
   const number = value.replace(/[ -]/g, '');
-  if (!/^\d{12,19}$/.test(number)) throw new VaultError('Check the card number.');
+  if (!/^\d{12,19}$/.test(number) || /^(\d)\1+$/.test(number))
+    throw new VaultError('Check the card number.');
   let sum = 0;
   let double = false;
   for (let index = number.length - 1; index >= 0; index--) {

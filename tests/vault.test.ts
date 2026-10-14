@@ -3022,6 +3022,20 @@ test(
         assert.equal(saved.statusCode, 200, saved.body);
         return saved.json<VaultCardEntry>();
       };
+      const zeros = await app.inject({
+        method: 'POST',
+        url: '/api/vault',
+        headers,
+        payload: {
+          kind: 'card',
+          label: 'Zero card',
+          cardholder: 'Synthetic Cardholder',
+          cardNumber: '0000 0000 0000 0000',
+          expiryMonth: 8,
+          expiryYear,
+        },
+      });
+      assert.equal(zeros.statusCode, 400);
       const card = await save('Studio card', '4242 4242 4242 4242');
       const turn = { threadId: randomUUID(), turnId: randomUUID() };
       await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [

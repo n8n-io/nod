@@ -36,6 +36,7 @@ export function credentialFields(input: CredentialInput): CredentialField[] {
   for (const { selector } of fields)
     if (
       !selector ||
+      selector.length > 500 ||
       (/^[\s@-]/.test(selector) && !/^@e\d+$/.test(selector)) ||
       selector.includes('\0')
     )
