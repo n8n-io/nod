@@ -16,7 +16,7 @@ const submission = z
   .object({
     submissionId: uuid,
     category: z.enum(['bug', 'feature', 'other']),
-    feedback: z.string().trim().min(1).max(feedbackLimits.text),
+    feedback: z.string().trim().min(1),
     computerName: z.string().trim().max(200).nullable(),
     appVersion: z.string().trim().min(1).max(100).nullable(),
     appRelease: z.string().trim().max(200).nullable(),
@@ -25,22 +25,20 @@ const submission = z
     source: z.enum(['desktop', 'local-web', 'hosted-web']),
     appModified: z.boolean().nullable(),
     reportId: uuid.nullable(),
-    attachments: z
-      .array(
-        z
-          .object({
-            name: z
-              .string()
-              .trim()
-              .min(1)
-              .max(160)
-              .regex(/^[^/\\\u0000-\u001f]+$/),
-            mimeType: z.enum(feedbackAttachmentMimeTypes),
-            data: z.string().max(Math.ceil(feedbackLimits.attachmentBytes / 3) * 4),
-          })
-          .strict(),
-      )
-      .max(feedbackLimits.attachments),
+    attachments: z.array(
+      z
+        .object({
+          name: z
+            .string()
+            .trim()
+            .min(1)
+            .max(160)
+            .regex(/^[^/\\\u0000-\u001f]+$/),
+          mimeType: z.enum(feedbackAttachmentMimeTypes),
+          data: z.string(),
+        })
+        .strict(),
+    ),
   })
   .strict();
 
@@ -50,12 +48,8 @@ const fail = (message: string, statusCode: number) =>
 
 function attachmentFile(file: z.infer<typeof submission>['attachments'][number]): FeedbackFile {
   const bytes = Buffer.from(file.data, 'base64');
-  if (
-    bytes.length === 0 ||
-    bytes.length > feedbackLimits.attachmentBytes ||
-    bytes.toString('base64') !== file.data
-  )
-    throw fail('Choose a supported attachment up to 2 MB.', 400);
+  if (bytes.length === 0 || bytes.toString('base64') !== file.data)
+    throw fail('Choose a supported attachment.', 400);
   let matches =
     (file.mimeType === 'image/png' &&
       bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) ||
@@ -176,7 +170,7 @@ export async function registerFeedback(
     const attachments = input.attachments.map(attachmentFile);
     if (
       attachments.reduce((sum, file) => sum + Buffer.from(file.data, 'base64').length, 0) >
-      feedbackLimits.totalAttachmentBytes
+      feedbackLimits.attachmentBytes
     )
       throw fail('Attachments must total no more than 4 MB.', 413);
     const report: FeedbackFile | undefined = snapshot

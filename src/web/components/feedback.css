@@ -119,13 +119,6 @@
   background: transparent;
   color: var(--foreground);
 }
-.feedback-length-error {
-  margin: 0;
-  padding: 0 14px 12px;
-  color: var(--error);
-  font-size: var(--text-control);
-  line-height: 1.5;
-}
 .feedback-composer > .feedback-thumbnails {
   padding: 0 12px 8px;
 }

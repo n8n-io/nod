@@ -3892,7 +3892,6 @@ test(
     });
     for (const attachments of [
       [textFile(feedbackLimits.attachmentBytes + 1)],
-      Array.from({ length: 4 }, () => textFile(1)),
       Array.from({ length: 3 }, () => textFile(1_500_000)),
     ]) {
       const response = await app.inject({
@@ -4432,19 +4431,12 @@ test('feedback diagnostics build bounded private tool activity from the saved se
     ])
       assert.ok(!encoded.includes(omitted), omitted);
   }
-  entries = Array.from({ length: 60 }, (_, index) =>
+  entries = Array.from({ length: 61 }, (_, index) =>
     activity(`compact-${index}`, 'browser', {}, 'synthetic', now - (61 - index) * 1000),
   ).flat();
   const complete = JSON.parse(await buildFeedbackReport(options));
   assert.equal(complete.coverage.truncated, false);
-  assert.equal(complete.trace.length, 60);
-  entries.push(...activity('compact-60', 'browser', {}, 'synthetic', now));
-  const sampled = JSON.parse(await buildFeedbackReport(options));
-  assert.equal(sampled.coverage.truncated, true);
-  assert.deepEqual(
-    sampled.trace.map((row: { id: string }) => row.id),
-    Array.from({ length: 60 }, (_, index) => `compact-${index + 1}`),
-  );
+  assert.equal(complete.trace.length, 61);
   const large = 'x'.repeat(3500);
   entries = Array.from({ length: 70 }, (_, index) =>
     activity(
@@ -4458,7 +4450,7 @@ test('feedback diagnostics build bounded private tool activity from the saved se
   const bounded = await buildFeedbackReport(options);
   const truncated = JSON.parse(bounded);
   assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
-  assert.ok(truncated.trace.length > 0 && truncated.trace.length <= 60);
+  assert.ok(truncated.trace.length > 0 && truncated.trace.length < 70);
   assert.equal(truncated.trace.at(-1).id, 'bounded-69');
   assert.ok(!bounded.includes('bounded-9'));
   assert.equal(truncated.coverage.truncated, true);
@@ -4599,59 +4591,21 @@ test(
     assert.equal(report.messages.length, 1);
     assert.equal(report.trace.length, 2);
     const large = 'x'.repeat(3500);
-    for (let index = 0; index < 60; index++)
+    const start = Date.now() + 1_000;
+    let newest = '';
+    for (let index = 0; index < 200; index++) {
+      newest = randomUUID();
       await f.pool.query(
-        "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant',$4)",
-        [randomUUID(), ownerId, threadId, `${large}${large}${large}`],
+        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,$5)",
+        [newest, ownerId, threadId, `${large}${large}${large}`, new Date(start + index * 1000)],
       );
+    }
     const bounded = await buildFeedbackReport(options);
     assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
     const truncated = JSON.parse(bounded);
     assert.equal(truncated.coverage.truncated, true);
-    assert.ok(truncated.messages.length <= 30);
-    assert.ok(truncated.trace.length <= 60);
-    assert.ok(truncated.messages.length + truncated.trace.length > 0);
-    for (const [field, limit, sql] of [
-      [
-        'messages',
-        30,
-        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant','Synthetic diagnostic',$4)",
-      ],
-      [
-        'turns',
-        20,
-        "INSERT INTO turns(id,owner_id,thread_id,source,status,background,waiting_reason,created_at) VALUES($1,$2,$3,'schedule','waiting',true,'user',$4)",
-      ],
-    ] as const) {
-      await t.test(`${field} reports omitted older records at the row limit`, async () => {
-        await f.pool.query('TRUNCATE messages,turns');
-        const ids: string[] = [];
-        const start = Date.now() - 120_000;
-        for (let index = 0; index <= limit; index++) {
-          if (index === limit) {
-            const complete = JSON.parse(await buildFeedbackReport(options));
-            assert.equal(complete.coverage.truncated, false);
-            assert.deepEqual(
-              complete[field].map((row: { id: string }) => row.id),
-              ids,
-            );
-          }
-          const id = randomUUID();
-          ids.push(id);
-          await f.pool.query(sql, [id, ownerId, threadId, new Date(start + index * 1000)]);
-        }
-        const sampled = JSON.parse(await buildFeedbackReport(options));
-        assert.equal(sampled.coverage.truncated, true);
-        assert.deepEqual(
-          sampled[field].map((row: { id: string }) => row.id),
-          ids.slice(1),
-        );
-        if (field === 'turns') {
-          assert.equal(sampled.turns.at(-1).background, true);
-          assert.equal(sampled.turns.at(-1).waiting_reason, 'user');
-        }
-      });
-    }
+    assert.equal(truncated.messages.at(-1).id, newest);
+    assert.ok(truncated.messages.length > 30);
   },
 );
 
