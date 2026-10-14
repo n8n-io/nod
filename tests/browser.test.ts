@@ -3761,6 +3761,35 @@ test('chat request submits once under StrictMode and keeps the pending message v
   }
 });
 
+test('a long paste in a browser handoff arrives whole in requests under the body limit', async () => {
+  const bodies: string[] = [];
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/browser-handoff') bodies.push(String(options?.body));
+    return Response.json({ ok: true });
+  });
+  try {
+    await view.showFrame();
+    const text = '漢字'.repeat(150_000);
+    const paste = new view.dom.window.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', { value: { getData: () => text } });
+    await act(async () => {
+      view.element('.browser-handoff-screen').dispatchEvent(paste);
+    });
+    await act(async () => delay(100));
+    assert.ok(bodies.length > 1);
+    assert.ok(bodies.every((body) => Buffer.byteLength(body) < 256 * 1024));
+    assert.equal(
+      bodies
+        .flatMap((body) => JSON.parse(body).inputs)
+        .map((input: { text: string }) => input.text)
+        .join(''),
+      text,
+    );
+  } finally {
+    await view.close();
+  }
+});
+
 test('chat request waits for model readiness before consuming and submitting once', async () => {
   const state = requestedChatState();
   const pending = deferred<Response>();

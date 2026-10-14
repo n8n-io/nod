@@ -23,6 +23,9 @@ const namedKeys = new Set([
   'PageDown',
 ]);
 const buttons = ['left', 'middle', 'right'] as const;
+const batchBytes = 64 * 1024;
+const textPiece = 2000;
+const encoder = new TextEncoder();
 
 export function BrowserHandoff({
   turnId,
@@ -60,7 +63,14 @@ export function BrowserHandoff({
   function flush(): Promise<void> {
     sending.current ??= (async () => {
       while (pending.current.length) {
-        const inputs = pending.current.splice(0);
+        const inputs: BrowserHandoffInput[] = [];
+        let bytes = 0;
+        while (pending.current.length) {
+          const size = encoder.encode(JSON.stringify(pending.current[0])).length;
+          if (inputs.length && bytes + size > batchBytes) break;
+          inputs.push(pending.current.shift()!);
+          bytes += size;
+        }
         try {
           await post('/api/browser-handoff', { turnId, inputs });
           setError('');
@@ -95,7 +105,11 @@ export function BrowserHandoff({
         deltaX: last.deltaX + input.deltaX,
         deltaY: last.deltaY + input.deltaY,
       };
-    else if (last?.type === 'text' && input.type === 'text')
+    else if (
+      last?.type === 'text' &&
+      input.type === 'text' &&
+      last.text.length + input.text.length <= textPiece
+    )
       queued[queued.length - 1] = { type: 'text', text: last.text + input.text };
     else queued.push(input);
     void flush();
@@ -164,7 +178,7 @@ export function BrowserHandoff({
       .getData('text/plain')
       .replace(/\r\n?/g, '\n')
       .replace(/\n+$/, '');
-    if (text) queue({ type: 'text', text });
+    for (const piece of text.match(/[\s\S]{1,2000}/gu) ?? []) queue({ type: 'text', text: piece });
   }
 
   async function navigate(action: 'back' | 'reload') {
