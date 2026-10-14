@@ -59,6 +59,7 @@ export function launchE2BCommand(
   function output(stream: PassThrough, value: string) {
     if (closed) return;
     stream.write(value);
+    if (stream.writableLength + stream.readableLength > 32 * 1024 * 1024) fail();
   }
   queueMicrotask(() => {
     removeFence = allocation.onFence(fail);
