@@ -271,8 +271,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.post('/api/messages', async (request) => {
     const input = z
       .object({
-        text: z.string().trim().max(100_000).default(''),
-        attachmentIds: z.array(z.uuid()).max(20).default([]),
+        text: z.string().trim().default(''),
+        attachmentIds: z.array(z.uuid()).default([]),
         replyToMessageId: z.uuid().optional(),
         seenMessageId: z.uuid().optional(),
         clientMessageId: z.uuid().optional(),

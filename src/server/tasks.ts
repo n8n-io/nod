@@ -8,14 +8,10 @@ import type { TurnRef } from './thread.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 
-const now = z.string().trim().min(1).max(200);
-const waits = z
-  .array(
-    z
-      .object({ who: z.string().trim().min(1).max(80), via: z.string().trim().min(1).max(40) })
-      .strict(),
-  )
-  .max(10);
+const now = z.string().trim().min(1);
+const waits = z.array(
+  z.object({ who: z.string().trim().min(1), via: z.string().trim().min(1) }).strict(),
+);
 const nextCheck = z.iso.datetime({ offset: true });
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const input = z.discriminatedUnion('action', [
@@ -23,8 +19,8 @@ const input = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('start'),
-      title: z.string().trim().min(1).max(120),
-      doneWhen: z.string().trim().min(1).max(300),
+      title: z.string().trim().min(1),
+      doneWhen: z.string().trim().min(1),
       now,
       waitingFor: waits.optional(),
       nextCheck: nextCheck.optional(),
@@ -44,7 +40,7 @@ const input = z.discriminatedUnion('action', [
       action: z.literal('finish'),
       id: z.uuid(),
       status: z.enum(['done', 'cancelled']),
-      result: z.string().trim().min(1).max(500),
+      result: z.string().trim().min(1),
     })
     .strict(),
 ]);

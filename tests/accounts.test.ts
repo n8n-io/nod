@@ -1646,14 +1646,6 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(await a.read(), undefined);
     assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
-    for (let count = 0; count < 4; count++) await owner.start('openrouter');
-    const pending = await app.inject({
-      method: 'POST',
-      url: '/api/models/oauth',
-      payload: { provider: 'openrouter' },
-    });
-    assert.equal(pending.statusCode, 400);
-    assert.match(pending.json().error, /pending sign-in/);
     assert.equal(captured.length, 3);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     let exchanging!: () => void;

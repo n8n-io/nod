@@ -49,7 +49,7 @@ The workspace can reach the internet. Code that Otto runs there can download fil
 
 ## Give Otto files
 
-- **Attach them in chat.** You can attach up to 20 files per message, each 90 MB or smaller. Otto gets a copy in the workspace and sees images directly.
+- **Attach them in chat.** Each file can be 90 MB or smaller. Otto gets a copy in the workspace and sees images directly.
 - **From your apps.** Files from a connected app, such as an email attachment, are saved privately in the workspace.
 - **From the web.** Files that Otto downloads in its [browser](/use/browser/) go into the workspace.
 

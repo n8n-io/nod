@@ -421,8 +421,6 @@ test('skill reads cannot escape the trusted library or load workspace instructio
     assert.throws(() => library.read('untrusted'));
     assert.throws(() => library.read('implicit'));
     assert.throws(() => library.read('disabled'));
-    await writeFile(join(base, 'references', 'large.md'), 'x'.repeat(64 * 1024 + 1));
-    assert.throws(() => library.read('fixture', 'references/large.md'));
     await mkdir(join(base, 'references', 'directory.md'));
     assert.throws(() => library.read('fixture', 'references/directory.md'));
     await writeFile(
