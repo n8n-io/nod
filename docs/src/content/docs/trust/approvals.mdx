@@ -45,6 +45,8 @@ If the checker can't answer, Otto requires confirmation. If the model also can't
 
 The same selected model writes the question from a frozen copy of the action, its arguments and account details. It explains what will happen and why Otto is asking, in your conversation language. There are no language-specific confirmation templates or yes/no word lists.
 
+Before showing it, a separate model call checks the question against those frozen facts without seeing the conversation. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. An unsupported claim, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
+
 Your recent messages and explicitly stated remembered preferences guide presentation only. An explicit output-language request applies to that output, and a short reply keeps the established conversation language. Quoted material, account names, region and time zone don't select the language. After a reset, your new messages and any remembered preference guide it again.
 
 Generating a question doesn't approve anything. The server checks the task again after generation, then saves the question and exact arguments together. Stop, cancellation, invalid model output or an unavailable model can't produce a late approval. The model never chooses the account or changes the saved arguments while writing the question.

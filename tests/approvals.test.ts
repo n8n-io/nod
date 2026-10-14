@@ -212,6 +212,8 @@ test(
       preferences: async () => ['Prefiro português de Portugal.'],
       review: async (_instructions, input) => {
         captured.push(input);
+        if ((input as { purpose: string }).purpose === 'confirmation_review')
+          return { valid: true };
         return { text: 'Confirma a ação apresentada.' };
       },
     });
@@ -244,9 +246,16 @@ test(
       JSON.stringify(supplied),
       /synthetic-private|private-payment|private-artifact|private-token|Foreign owner|Other thread|Security code|Suggested task|Assistant instruction/,
     );
+    assert.equal(captured.length, 2);
+    assert.deepEqual(captured[1], {
+      purpose: 'confirmation_review',
+      data: supplied.data,
+      text: 'Confirma a ação apresentada.',
+    });
     await communication.present(randomUUID(), { kind: 'paired', channel: 'telegram' });
     await communication.present(null, { kind: 'paired', channel: 'telegram' });
-    for (const input of captured.slice(1))
+    assert.equal(captured.length, 4);
+    for (const input of captured.slice(2))
       assert.deepEqual((input as { languageContext: unknown }).languageContext, {
         userMessages: [],
         rememberedPreferences: ['Prefiro português de Portugal.'],
@@ -268,7 +277,7 @@ test('communication retains complete action facts beyond logging limits while re
     finalAmount: '9123.45',
   };
   const before = structuredClone(args);
-  let supplied: { data: { args: typeof args } } | undefined;
+  const supplied: Array<{ purpose: string; data: { args: typeof args } }> = [];
   const communication = createCommunication({
     pool: {
       query: async () => {
@@ -277,22 +286,122 @@ test('communication retains complete action facts beyond logging limits while re
     } as unknown as pg.Pool,
     ownerId: 'fixture-owner',
     review: async (_instructions, input) => {
-      supplied = input as typeof supplied;
+      const call = input as (typeof supplied)[number];
+      supplied.push(call);
+      if (call.purpose === 'confirmation_review') return { valid: true };
       return { text: 'Confirm the complete synthetic action.' };
     },
   });
   await communication.present(null, { kind: 'confirmation', action: 'BULK_SEND', args });
-  assert.deepEqual(supplied!.data.args.recipients, recipients);
-  assert.equal(supplied!.data.args.finalAmount, '9123.45');
-  assert.equal(Object.keys(supplied!.data.args).length, Object.keys(args).length);
-  assert.equal(typeof supplied!.data.args.body, 'string');
-  assert.ok(supplied!.data.args.body.length > 64000);
-  assert.match(supplied!.data.args.body, /Final condition: send after 2030-01-01/);
+  assert.deepEqual(
+    supplied.map(({ purpose }) => purpose),
+    ['confirmation', 'confirmation_review'],
+  );
+  for (const call of supplied) {
+    assert.deepEqual(call.data.args.recipients, recipients);
+    assert.equal(call.data.args.finalAmount, '9123.45');
+    assert.equal(Object.keys(call.data.args).length, Object.keys(args).length);
+    assert.equal(typeof call.data.args.body, 'string');
+    assert.ok(call.data.args.body.length > 64000);
+    assert.match(call.data.args.body, /Final condition: send after 2030-01-01/);
+  }
+  assert.deepEqual(supplied[1]!.data, supplied[0]!.data);
+  assert.equal('languageContext' in supplied[1]!, false);
   assert.doesNotMatch(
     JSON.stringify(supplied),
     /synthetic-body-secret|synthetic-authorization|synthetic-api-key|synthetic-tuple-secret/,
   );
   assert.deepEqual(args, before);
+});
+
+test('communication blocks unsupported confirmations unless their frozen facts pass validation', async () => {
+  const { createCommunication } = await import('../src/server/communication.ts');
+  const proposal = {
+    turn: { threadId: randomUUID(), turnId: randomUUID() },
+    action: 'GMAIL_REPLY_TO_THREAD',
+    args: { thread_id: 'thread-fixture', message_body: 'The original agreed terms still apply.' },
+    details: { account: { email: 'owner@example.test' } },
+  };
+  const original = structuredClone(proposal);
+  const unsupported = 'Reply with the subject Re: Meridian 427?';
+  let validation: unknown;
+  let failValidation = false;
+  const captured: object[] = [];
+  const communication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'fixture-owner',
+    preferences: async () => ['Use Portuguese. An earlier topic was Meridian 427.'],
+    review: async (_instructions, input) => {
+      captured.push(input);
+      if ((input as { purpose: string }).purpose === 'confirmation') {
+        (input as { data: { args: Record<string, unknown> } }).data.args.subject =
+          'Re: Meridian 427';
+        return { text: unsupported };
+      }
+      if (failValidation) throw new Error('Synthetic validator unavailable');
+      return validation;
+    },
+  });
+  for (validation of [
+    { valid: false },
+    undefined,
+    null,
+    true,
+    {},
+    { valid: 'true' },
+    { valid: true, run: true },
+  ]) {
+    captured.length = 0;
+    await assert.rejects(communication.describe(proposal));
+    assert.equal(captured.length, 2);
+    assert.deepEqual(captured[1], {
+      purpose: 'confirmation_review',
+      data: { action: original.action, args: original.args, details: original.details },
+      text: unsupported,
+    });
+  }
+  validation = { valid: true };
+  failValidation = true;
+  captured.length = 0;
+  await assert.rejects(communication.describe(proposal));
+  assert.equal(captured.length, 2);
+  assert.deepEqual(captured[1], {
+    purpose: 'confirmation_review',
+    data: { action: original.action, args: original.args, details: original.details },
+    text: unsupported,
+  });
+  assert.deepEqual(proposal, original);
+});
+
+test('communication cancellation between generation and validation cannot release a confirmation', async () => {
+  const { createCommunication } = await import('../src/server/communication.ts');
+  const proposal = {
+    turn: { threadId: randomUUID(), turnId: randomUUID() },
+    action: 'GMAIL_SEND_EMAIL',
+    args: { to: 'receiver@example.test', body: 'Synthetic approved content.' },
+  };
+  for (const abortAt of ['confirmation', 'confirmation_review']) {
+    const controller = new AbortController();
+    const purposes: string[] = [];
+    const communication = createCommunication({
+      pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+      ownerId: 'fixture-owner',
+      review: async (_instructions, input, signal) => {
+        const { purpose } = input as { purpose: string };
+        purposes.push(purpose);
+        assert.equal(signal, controller.signal);
+        if (purpose === abortAt) controller.abort();
+        return purpose === 'confirmation' ? { text: 'Confirm this action?' } : { valid: true };
+      },
+    });
+    await assert.rejects(communication.describe(proposal, controller.signal), {
+      name: 'AbortError',
+    });
+    assert.deepEqual(
+      purposes,
+      abortAt === 'confirmation' ? ['confirmation'] : ['confirmation', 'confirmation_review'],
+    );
+  }
 });
 
 test('communication rejects malformed responses and cancellation without a fallback', async () => {

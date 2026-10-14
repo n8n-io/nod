@@ -58,6 +58,9 @@ test(
     const asked = new Set<string>();
     const cleared = new Set<string>();
     const descriptions: Array<Record<string, any>> = [];
+    const confirmationText = 'Proceed with the saved synthetic action?';
+    let confirmationValid = true;
+    let confirmationReviews = 0;
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -150,7 +153,11 @@ test(
           curate: async ({ task, input }) => {
             if ('purpose' in input && input.purpose === 'confirmation') {
               descriptions.push(input);
-              return { text: 'Proceed with the saved synthetic action?' };
+              return { text: confirmationText };
+            }
+            if ('purpose' in input && input.purpose === 'confirmation_review') {
+              confirmationReviews++;
+              return { valid: confirmationValid };
             }
             return task === 'review' && 'reply' in input
               ? {
@@ -306,6 +313,46 @@ test(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(held))[0].status, 'declined');
           assert.equal(sends(), 0);
+        },
+      );
+
+      await t.test(
+        'a rejected generated confirmation cannot create an approval or send an email',
+        async () => {
+          const before = confirmationReviews;
+          const writes = integrationFixture.writes.length;
+          const text = `Synthetic rejected confirmation ${randomUUID()}`;
+          plans.set(text, {
+            tool: 'apps',
+            action: 'GMAIL_SEND_EMAIL',
+            args: {
+              recipient_email: 'blocked@example.test',
+              subject: 'Synthetic reviewed email',
+              body: 'Synthetic body awaiting confirmation.',
+            },
+          });
+          confirmationValid = false;
+          try {
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            ids.push(response.json().threadId as string);
+            await waitFor(turn, 'failed|succeeded|waiting');
+            assert.equal(confirmationReviews, before + 1);
+            assert.deepEqual(await approvalsFor(turn), []);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text=$2",
+                  [turn, confirmationText],
+                )
+              ).rowCount,
+              0,
+            );
+            assert.equal(integrationFixture.writes.length, writes);
+          } finally {
+            confirmationValid = true;
+          }
         },
       );
 
