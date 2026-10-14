@@ -1,5 +1,8 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Extension } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
+import { Plugin } from '@tiptap/pm/state';
+import { feedbackLimits } from '../../shared/feedback';
 import { createComposerExtensions } from '../lib/composer-editor';
 import { EditorFormatting } from './editor-formatting';
 
@@ -18,6 +21,7 @@ interface FeedbackEditorProps {
 
 export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorProps>(
   function FeedbackEditor({ value, onChange, placeholder, disabled, onSubmit, onUpload }, ref) {
+    const [limitReached, setLimitReached] = useState(false);
     const lastValue = useRef(value);
     const actions = useRef({ onChange, onSubmit, onUpload, placeholder, disabled });
     actions.current = { onChange, onSubmit, onUpload, placeholder, disabled };
@@ -31,6 +35,23 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
           },
           upload: (files) => {
             if (!actions.current.disabled) actions.current.onUpload(files);
+          },
+        }),
+        Extension.create({
+          name: 'feedbackLength',
+          addProseMirrorPlugins() {
+            const editor = this.editor;
+            return [
+              new Plugin({
+                filterTransaction(transaction) {
+                  if (!transaction.docChanged || transaction.getMeta('preventUpdate')) return true;
+                  const length = editor.markdown!.serialize(transaction.doc.toJSON()).length;
+                  const tooLong = length > feedbackLimits.text;
+                  setLimitReached(tooLong);
+                  return !tooLong || length < editor.getMarkdown().length;
+                },
+              }),
+            ];
           },
         }),
       ],
@@ -84,6 +105,7 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
         lastValue.current = '';
         actions.current.onChange('');
       }
+      setLimitReached(editor.getMarkdown().length > feedbackLimits.text);
     }, [editor, value]);
     useEffect(() => {
       if (!editor) return;
@@ -95,6 +117,12 @@ export const FeedbackEditor = forwardRef<FeedbackEditorHandle, FeedbackEditorPro
       <>
         <EditorContent editor={editor} />
         <EditorFormatting editor={editor} active={!disabled} />
+        {limitReached && (
+          <p className="feedback-length-error" role="alert">
+            Feedback can contain up to 12,000 characters, including formatting. Shorten it before
+            adding more.
+          </p>
+        )}
       </>
     );
   },

@@ -68,6 +68,7 @@ function mark(value: unknown): value is FeedbackMark {
     return (
       point(value.point) &&
       typeof value.text === 'string' &&
+      value.text.length <= feedbackLimits.text &&
       positive(value.fontSize) &&
       (value.width === undefined || positive(value.width))
     );

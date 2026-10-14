@@ -149,7 +149,7 @@ function FeedbackDraftDialog({
   const copyRequest = useRef<AbortController | null>(null);
   const reportRef = useRef<FeedbackReport | null>(null);
   const frozen = !!busy || !!pendingId || !hydrated || discarding;
-  const valid = !!feedback.trim();
+  const valid = !!feedback.trim() && feedback.length <= feedbackLimits.text;
   const draft = useMemo<FeedbackDraft>(
     () => ({
       category: kind,
@@ -610,10 +610,12 @@ function FeedbackDraftDialog({
   }
 
   function attachmentError(files: File[]) {
+    if (files.length > feedbackLimits.attachments) return 'You can attach up to 3 files.';
     if (files.some((file) => !feedbackAttachmentMimeType(file)))
       return 'Choose images, PDFs, text, logs, JSON or CSV files.';
-    if (files.some((file) => !file.size)) return 'Choose files that aren’t empty.';
-    if (files.reduce((total, file) => total + file.size, 0) > feedbackLimits.attachmentBytes)
+    if (files.some((file) => !file.size || file.size > feedbackLimits.attachmentBytes))
+      return 'Each file must be between 1 byte and 2 MB.';
+    if (files.reduce((total, file) => total + file.size, 0) > feedbackLimits.totalAttachmentBytes)
       return 'Keep the attachments under 4 MB in total.';
     return '';
   }

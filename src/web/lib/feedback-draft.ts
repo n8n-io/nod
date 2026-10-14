@@ -121,13 +121,15 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
   if (
     !['bug', 'feature', 'other'].includes(String(draft.category)) ||
     typeof draft.feedback !== 'string' ||
+    draft.feedback.length > feedbackLimits.text ||
     typeof draft.includeReport !== 'boolean' ||
     (draft.pendingId !== null &&
       (typeof draft.pendingId !== 'string' ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           draft.pendingId,
         ))) ||
-    !Array.isArray(draft.attachments)
+    !Array.isArray(draft.attachments) ||
+    draft.attachments.length > feedbackLimits.attachments
   )
     return fail();
   const attachments = draft.attachments.map((value) => {
@@ -145,7 +147,8 @@ function decode(value: unknown, ownerId: string): FeedbackDraft | null {
   });
   if (
     new Set(attachments.map((item) => item.id)).size !== attachments.length ||
-    attachments.reduce((total, item) => total + item.file.size, 0) > feedbackLimits.attachmentBytes
+    attachments.reduce((total, item) => total + item.file.size, 0) >
+      feedbackLimits.totalAttachmentBytes
   )
     return fail();
   return {

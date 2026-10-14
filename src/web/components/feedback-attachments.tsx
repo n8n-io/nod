@@ -344,7 +344,7 @@ async function encodeImage(canvas: HTMLCanvasElement, name: string) {
     }
   }
   if (blob.size > feedbackLimits.attachmentBytes)
-    throw new Error('The edited image is larger than 4 MB. Your original is unchanged.');
+    throw new Error('The edited image is larger than 2 MB. Your original is unchanged.');
   const base = name
     .replace(/\.[^.]*$/, '')
     .replace(/[/\\\u0000-\u001f]/g, '-')

@@ -1,9 +1,10 @@
-const attachmentBytes = 4 * 1024 * 1024;
-
 export const feedbackLimits = {
-  attachmentBytes,
+  text: 12_000,
+  attachments: 3,
+  attachmentBytes: 2 * 1024 * 1024,
+  totalAttachmentBytes: 4 * 1024 * 1024,
   reportBytes: 512 * 1024,
-  requestBytes: Math.ceil(attachmentBytes / 3) * 4 + 1024 * 1024,
+  requestBytes: 7 * 1024 * 1024,
 };
 
 export const feedbackAttachmentMimeTypes = [

@@ -5486,6 +5486,9 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         assert.equal(editor.state.doc.childCount, 2);
         assert.equal(submissions.length, 0);
         await writeFeedback('Synthetic **feedback**');
+        await act(async () => editor.commands.insertContent('x'.repeat(12_001)));
+        assert.equal(editor.getMarkdown(), 'Synthetic **feedback**');
+        assert.ok(document.querySelector('.feedback-length-error'));
         const bytes = Uint8Array.from([137,80,78,71,13,10,26,10]);
         const file = new File([bytes], 'synthetic-paste.png', { type: 'image/png' });
         const paste = new Event('paste', { bubbles: true, cancelable: true });
@@ -5495,6 +5498,7 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         await act(async () => document.querySelector('.feedback-editor').dispatchEvent(paste));
         assert.equal(paste.defaultPrevented, true);
         assert.equal(editor.getMarkdown(), 'Synthetic **feedback**Synthetic pasted text');
+        assert.equal(document.querySelector('.feedback-length-error'), null);
         const dropped = new File(['Synthetic log entry'], 'synthetic-drop.log');
         const details = new File(['{"status":"synthetic"}'], 'details.json', { type: 'application/json' });
         const drop = new Event('drop', { bubbles: true, cancelable: true });
