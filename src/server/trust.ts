@@ -26,6 +26,7 @@ export function createTrust(options: {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
         `WITH owner AS (SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
+           AND (created_at>now()-interval '24 hours' OR id=$3)
            AND text<>'' AND text NOT IN (
              SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
              WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL))
