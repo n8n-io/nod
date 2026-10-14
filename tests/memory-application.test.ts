@@ -687,6 +687,14 @@ test('the memory file round-trips, skips unsafe or invalid entries and reads old
     parse(encode(JSON.stringify(document))).entries.map((item) => item.slug),
     ['coffee'],
   );
+  const legacy = `# Memory\n\n## ${randomUUID()}\nKind: fact\nUpdated: ${when}\nSources: ${ids[0]}\n\nLives in Lisbon.\n\n## ${randomUUID()}\nKind: pattern\nUpdated: ${when}\nSources: ${ids[1]}\n\nOften asks for a design first.\n`;
+  assert.deepEqual(
+    parse(encode(legacy)).entries.map((item) => [item.area, item.slug, item.origin]),
+    [
+      ['about', 'lives-in-lisbon', 'stated'],
+      ['lessons', 'often-asks-for-design-first', 'inferred'],
+    ],
+  );
   assert.deepEqual(parse(encode('{ not json')), emptyTree());
   const merged = {
     ...entry({ slug: 'tea', text: 'Drinks green tea.' }),

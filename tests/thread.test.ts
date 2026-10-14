@@ -2937,6 +2937,23 @@ test(
       assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
       await memory.learn({ area: 'about', quote: chess }, await post(chess));
       assert.doesNotMatch(await readFile(path, 'utf8'), /sk-fixture|broken/);
+
+      await writeFile(
+        path,
+        `# Memory\n\n## ${randomUUID()}\nKind: preference\nUpdated: 2026-01-01T00:00:00.000Z\nSources: ${randomUUID()}\n\nPrefers email updates.\n\n## ${randomUUID()}\nKind: pattern\nUpdated: 2026-01-02T00:00:00.000Z\nSources: ${randomUUID()}\n\nOften asks for a design first.\n\n## not-an-id\nKind: fact\n\nBroken entry.\n`,
+      );
+      assert.deepEqual(JSON.parse(await memory.context()), {
+        preferences: ['prefers-email-updates: Prefers email updates.'],
+      });
+      assert.equal(
+        (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
+        'tentative',
+      );
+      await memory.learn({ area: 'about', quote: chess }, await post(chess));
+      const migrated = await readFile(path, 'utf8');
+      assert.match(migrated, /^\{/);
+      assert.doesNotMatch(migrated, /Broken entry/);
+      assert.match(migrated, /Often asks for a design first/);
     } finally {
       await close();
     }
