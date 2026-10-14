@@ -17,6 +17,11 @@ export interface Interaction {
 export interface Session {
   followUp(): Promise<void>;
   say(text: string, options?: { attach?: string[] }): Promise<void>;
+  send(
+    text: string,
+    options?: { replyTo?: string },
+  ): Promise<{ turnId: string; messageId: string }>;
+  task(requestId: string): Promise<{ id: string; lastMessageId?: string } | undefined>;
   sayTogether(texts: string[]): Promise<void>;
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
@@ -249,6 +254,21 @@ export function createSession(options: {
       userMessages.push({ at: Date.now(), text });
       await post('/api/messages', { text, attachmentIds: sendOptions?.attach ?? [] });
       await converse();
+    },
+    async send(text, sendOptions) {
+      userMessages.push({ at: Date.now(), text });
+      return post('/api/messages', { text, replyToMessageId: sendOptions?.replyTo });
+    },
+    async task(requestId) {
+      const row = (
+        await pool.query(
+          `SELECT t.id,(SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE u.session_id=t.id
+             AND m.role='assistant' AND m.text<>'' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last
+           FROM tasks t WHERE t.source_message_id=$1`,
+          [requestId],
+        )
+      ).rows[0];
+      return row && { id: row.id as string, lastMessageId: row.last ?? undefined };
     },
     async sayTogether(texts) {
       for (const text of texts) {

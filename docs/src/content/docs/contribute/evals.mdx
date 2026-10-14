@@ -12,7 +12,7 @@ Capability evals run real tasks against the real Otto harness and report how oft
 The short version: each attempt boots its own Otto with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what Otto said.
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50, and the default run has 162 attempts. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50, and the default run has 171 attempts. The unit tests never call them.
 :::
 
 ## How an attempt works
@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 54 controlled cases, three attempts each.
+3. Run all 57 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -149,7 +149,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 58 cases: 54 controlled cases, three live web cases and the harness canary.
+The suite has 61 cases: 57 controlled cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -161,9 +161,12 @@ The suite has 58 cases: 54 controlled cases, three live web cases and the harnes
 
 Payment cases use a synthetic merchant and never a real card. They measure task results, not issuer settlement or payment compliance.
 
+**Task** cases (`answer-the-right-task`, `continue-a-done-task` and `two-tasks-at-once`) run Otto with [`OTTO_TASKS`](/deploy/configuration/#server-and-data) on, so the chat can hand work to [tasks](/use/tasks/). Run them with `--capability tasks`. Every other case runs with it off.
+
 | Scenario                                | What it checks                                                                | Capabilities                             | Status      |
 | --------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
 | `admin-email-approvals`                 | Handle the private admin in my email, ask before paying or sending            | approvals, apps, browser                 | scored      |
+| `answer-the-right-task`                 | Two tasks ask at once, and a reply answers only the task it replies to        | tasks, browser, progress                 | calibrating |
 | `background-calendar-isolation`         | An incoming event does not repeat a pending calendar request                  | apps, progress, long-running             | calibrating |
 | `background-calendar-isolation-holdout` | An incoming event does not repeat a calendar change in progress               | apps, progress, long-running             | calibrating |
 | `bank-statements-download`              | Download bank statements and last year's tax assessment into a folder         | files, vault, browser                    | scored      |
@@ -176,6 +179,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `catalog-reconnect`                     | Reconnect an expired saved account without adding or replacing another one    | apps                                     | calibrating |
 | `chase-unpaid-invoice`                  | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
 | `competitor-digest`                     | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
+| `continue-a-done-task`                  | A reply to a finished shortlist books from it in the same task                | tasks, browser, long-running             | calibrating |
 | `finance-sheet`                         | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
 | `gym-data-export`                       | Get my workout history out of a gym site with no export, show my progression  | apps, browser, files, vault, schedules   | calibrating |
 | `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
@@ -216,6 +220,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
 | `steering-mid-task`                     | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
 | `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
+| `two-tasks-at-once`                     | Run research and a browser check as two tasks while the chat stays free       | tasks, research, browser, progress       | calibrating |
 | `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                     | vault, browser                           | calibrating |
 | `video-links`                           | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
 | `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
@@ -228,14 +233,14 @@ Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The s
 | Field                    | What it holds                                                                             |
 | ------------------------ | ----------------------------------------------------------------------------------------- |
 | `id`, `title`            | The file name, and the task in the user's words                                           |
-| `capabilities`           | The areas it covers, such as `apps`, `browser` or `vault`                                 |
+| `capabilities`           | The areas it covers, such as `apps`, `browser` or `vault`. `tasks` turns on `OTTO_TASKS`  |
 | `tier`                   | `pr` for small, stable and cheap cases, `full`, or `live` for cases that use the open web |
 | `complexity`, `seconds`  | `simple`, `medium` or `complex`, and the time limit                                       |
 | `stance`                 | `regression` for a task that should keep passing, `gap` for a known limitation            |
 | `calibration: 'pending'` | Marks it as calibrating until you've calibrated it                                        |
 | `user`                   | Scripted answers, approvals and secrets, plus a persona for other questions               |
 | `world`                  | Fake apps, sites, saved logins and cards, built from the run clock                        |
-| `play`                   | What the simulated user says, and when schedules fire                                     |
+| `play`                   | What the simulated user says or replies to, and when schedules fire                       |
 | `expect`                 | `check()` for state you can test, and one `judge()` criterion per judgement               |
 | `evidence`               | The exact end state the judge sees                                                        |
 

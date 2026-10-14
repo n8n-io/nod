@@ -255,16 +255,6 @@ async function runScenario(
   const visible = new Map<string, number>();
   const latency = () => sleep(scenario.latencyMs ?? 1500);
   const apps = scenario.apps ?? [];
-  const tasks: Array<Record<string, unknown>> = (scenario.tasks ?? []).map((task) => ({
-    id: randomUUID(),
-    title: task.title,
-    now: task.now,
-    doneWhen: task.doneWhen,
-    status: 'scheduled',
-    waitingFor: [],
-    nextCheck: '2026-10-14T09:00:00.000Z',
-    question: null,
-  }));
   const directory = await mkdtemp(join(tmpdir(), 'otto-voice-'));
   const threadId = randomUUID();
   const turnId = randomUUID();
@@ -385,29 +375,6 @@ async function runScenario(
       if (/DRAFT/.test(action)) return { status: 'draft_created', draftId: randomUUID() };
       if (/CREATE|UPDATE|ADD|APPEND|INSERT/.test(action)) return { status: 'ok' };
       return scenario.data?.[prefix] ?? { items: [] };
-    },
-    task: async (input) => {
-      const { action, id, status, ...fields } = input as Record<string, unknown>;
-      if (action === 'list')
-        return record('task', input, { tasks: tasks.filter((task) => !task.closedAt) });
-      const open = tasks.find((item) =>
-        action === 'start'
-          ? item.title === fields.title && !item.closedAt
-          : item.id === id && !item.closedAt,
-      );
-      const task =
-        open ??
-        (action === 'start'
-          ? { id: randomUUID(), status: 'working', waitingFor: [], nextCheck: null, question: null }
-          : undefined);
-      if (!task) throw new Error('This task is not open. Use task list for open tasks.');
-      if (!open) tasks.push(task);
-      Object.assign(
-        task,
-        fields,
-        action === 'finish' ? { status, closedAt: new Date().toISOString() } : {},
-      );
-      return record('task', input, task);
     },
     manage: async (action, input) => {
       if (action === 'profile_get') return record(action, input, context.personalContext!.profile);

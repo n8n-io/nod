@@ -100,6 +100,7 @@ export async function startStack(options: {
   siteHosts: string[];
   siteUpstreamPort: number;
   hermetic: boolean;
+  tasks: boolean;
   environment: Record<string, string | undefined>;
 }): Promise<Stack> {
   const { model, environment } = options;
@@ -130,6 +131,7 @@ export async function startStack(options: {
   process.env.OTTO_DATA_ROOT = join(directory, '.local');
   process.env.NODE_ENV = 'production';
   process.env.DEV_INSPECTOR = 'true';
+  process.env.OTTO_TASKS = String(options.tasks);
   process.env[keyVariables[model.provider]] = model.apiKey;
   process.chdir(appSource);
 

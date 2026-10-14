@@ -294,6 +294,19 @@ const adminInbox = {
   ],
 };
 
+const goals = [
+  {
+    path: 'about/beacon-launch',
+    text: 'Launch Beacon beta to the first 50 users, with the launch post out on Oct 14. Now picking the 50 users.',
+    status: 'stated',
+  },
+  {
+    path: 'about/northwind-contract',
+    text: 'Close the Northwind contract, signed by Oct 15. Now deciding clause 7.2.',
+    status: 'stated',
+  },
+];
+
 export const taskScenarios: VoiceScenario[] = [
   {
     id: 'lab-376-slack-catchup',
@@ -374,18 +387,10 @@ export const taskScenarios: VoiceScenario[] = [
     background: true,
     apps: ['gmail', 'googlecalendar'],
     data: { GMAIL: slipping, GOOGLECALENDAR: calendarToday },
-    tasks: [
-      {
-        title: 'Launch Beacon beta to first 50 users',
-        now: 'Picking the 50 users',
-        doneWhen: 'Launch post is out on Oct 14.',
-      },
-      {
-        title: 'Close Northwind contract',
-        now: 'Deciding clause 7.2',
-        doneWhen: 'Contract signed by Oct 15.',
-      },
-    ],
+    memory: JSON.stringify({
+      about: goals.map((goal) => `${goal.path.slice('about/'.length)}: ${goal.text}`),
+    }),
+    personalData: { memory_find: goals, memory_read: { path: 'about', entries: goals } },
     maxWords: 150,
     maxLines: 12,
     expect: [

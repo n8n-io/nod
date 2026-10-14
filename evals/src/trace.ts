@@ -17,10 +17,21 @@ export interface ToolCall {
 }
 
 export interface ChatMessage {
+  id: string;
   role: 'user' | 'assistant';
   text: string;
   at: number;
   turnId: string | null;
+  replyToMessageId: string | null;
+}
+
+export interface TaskRecord {
+  id: string;
+  title: string;
+  state: string;
+  sourceMessageId: string | null;
+  onItMessageId: string | null;
+  resultMessageId: string | null;
 }
 
 export interface Run {
@@ -37,9 +48,11 @@ export interface Run {
     source: string;
     error: string | null;
     background: boolean;
+    sessionId?: string;
     startedAt?: number;
     finishedAt?: number;
   }>;
+  tasks: TaskRecord[];
   prompts?: Array<{ turnId: string; instruction: string }>;
   interactions: Interaction[];
   userMessages: Array<{ at: number; text: string }>;
@@ -93,9 +106,10 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
     );
 }
 
-async function sessionEvents(sessionRoot: string) {
+async function sessionEvents(sessionRoot: string, captured: Set<string | undefined>) {
   const entries: any[] = [];
   for (const thread of await readdir(sessionRoot).catch(() => [] as string[])) {
+    if (captured.has(thread)) continue;
     const files = await Promise.all(
       (await readdir(join(sessionRoot, thread)))
         .filter((name) => name.endsWith('.jsonl'))
@@ -189,7 +203,22 @@ export async function collect(options: {
   let modelCalls = 0;
   let cost = 0;
   let costKnown = false;
-  for (const entry of await sessionEvents(stack.sessionRoot)) {
+  const turns = (
+    await stack.pool.query(
+      `SELECT id,status,source,error,background,started_at,finished_at,to_jsonb(turns)->>'session_id' AS session_id
+       FROM turns ORDER BY created_at, id`,
+    )
+  ).rows.map(({ started_at, finished_at, session_id, ...turn }) => ({
+    ...turn,
+    sessionId: session_id ?? undefined,
+    startedAt: started_at ? new Date(started_at).getTime() : undefined,
+    finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
+  }));
+  const background = turns.filter((turn) => turn.background);
+  for (const entry of await sessionEvents(
+    stack.sessionRoot,
+    new Set(background.map((turn) => turn.sessionId)),
+  )) {
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user') {
@@ -202,9 +231,13 @@ export async function collect(options: {
     if (message.role === 'assistant') {
       if (waitingForFirst) {
         waitingForFirst = false;
-        if ((message.content ?? []).some((block: any) => block.type === 'toolCall')) {
+        const called = (message.content ?? [])
+          .filter((block: any) => block.type === 'toolCall')
+          .map((block: any) => block.name);
+        if (called.some((name: string) => name !== 'route_to_task')) {
           turnsWithTools++;
           if (
+            called.includes('start_task') ||
             (message.content ?? []).some((block: any) => block.type === 'text' && block.text.trim())
           )
             acknowledged++;
@@ -247,27 +280,36 @@ export async function collect(options: {
   }
   const messages = (
     await stack.pool.query(
-      'SELECT role,text,turn_id,created_at FROM messages ORDER BY created_at, id',
+      `SELECT id,role,text,turn_id,created_at,to_jsonb(messages)->>'reply_to_message_id' AS reply_to
+       FROM messages ORDER BY created_at, id`,
     )
   ).rows.map((row): ChatMessage => ({
+    id: row.id,
     role: row.role,
     text: row.text ?? '',
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
+    replyToMessageId: row.reply_to,
   }));
-  const turns = (
-    await stack.pool.query(
-      'SELECT id,status,source,error,background,started_at,finished_at FROM turns ORDER BY created_at, id',
-    )
-  ).rows.map(({ started_at, finished_at, ...turn }) => ({
-    ...turn,
-    startedAt: started_at ? new Date(started_at).getTime() : undefined,
-    finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
-  }));
-  const capture = await backgroundCapture(
-    stack,
-    new Set(turns.filter((turn) => turn.background).map((turn) => turn.id)),
-  );
+  const tasks = (
+    await stack.pool
+      .query(
+        `SELECT id,title,state,to_jsonb(tasks)->>'source_message_id' AS source,
+           to_jsonb(tasks)->>'on_it_message_id' AS on_it,to_jsonb(tasks)->>'result_message_id' AS result
+         FROM tasks ORDER BY created_at, id`,
+      )
+      .catch(() => ({ rows: [] as any[] }))
+  ).rows
+    .filter((row) => row.on_it)
+    .map((row): TaskRecord => ({
+      id: row.id,
+      title: row.title,
+      state: row.state,
+      sourceMessageId: row.source,
+      onItMessageId: row.on_it,
+      resultMessageId: row.result,
+    }));
+  const capture = await backgroundCapture(stack, new Set(background.map((turn) => turn.id)));
   const prompts = capture.prompts;
   requireBackgroundPrompts(turns, prompts);
   tools.push(...capture.tools);
@@ -339,6 +381,7 @@ export async function collect(options: {
     said: replies.join('\n\n'),
     tools,
     turns,
+    tasks,
     prompts,
     interactions: session.interactions,
     userMessages: session.userMessages,
@@ -413,6 +456,11 @@ export async function collect(options: {
         `Workspace files: ${files.length ? files.join(', ') : 'none'}.`,
         `Actions the user approved or declined (the server runs these itself, so they never appear as tool calls): ${approvals.length ? approvals.map((item) => `${item.action} ${item.status} ${JSON.stringify(item.args).slice(0, 220)}`).join('; ') : 'none'}.`,
         `Saved profile: ${profileRow ? `name "${profileRow.name ?? ''}", location "${profileRow.location ?? ''}", preferences "${String(profileRow.preferences ?? '').slice(0, 300)}"` : 'none'}. Saved memory: ${memory.slice(0, 700)}`,
+        ...(tasks.length
+          ? [
+              `Tasks Otto started, each in its own session: ${tasks.map((task) => `"${task.title}" (${task.state})`).join('; ')}.`,
+            ]
+          : []),
         failedTurns.length
           ? `Turns that did not succeed: ${failedTurns.map((turn) => `${turn.status}${turn.error ? ` (${turn.error})` : ''}`).join('; ')}.`
           : 'Every turn finished.',

@@ -627,6 +627,68 @@ test('the stop case rejects a task that finished before Stop', async () => {
   assert.equal(await verdict(), false);
 });
 
+test('task cases grade the reply target, the shortlist order and real overlap', async () => {
+  const verdict = async (definition: Scenario, world: any, id: string, run: unknown) => {
+    const found = definition.expect(world).find((item) => item.id === id)!;
+    assert.equal(found.kind, 'check');
+    return found.kind === 'check' && (await found.check(run as Run)).pass;
+  };
+  const right = (await import('../src/scenarios/answer-the-right-task.ts')).default;
+  const answers = Object.assign(right.world({ now: Date.now }), {
+    dinnerTask: 'dinner',
+    firstAnswer: 'answer',
+    haircutWaitedForItsAnswer: true,
+  });
+  const routed = {
+    messages: [{ id: 'answer', turnId: 'routed' }],
+    turns: [{ id: 'routed', sessionId: 'dinner' }],
+  };
+  const reached = 'the-reply-reached-only-the-task-it-answered';
+  assert.equal(await verdict(right, answers, reached, routed), true);
+  routed.turns[0].sessionId = 'haircut';
+  assert.equal(await verdict(right, answers, reached, routed), false);
+  routed.turns[0].sessionId = 'dinner';
+  answers.haircutWaitedForItsAnswer = false;
+  assert.equal(await verdict(right, answers, reached, routed), false);
+
+  const done = (await import('../src/scenarios/continue-a-done-task.ts')).default;
+  const shortlist = Object.assign(done.world({ now: Date.now }), { shortlist: 'list' }) as any;
+  shortlist.bookings.push({
+    restaurant: 'tasca-lume',
+    date: shortlist.friday,
+    time: '20:00',
+    guests: 2,
+    at: 1,
+  });
+  const listed = { messages: [{ id: 'list', text: '1. Mar Alto\n2. Tasca Lume\n3. Casa Cedro' }] };
+  const second = 'booked-the-second-place-on-the-list';
+  assert.equal(await verdict(done, shortlist, second, listed), true);
+  listed.messages[0].text = 'Pátio Verde is full. 1. Casa Cedro 2. Tasca Lume 3. Mar Alto';
+  assert.equal(await verdict(done, shortlist, second, listed), true);
+  listed.messages[0].text = '1. Tasca Lume\n2. Mar Alto\n3. Casa Cedro';
+  assert.equal(await verdict(done, shortlist, second, listed), false);
+
+  const parallel = (await import('../src/scenarios/two-tasks-at-once.ts')).default;
+  const spans = {
+    tasks: [
+      { id: 'research', sourceMessageId: 'compare' },
+      { id: 'browse', sourceMessageId: 'check' },
+    ],
+    turns: [
+      { sessionId: 'research', startedAt: 1, finishedAt: 10 },
+      { sessionId: 'browse', startedAt: 5, finishedAt: 20 },
+    ],
+  };
+  const together = 'the-two-tasks-ran-at-the-same-time';
+  const world = Object.assign(parallel.world({ now: Date.now }), {
+    research: { turnId: 'first', messageId: 'compare' },
+    browse: { turnId: 'second', messageId: 'check' },
+  });
+  assert.equal(await verdict(parallel, world, together, spans), true);
+  spans.turns[1].startedAt = 10;
+  assert.equal(await verdict(parallel, world, together, spans), false);
+});
+
 test('the style tripwires catch what the personality forbids and let normal replies through', () => {
   const run = (texts: string[], user = 'hi') =>
     ({
@@ -1262,10 +1324,12 @@ test('background calendar checks reject leaked context and repeated outside effe
   run.writes.push(run.writes[0]);
   assert.equal(await verdict('calendar-moved-once-to-requested-time'), false);
   run.messages.push({
+    id: 'background-reply',
     turnId: 'background',
     role: 'assistant',
     text: 'Moved the planning block.',
     at: 80,
+    replyToMessageId: null,
   });
   assert.equal(await verdict('background-did-not-answer-the-chat-request'), false);
   run.turns[1].startedAt = 120;

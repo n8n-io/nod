@@ -13,7 +13,8 @@ export type Capability =
   | 'schedules'
   | 'approvals'
   | 'progress'
-  | 'long-running';
+  | 'long-running'
+  | 'tasks';
 
 export type FailureClass =
   | 'intent'

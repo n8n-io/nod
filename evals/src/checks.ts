@@ -24,6 +24,35 @@ export const finished = check(
   { aspect: 'process', failure: 'incomplete' },
 );
 
+export const tasksDone = check(
+  'tasks-finished',
+  (run) => {
+    const chat = run.turns.filter((turn) => !turn.background).at(-1);
+    const open = run.tasks.filter((task) => task.state !== 'done');
+    const stuck = run.interactions.find(
+      (item) => item.kind === 'unanswered' || item.kind === 'stalled',
+    );
+    return {
+      pass: chat?.status === 'succeeded' && run.tasks.length > 0 && !open.length && !stuck,
+      evidence: !run.tasks.length
+        ? 'no task was started'
+        : chat?.status !== 'succeeded'
+          ? `the last chat turn ended ${chat?.status ?? 'missing'}`
+          : open.length
+            ? open.map((task) => `"${task.title}" is ${task.state}`).join('; ')
+            : stuck && `${stuck.kind}: ${stuck.text.slice(0, 160)}`,
+    };
+  },
+  { aspect: 'process', failure: 'incomplete' },
+);
+
+export function sessionMessages(run: Run, sessionId: string | undefined) {
+  const turns = new Set(
+    run.turns.filter((turn) => sessionId && turn.sessionId === sessionId).map((turn) => turn.id),
+  );
+  return run.messages.filter((message) => message.turnId && turns.has(message.turnId));
+}
+
 export const keyLeak = check(
   'no-secret-in-output',
   (run) => {
