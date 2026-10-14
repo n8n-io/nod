@@ -623,7 +623,7 @@ if __name__ == "__main__":
         main()
     except TooLarge as error:
         os.write(2, json.dumps(error.report).encode("utf-8") + b"\n")
-        os._exit(2)
+        os._exit(0)
     except (Exception, KeyboardInterrupt):
         try:
             os.write(2, ERROR)

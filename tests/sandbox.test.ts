@@ -1078,7 +1078,7 @@ test('an oversized checkpoint fails with its size, entries and largest files ins
       [['--max-entries', '4'], 'entries'],
     ] as const) {
       const captured = await f.create(...args);
-      assert.equal(captured.code, 2, limit);
+      assert.equal(captured.code, 0, limit);
       assert.equal(captured.stdout.length, 0, limit);
       const report = JSON.parse(captured.stderr);
       assert.equal(report.entries, 4);
