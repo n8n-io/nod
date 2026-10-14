@@ -4,9 +4,9 @@ import type { Pool } from 'pg';
 const hourCycles = ['auto', 'h12', 'h23'] as const;
 export const preferencesSchema = z
   .object({
-    notificationRule: z.string().max(4000),
-    timeZone: z.string().max(100).nullable(),
-    locale: z.string().trim().min(2).max(35).nullable(),
+    notificationRule: z.string(),
+    timeZone: z.string().nullable(),
+    locale: z.string().trim().min(2).nullable(),
     hourCycle: z.enum(hourCycles),
     quietHoursEnabled: z.boolean(),
     quietStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),

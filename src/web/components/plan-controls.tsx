@@ -465,13 +465,7 @@ function TaskScheduleForm({
     return () => controller.abort();
   }, [taskId, attempt]);
   const valid = Boolean(
-    !uncertain &&
-    draft?.title.trim() &&
-    draft.title.trim().length <= 100 &&
-    draft.prompt.trim() &&
-    draft.prompt.trim().length <= 6000 &&
-    frequency &&
-    time,
+    !uncertain && draft?.title.trim() && draft.prompt.trim() && frequency && time,
   );
   async function submit() {
     if (!valid || !draft || !frequency || submitting.current) return;
@@ -542,12 +536,6 @@ function TaskScheduleForm({
               onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
             />
           </Field>
-          {(draft.title.trim().length > 100 || draft.prompt.trim().length > 6000) && (
-            <Notice>
-              Shorten the name to 100 characters and the instructions to 6,000 characters before
-              scheduling.
-            </Notice>
-          )}
           {draft.omittedSensitive && (
             <Notice kind="info">
               Sign-in codes and messages containing sensitive details were left out. Review the
