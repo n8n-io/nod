@@ -3385,7 +3385,7 @@ test(
   'background learning catches up across batches in one run',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
-    const { pool, ownerId, post, memory, close } = await memoryFixture();
+    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
     try {
       const { calls, curator } = scriptedCurator();
       const learning = createMemoryLearning({ pool, ownerId, memory, curator });
