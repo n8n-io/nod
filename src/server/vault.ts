@@ -33,6 +33,7 @@ import type { TurnRef } from './thread.ts';
 import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { CaptureAnalytics } from './analytics.ts';
+import { analyticsDomain } from './analytics-connections.ts';
 const passwordInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -631,16 +632,23 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     item_type: 'login' | 'card',
     operation: 'create' | 'update' | 'delete',
     source?: 'user' | 'import' | 'agent',
+    origin?: string,
   ) {
+    const domain = item_type === 'login' && origin ? analyticsDomain(origin) : undefined;
     options.analytics?.({
       event: 'otto_vault_changed',
-      properties: { item_type, operation, ...(source ? { source } : {}) },
+      properties: {
+        item_type,
+        operation,
+        ...(source ? { source } : {}),
+        ...(domain ? { domain } : {}),
+      },
     });
   }
 
   async function save(ownerId: string, raw: unknown, source?: 'user') {
     const saved = await transaction((client) => saveEntry(ownerId, raw, client), pool);
-    if (saved.operation) track('login', saved.operation, source);
+    if (saved.operation) track('login', saved.operation, source, saved.entry.origin);
     return saved.entry;
   }
 
@@ -648,7 +656,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     ownerId: string,
     raw: unknown,
     database: PoolClient,
-  ): Promise<{ entry: VaultEntry; operation?: 'create' | 'update' }> {
+  ): Promise<{ entry: VaultLoginEntry; operation?: 'create' | 'update' }> {
     await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
       `otto-vault-items:${ownerId}`,
     ]);
@@ -718,6 +726,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .strict();
     const credentialKey = await key();
     const result = { imported: 0, existing: 0, skipped: 0 };
+    const origins: string[] = [];
     await transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `otto-vault-items:${owner}`,
@@ -769,9 +778,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           ],
         );
         result.imported++;
+        origins.push(origin);
       }
     }, pool);
-    for (let index = 0; index < result.imported; index++) track('login', 'create', 'import');
+    for (const origin of origins) track('login', 'create', 'import', origin);
     return result;
   }
 
@@ -816,7 +826,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
       return metadata(result.rows[0], input.username);
     }, pool);
-    if (changed) track('login', 'update', 'user');
+    if (changed) track('login', 'update', 'user', entry.origin);
     return entry;
   }
 
@@ -1606,7 +1616,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         }
       },
     });
-    if (savedOperation) track('login', savedOperation, 'user');
+    if (savedOperation) track('login', savedOperation, 'user', input.origin);
     return result === true;
   }
 
@@ -1986,13 +1996,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .send(Buffer.from(icon.bytes));
       });
       scope.delete<{ Params: { id: string } }>('/api/vault/:id', async (request) => {
-        const removed = await pool.query<{ kind: 'login' | 'card' }>(
-          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING id),
+        const removed = await pool.query<{ kind: 'login' | 'card'; origin: string | null }>(
+          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING origin),
            card AS (DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2 RETURNING id)
-           SELECT 'login' AS kind FROM login UNION ALL SELECT 'card' AS kind FROM card`,
+           SELECT 'login' AS kind, origin FROM login UNION ALL SELECT 'card' AS kind, NULL AS origin FROM card`,
           [z.uuid().parse(request.params.id), owner],
         );
-        for (const row of removed.rows) track(row.kind, 'delete', 'user');
+        for (const row of removed.rows) track(row.kind, 'delete', 'user', row.origin ?? undefined);
         return { ok: true };
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>

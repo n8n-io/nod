@@ -22,6 +22,7 @@ import { verificationCode, verificationSenderDomain } from '../src/server/email-
 import { createIntegrations } from '../src/server/integrations.ts';
 import type { TurnRef } from '../src/server/thread.ts';
 import type { AnalyticsEvent } from '../src/server/analytics.ts';
+import { analyticsEvent } from '../src/server/analytics-events.ts';
 import {
   credentialOrigin,
   checkedKeyStore,
@@ -313,7 +314,12 @@ test(
       assert.deepEqual(captured, [
         {
           event: 'otto_vault_changed',
-          properties: { item_type: 'login', operation: 'create', source: 'user' },
+          properties: {
+            item_type: 'login',
+            operation: 'create',
+            source: 'user',
+            domain: 'example.com',
+          },
         },
       ]);
       const metadata = await app.inject({ url: '/api/vault' });
@@ -2188,14 +2194,14 @@ test(
       app.inject({ method: 'PATCH', url: `/api/vault/${id}`, headers, payload });
     const read = (id: string, field: 'details' | 'password') =>
       app.inject({ method: 'POST', url: `/api/vault/${id}/${field}`, headers, payload: {} });
-    const save = async (label: string) => {
+    const save = async (label: string, origin = 'https://accounts.example.test:8443') => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/vault',
         headers,
         payload: {
           label,
-          origin: 'https://accounts.example.test:8443',
+          origin,
           username: `${label}@example.test`,
           password: `${label}-secret`,
         },
@@ -2226,10 +2232,22 @@ test(
         'Vault analytics count committed mutations without private item data',
         async () => {
           captured.length = 0;
-          const entry = await save('Analytics');
-          await save('Analytics');
+          const origin = 'https://tenant.accounts.example.co.uk:8443';
+          const entry = await save('Analytics', origin);
+          await save('Analytics', origin);
           const same = { label: 'Analytics', username: 'Analytics@example.test' };
           assert.equal((await patch(entry.id, same)).statusCode, 200);
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: '/api/vault',
+                headers,
+                payload: { ...same, origin, password: 'updated-synthetic-secret' },
+              })
+            ).statusCode,
+            200,
+          );
           assert.equal(
             (await patch(entry.id, { ...same, label: 'Updated analytics' })).statusCode,
             200,
@@ -2244,9 +2262,14 @@ test(
           }
           assert.deepEqual(
             captured,
-            ['create', 'update', 'delete'].map((operation) => ({
+            ['create', 'update', 'update', 'delete'].map((operation) => ({
               event: 'otto_vault_changed',
-              properties: { item_type: 'login', operation, source: 'user' },
+              properties: {
+                item_type: 'login',
+                operation,
+                source: 'user',
+                domain: 'example.co.uk',
+              },
             })),
           );
           await pool.query(`CREATE FUNCTION reject_analytics_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -2264,10 +2287,72 @@ test(
             },
           });
           assert.equal(refused.statusCode, 500);
-          assert.equal(captured.length, 3);
+          const imported = await app.inject({
+            method: 'POST',
+            url: '/api/vault/import',
+            headers,
+            payload: {
+              logins: [
+                {
+                  label: 'Imported before rollback',
+                  origin: 'https://rollback.example.com',
+                  username: 'synthetic',
+                  password: 'synthetic-secret',
+                },
+                {
+                  label: 'Rolled back analytics',
+                  origin: 'https://rollback.example.org',
+                  username: 'synthetic',
+                  password: 'synthetic-secret',
+                },
+              ],
+            },
+          });
+          assert.equal(imported.statusCode, 500);
+          assert.equal(captured.length, 4);
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT id FROM vault_entries WHERE label='Imported before rollback'",
+              )
+            ).rowCount,
+            0,
+          );
           await pool.query(
             'DROP TRIGGER reject_analytics_fixture ON vault_entries; DROP FUNCTION reject_analytics_fixture()',
           );
+          for (const [origin, domain] of [
+            ['https://пример.рф', 'xn--e1afmkfd.xn--p1ai'],
+            ['https://accounts.example.test', undefined],
+            ['http://localhost:4310', undefined],
+            ['https://127.0.0.1', undefined],
+            ['https://[::1]', undefined],
+          ] as const) {
+            captured.length = 0;
+            const savedEntry = await save('Domain analytics', origin);
+            assert.equal(
+              (
+                await app.inject({
+                  method: 'DELETE',
+                  url: `/api/vault/${savedEntry.id}`,
+                  headers,
+                })
+              ).statusCode,
+              200,
+            );
+            assert.deepEqual(
+              captured.map((event) => analyticsEvent.parse(event)),
+              ['create', 'delete'].map((operation) => ({
+                event: 'otto_vault_changed',
+                properties: {
+                  item_type: 'login',
+                  operation,
+                  source: 'user',
+                  ...(domain ? { domain } : {}),
+                },
+              })),
+            );
+          }
         },
       );
 
@@ -2473,7 +2558,7 @@ test(
             headers,
             payload: {
               label: 'Kept',
-              origin: 'https://import.fixture.test',
+              origin: 'https://import.example.com',
               username: 'kept@example.test',
               password: 'kept-original-secret',
             },
@@ -2481,10 +2566,10 @@ test(
           assert.equal(existing.statusCode, 200);
           const { logins, unreadable } = parsePasswordCsv(
             'name,url,username,password,note\n' +
-              'Kept,https://import.fixture.test/login,kept@example.test,kept-changed-secret,\n' +
-              'Fresh,http://import.fixture.test/,fresh@example.test,fresh-import-secret,\n' +
-              'Fresh again,https://import.fixture.test,fresh@example.test,fresh-import-secret,\n' +
-              ',https://other.fixture.test,,other-import-secret,\n' +
+              'Kept,https://import.example.com/login,kept@example.test,kept-changed-secret,\n' +
+              'Fresh,http://import.example.com/,fresh@example.test,fresh-import-secret,\n' +
+              'Fresh again,https://import.example.com,fresh@example.test,fresh-import-secret,\n' +
+              ',https://other.example.org,,other-import-secret,\n' +
               'App,android://key@com.fixture.app/,ana,app-import-secret,\n',
           );
           assert.equal(unreadable, 1);
@@ -2516,9 +2601,9 @@ test(
           assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
           assert.deepEqual(
             captured,
-            Array.from({ length: 2 }, () => ({
+            ['example.com', 'example.org'].map((domain) => ({
               event: 'otto_vault_changed',
-              properties: { item_type: 'login', operation: 'create', source: 'import' },
+              properties: { item_type: 'login', operation: 'create', source: 'import', domain },
             })),
           );
           assert.equal(imported.body.includes('secret'), false);
@@ -2526,9 +2611,9 @@ test(
             VaultLoginEntry[]
           >();
           const fresh = listed.find((entry) => entry.label === 'Fresh again');
-          const other = listed.find((entry) => entry.label === 'other.fixture.test');
-          assert.equal(fresh?.origin, 'https://import.fixture.test');
-          assert.equal(other?.origin, 'https://other.fixture.test');
+          const other = listed.find((entry) => entry.label === 'other.example.org');
+          assert.equal(fresh?.origin, 'https://import.example.com');
+          assert.equal(other?.origin, 'https://other.example.org');
           assert.equal((await read(fresh!.id, 'password')).json().password, 'fresh-import-secret');
           const kept = listed.find((entry) => entry.label === 'Kept');
           assert.equal((await read(kept!.id, 'password')).json().password, 'kept-original-secret');

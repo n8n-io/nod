@@ -4813,12 +4813,13 @@ async function conversationAnalyticsFixture(t: TestContext) {
       allowed = value;
       remoteRevision = nextRevision;
     },
-    async processor(curate: MemoryCurator['curate'], owner = ownerId) {
+    async processor(curate: MemoryCurator['curate'], owner = ownerId, secrets: string[] = []) {
       const processor = createConversationAnalytics({
         pool,
         ownerId: owner,
         analytics,
         curator: { id: 'synthetic', configured: true, curate },
+        secrets,
       });
       processors.push(processor);
       await processor.initialize();
@@ -4881,6 +4882,61 @@ async function conversationAnalyticsFixture(t: TestContext) {
     },
   };
 }
+
+test(
+  'conversation analytics redacts before truncating and preserves structured requests',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    for (const structured of [false, true]) {
+      await t.test(
+        structured ? 'JSON request' : 'credential across the input boundary',
+        async (t) => {
+          const f = await conversationAnalyticsFixture(t);
+          f.analytics.setUsageData(f.ownerId, true);
+          const secret = 'syntheticboundarycredential';
+          const prompt = structured
+            ? JSON.stringify({ request: 'Translate the audio transcript', language: 'French' })
+            : 'x'.repeat(1190) + secret;
+          const turn = await f.turn({ prompt });
+          let input: { messages: Array<{ role: string; text: string }> } | undefined;
+          const processor = await f.processor(
+            async (request) => {
+              input = request.input as typeof input;
+              return {
+                tasks: [
+                  {
+                    task_id: null,
+                    request_message_id: turn.messageId,
+                    task_type: 'translation',
+                    task_action: 'translate',
+                    task_subject: 'audio',
+                    task_activities: ['translate:audio'],
+                    outcome: 'active',
+                  },
+                ],
+                frustration: null,
+              };
+            },
+            f.ownerId,
+            [secret],
+          );
+          processor.start(turn.id)();
+          await processor.drain();
+          const text = input?.messages.find((message) => message.role === 'user')?.text;
+          if (structured) assert.deepEqual(JSON.parse(text!), JSON.parse(prompt));
+          else {
+            assert.equal(text, 'x'.repeat(1190) + '[redacted]');
+            assert.ok(!JSON.stringify(input).includes(secret.slice(0, 10)));
+          }
+          assert.equal(
+            f.events.find((event) => event.event === 'otto_task_started')?.properties.task_type,
+            'translation',
+          );
+        },
+      );
+    }
+  },
+);
 
 test(
   'conversation analytics preserves compound task identity, activities and original timing across turns and restarts',

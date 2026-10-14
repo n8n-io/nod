@@ -16,6 +16,7 @@ type Message = { id: string; role: 'user' | 'assistant'; text: string; current: 
 export interface AnalyticsCase {
   id: string;
   partition: 'core' | 'holdout';
+  equivalenceGroup?: string;
   input: {
     source: 'user' | 'schedule' | 'resume';
     runtime_status: string;
@@ -302,18 +303,57 @@ export const analyticsCases: AnalyticsCase[] = [
       },
     ],
   ),
-  holdout(
-    'holdout-email-summary-in-chat',
+  {
+    ...holdout(
+      'holdout-email-summary-in-chat',
+      [
+        message(1, 'user', 'Summarize the three unread emails in my inbox here in chat.'),
+        message(
+          2,
+          'assistant',
+          'The venue confirmed the room, the supplier moved delivery to Tuesday, and the team requested the updated agenda.',
+        ),
+      ],
+      [task('communication', 'summarize', 'email', 'completed')],
+    ),
+    equivalenceGroup: 'email-summary',
+  },
+  {
+    ...holdout(
+      'holdout-email-summary-paraphrase',
+      [
+        message(1, 'user', 'Give me a brief overview of the unread messages in my email inbox.'),
+        message(
+          2,
+          'assistant',
+          'The venue confirmed the room, the delivery moved to Tuesday, and the team requested the agenda.',
+        ),
+      ],
+      [task('communication', 'summarize', 'email', 'completed')],
+    ),
+    equivalenceGroup: 'email-summary',
+  },
+  ...[
+    ['holdout-audio-translation', 'Translate the supplied voice recording into English.'],
     [
-      message(1, 'user', 'Summarize the three unread emails in my inbox here in chat.'),
-      message(
-        2,
-        'assistant',
-        'The venue confirmed the room, the supplier moved delivery to Tuesday, and the team requested the updated agenda.',
-      ),
+      'holdout-audio-translation-paraphrase',
+      'Please give me an English translation of this audio clip.',
     ],
-    [task('communication', 'summarize', 'email', 'completed')],
-  ),
+  ].map(([name, request]) => ({
+    ...holdout(
+      name,
+      [
+        message(1, 'user', request),
+        message(
+          2,
+          'assistant',
+          'English translation: The train leaves at noon and arrives at two.',
+        ),
+      ],
+      [task('translation', 'translate', 'audio', 'completed')],
+    ),
+    equivalenceGroup: 'audio-translation',
+  })),
   holdout(
     'holdout-same-type-mixed-outcomes',
     [
@@ -430,16 +470,21 @@ export const analyticsCases: AnalyticsCase[] = [
   ),
 ];
 
-const taskErrors = (item: AnalyticsCase, expected: Task, actual: Task) => ({
-  wrongType: Number(expected.task_type !== actual.task_type),
-  wrongAction: Number(expected.task_action !== actual.task_action),
-  wrongSubject: Number(expected.task_subject !== actual.task_subject),
+const referenceLabels = (expected: Task, actual: Task) => ({
+  typeDisagreements: Number(expected.task_type !== actual.task_type),
+  actionDisagreements: Number(expected.task_action !== actual.task_action),
+  subjectDisagreements: Number(expected.task_subject !== actual.task_subject),
   missingActivities: expected.task_activities.filter(
     (activity) => !actual.task_activities.includes(activity),
   ).length,
   extraActivities: actual.task_activities.filter(
     (activity) => !expected.task_activities.includes(activity),
   ).length,
+});
+
+const taskErrors = (item: AnalyticsCase, expected: Task, actual: Task) => ({
+  missingActivities: Math.max(0, expected.task_activities.length - actual.task_activities.length),
+  extraActivities: Math.max(0, actual.task_activities.length - expected.task_activities.length),
   wrongOutcome: Number(expected.outcome !== actual.outcome),
   wrongContinuation: Number(expected.task_id !== actual.task_id),
   wrongRequest: Number(
@@ -455,50 +500,57 @@ function matchTasks(item: AnalyticsCase, actual: Task[]) {
   const reverse = expected.length > actual.length;
   const rows = reverse ? actual : expected;
   const columns = reverse ? expected : actual;
-  const memo = new Map<string, { cost: number; pairs: Array<[Task, Task]> }>();
-  const match = (index: number, used: number): { cost: number; pairs: Array<[Task, Task]> } => {
-    if (index === rows.length) return { cost: 0, pairs: [] };
+  type Match = { cost: number; pairs: Array<[Task, Task]>; ambiguous: boolean };
+  const memo = new Map<string, Match>();
+  const outcomes = (pairs: Match['pairs']) =>
+    JSON.stringify(
+      pairs
+        .map(([expectedTask, actualTask]) => [expected.indexOf(expectedTask), actualTask.outcome])
+        .sort(([a], [b]) => Number(a) - Number(b)),
+    );
+  const match = (index: number, used: number): Match => {
+    if (index === rows.length) return { cost: 0, pairs: [], ambiguous: false };
     const key = `${index}:${used}`;
     const saved = memo.get(key);
     if (saved) return saved;
-    let best = { cost: Infinity, pairs: [] as Array<[Task, Task]> };
+    let best: Match = { cost: Infinity, pairs: [], ambiguous: false };
     for (let column = 0; column < columns.length; column++) {
       if (used & (1 << column)) continue;
       const pair: [Task, Task] = reverse
         ? [columns[column], rows[index]]
         : [rows[index], columns[column]];
       const errors = taskErrors(item, ...pair);
+      const labels = referenceLabels(...pair);
       const next = match(index + 1, used | (1 << column));
       const cost =
         next.cost +
         errors.wrongContinuation * 131072 +
         errors.wrongRequest * 8192 +
-        errors.wrongType * 256 +
-        errors.wrongAction * 256 +
-        errors.wrongSubject * 256 +
-        errors.missingActivities * 9 +
-        errors.extraActivities * 9 +
-        errors.wrongOutcome;
-      if (cost < best.cost) best = { cost, pairs: [pair, ...next.pairs] };
+        labels.typeDisagreements * 256 +
+        labels.actionDisagreements * 256 +
+        labels.subjectDisagreements * 256 +
+        labels.missingActivities * 9 +
+        labels.extraActivities * 9;
+      const pairs: Match['pairs'] = [pair, ...next.pairs];
+      if (cost < best.cost) best = { cost, pairs, ambiguous: next.ambiguous };
+      else if (cost === best.cost)
+        best.ambiguous ||= next.ambiguous || outcomes(pairs) !== outcomes(best.pairs);
     }
     memo.set(key, best);
     return best;
   };
-  return match(0, 0).pairs;
+  return match(0, 0);
 }
 
 export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
   const parsed = conversationAnalyticsClassification.safeParse(output);
   const actual = parsed.success ? parsed.data : { tasks: [], frustration: null };
-  const pairs = matchTasks(item, actual.tasks);
+  const { pairs, ambiguous } = matchTasks(item, actual.tasks);
   const matchedExpected = new Set(pairs.map(([expected]) => expected));
   const matchedActual = new Set(pairs.map(([, actual]) => actual));
   const errors = {
     missing: Math.max(0, item.expected.tasks.length - actual.tasks.length),
     extra: Math.max(0, actual.tasks.length - item.expected.tasks.length),
-    wrongType: 0,
-    wrongAction: 0,
-    wrongSubject: 0,
     missingActivities: item.expected.tasks
       .filter((task) => !matchedExpected.has(task))
       .reduce((total, task) => total + task.task_activities.length, 0),
@@ -509,9 +561,26 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
     wrongContinuation: 0,
     wrongRequest: 0,
   };
+  const labels = {
+    typeDisagreements: 0,
+    actionDisagreements: 0,
+    subjectDisagreements: 0,
+    missingActivities: errors.missingActivities,
+    extraActivities: errors.extraActivities,
+    frustrationTypeDisagreements: Number(
+      Boolean(
+        item.expected.frustration &&
+        actual.frustration &&
+        item.expected.frustration.task_type !== actual.frustration.task_type,
+      ),
+    ),
+  };
   for (const pair of pairs) {
     const found = taskErrors(item, ...pair);
     for (const key of Object.keys(found) as Array<keyof typeof found>) errors[key] += found[key];
+    const references = referenceLabels(...pair);
+    for (const key of Object.keys(references) as Array<keyof typeof references>)
+      labels[key] += references[key];
   }
   const wanted = item.expected.frustration;
   const signal = actual.frustration;
@@ -550,7 +619,6 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
       ),
     ),
     wrongReason: Number(Boolean(wanted && signal && wanted.reason !== signal.reason)),
-    wrongType: Number(Boolean(wanted && signal && wanted.task_type !== signal.task_type)),
     wrongEvidence: Number(
       !evidenceValid ||
         Boolean(
@@ -561,17 +629,37 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
   return {
     schemaValid: parsed.success,
     valid,
-    exact:
+    ambiguousOutcomeMatching: ambiguous,
+    lifecycleCorrect:
       valid &&
+      !ambiguous &&
       Object.values(errors).every((count) => count === 0) &&
-      [
-        'falsePositive',
-        'falseNegative',
-        'wrongSignal',
-        'wrongReason',
-        'wrongType',
-        'wrongEvidence',
-      ].every((key) => frustrationErrors[key as keyof typeof frustrationErrors] === 0),
+      ['falsePositive', 'falseNegative', 'wrongSignal', 'wrongReason', 'wrongEvidence'].every(
+        (key) => frustrationErrors[key as keyof typeof frustrationErrors] === 0,
+      ),
+    referenceLabels: {
+      ...labels,
+      matched:
+        valid &&
+        !errors.missing &&
+        !errors.extra &&
+        Object.values(labels).every((count) => count === 0),
+    },
+    labelSignature:
+      valid && actual.tasks.length
+        ? JSON.stringify(
+            actual.tasks
+              .map((task) =>
+                JSON.stringify([
+                  task.task_type,
+                  task.task_action,
+                  task.task_subject,
+                  [...task.task_activities].sort(),
+                ]),
+              )
+              .sort(),
+          )
+        : null,
     expectedTasks: item.expected.tasks.length,
     predictedTasks: actual.tasks.length,
     expectedActivities: item.expected.tasks.reduce(
@@ -589,11 +677,53 @@ export function scoreAnalytics(item: AnalyticsCase, output: unknown) {
 
 export interface AnalyticsAttempt {
   case: string;
+  equivalenceGroup?: string;
   attempt: number;
   durationMs: number;
   status: 'scored' | 'model_error';
   output?: unknown;
   score?: ReturnType<typeof scoreAnalytics>;
+}
+
+function labelStability(attempts: AnalyticsAttempt[], paraphrases: boolean) {
+  const groups = new Map<string, Array<{ case: string; signature: string }>>();
+  for (const attempt of attempts) {
+    const key = paraphrases ? attempt.equivalenceGroup : attempt.case;
+    const signature = attempt.score?.labelSignature;
+    if (!key || !signature) continue;
+    const group = groups.get(key) ?? [];
+    group.push({ case: attempt.case, signature });
+    groups.set(key, group);
+  }
+  const compared = [...groups].flatMap(([group, members]) => {
+    let comparisons = 0;
+    let agreements = 0;
+    for (let left = 0; left < members.length; left++) {
+      for (let right = left + 1; right < members.length; right++) {
+        if (paraphrases && members[left].case === members[right].case) continue;
+        comparisons++;
+        agreements += Number(members[left].signature === members[right].signature);
+      }
+    }
+    return comparisons
+      ? [
+          {
+            group,
+            comparisons,
+            agreements,
+            distinctLabels: new Set(members.map((m) => m.signature)).size,
+          },
+        ]
+      : [];
+  });
+  const comparisons = compared.reduce((total, group) => total + group.comparisons, 0);
+  const agreements = compared.reduce((total, group) => total + group.agreements, 0);
+  return {
+    agreementRate: comparisons ? agreements / comparisons : null,
+    comparisons,
+    agreements,
+    groups: compared,
+  };
 }
 
 export function summarizeAnalytics(attempts: AnalyticsAttempt[]) {
@@ -615,48 +745,51 @@ export function summarizeAnalytics(attempts: AnalyticsAttempt[]) {
     ),
     schemaInvalid: sum((score) => Number(!score.schemaValid)),
     invalid: sum((score) => Number(!score.valid)),
-    exact: sum((score) => Number(score.exact)),
-    exactRate: ratio(
-      sum((score) => Number(score.exact)),
+    ambiguousOutcomeMatching: sum((score) => Number(score.ambiguousOutcomeMatching)),
+    lifecycleCorrect: sum((score) => Number(score.lifecycleCorrect)),
+    lifecycleAccuracy: ratio(
+      sum((score) => Number(score.lifecycleCorrect)),
       scores.length,
     ),
-    tasks: Object.fromEntries(
-      ['expectedTasks', 'predictedTasks', 'expectedActivities', 'predictedActivities']
-        .map((key) => [
-          key,
-          sum(
-            (score) =>
-              score[
-                key as
-                  'expectedTasks' | 'predictedTasks' | 'expectedActivities' | 'predictedActivities'
-              ],
-          ),
-        ])
-        .concat(
-          [
-            'missing',
-            'extra',
-            'wrongType',
-            'wrongAction',
-            'wrongSubject',
-            'missingActivities',
-            'extraActivities',
-            'wrongOutcome',
-            'wrongContinuation',
-            'wrongRequest',
-          ].map((key) => [key, sum((score) => score.tasks[key as keyof typeof score.tasks])]),
-        ),
-    ),
+    referenceLabels: {
+      agreementRate: ratio(
+        sum((score) => Number(score.referenceLabels.matched)),
+        scores.length,
+      ),
+      typeDisagreements: sum((score) => score.referenceLabels.typeDisagreements),
+      actionDisagreements: sum((score) => score.referenceLabels.actionDisagreements),
+      subjectDisagreements: sum((score) => score.referenceLabels.subjectDisagreements),
+      missingActivities: sum((score) => score.referenceLabels.missingActivities),
+      extraActivities: sum((score) => score.referenceLabels.extraActivities),
+      frustrationTypeDisagreements: sum(
+        (score) => score.referenceLabels.frustrationTypeDisagreements,
+      ),
+    },
+    labelStability: {
+      repetitions: labelStability(attempts, false),
+      paraphrases: labelStability(attempts, true),
+    },
+    tasks: {
+      expected: sum((score) => score.expectedTasks),
+      predicted: sum((score) => score.predictedTasks),
+      expectedActivities: sum((score) => score.expectedActivities),
+      predictedActivities: sum((score) => score.predictedActivities),
+      missing: sum((score) => score.tasks.missing),
+      extra: sum((score) => score.tasks.extra),
+      missingActivities: sum((score) => score.tasks.missingActivities),
+      extraActivities: sum((score) => score.tasks.extraActivities),
+      wrongOutcome: sum((score) => score.tasks.wrongOutcome),
+      wrongContinuation: sum((score) => score.tasks.wrongContinuation),
+      wrongRequest: sum((score) => score.tasks.wrongRequest),
+    },
     frustration: {
       truePositive: tp,
       falsePositive: fp,
       falseNegative: fn,
-      trueNegative: sum((score) => score.frustration.trueNegative),
       precision: ratio(tp, tp + fp),
       recall: ratio(tp, tp + fn),
       wrongSignal: sum((score) => score.frustration.wrongSignal),
       wrongReason: sum((score) => score.frustration.wrongReason),
-      wrongType: sum((score) => score.frustration.wrongType),
       wrongEvidence: sum((score) => score.frustration.wrongEvidence),
     },
   };
@@ -749,6 +882,7 @@ export async function runAnalyticsEval(options: {
         );
         attempts.push({
           case: item.id,
+          equivalenceGroup: item.equivalenceGroup,
           attempt,
           status: 'scored',
           durationMs: Math.round(performance.now() - started),
@@ -758,6 +892,7 @@ export async function runAnalyticsEval(options: {
       } catch {
         attempts.push({
           case: item.id,
+          equivalenceGroup: item.equivalenceGroup,
           attempt,
           status: 'model_error',
           durationMs: Math.round(performance.now() - started),
@@ -766,7 +901,7 @@ export async function runAnalyticsEval(options: {
       await save('running');
       const result = attempts.at(-1)!;
       console.log(
-        `${item.id} ${attempt}/${options.repeat}: ${result.status === 'model_error' ? 'model error' : result.score?.exact ? 'pass' : 'fail'}`,
+        `${item.id} ${attempt}/${options.repeat}: ${result.status === 'model_error' ? 'model error' : result.score?.lifecycleCorrect ? 'lifecycle pass' : 'lifecycle fail'}`,
       );
     }
   }

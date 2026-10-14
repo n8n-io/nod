@@ -57,9 +57,8 @@ export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) 
           </Bubble>,
           <Bubble className="ob-open-usage">
             <p>
-              Share <strong>usage data</strong> to help us improve Otto: connected app domains, task
-              categories, timing, signs of friction and masked recordings. Your model analyzes chat
-              text; PostHog receives only categories, never messages, files or keys.
+              Help improve Otto by sharing <strong>usage data</strong>. Messages, files and keys are
+              not sent to analytics.
             </p>
             <div className="ob-open-toggle">
               <Switch

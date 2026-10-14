@@ -1,16 +1,31 @@
 import { z } from 'zod';
-import { taskTaxonomy } from './analytics-taxonomy.ts';
 
 export const analyticsVersion = z
   .string()
   .max(80)
   .regex(/^(?:[a-f0-9]{7,64}|\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?)$/);
 
-export const taskType = z.enum(taskTaxonomy.types.map(({ id }) => id));
-export const taskAction = z.enum(taskTaxonomy.actions.map(({ id }) => id));
-export const taskSubject = z.enum(taskTaxonomy.subjects.map(({ id }) => id));
+const domain = z
+  .string()
+  .max(253)
+  .regex(
+    /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$/,
+  );
+
+const taskLabel = z
+  .string()
+  .max(48)
+  .regex(/^[a-z]+(?:_[a-z]+){0,2}$/);
+export const taskType = taskLabel;
+export const taskAction = taskLabel;
+export const taskSubject = taskLabel;
 export const taskActivities = z
-  .array(z.templateLiteral([taskAction, ':', taskSubject]))
+  .array(
+    z.string().refine((value) => {
+      const parts = value.split(':');
+      return parts.length === 2 && parts.every((part) => taskLabel.safeParse(part).success);
+    }),
+  )
   .min(1)
   .max(8)
   .refine((values) => new Set(values).size === values.length);
@@ -107,11 +122,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
             'linear',
             'custom',
           ]),
-          domain: z
-            .string()
-            .max(253)
-            .regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/)
-            .optional(),
+          domain: domain.optional(),
           connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
           status: z.enum(['started', 'connected', 'failed', 'disconnected']),
           failure_reason: z
@@ -144,11 +155,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
             'linear',
             'custom',
           ]),
-          domain: z
-            .string()
-            .max(253)
-            .regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/)
-            .optional(),
+          domain: domain.optional(),
           connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           duration_ms: duration,
@@ -164,6 +171,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           item_type: z.enum(['login', 'card']),
           operation: z.enum(['create', 'update', 'delete']),
           source: z.enum(['user', 'import', 'agent']).optional(),
+          domain: domain.optional(),
         })
         .strict(),
     })
