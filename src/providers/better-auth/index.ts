@@ -31,8 +31,7 @@ export function createGoogleAuthentication(options: {
         prompt: 'select_account',
         overrideUserInfoOnSignIn: true,
         mapProfileToUser: (profile) => ({
-          givenName:
-            typeof profile.given_name === 'string' ? profile.given_name.slice(0, 100) : null,
+          givenName: typeof profile.given_name === 'string' ? profile.given_name : null,
         }),
       },
     },
@@ -62,13 +61,15 @@ export function createGoogleAuthentication(options: {
       const migrations = await getMigrations(auth.options);
       await migrations.runMigrations();
     },
-    async session(headers) {
-      const result = await auth.api.getSession({
+    async session(headers, refresh = false) {
+      const { headers: returned, response: result } = await auth.api.getSession({
         headers,
-        query: { disableCookieCache: true, disableRefresh: true },
+        query: { disableCookieCache: true, disableRefresh: !refresh },
+        returnHeaders: true,
       });
       if (!result || !result.user.emailVerified || result.session.expiresAt <= new Date())
         return null;
+      const cookies = returned.getSetCookie();
       const avatarSource = googleAvatarUrl(result.user.image);
       const givenName =
         typeof result.user.givenName === 'string' ? result.user.givenName.trim() : '';
@@ -77,6 +78,7 @@ export function createGoogleAuthentication(options: {
         expiresAt: result.session.expiresAt,
         ...(avatarSource ? { avatarSource } : {}),
         ...(givenName ? { givenName } : {}),
+        ...(cookies.length ? { cookies } : {}),
         user: {
           id: result.user.id,
           name: result.user.name,
