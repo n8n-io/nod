@@ -265,7 +265,7 @@ export function About({ arrived, onNext }: StepProps) {
           </p>
         </Rise>
       )}
-      {wrapped && (
+      {wrapped ? (
         <Footer
           show={shown}
           onBack={restart}
@@ -273,6 +273,8 @@ export function About({ arrived, onNext }: StepProps) {
           onNext={() => void save()}
           busy={saving}
         />
+      ) : (
+        arrived === 'back' && !answers.length && <Footer onNext={onNext} />
       )}
       {error && (
         <p className="ob-about-error" role="alert">

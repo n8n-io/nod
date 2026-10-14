@@ -16,3 +16,4 @@ Save the check-in before ending or using ask_user when it can still be useful wi
 4. Each run checks the source and calls manage_personal_context schedule_record_observation {status, sourceUrl, value, summary}. Keep value short and stable, with item terms in summary. For an unverified check, use status unavailable and value null.
 5. Compare meaning with the previous verified value. A current-state rule ("while below 50 EUR") alerts on each matching run unless the user suppresses repeats; a change rule alerts only on a verified change. Unavailable never means changed.
 6. In background runs, use send_message only for a real alert or necessary question. Keep routine checks quiet.
+7. A digest or briefing covers only the requested day. Report calendar clashes, changes and what needs the user's response instead of listing meetings they can see in their calendar.

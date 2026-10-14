@@ -1123,7 +1123,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
     } catch (error) {
       if (error instanceof IntegrationError) throw error;
-      throw new IntegrationError(failure('The app request failed', error), 502);
+      throw new IntegrationError(
+        `${failure('The app request failed', error)} If the action name or arguments may be wrong, look them up with apps SEARCH_TOOLS.`,
+        502,
+      );
     }
   }
 

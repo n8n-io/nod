@@ -1264,6 +1264,7 @@ test(
             });
             assert.equal((await row(revised.turnId)).source, 'user');
             assert.equal((await stored(id)).status, 'expired');
+            assert.equal(await turnStatus(origin.turnId), 'cancelled');
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(
