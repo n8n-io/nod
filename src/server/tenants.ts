@@ -1,3 +1,4 @@
+import { transaction as inTransaction } from './transaction.ts';
 import { createHash, hkdfSync } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -172,22 +173,8 @@ export function createTenantStore(options: TenantStoreOptions) {
     }
   }
 
-  async function transaction<T>(action: (client: PoolClient) => Promise<T>) {
-    return protect(async () => {
-      const client = await options.admin.connect();
-      try {
-        await client.query('BEGIN');
-        const result = await action(client);
-        await client.query('COMMIT');
-        return result;
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw error;
-      } finally {
-        client.release();
-      }
-    });
-  }
+  const transaction = <T>(action: (client: PoolClient) => Promise<T>) =>
+    protect(() => inTransaction(action, options.admin));
 
   async function password(tenant: TenantRecord) {
     const secret = await options.getSecret(tenant.credentialVersion);

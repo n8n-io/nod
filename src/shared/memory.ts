@@ -35,19 +35,11 @@ export interface MemoryArchived {
   sources: MemorySource[];
 }
 
-export interface MemoryProfile {
-  name: string;
-  location: string;
-  phone: string;
-  preferences: string;
-}
-
 export interface MemoryView {
   saving: boolean;
   sensitive: boolean;
   notes: MemoryNote[];
   archive: MemoryArchived[];
-  profile: MemoryProfile;
 }
 
 export interface MemoryUpdate extends MemoryView {

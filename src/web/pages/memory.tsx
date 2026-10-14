@@ -55,12 +55,6 @@ const areaLabels: Record<MemoryArea, string> = {
   routines: 'Routines',
   lessons: 'Lessons',
 };
-const profileLabels = {
-  name: 'Name',
-  location: 'Location',
-  phone: 'Phone',
-  preferences: 'Preferences',
-} as const;
 const reasons: Record<MemoryArchived['reason'], string> = {
   superseded: 'Replaced',
   merged: 'Merged',
@@ -466,13 +460,10 @@ export function Memory() {
     setChosen(undefined);
   }
 
-  const profileFields = (Object.keys(profileLabels) as Array<keyof typeof profileLabels>).filter(
-    (field) => view?.profile[field],
-  );
   const counts = {
     tentative: 0,
     observed: 0,
-    stated: profileFields.length,
+    stated: 0,
     archive: view?.archive.length ?? 0,
   } satisfies Record<Stage, number>;
   for (const note of view?.notes ?? []) counts[note.status]++;
@@ -483,10 +474,6 @@ export function Memory() {
   );
   const archive =
     stage === 'archive' ? (view?.archive ?? []).filter((item) => matches(item.text)) : [];
-  const profile =
-    view && (!stage || stage === 'stated')
-      ? profileFields.filter((field) => matches(view.profile[field]))
-      : [];
   const visible: NonNullable<Selection>[] =
     stage === 'archive'
       ? archive.map((item) => ({ archived: archivedKey(item) }))
@@ -551,32 +538,16 @@ export function Memory() {
       ) : (
         <p className="memory-empty">Nothing here.</p>
       )
-    ) : notes.length || profile.length ? (
-      <>
-        {profile.length > 0 && view && (
-          <div className="memory-group">
-            <h4>Profile</h4>
-            {profile.map((field) => (
-              <div key={field} className="memory-row is-static">
-                <MemoryMark stage="stated" />
-                <span className="memory-row-text" title={view.profile[field]}>
-                  {profileLabels[field]}: {view.profile[field]}
-                </span>
-                <span className="memory-row-meta">{stage ? '' : stageLabel.stated}</span>
-              </div>
-            ))}
+    ) : notes.length ? (
+      memoryAreas.map((area) => {
+        const group = notes.filter((n) => n.area === area);
+        return group.length ? (
+          <div key={area} className="memory-group">
+            <h4>{areaLabels[area]}</h4>
+            {group.map(row)}
           </div>
-        )}
-        {memoryAreas.map((area) => {
-          const group = notes.filter((n) => n.area === area);
-          return group.length ? (
-            <div key={area} className="memory-group">
-              <h4>{areaLabels[area]}</h4>
-              {group.map(row)}
-            </div>
-          ) : null;
-        })}
-      </>
+        ) : null;
+      })
     ) : (
       <p className="memory-empty">
         {search || stage

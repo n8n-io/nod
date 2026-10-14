@@ -536,8 +536,6 @@ const names: Record<IntegrationService, string> = {
   googlesheets: 'Google Sheets',
   googledocs: 'Google Docs',
   slack: 'Slack',
-  notion: 'Notion',
-  linear: 'Linear',
 };
 const spendingCsv = [
   'Date,Category,Merchant,Amount EUR,Monthly budget EUR,Kind',
@@ -600,14 +598,6 @@ const toolDefinitions = [
       type: 'object',
       properties: { query: { type: 'string' }, count: { type: 'integer' } },
       required: ['query'],
-    },
-  },
-  {
-    name: 'NOTION_SEARCH_NOTION_PAGE',
-    description: 'Search synthetic Notion pages by title and read their short summaries.',
-    parameters: {
-      type: 'object',
-      properties: { query: { type: 'string' }, page_size: { type: 'integer' } },
     },
   },
   {
@@ -955,9 +945,7 @@ export function createIntegrationFixture(
   const provider: IntegrationProvider = {
     id: 'synthetic-apps',
     configured: true,
-    supportedServices: (Object.keys(names) as IntegrationService[]).filter(
-      (service) => service !== 'linear',
-    ),
+    supportedServices: Object.keys(names) as IntegrationService[],
     webhooksConfigured: Boolean(options.eventToken),
     supportsSubscriptions: options.eventToken ? ['gmail'] : [],
     async createSession(ownerId) {
@@ -1223,19 +1211,6 @@ export function createIntegrationFixture(
               !args.query || /northstar|review|invoice/i.test(String(args.query)) ? [message] : [];
             return { messages: { matches, total: matches.length }, ...fixtureMetadata };
           }
-          if (action === 'NOTION_SEARCH_NOTION_PAGE') {
-            const page = {
-              id: `fixture-notion-page-${account.number}`,
-              object: 'page',
-              title: 'Northstar review notes',
-              summary:
-                'The NS-2048 review is complete. Prepare the next summary by Friday at 15:00. Synthetic test data only.',
-              last_edited_time: new Date(observedAt).toISOString(),
-            };
-            const results =
-              !args.query || /northstar|review|invoice/i.test(String(args.query)) ? [page] : [];
-            return { results, has_more: false, ...fixtureMetadata };
-          }
           if (action === 'GOOGLECALENDAR_EVENTS_LIST') {
             if (options.data) {
               const field = (first: string, second: string) => {
@@ -1433,11 +1408,6 @@ export function createIntegrationFixture(
         },
       };
       sessions.set(session.id, session);
-      return session;
-    },
-    async restoreSession(id) {
-      const session = sessions.get(id);
-      if (!session) throw new Error('Synthetic session expired.');
       return session;
     },
     async deleteSession(id) {
@@ -1717,6 +1687,6 @@ export function operatorPage(scenario?: { id: string; accountEmail: string }) {
   return html(
     'Otto isolated acceptance environment',
     signupOperator +
-      `<p><a href="/">Open Otto</a></p><button type="button" data-operator="status">Timing events</button><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
+      `<p><a href="/">Open Otto</a></p><button type="button" data-operator="status">Timing events</button><p>The assistant and browser are real. Google and Slack accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
   );
 }

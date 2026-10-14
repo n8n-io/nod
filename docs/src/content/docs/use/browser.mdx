@@ -1,6 +1,6 @@
 ---
 title: Otto's browser
-description: What Otto can do in its own browser, how to take over when it needs you, and how it handles CAPTCHAs, passkeys, routines and downloads.
+description: What Otto can do in its own browser, how to take over when it needs you, and how it handles CAPTCHAs, passkeys and downloads.
 sidebar:
   order: 5
 ---
@@ -46,32 +46,23 @@ Solving a challenge is up to the model. Some challenges block automated browsers
 - **Passkeys.** Otto doesn't supply a passkey authenticator. Use another sign-in method, such as a password saved in Vault.
 - **Approval on your phone.** When a site asks you to approve on another device, Otto tells you what the page says. Then it checks the page every 15 seconds, up to eight times, and continues once the page confirms. It stops if the request is denied or expires, and asks you if the result stays unclear.
 
-## One holder at a time
+## A browser for each job
 
-The browser has one holder: the conversation, a background task or you. Anyone else waits in line.
+The chat, every scheduled or background run and every subagent have their own browser. Each opens one only when it needs it.
 
 ```mermaid
-stateDiagram-v2
-  direction LR
-  state "Conversation" as conv
-  state "Background task" as bg
-  state "You" as you
-  [*] --> Free
-  Free --> conv: chat needs it
-  Free --> bg: a run needs it
-  conv --> you: Open browser
-  you --> conv: Done
-  conv --> Free: task ends
-  bg --> Free: run ends
+flowchart LR
+  chat[Chat]:::accent --> b1[Chat browser]
+  sub[Subagents] --> b2[A browser each]
+  run[Scheduled run] --> b3[Its own browser]
+  b1 -- Open browser --> you([You]):::accent
 ```
 
-While Otto waits for you, the conversation keeps the browser, so background work can't take it from under you. If you don't use it for 30 minutes, Otto lets it go.
+When you ask for several independent things, such as prices from three shops, Otto can split the work between subagents that browse at the same time, then combine what they found.
 
-## Saved routines
+The chat's browser is the one Otto hands to you. Other browsers are deleted when their work ends.
 
-When Otto repeats the same steps on a website, it can save them as a routine and reuse it next time. A routine stops if a step fails, the browser leaves the website or the page doesn't match a saved check, so Otto can look and fix it.
-
-Routines never store passwords or codes. They're kept in `/workspace/.otto/browser-flows` and stay even if the chat is cleared. To make one, ask Otto to save what it just did as a routine.
+Up to four browsers run at once, enough for the chat, two subagents and a scheduled run. Otto never closes a browser used in the last five minutes for another job. One idle for longer can be closed, even in the middle of a task. When none can close, other work waits up to two minutes for a free browser.
 
 ## Downloads
 

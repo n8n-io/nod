@@ -51,7 +51,19 @@ function emailText(value: unknown, field = ''): string {
     .join('\n');
 }
 
-function privateEmailResult(value: unknown): unknown {
+export function verificationMail(text: string) {
+  return (
+    /\b\d{4,8}\b/.test(text) &&
+    (/\b(?:(?:verification|security|authentication|login|sign[ -]?in|one[ -]?time)\s+(?:code|passcode|password)|(?:verify|confirm)\s+(?:(?:your|the)\s+)?(?:email|account|identity)|otp|c[oó]digo\s+de\s+(?:verifica[çc][aã]o|seguran[çc]a|autentica[çc][aã]o))\b/i.test(
+      text,
+    ) ||
+      /(?:\b(?:your|the)\s+(?:code|passcode)|\b(?:o\s+)?seu\s+c[oó]digo|(?:^|[\n.!?])\s*(?:code|passcode|c[oó]digo))\s*(?:(?:is|[eé])\s*)?[:=]?\s*\d{4,8}\b|\b\d{4,8}\s+(?:is\s+(?:your|the)\s+(?:code|passcode)|[eé]\s+(?:o\s+)?seu\s+c[oó]digo)\b/i.test(
+        text,
+      ))
+  );
+}
+
+export function privateEmailResult(value: unknown): unknown {
   if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
     try {
       return JSON.stringify(privateEmailResult(JSON.parse(value)));
@@ -85,15 +97,7 @@ function privateEmailResult(value: unknown): unknown {
         /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(entry.value),
     );
   const text = isMail ? emailText(record).replace(/<[^>]*>/g, ' ') : '';
-  if (
-    /\b\d{4,8}\b/.test(text) &&
-    (/\b(?:(?:verification|security|authentication|login|sign[ -]?in|one[ -]?time)\s+(?:code|passcode|password)|(?:verify|confirm)\s+(?:(?:your|the)\s+)?(?:email|account|identity)|otp|c[oó]digo\s+de\s+(?:verifica[çc][aã]o|seguran[çc]a|autentica[çc][aã]o))\b/i.test(
-      text,
-    ) ||
-      /(?:\b(?:your|the)\s+(?:code|passcode)|\b(?:o\s+)?seu\s+c[oó]digo|(?:^|[\n.!?])\s*(?:code|passcode|c[oó]digo))\s*(?:(?:is|[eé])\s*)?[:=]?\s*\d{4,8}\b|\b\d{4,8}\s+(?:is\s+(?:your|the)\s+(?:code|passcode)|[eé]\s+(?:o\s+)?seu\s+c[oó]digo)\b/i.test(
-        text,
-      ))
-  ) {
+  if (verificationMail(text)) {
     const safe = Object.fromEntries(
       Object.entries(record).filter(
         ([key, entry]) =>

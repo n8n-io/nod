@@ -16,10 +16,10 @@ const dollars = (value: number) =>
 
 function summary(view: TrustView) {
   const { week } = view;
-  const reached = week.reached
-    ? ` ${week.reached === 1 ? '1 reached someone' : `${week.reached} reached people`}, all on your say-so.`
+  const actions = week.actions
+    ? ` It used your apps ${week.actions === 1 ? 'once' : `${week.actions} times`}.`
     : '';
-  return `In the last 7 days, Otto did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${reached} It spent ${dollars(week.spentUsd)}.`;
+  return `In the last 7 days, Otto did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${actions} It spent ${dollars(week.spentUsd)}.`;
 }
 
 function month({ view, timeZone, locale }: UsageReport) {

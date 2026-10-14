@@ -12,7 +12,7 @@ Capability evals run real tasks against the real Otto harness and report how oft
 The short version: each attempt boots its own Otto with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what Otto said.
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50, and the default run has 159 attempts. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50, and the default run has 162 attempts. The unit tests never call them.
 :::
 
 ## How an attempt works
@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 53 controlled cases, three attempts each.
+3. Run all 54 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -149,7 +149,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 57 cases: 53 controlled cases, three live web cases and the harness canary.
+The suite has 58 cases: 54 controlled cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -188,6 +188,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
 | `morning-brief`                         | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
 | `onboarding-first-value`                | Set up Otto, get three first tasks from my answers and inbox, finish one      | apps, memory                             | calibrating |
+| `parallel-shop-prices`                  | Check three shops at the same time and name the cheapest                      | browser, progress                        | calibrating |
 | `pay-bill-bank-transfer`                | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
 | `payment-bank-verification`             | Finish a card payment with a secure code on the bank verification page        | vault, approvals, browser                | calibrating |
 | `payment-card-choice`                   | Choose a named saved card                                                     | vault, approvals, browser                | calibrating |

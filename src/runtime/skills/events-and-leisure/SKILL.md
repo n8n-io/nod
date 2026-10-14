@@ -15,6 +15,6 @@ For tickets, preserve section, seat, quantity, age limits and entry conditions. 
 
 For entertainment choices, check the user's country and selected services. A title can be included, rental-only, unavailable or a different edition. For sports or fantasy tools, distinguish a recommendation from an authorized roster change; check the league's lock time before acting.
 
-A request to find options or prepare a plan does not authorize a booking. Before you book, check that the current user request approves the exact venue, date, time, party or ticket count, selected ticket section or seats (or an explicit acceptable range) and total cost. If approval is missing, show the option and ask.
+A request to find options or prepare a plan is not a request to book. When the user asks you to book, choose within their constraints and book without asking them to confirm again; pay gets their approval for any payment.
 
 After an authorized booking, check the reference, date, guest count, seats and payment state. Add a calendar entry only within the request and use the calendar skill. Return a feasible plan with confirmed and proposed items clearly identified.

@@ -1,25 +1,20 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { appConfirmation, type AgentToolMetadata, type SkillLibrary } from '../ports/agent.ts';
+import { appConfirmation, type SkillLibrary } from '../ports/agent.ts';
 import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
 import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { requestsPrivateInput, vaultInvitation } from './communication.ts';
-import { browserFlowParameters } from './browser-flows.ts';
-import { privateInputNotice, type Turn } from './turn.ts';
+import { vaultInvitation } from './communication.ts';
+import type { Turn } from './turn.ts';
 
 export const personalActions = [
-  'profile_get',
-  'profile_update',
-  'profile_learn',
   'notification_preferences_get',
   'notification_preferences_update',
   'history_search',
   'memory_find',
   'memory_read',
-  'memory_save',
   'memory_learn',
   'memory_control',
   'memory_forget',
@@ -138,39 +133,6 @@ const taskNextCheck = Type.String({
   description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
 });
 
-const activityCheckTool = defineTool(
-  'record_activity_check',
-  'Record this read-only activity check once. verified requires a successful read from the selected account; include at most one useful finding with its stable source ID. Use unavailable when the source could not be inspected. This does not notify the user or prepare work.',
-  Type.Union([
-    Type.Object(
-      {
-        status: Type.Literal('verified'),
-        value: Type.String({ minLength: 1, maxLength: 300 }),
-        summary: Type.String({ minLength: 1, maxLength: 500 }),
-        finding: Type.Optional(
-          Type.Object(
-            {
-              id: Type.String({ minLength: 1, maxLength: 300 }),
-              version: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
-              url: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
-              summary: Type.String({ minLength: 1, maxLength: 500 }),
-            },
-            { additionalProperties: false },
-          ),
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        status: Type.Literal('unavailable'),
-        summary: Type.String({ minLength: 1, maxLength: 500 }),
-      },
-      { additionalProperties: false },
-    ),
-  ]),
-);
-
 export const toolDefinitions = {
   skills: defineTool(
     'skills',
@@ -195,6 +157,14 @@ export const toolDefinitions = {
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
   ),
+  delegate: defineTool(
+    'delegate',
+    "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Two run at once and further calls wait for a slot. A subagent cannot delegate, sign in, pay or open saved browser sessions; do those yourself.",
+    Type.Object({
+      title: Type.String({ minLength: 1, maxLength: 120 }),
+      instruction: Type.String({ minLength: 1, maxLength: 4000 }),
+    }),
+  ),
   ask_user: defineTool(
     'ask_user',
     'Ask one necessary question and pause until the user answers.',
@@ -210,7 +180,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. waitMs waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs and link URLs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. waitMs waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -266,14 +236,9 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
   ),
-  browser_flow: defineTool(
-    'browser_flow',
-    'Reuse known website routines in the current private browser. list {query?} reads the flow registry and ranks matches. get {id} shows a flow. save {flow} stores a checked flow as a file. run {id, inputs?} replays it and checks expectText or expectUrl after each step. It stops with the current page if a check fails. Files live in the owner flow library and remain available after a conversation reset. Start with open and end with a checked snapshot. Use stable selectors and named inputs for entered text. Never store passwords or codes.',
-    browserFlowParameters,
-  ),
   sign_in: defineTool(
     'sign_in',
-    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
+    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Read the full sign-in page through snapshots or screenshots and navigate login choices yourself. Use the method and account the user chose, or a uniquely applicable saved login; ask when methods or accounts remain ambiguous. A website default is not a user choice. A saved login applies only to the current exact origin or an observed link to the visible sign-in provider, never an unrelated entry or a shared parent domain. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId, the manage_apps connectionId of a saved login, to choose it; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer, then call sign_in again with a fresh snapshot. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
       origin: Type.String({ minLength: 1, maxLength: 2048 }),
       label: Type.String({ minLength: 1, maxLength: 100 }),
@@ -321,16 +286,13 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect {url, label?, destinations?} opens a new private profile. use {url, connectionId, destinations?} opens an existing profile without verifying sign-in. destinations lists additional exact origins needed for assets, APIs or sign-in redirects. Network access with a saved profile requires permission for each origin. If a destination is blocked, request it with use. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
+    'Browser profiles for website accounts the user signs in to; public pages need no profile, so open them with browser. connect {url, label?} opens a new private profile. use {url, connectionId} opens a saved profile after the same permission check as a sign-in, without verifying that it is still signed in. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
       Type.Object(
         {
           action: Type.Literal('connect'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-          destinations: Type.Optional(
-            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
-          ),
         },
         { additionalProperties: false },
       ),
@@ -339,9 +301,6 @@ export const toolDefinitions = {
           action: Type.Literal('use'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           connectionId: uuid,
-          destinations: Type.Optional(
-            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
-          ),
         },
         { additionalProperties: false },
       ),
@@ -422,7 +381,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, schedules, notification preferences, memory and earlier conversation. profile_get reads the profile; profile_update is for explicit requests to edit profile fields, not learning ordinary preferences. Store communication, language and writing-style preferences with memory_save in the preferences area. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves a concise non-sensitive personal fact, preference or routine supported by the owner’s messages without asking; unsupported or unverifiable notes return skipped without saving; continue the task without requesting confirmation; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. Do not announce saves or show memory notices. Answer explicit questions and requests about memory honestly. An existing slug adds evidence only for the same text. Save an additional fact or exception with a distinct new slug. Use replace:true only for a correction that preserves details still valid; do not replace a whole routine with only its exception. After a skipped synthesis, memory_learn may retain a qualifying complete current statement verbatim under the same source and sensitive-topic restrictions. For both memory_learn and memory_save, save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when sensitiveTopics is allowed in memory or the user explicitly asks to remember that information. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; profile_learn {field, value, quote}; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (things done, people reached, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
+    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 600 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query}; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -509,17 +468,13 @@ function pageText(page: BrowserObservation) {
   return `URL: ${page.url}\n${page.text}`;
 }
 
-export function ottoTools(
-  turn: Turn,
-  browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
-  skills?: SkillLibrary,
-): OttoTool[] {
-  const { context, computer, pause, confirm } = turn;
-  const { threadId, signal } = context;
+export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
+  const { context, computer, pause, confirm, browserId } = turn;
+  const { signal } = context;
   const screenshot = async () => {
-    const bytes = await computer.screenshot(threadId, signal);
+    const bytes = await computer.screenshot(browserId, signal);
     signal.throwIfAborted();
-    if (bytes && computer.screenStatus && computer.screenStatus(threadId).state !== 'live')
+    if (bytes && computer.screenStatus && computer.screenStatus(browserId).state !== 'live')
       throw new Error(
         'A live browser screenshot is unavailable. Reopen the page and take a fresh screenshot before continuing. Do not repeat an action whose result is uncertain.',
       );
@@ -530,7 +485,7 @@ export function ottoTools(
     await pause('question', text(url));
     return 'Waiting for the user to sign in.';
   };
-  const tools = [
+  return [
     ...(skills
       ? [
           bind(toolDefinitions.skills, async (p) =>
@@ -543,12 +498,13 @@ export function ottoTools(
       async (p) =>
         (await turn.reply(p.text, undefined, p.replyToMessageId)) ?? 'Message delivered.',
     ),
+    ...(turn.delegate
+      ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
+      : []),
     bind(toolDefinitions.ask_user, async (p) => {
-      if (requestsPrivateInput(p.question))
-        return { status: 'withheld', message: privateInputNotice };
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
-      await pause('question', text, { hold: true });
+      await pause('question', text);
       return 'Waiting for the user to reply.';
     }),
     bind(toolDefinitions.react_to_message, async (p) => {
@@ -582,10 +538,9 @@ export function ottoTools(
         return context.publishScreenshot(bytes, name);
       }
       if (action === 'download') {
-        if (!computer.download || !context.publishBrowserFile)
-          throw new Error('Browser file delivery is unavailable.');
+        if (!context.publishBrowserFile) throw new Error('Browser file delivery is unavailable.');
         const file = await computer.download(
-          threadId,
+          browserId,
           { selector: rest.selector, url: rest.url, name },
           signal,
         );
@@ -595,21 +550,19 @@ export function ottoTools(
         return context.publishBrowserFile(file);
       }
       if (action === 'upload') {
-        if (!computer.upload || !context.readWorkspaceFile)
-          throw new Error('Browser file upload is unavailable.');
+        if (!context.readWorkspaceFile) throw new Error('Browser file upload is unavailable.');
         if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
         const bytes = await context.readWorkspaceFile(rest.path, browserUploadBytes);
         return pageText(
           await computer.upload(
-            threadId,
+            browserId,
             { selector: rest.selector, name: basename(rest.path), bytes },
             signal,
           ),
         );
       }
-      return pageText(await computer.act(threadId, { action, ...rest } as BrowserAction, signal));
+      return pageText(await computer.act(browserId, { action, ...rest } as BrowserAction, signal));
     }),
-    bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
       if (appConfirmation in result)
@@ -662,6 +615,10 @@ export function ottoTools(
           case 'browser_connection_unavailable':
             throw new Error(
               'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
+            );
+          case 'browser_connection_busy':
+            throw new Error(
+              'This browser profile is open in another task, waiting for the user to finish signing in. Open public pages with browser instead, or try again later.',
             );
           default:
             throw new Error(
@@ -724,22 +681,4 @@ export function ottoTools(
       return context.createAudio(p.text);
     }),
   ];
-  if (context.activityCheck) {
-    const check = context.activityCheck;
-    return [
-      ...tools.filter((tool) => tool.name === 'apps'),
-      bind(activityCheckTool, async (result) => {
-        signal.throwIfAborted();
-        await check.record(result, signal);
-        return 'Activity check recorded.';
-      }),
-    ];
-  }
-  return tools;
-}
-
-export function inspectToolCatalog(): AgentToolMetadata[] {
-  return Object.values(toolDefinitions).map(({ name, description, parameters }) =>
-    structuredClone({ name, description, parameters }),
-  );
 }

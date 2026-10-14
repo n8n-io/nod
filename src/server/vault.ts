@@ -1,3 +1,4 @@
+import { transaction } from './transaction.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
@@ -28,9 +29,9 @@ import {
 } from './email-code.ts';
 import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
-import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
-import { parentTurnSql } from './turn-chain.ts';
+import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 const passwordInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -128,9 +129,7 @@ export type VaultUse = {
 };
 type VaultOptions = {
   refresh?(): void;
-  admission?: WorkAdmission;
   onUse?(use: VaultUse, client: PoolClient): Promise<void>;
-  onForget?(origin: string): Promise<void>;
   onOwnerUse?(
     entry: {
       action: 'reveal' | 'permission';
@@ -142,7 +141,7 @@ type VaultOptions = {
     client?: PoolClient,
   ): Promise<void>;
   securityCodes?: boolean;
-  resume(turnId: string): Promise<void>;
+  resume(turnId: string, client: PoolClient): Promise<void>;
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
   keyStore: CredentialKeyStore;
@@ -175,6 +174,7 @@ type CardRow = {
 type RequestRow = {
   id: string;
   thread_id: string;
+  browser_id: string | null;
   turn_id: string;
   root_turn_id: string;
   owner_id: string;
@@ -233,15 +233,13 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
 export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
   return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
     AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
-    AND NOT EXISTS(SELECT 1 FROM turns wn WHERE wn.thread_id=${alias}.thread_id AND wn.id<>${alias}.id AND NOT wn.background AND wn.started_at>=${alias}.started_at)`;
+    AND NOT ${supersededSql(alias, `newer.started_at>=${alias}.started_at`)}`;
 }
 
 const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
 
 async function verifyKey(pool: Pool, key: Buffer) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await transaction(async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
       `otto-vault-key:${owner}`,
     ]);
@@ -257,7 +255,6 @@ async function verifyKey(pool: Pool, key: Buffer) {
     if (row) {
       try {
         openCredential(key, { ...keyCheck, ciphertext: row.ciphertext });
-        await client.query('COMMIT');
         return;
       } catch {
         if (await sealedDataExists(client)) throw new Error('The Vault key does not match.');
@@ -305,13 +302,7 @@ async function verifyKey(pool: Pool, key: Buffer) {
       `INSERT INTO vault_key_check(owner_id,ciphertext) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET ciphertext=excluded.ciphertext`,
       [owner, sealCredential(key, keyCheck, { username: '', password: '' })],
     );
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  }, pool);
 }
 
 export function checkedKeyStore(pool: Pool, keyStore: CredentialKeyStore): CredentialKeyStore {
@@ -352,7 +343,7 @@ export function credentialOrigin(value: string) {
   } catch {
     throw new VaultError('Enter a valid website origin.');
   }
-  const local = localHost(url.hostname);
+  const local = loopbackHost(url.hostname);
   if (
     (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) ||
     url.username ||
@@ -366,10 +357,6 @@ export function credentialOrigin(value: string) {
   return url.origin;
 }
 
-function localHost(hostname: string) {
-  return ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
-}
-
 function savedCredentialOrigin(value: string) {
   const trimmed = value.trim();
   return credentialOrigin(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
@@ -378,7 +365,7 @@ function savedCredentialOrigin(value: string) {
 function requireFullHost(raw: unknown) {
   const { origin } = z.object({ origin: z.string().max(2048) }).parse(raw);
   const { hostname } = new URL(savedCredentialOrigin(origin));
-  if (!localHost(hostname) && !/[^.]\.[^.]/.test(hostname))
+  if (!loopbackHost(hostname) && !/[^.]\.[^.]/.test(hostname))
     throw new VaultError('Enter a full website domain, such as example.com.');
 }
 
@@ -517,8 +504,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       thread_id uuid NOT NULL REFERENCES threads(id), turn_id uuid NOT NULL REFERENCES turns(id), root_turn_id uuid NOT NULL REFERENCES turns(id),
       origin text NOT NULL, label text NOT NULL, kind text NOT NULL, status text NOT NULL DEFAULT 'pending',
       selectors jsonb NOT NULL, inspection jsonb NOT NULL, expires_at timestamptz NOT NULL,
-      resume_pending boolean NOT NULL DEFAULT false, failed_at timestamptz
+      failed_at timestamptz
     );
+    ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS browser_id text;
+    ALTER TABLE credential_requests DROP COLUMN IF EXISTS resume_pending;
     CREATE TABLE IF NOT EXISTS credential_account_selections (
       id text NOT NULL, root_turn_id uuid NOT NULL REFERENCES turns(id), owner_id text NOT NULL, origin text NOT NULL,
       entry_id text, ciphertext text NOT NULL, blocked boolean NOT NULL DEFAULT false, expires_at timestamptz NOT NULL,
@@ -527,14 +516,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     );
     CREATE INDEX IF NOT EXISTS credential_requests_turn ON credential_requests(turn_id);
     ALTER TABLE credential_account_selections ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'identifier';
-    CREATE INDEX IF NOT EXISTS credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
+    DROP INDEX IF EXISTS credential_requests_root_turn;
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
   `);
   const uses = await createVaultUses(pool, owner);
   await pool.query(
     `
-    INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,status)
-      SELECT id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,
+    INSERT INTO vault_uses(id,owner_id,root_turn_id,origin,kind,status)
+      SELECT id,owner_id,root_turn_id,origin,kind,
         CASE WHEN status='filled' THEN 'submitted' ELSE 'uncertain' END
       FROM credential_requests WHERE owner_id=$1 AND status IN ('filled','entering','uncertain') ON CONFLICT DO NOTHING`,
     [owner],
@@ -547,16 +536,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     "UPDATE credential_requests SET status='consumed' WHERE owner_id=$1 AND status IN ('filled','entering','uncertain')",
     [owner],
   );
-  await pool.query(`DO $$ BEGIN
-      IF to_regclass('credential_autofill_attempts') IS NOT NULL THEN
-        INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,item_id,attempt_key,status)
-          SELECT 'legacy:'||md5(a.owner_id||a.root_turn_id||a.origin||a.kind),a.owner_id,u.thread_id,u.id,a.root_turn_id,a.origin,a.kind,a.entry_id,
-            a.root_turn_id||':'||a.origin||':'||a.kind||':'||coalesce(a.entry_id,''),'uncertain'
-          FROM credential_autofill_attempts a JOIN turns u ON u.id=a.root_turn_id AND u.owner_id=a.owner_id ON CONFLICT DO NOTHING;
-        DROP TABLE credential_autofill_attempts;
-      END IF;
-    END $$;
-  `);
   let keyPromise: Promise<Buffer> | undefined;
   const key = () => {
     keyPromise ??= options.keyStore
@@ -575,42 +554,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       });
     return keyPromise;
   };
-  let closed = false;
-  let resuming: Promise<void> | undefined;
-  function resumePending() {
-    if (closed) return Promise.resolve();
-    resuming ??= Promise.resolve()
-      .then(async () => {
-        if (closed) return;
-        await pool.query(`UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
-        WHERE login_label<>'' AND expires_at<=now()`);
-        await pool.query(`UPDATE credential_requests r SET resume_pending=false WHERE r.resume_pending=true
-        AND NOT EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id AND ${waitingTurnSql('u', 'credentials')})`);
-        const { rows } =
-          await pool.query<RequestRow>(`SELECT r.* FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-        WHERE r.resume_pending=true AND ${waitingTurnSql('u', 'credentials')}`);
-        for (const row of rows) {
-          if (closed) break;
-          try {
-            await options.resume(row.turn_id);
-            await pool.query(
-              'UPDATE credential_requests SET resume_pending = false WHERE id = $1',
-              [row.id],
-            );
-          } catch {}
-        }
-      })
-      .finally(() => {
-        resuming = undefined;
-      });
-    return resuming;
-  }
-  const timer = setInterval(() => {
-    void (options.admission ? options.admission.run(resumePending) : resumePending())?.catch(
-      () => {},
-    );
-  }, 5000);
-  timer.unref();
+  const forgetExpiredHolds = () =>
+    pool
+      .query(
+        `UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
+       WHERE owner_id=$1 AND login_label<>'' AND expires_at<=now()`,
+        [owner],
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => logFailure('vault_hold_cleanup', error),
+      );
+  await forgetExpiredHolds();
 
   async function list(ownerId = owner) {
     const { rows } = await pool.query<EntryRow>(
@@ -672,18 +627,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
 
   async function save(ownerId: string, raw: unknown, database?: PoolClient): Promise<VaultEntry> {
     if (!database) {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        const result = await save(ownerId, raw, client);
-        await client.query('COMMIT');
-        return result;
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      return transaction((client) => save(ownerId, raw, client), pool);
     }
     await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
       `otto-vault-items:${ownerId}`,
@@ -754,9 +698,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .strict();
     const credentialKey = await key();
     const result = { imported: 0, existing: 0, skipped: 0 };
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    await transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `otto-vault-items:${owner}`,
       ]);
@@ -808,13 +750,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         );
         result.imported++;
       }
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
     return result;
   }
 
@@ -823,9 +759,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const input = updateInput.parse(raw);
     await ownedEntry(id);
     const credentialKey = await key();
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    return transaction(async (client) => {
       const { rows } = await client.query<EntryRow>(
         'SELECT * FROM vault_entries WHERE id=$1 AND owner_id=$2 FOR UPDATE',
         [id, owner],
@@ -854,14 +788,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           ciphertext,
         ],
       );
-      await client.query('COMMIT');
       return metadata(result.rows[0], input.username);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
   }
 
   async function ownedCard(id: string, client?: PoolClient) {
@@ -929,9 +857,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       throw new VaultError('Otto never keeps security codes here.', 400);
     const id = z.uuid().parse(rawId);
     const credentialKey = await key();
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    return transaction(async (client) => {
       const entry = (
         await client.query<CardRow>(
           'SELECT * FROM vault_cards WHERE id=$1 AND owner_id=$2 FOR UPDATE',
@@ -943,7 +869,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         'code' in change &&
         (entry.do_it_for_me !== true || cardVersion(entry) !== change.version)
       ) {
-        await client.query('COMMIT');
         return cardMetadata(entry);
       }
       const { securityCode: previous, ...secret } = openCard(credentialKey, entry);
@@ -969,14 +894,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           },
           client,
         );
-      await client.query('COMMIT');
       return cardMetadata(rows[0]!);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
   }
 
   const setDoItForMe = (id: string, on: boolean) => changeCardPermission(id, { on });
@@ -1024,9 +943,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       input.cardNumber === undefined ? undefined : normalizedCardNumber(input.cardNumber);
     await ownedCard(id);
     const credentialKey = await key();
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    return transaction(async (client) => {
       const { rows } = await client.query<CardRow>(
         'SELECT * FROM vault_cards WHERE id=$1 AND owner_id=$2 FOR UPDATE',
         [id, owner],
@@ -1064,14 +981,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 : null,
         ],
       );
-      await client.query('COMMIT');
       return cardMetadata(result.rows[0]);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
   }
 
   async function currentTurn(
@@ -1089,14 +1000,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
-    const link = parentTurnSql('u');
     const { rows } = await database.query<{ id: string }>(
-      `WITH RECURSIVE chain(id,next,thread_id) AS (
-         SELECT u.id,${link},u.thread_id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
-         UNION
-         SELECT u.id,${link},u.thread_id FROM chain c
-         JOIN turns u ON u.id=c.next AND u.owner_id=$2 AND u.thread_id=c.thread_id
-       ) SELECT c.id FROM chain c WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
+      `${turnChainSql()} SELECT c.id FROM chain c WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
       [turn.turnId, ownerId, turn.threadId],
     );
     return rows[0]?.id;
@@ -1113,6 +1018,25 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       [rootTurnId, ownerId, origin],
     );
     return result.rows[0];
+  }
+
+  async function automaticUse(
+    database: Pick<PoolClient, 'query'>,
+    rootTurnId: string,
+    origin: string,
+    kind: string,
+    itemId: string | null,
+    since?: number,
+  ) {
+    await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `otto-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`,
+    ]);
+    const { rowCount } = await database.query(
+      `SELECT 1 FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=$3 AND kind=$4
+       AND (item_id IS NULL OR item_id=$5) AND ($6::timestamptz IS NULL OR created_at>=$6) LIMIT 1`,
+      [owner, rootTurnId, origin, kind, itemId, since === undefined ? null : new Date(since)],
+    );
+    return Boolean(rowCount);
   }
 
   async function rememberSelection(
@@ -1224,14 +1148,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   ): Promise<{ url: string }> {
     if (!(await currentTurn(pool, turn, ownerId)))
       throw new VaultError('This task can no longer request credentials.', 409);
-    const { input, inspection } = await inspectRequest(turn.threadId, raw);
+    const { input, inspection } = await inspectRequest(browserOf(turn), raw);
     const token = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(token).digest('hex');
     const expiresAt = Date.now() + 10 * 60_000;
-    await options.hold?.(turn.threadId, expiresAt);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    await forgetExpiredHolds();
+    await options.hold?.(browserOf(turn), expiresAt);
+    await transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `thread:${ownerId}`,
       ]);
@@ -1240,12 +1163,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const root = await rootTurn(client, turn, ownerId);
       if (!root) throw new VaultError('This task can no longer request credentials.', 409);
       await client.query(
-        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending'",
-        [turn.threadId, ownerId],
+        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending' AND COALESCE(browser_id,thread_id::text)=$3",
+        [turn.threadId, ownerId, browserOf(turn)],
       );
       await client.query(
-        `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection,browser_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           randomUUID(),
           hash,
@@ -1259,15 +1182,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           storedSelectors(input),
           new Date(expiresAt),
           JSON.stringify(inspection),
+          browserOf(turn),
         ],
       );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    }, pool);
     return { url: `/vault/${token}` };
   }
 
@@ -1293,6 +1211,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function describe(token: string): Promise<CredentialRequest> {
+    await forgetExpiredHolds();
     const { rows } = await pool.query<RequestRow & { current_step: boolean; expired: boolean }>(
       `SELECT r.*,(SELECT v.status FROM vault_uses v WHERE v.id=r.id AND r.status='consumed') AS operation_status,r.expires_at<=now() AS expired,EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
         AND ${waitingTurnSql('u', 'credentials')}) AS current_step FROM credential_requests r WHERE token_hash=$1 AND owner_id=$2`,
@@ -1308,10 +1227,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const selected = chosen?.kind === 'identifier' ? chosen : undefined;
       const username = await stagedUsername(selected);
       const entries = await pool.query<EntryRow>(
-        `SELECT e.* FROM vault_entries e WHERE e.owner_id=$1 AND e.origin=$2
-         AND NOT EXISTS(SELECT 1 FROM vault_uses a WHERE a.root_turn_id=$3 AND a.owner_id=e.owner_id AND a.origin=e.origin AND a.kind=$4 AND a.item_id=e.id)
-         ORDER BY e.updated_at DESC`,
-        [row.owner_id, row.origin, row.root_turn_id, row.kind],
+        'SELECT e.* FROM vault_entries e WHERE e.owner_id=$1 AND e.origin=$2 ORDER BY e.updated_at DESC',
+        [row.owner_id, row.origin],
       );
       const matches =
         row.kind === 'password' && selected && username === undefined ? [] : entries.rows;
@@ -1373,20 +1290,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     request?: RequestRow,
   ) {
     if (ownerId !== owner) throw new VaultError('This task belongs to another owner.', 409);
-    const { input } = await inspectRequest(turn.threadId, raw);
+    await forgetExpiredHolds();
+    const { input } = await inspectRequest(browserOf(turn), raw);
     const root = request?.root_turn_id ?? (await rootTurn(pool, turn, ownerId));
     if (!root) throw new VaultError('This task can no longer use credentials.', 409);
     const encryptionKey = input.kind === 'otp' ? undefined : await key();
     const use = {
       id: request?.id,
       ownerId,
-      threadId: turn.threadId,
-      turnId: turn.turnId,
       rootTurnId: root,
       origin: input.origin,
       kind: input.kind,
       itemId: undefined as string | undefined,
-      attemptKey: undefined as string | undefined,
     };
     let selected: SelectionRow | undefined;
     let entryId: string | null = null;
@@ -1444,8 +1359,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             ).rowCount
           )
             throw new VaultError('This saved login is no longer available.', 409);
+          if (await automaticUse(client, root, input.origin, 'otp', null, source.enteredAt))
+            return false;
           secret.code = source.code.code;
-          use.attemptKey = `${root}:${input.origin}:otp:${selected?.id ?? root}`;
         } else if (source.kind === 'form') {
           const values = source.values;
           if (
@@ -1489,7 +1405,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             selected &&
             (selected.blocked || !staged || selected.entry_id !== entryId)
           )
-            throw new VaultError('Enter fresh credentials to retry this website.', 409);
+            return false;
           if (entryId) {
             const row = (
               await client.query<EntryRow>(
@@ -1535,25 +1451,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             heldLabel = selected.login_label;
           }
           use.itemId = entryId ?? selected?.id;
-          if (!request) {
-            const recovering =
-              input.kind === 'identifier' && selected?.kind === 'identifier' ? selected : undefined;
-            if (
-              !recovering &&
-              (
-                await client.query(
-                  `SELECT 1 FROM credential_requests r LEFT JOIN vault_uses v ON v.id=r.id AND v.owner_id=r.owner_id
-                   WHERE r.root_turn_id=$1 AND r.owner_id=$2 AND r.origin=$3 AND r.kind=$4
-                   AND r.status IN ('consumed','retried') AND (v.item_id IS NULL OR v.item_id=$5) LIMIT 1`,
-                  [root, ownerId, input.origin, input.kind, entryId],
-                )
-              ).rowCount
-            )
-              throw new VaultError('Enter fresh credentials to retry this website.', 409);
-            use.attemptKey = recovering
-              ? `${root}:${input.origin}:identifier:${recovering.id}`
-              : `${root}:${input.origin}:${input.kind}:${entryId ?? selected?.id ?? ''}`;
-          }
+          if (
+            !request &&
+            !(input.kind === 'identifier' && selected?.kind === 'identifier') &&
+            (await automaticUse(client, root, input.origin, input.kind, use.itemId ?? null))
+          )
+            return false;
         }
         if (request)
           await client.query("UPDATE credential_requests SET status='consumed' WHERE id=$1", [
@@ -1577,7 +1480,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       perform: async () => {
         await options.inject({
           ...input,
-          threadId: turn.threadId,
+          threadId: browserOf(turn),
           ...(input.kind === 'otp'
             ? { code: secret.code }
             : input.kind === 'identifier'
@@ -1590,6 +1493,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         return true;
       },
       complete: async (client) => {
+        if (request)
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+            `thread:${owner}`,
+          ]);
         if (input.kind !== 'otp') {
           if (
             (source.kind === 'form' && (input.kind === 'password' || !heldPassword)) ||
@@ -1629,9 +1536,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             ]);
         }
         if (request) {
-          await client.query('UPDATE credential_requests SET resume_pending=true WHERE id=$1', [
-            request.id,
-          ]);
           await options.onUse?.(
             {
               ...turn,
@@ -1641,10 +1545,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             },
             client,
           );
+          if (
+            (
+              await client.query(
+                `SELECT 1 FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND ${waitingTurnSql('u', 'credentials')}`,
+                [request.turn_id, ownerId],
+              )
+            ).rowCount
+          )
+            await options.resume(request.turn_id, client);
         }
       },
     });
-    if (request) await resumePending();
     return result === true;
   }
 
@@ -1662,7 +1574,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       );
     try {
       await enterLogin(
-        { threadId: row.thread_id, turnId: row.turn_id },
+        { threadId: row.thread_id, turnId: row.turn_id, browserId: row.browser_id ?? undefined },
         row.owner_id,
         row.selectors,
         source,
@@ -1671,7 +1583,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       return { ok: true };
     } catch (error) {
       if (source.kind === 'saved' && error instanceof VaultError && error.statusCode === 404) {
-        const fresh = await inspectRequest(row.thread_id, row.selectors);
+        const fresh = await inspectRequest(row.browser_id ?? row.thread_id, row.selectors);
         const token = randomBytes(32).toString('base64url');
         await uses.transaction(async (client) => {
           if (!(await lockRequest(client, row.token_hash)))
@@ -1690,8 +1602,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             row.id,
           ]);
           await client.query(
-            `INSERT INTO credential_requests(id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            `INSERT INTO credential_requests(id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,expires_at,inspection,browser_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
             [
               randomUUID(),
               tokenHash(token),
@@ -1705,6 +1617,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               storedSelectors(fresh.input),
               row.expires_at,
               JSON.stringify(fresh.inspection),
+              row.browser_id,
             ],
           );
         });
@@ -1764,6 +1677,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function fillSelected(turn: TurnRef, ownerId: string, raw: CredentialInput) {
+    await forgetExpiredHolds();
     const root = await rootTurn(pool, turn, ownerId);
     const selected = root
       ? await selection(root, ownerId, credentialOrigin(raw.origin))
@@ -1788,6 +1702,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     )
       return false;
     try {
+      await forgetExpiredHolds();
       const origin = credentialOrigin(raw.origin);
       const started = await currentTurn(pool, turn, ownerId);
       const root = started ? await rootTurn(pool, turn, ownerId) : undefined;
@@ -1803,17 +1718,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         (selected && selected.expires_at.getTime() <= Date.now())
       )
         return false;
-      const attemptKey = `${root}:${origin}:otp:${selected?.id ?? root}`;
-      if (
-        (
-          await pool.query('SELECT 1 FROM vault_uses WHERE owner_id=$1 AND attempt_key=$2', [
-            ownerId,
-            attemptKey,
-          ])
-        ).rowCount
-      )
-        return false;
-      const fresh = await inspectRequest(turn.threadId, raw);
+      if (await automaticUse(pool, root, origin, 'otp', null, enteredAt)) return false;
+      const fresh = await inspectRequest(browserOf(turn), raw);
       const shown = fresh.input.emailRecipient?.toLowerCase();
       const username = verificationRecipient(
         shown ? (/[*•]/.test(shown) ? { recipientHint: shown } : { recipient: shown }) : {},
@@ -1869,36 +1775,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
-  const icons = new Map<string, { expiresAt: number; icon: Promise<SiteIcon | null> }>();
   function siteIcon(origin: string) {
-    const fetchIcon = options.icon;
-    if (!fetchIcon || localHost(new URL(origin).hostname)) return null;
-    const cached = icons.get(origin);
-    if (cached && cached.expiresAt > Date.now()) return cached.icon;
-    icons.delete(origin);
-    const entry = {
-      expiresAt: Date.now() + 86_400_000,
-      icon: fetchIcon(origin)
-        .catch(() => null)
-        .then((icon) => {
-          if (!icon || icon.bytes.byteLength > 128 * 1024) {
-            entry.expiresAt = Date.now() + 600_000;
-            return null;
-          }
-          return icon;
-        }),
-    };
-    icons.set(origin, entry);
-    while (icons.size > 128) icons.delete(icons.keys().next().value!);
-    return entry.icon;
+    if (!options.icon || loopbackHost(new URL(origin).hostname)) return null;
+    return options.icon(origin);
   }
 
   function registerRoutes(app: FastifyInstance) {
-    app.addHook('onClose', async () => {
-      closed = true;
-      clearInterval(timer);
-      await resuming;
-    });
     app.register(async (scope) => {
       scope.addHook('onSend', async (_request, reply, payload) => {
         reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
@@ -2054,13 +1936,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .send(Buffer.from(icon.bytes));
       });
       scope.delete<{ Params: { id: string } }>('/api/vault/:id', async (request) => {
-        const { rows } = await pool.query<{ origin: string; remaining: boolean }>(
-          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING origin),
-           card AS (DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2)
-           SELECT origin,EXISTS(SELECT 1 FROM vault_entries e WHERE e.owner_id=$2 AND e.origin=login.origin AND e.id<>$1) AS remaining FROM login`,
+        await pool.query(
+          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2)
+           DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2`,
           [z.uuid().parse(request.params.id), owner],
         );
-        for (const row of rows) if (!row.remaining) await options.onForget?.(row.origin);
         return { ok: true };
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>
@@ -2094,7 +1974,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     fillSelected,
     fillEmailCode,
     submitChatCode,
-    resumePending,
+    forgetExpiredHolds,
     paymentCards,
     paymentCard,
     setDoItForMe,

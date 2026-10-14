@@ -27,6 +27,7 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
   const socketDir = resolve(options.dataRoot, 'fixture-sockets');
   return createAgentBrowserComputer({
     ...computerOptions,
+    headless: true,
     run: async (executable, args, input) => {
       const session = args[args.indexOf('--session') + 1];
       if (args.includes('info')) {

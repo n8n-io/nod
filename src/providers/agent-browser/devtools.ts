@@ -78,7 +78,7 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
 
 export async function openDevtools(url: string, targetId: string, signal?: AbortSignal) {
   const address = new URL(url);
-  if (address.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname))
+  if (address.protocol !== 'ws:' || !['localhost', '127.0.0.1', '[::1]'].includes(address.hostname))
     throw new Error('The browser inspector must be local.');
   signal?.throwIfAborted();
   const socket = new WebSocket(url);
@@ -356,6 +356,15 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     },
     async blur() {
       await everyFrame(blurScript);
+    },
+    async holding() {
+      return (
+        await everyFrame(
+          `[...(globalThis.__ottoPrivateFields ?? [])].some(node => node.isConnected && (node.value || (node.isContentEditable && node.textContent)))`,
+          undefined,
+          true,
+        )
+      ).some((item) => item.value === true);
     },
     async mask(on: boolean, secrets: string[] = [], allFields = true, snapshot = false) {
       await everyFrame(

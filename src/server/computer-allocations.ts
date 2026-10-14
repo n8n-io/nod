@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { transaction } from './transaction.ts';
 import type {
   ComputerAllocation,
   ComputerAllocationRole,
@@ -102,10 +103,8 @@ export function createComputerAllocationStore(options: {
 
   return {
     initialize: () =>
-      protect(async () => {
-        const client = await options.database.connect();
-        try {
-          await client.query('BEGIN');
+      protect(() =>
+        transaction(async (client) => {
           await client.query(
             "SELECT pg_advisory_xact_lock(hashtextextended('otto:computer-allocations:'||current_schema(),0))",
           );
@@ -126,14 +125,8 @@ export function createComputerAllocationStore(options: {
           CHECK (state<>'ready' OR resource_id IS NOT NULL)
         )`);
           await client.query('REVOKE ALL ON TABLE computer_allocations FROM PUBLIC');
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => {});
-          throw error;
-        } finally {
-          client.release();
-        }
-      }),
+        }, options.database),
+      ),
     read: (owner, role) =>
       protect(async () => {
         identity(owner, role);
