@@ -13,7 +13,7 @@ When Otto starts a task, it answers your message with a short "On it" message. T
 
 To answer a task or add to it, reply to any of its messages. Your reply goes to that task, not the chat. While the task works, it reads your reply before its next step, as the chat does with a follow-up. A reply with files waits and runs next. A reply to a done, stopped or failed task opens it again in a new browser: your saved logins and saved browser sessions still work, but the pages it had open are gone. When Otto sees that a message without a reply belongs to a task, it moves your message to that task word for word.
 
-Up to three tasks work at the same time. When three are working, a new task waits as **Queued** until one of them finishes or stops to ask you something. So does a task you answer or open again while three others work. A task that waits for your answer doesn't take a place, and the chat and your schedules never wait for tasks.
+Up to three tasks work at the same time. When three are working, a new task waits as **Queued** until one of them finishes or stops to ask you something. So does a task you answer or open again while three others work. A task that waits for your answer or for someone else doesn't take a place, and the chat and your schedules never wait for tasks.
 
 ## Answer a task's question
 
@@ -23,6 +23,17 @@ To answer a task's confirmation, reply yes or no to the confirmation or to any o
 - A message you send without a reply never cancels a task's question.
 - A task's confirmation stays open for 24 hours. A yes after that gets a short reply that the question expired, and nothing runs. Reply to the task again to pick it up.
 - When a task finishes or stops, its open confirmations close without running.
+
+## When a task waits for someone else
+
+Some work waits for other people, such as a reply to an email Otto sent for you. The task then shows **Waiting**, with who it's waiting on, how they'll answer and when it checks next.
+
+- At the next check, the task looks again and carries on. If nobody has answered, it plans another check, at least 15 minutes and at most 30 days ahead.
+- After 24 checks without a message from you, the task stops checking and gives you its result.
+- To wake it sooner, reply to any of its messages. Your reply replaces the planned check and runs without waiting for its time, as soon as one of three places is free.
+- A new email or app event doesn't wake a waiting task. Only the planned check or your reply does.
+
+A planned check belongs to its task. It isn't a schedule, so it doesn't show in **Tasks → Scheduled**.
 
 ## Stop a task
 
@@ -50,24 +61,27 @@ Otto deletes a task's browser when the task closes, and its transcript, its reco
 
 ## What a card shows
 
-| Part     | What it tells you                                           |
-| -------- | ----------------------------------------------------------- |
-| Title    | The task in a few words                                     |
-| Status   | Where the task stands, such as **Working** or **Needs you** |
-| Now line | What Otto is doing, the question it asked you or the result |
+| Part           | What it tells you                                           |
+| -------------- | ----------------------------------------------------------- |
+| Title          | The task in a few words                                     |
+| Status         | Where the task stands, such as **Working** or **Needs you** |
+| Now line       | What Otto is doing, the question it asked you or the result |
+| **Waiting on** | Who a waiting task waits for, and how, such as an email     |
+| **Next check** | When a waiting task looks again                             |
 
 A done task has **Schedule task**, which turns the same work into a [schedule](/use/schedules/). The draft starts from your message that started the task and your later replies to that task. It never takes words from the chat or from other tasks. Cards from before tasks had an "On it" message don't have it.
 
 ## Statuses
 
-| Status        | Meaning                                  |
-| ------------- | ---------------------------------------- |
-| **Queued**    | Waiting for one of three places to free. |
-| **Working**   | Otto is on it right now.                 |
-| **Needs you** | Otto asked you something. Reply to it.   |
-| **Done**      | Finished, with the result on the card.   |
-| **Stopped**   | Closed before it finished.               |
-| **Failed**    | An error or a restart ended it.          |
+| Status        | Meaning                                                   |
+| ------------- | --------------------------------------------------------- |
+| **Queued**    | Waiting for one of three places to free.                  |
+| **Working**   | Otto is on it right now.                                  |
+| **Needs you** | Otto asked you something. Reply to it.                    |
+| **Waiting**   | Otto is waiting for someone else and has a check planned. |
+| **Done**      | Finished, with the result on the card.                    |
+| **Stopped**   | Closed before it finished.                                |
+| **Failed**    | An error or a restart ended it.                           |
 
 ```mermaid
 stateDiagram-v2
@@ -78,6 +92,8 @@ stateDiagram-v2
   Working --> needs: question
   needs --> Working: you answer
   needs --> Queued: you answer while three work
+  Working --> Waiting: waits for someone
+  Waiting --> Queued: next check or your reply
   Working --> Done
   Working --> Stopped
   Working --> Failed

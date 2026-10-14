@@ -25,9 +25,9 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | `schedule` | A schedule firing                                                                          | A new session                                          |
 | `event`    | A connected-app event, a reaction to an Otto message, or an internal check                 | A new session                                          |
 | `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                                 |
-| `task`     | The chat starting a task with `start_task`                                                 | The task's session                                     |
+| `task`     | The chat starting a task with `start_task`, or a task's planned check                      | The task's session                                     |
 
-Creating a turn also queues a `thread-drain` job in the same transaction.
+Creating a turn also queues a `thread-drain` job in the same transaction. A turn with `not_before` set, such as a task's planned check, stays queued until that time, and its drain job starts then.
 
 ## How the worker starts turns
 
@@ -44,7 +44,7 @@ flowchart TD
 
 The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns without waiting for them. When a turn finishes, it queues the next drain.
 
-At most three task sessions have a running turn at once. The worker counts them while it holds the thread lock, so two tasks started at the same moment can't both take the third place. A task that waits for you doesn't count, and neither do the chat, schedule fires or events, which the limit never holds back.
+At most three task sessions have a running turn at once. The worker counts them while it holds the thread lock, so two tasks started at the same moment can't both take the third place. A task that waits for you or for other people doesn't count, and neither do the chat, schedule fires or events, which the limit never holds back.
 
 ## Turn status
 
@@ -111,6 +111,7 @@ The Tasks page reads each task's status from its row and the turns of its sessio
 - **Working** while one of its turns runs.
 - **Queued** while its latest turn waits for a free place, as a new task does while three other tasks run. A resume after your answer waits the same way.
 - **Needs you** while its latest turn waits for you.
+- **Waiting** while it waits for other people until its planned check. Once the check is due, it shows **Queued** until the check starts.
 
 Stop and reset close the task's row as **Stopped**, and a failed turn closes it as **Failed**. See [Stop and failures](#stop-and-failures).
 
@@ -123,7 +124,7 @@ A task turn runs in task mode, which replaces the rules of a background session:
 - **Prompt.** It names the task and carries your message that started it. The turn works only on that task, not on chat requests or other tasks.
 - **Replies.** Every message the turn posts replies to the task's "On it" message: questions, the trust check's confirmations, secure-form and payment links, audio and files. A file shared with `share_file` goes out with the turn's next message, usually the result.
 - **Result.** The turn's final text is the result, posted as a reply to "On it". The task row keeps the result's message ID, and the task closes as **Done** when the turn finishes. Closing declines the task's open confirmations, so none of them can run later.
-- **Progress.** `task_progress {steps?, current?, now?, stop?}` changes the task's steps, current step and status line, and sends nothing. The server finds the task from the turn's session, so a task can only change its own row. `stop` closes the task as **Stopped**, declines its open confirmations and posts its note as a reply to "On it". The task's prompt allows it only when you ask that task to stop.
+- **Progress.** `task_progress {steps?, current?, now?, waitingFor?, nextCheck?, stop?}` changes the task's steps, current step and status line, and sends nothing. The server finds the task from the turn's session, so a task can only change its own row. `stop` closes the task as **Stopped**, declines its open confirmations and posts its note as a reply to "On it". The task's prompt allows it only when you ask that task to stop. `waitingFor` with `nextCheck` sets the task to wait for other people. See [Waiting for other people](#waiting-for-other-people).
 - **Tools.** A task turn has no `send_message` or `start_task`. Its subagents also lose `task_progress` and can't hand their browser to you.
 - **Context.** The turn sees your message that started the task and the messages of the task's own session. It never sees the chat's later messages or another task's, and it doesn't get the count of messages you haven't answered.
 
@@ -135,12 +136,30 @@ An hourly job deletes a closed task's saved Pi session and its browser profile 3
 
 The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its ID, title, status and the ID of its "On it" message, so Otto knows what's running. The list is in the turn message, not the system prompt, so a status change doesn't change the chat's prompt.
 
+### Waiting for other people
+
+When a task waits for someone else, such as a reply to an email it sent, it calls `task_progress {waitingFor: [{who, via}], nextCheck}`. In one transaction, the server locks the thread, then the turn:
+
+1. It sets the task to `waiting` and saves who it waits for and the next check time.
+2. It deletes the task's earlier planned check, if one is still queued.
+3. It queues the planned check: a `task` turn in the task's session with `source_id` `task-check:<taskId>:<nextCheck>` and `not_before` set to `nextCheck`. The same task and time always give the same turn. Its drain job starts at `nextCheck`.
+
+Then the turn ends without a result, and the task's browser closes. A waiting task doesn't hold a saved browser session, so another session can use it. At `nextCheck`, the planned check runs in the task's session and continues its saved Pi session. It's checked against the task's own words, like every task turn. It can plan another check or give the result.
+
+The trust check doesn't review a planned check, so the server bounds them:
+
+- `nextCheck` must be 15 minutes to 30 days from now.
+- After 24 planned checks have run since your last message to the task, the task can't plan another one and must give its result. Your next reply starts a new count.
+
+Your reply to a waiting task doesn't wait for the check time: the server deletes the planned check in the same transaction that queues your reply. A reply that arrives while the task's turn still runs, before it plans its check, deletes the check when the reply starts. **Stop** cancels the planned check with the task. An email or app event doesn't wake a waiting task yet. A planned check is never a schedule, so it doesn't appear in the schedule list or its history.
+
 ### Replies to a task
 
 Your reply to any message of a task goes to that task: its "On it" message, a question, a link or its result. The server finds the task from the message you replied to while it saves your message, and queues a `user` turn in the task's session. Every turn in a task's session is a background turn on the task's channel, so the task's answer goes where the task replies. A message without a reply target, or a reply to a chat message, stays in the chat.
 
 - **While the task works.** The running turn takes your reply at its next step, as the chat takes a follow-up. See [Messages you send while Otto works](#messages-you-send-while-otto-works). A reply with attachments, or one that arrives after the turn's last step, waits behind the running turn and runs after it. The task stays open until your reply has run. If the running turn stops the task first, your reply opens it again when it starts.
 - **While the task waits for you.** Your reply starts the task's next turn. A yes or no that replies to the confirmation, or to any other message of a task with one open confirmation, answers it and queues a `resume` turn in the task's session. Any other reply cancels the task's open confirmations. A confirmation the task asks while an earlier reply of yours waits is cancelled too, and your yes or no to it reaches the task as an ordinary reply. So an action you were asked about can't run twice.
+- **While the task waits for other people.** Your reply runs in place of the planned check, without waiting for its time.
 - **After the task closed.** A reply to a done, stopped or failed task opens it again as **Queued**, in the same session. Within 30 days of closing, it also continues the same saved Pi session. It runs when fewer than three other tasks work.
 
 ### Answers to a task's confirmation
@@ -236,7 +255,7 @@ A task ID that belongs to another owner or an earlier thread returns `404`. A ta
 
 Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
 
-A task turn that fails closes the task as **Failed** in the same transaction. It declines the task's open confirmations and posts a short note as a reply to the task's "On it" message, so you hear about it on Telegram and WhatsApp too. Otto deletes the task's browser before the turn ends. Nothing reruns. Your reply opens the task again. If a reply of yours already waits in the task's session, the task stays open and runs it next, with the note in its first instruction. Schedule and event sessions fail silently.
+A task turn that fails closes the task as **Failed** in the same transaction, also when it already set the task to wait for other people. It deletes the task's planned check, declines the task's open confirmations and posts a short note as a reply to the task's "On it" message, so you hear about it on Telegram and WhatsApp too. Otto deletes the task's browser before the turn ends. Nothing reruns. Your reply opens the task again. If a reply of yours already waits in the task's session, the task stays open and runs it next, with the note in its first instruction. Schedule and event sessions fail silently.
 
 When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model. A task's note is that notice.
 

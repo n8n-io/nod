@@ -16,7 +16,7 @@ Ask in chat. For example:
 - "Every weekday at 8:00, summarize my calendar and anything urgent in my inbox."
 - "Tomorrow at 15:00, remind me to call the landlord."
 
-A schedule runs **One time** or is **Recurring**. Otto tells you when it's saved and when it runs next. When you hand Otto work that needs follow-up, it can also plan its own check-in, such as "I'll look for a reply on Friday". Check-ins are schedules too.
+A schedule runs **One time** or is **Recurring**. Otto tells you when it's saved and when it runs next. When you hand Otto work that needs follow-up, it can also plan its own check-in, such as "I'll look for a reply on Friday". Check-ins are schedules too, except for a [task](/use/tasks/#when-a-task-waits-for-someone-else) that waits for someone: its planned check belongs to the task and doesn't show in **Tasks → Scheduled**.
 
 Otto uses your time zone, saved from your browser the first time you use Otto. Change it in **Settings → Preferences**. If Otto doesn't know your time zone, it asks.
 

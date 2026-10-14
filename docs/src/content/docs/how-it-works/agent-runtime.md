@@ -62,7 +62,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `manage_personal_context`                                           | Profile, schedules, notification preferences, memory, history and usage.                            |
 | `start_task`                                                        | Hands long work to a task in its own session. Only chat turns get it, with `OTTO_TASKS` on.         |
 | `route_to_task`                                                     | Moves your current message, word for word, into an open task. Only chat turns get it.               |
-| `task_progress`                                                     | Changes the task's own steps and status line, or stops the task. Only task turns get it.            |
+| `task_progress`                                                     | Changes a task's own steps and status line, plans its next check or stops it. Task turns only.      |
 | `share_file`                                                        | Sends a workspace file to you.                                                                      |
 | `create_audio`                                                      | Turns text into speech and sends it to you.                                                         |
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                 |

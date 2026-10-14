@@ -58,6 +58,7 @@ export interface EnqueueTurnOptions {
   background?: boolean;
   sessionId?: string;
   readOnly?: boolean;
+  notBefore?: Date;
   client?: PoolClient;
 }
 export interface SubmitUserMessageOptions {
@@ -195,8 +196,10 @@ const messageIdInUse = () =>
 export async function withTurnLock<T>(
   turnId: string,
   operation: (client: PoolClient) => Promise<T>,
+  threadFirst = false,
 ) {
   return transaction(async (client) => {
+    if (threadFirst) await lockThread(client);
     const { rows } = await client.query(
       `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL FOR NO KEY UPDATE OF u`,
@@ -207,7 +210,7 @@ export async function withTurnLock<T>(
   });
 }
 
-async function sendDrain(client: PoolClient | undefined, threadId: string) {
+async function sendDrain(client: PoolClient | undefined, threadId: string, startAfter?: Date) {
   await boss.send(
     queue,
     { threadId },
@@ -215,6 +218,7 @@ async function sendDrain(client: PoolClient | undefined, threadId: string) {
       ...(client
         ? { db: { executeSql: (sql: string, values: unknown[]) => client.query(sql, values) } }
         : {}),
+      ...(startAfter ? { startAfter } : {}),
       retryLimit: 0,
       expireInSeconds: 86400,
     },
@@ -304,8 +308,8 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
       throw new Error('A foreground turn runs only in the chat session.');
     const id = randomUUID();
     const inserted = await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id,session_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id,session_id,not_before)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (owner_id,source_id) WHERE source_id IS NOT NULL DO NOTHING RETURNING id`,
       [
         id,
@@ -319,6 +323,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.readOnly ?? false,
         options.channelSourceId ?? null,
         options.sessionId ?? null,
+        options.notBefore ?? null,
       ],
     );
     if (!inserted.rowCount)
@@ -328,7 +333,7 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
           options.sourceId,
         ])
       ).rows[0].id as string;
-    await sendDrain(client, thread.id);
+    await sendDrain(client, thread.id, options.notBefore);
     return id;
   };
   const turnId = options.client ? await create(options.client) : await transaction(create);
@@ -380,9 +385,17 @@ export async function insertUserTurn(
       [task.id, ownerId],
     );
     await endSessionApprovals(client, [task.id]);
+    await cancelPlannedChecks(client, [task.id]);
   }
   await sendDrain(client, threadId);
   return id;
+}
+
+export async function cancelPlannedChecks(client: PoolClient, sessionIds: string[]) {
+  await client.query(
+    "DELETE FROM turns WHERE owner_id=$1 AND session_id=ANY($2::uuid[]) AND status='queued' AND not_before IS NOT NULL",
+    [ownerId, sessionIds],
+  );
 }
 
 export async function endSessionApprovals(
@@ -530,7 +543,9 @@ export async function submitUserMessage(
 
 async function cancelTurns(client: PoolClient, threadId: string, sessionId: string | null = null) {
   const current = await client.query(
-    `UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2
+    `UPDATE turns SET status='cancelled',finished_at=now(),
+       source_id=CASE WHEN not_before IS NULL THEN source_id END
+     WHERE thread_id=$1 AND owner_id=$2
        AND status IN ('queued','running','waiting') AND ($3::uuid IS NULL OR session_id=$3)
      RETURNING id,session_id`,
     [threadId, ownerId, sessionId],
@@ -848,15 +863,16 @@ async function failTask(client: PoolClient, turnId: string, note: string) {
       continues: boolean;
     }>(
       `SELECT t.id,t.thread_id,t.on_it_message_id,EXISTS (SELECT 1 FROM turns q
-         WHERE q.owner_id=t.owner_id AND q.session_id=t.id AND q.status='queued') AS continues
+         WHERE q.owner_id=t.owner_id AND q.session_id=t.id AND q.status='queued' AND q.not_before IS NULL) AS continues
        FROM turns u JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2 AND t.on_it_message_id IS NOT NULL
-         AND t.state IN ('queued','open')
+         AND t.state IN ('queued','open','waiting')
        FOR NO KEY UPDATE OF t`,
       [turnId, ownerId],
     )
   ).rows[0];
   if (!task) return;
+  await cancelPlannedChecks(client, [task.id]);
   if (!task.continues) {
     await client.query(
       "UPDATE tasks SET state='failed',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2",
@@ -941,6 +957,7 @@ async function claimTurns(threadId: string) {
       `SELECT u.*,${taskSessionSql()} AS task_session,EXISTS (SELECT 1 FROM turns p
          WHERE p.owner_id=u.owner_id AND p.session_id=u.session_id AND p.created_at<u.created_at) AS continued
        FROM turns u WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status='queued'
+         AND (u.not_before IS NULL OR u.not_before<=now())
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [threadId, ownerId],
     );
@@ -963,7 +980,10 @@ async function claimTurns(threadId: string) {
       [ownerId, taskTurns.map((row) => row.session_id)],
     );
     const replies = taskTurns.filter((row) => row.source === 'user').map((row) => row.session_id);
-    if (replies.length) await endSessionApprovals(client, replies);
+    if (replies.length) {
+      await endSessionApprovals(client, replies);
+      await cancelPlannedChecks(client, replies);
+    }
     return claimed;
   });
 }

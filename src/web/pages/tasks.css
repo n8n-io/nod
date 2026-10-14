@@ -77,6 +77,21 @@
   background: var(--error-soft);
   color: var(--error);
 }
+.task-facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+  line-height: 1.6;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.task-facts > li > span {
+  margin-right: 8px;
+  color: var(--muted-foreground);
+}
 .task-now {
   display: -webkit-box;
   overflow: hidden;

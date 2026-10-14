@@ -31,7 +31,7 @@ test(
         'CREATE TABLE threads (id uuid PRIMARY KEY,owner_id text,status text,archived_at timestamptz)',
       );
       await pool.query(
-        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,background boolean NOT NULL DEFAULT false,started_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)',
+        'CREATE TABLE turns (id uuid PRIMARY KEY,owner_id text,thread_id uuid,status text,background boolean NOT NULL DEFAULT false,started_at timestamptz,not_before timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)',
       );
       const first = { threadId: randomUUID(), turnId: randomUUID() };
       const second = { threadId: randomUUID(), turnId: randomUUID() };
@@ -157,6 +157,11 @@ test(
         { status: 'rejected', code: 'browser_connection_unavailable' },
       );
       await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [first.turnId]);
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,thread_id,status,not_before)
+         VALUES($1,'owner-a',$2,'queued',now()+interval '1 hour')`,
+        [randomUUID(), first.threadId],
+      );
       const priorBindings = bindings.length;
       cancelTurnId = second.turnId;
       await assert.rejects(

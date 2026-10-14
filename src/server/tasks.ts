@@ -6,6 +6,7 @@ import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
   boss,
+  cancelPlannedChecks,
   endSessionApprovals,
   enqueueTurn,
   insertAssistantMessage,
@@ -31,15 +32,33 @@ const dispatchInput = z
   })
   .strict();
 const routeInput = z.object({ taskId: z.uuid() }).strict();
+const waits = z
+  .array(
+    z
+      .object({ who: z.string().trim().min(1).max(80), via: z.string().trim().min(1).max(40) })
+      .strict(),
+  )
+  .min(1)
+  .max(10);
 const progressInput = z
   .object({
     steps: z.array(z.string().trim().min(1).max(120)).min(2).max(8).optional(),
     current: z.number().int().min(1).max(8).optional(),
     now: z.string().trim().max(200).optional(),
+    waitingFor: waits.optional(),
+    nextCheck: z.iso.datetime({ offset: true }).optional(),
     stop: z.string().trim().min(1).max(500).optional(),
   })
   .strict()
-  .refine((input) => Object.keys(input).length > 0, 'Give steps, current, now or stop.');
+  .refine((input) => Object.keys(input).length > 0, 'Give steps, current, now, waitingFor or stop.')
+  .refine(
+    (input) => !input.waitingFor === !input.nextCheck && !(input.nextCheck && input.stop),
+    'Give waitingFor and nextCheck together, and never with stop.',
+  );
+const minute = 60_000;
+const maxChecks = 24;
+const checkPrompt =
+  "Planned check. See whether the people this task waits for have answered, then continue the task. If they haven't, plan the next check with task_progress, or give the result when waiting no longer helps.";
 
 type Row = {
   id: string;
@@ -47,7 +66,10 @@ type Row = {
   on_it_message_id: string | null;
   now_text: string;
   result: string;
-  state: 'queued' | 'open' | 'done' | 'stopped' | 'failed';
+  state: 'queued' | 'open' | 'waiting' | 'done' | 'stopped' | 'failed';
+  waiting_for: Task['waitingFor'];
+  next_check: Date | null;
+  due: boolean | null;
   running: boolean;
   turn_status: string | null;
   turn_finished_at: Date | null;
@@ -69,6 +91,7 @@ function failure(message: string, statusCode = 400) {
 }
 
 function status(row: Row): TaskStatus {
+  if (row.state === 'waiting') return row.due ? 'queued' : 'waiting';
   if (row.state !== 'queued' && row.state !== 'open') return row.state;
   if (row.running) return 'working';
   return latest[row.turn_status ?? ''] ?? (row.state === 'queued' ? 'queued' : 'working');
@@ -90,7 +113,7 @@ export function createTasks(options: {
     return (
       await pool.query<Row>(
         `SELECT t.id,t.title,t.on_it_message_id,t.now_text,COALESCE(NULLIF(t.result,''),left(r.text,600),'') AS result,
-           t.state,t.created_at,t.updated_at,t.closed_at,l.status AS turn_status,
+           t.state,t.waiting_for,t.next_check,t.next_check<=now() AS due,t.created_at,t.updated_at,t.closed_at,l.status AS turn_status,
            l.finished_at AS turn_finished_at,EXISTS (SELECT 1 FROM turns w WHERE w.owner_id=t.owner_id
              AND w.session_id=t.id AND w.status='running') AS running,
            CASE WHEN l.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
@@ -101,7 +124,7 @@ export function createTasks(options: {
          LEFT JOIN LATERAL (SELECT u.id,u.status,u.finished_at FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.id
            AND ${untakenTurnSql('u')} ORDER BY u.created_at DESC,u.id DESC LIMIT 1) l ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.thread_id=$2)
-           AND (NOT $3::boolean OR t.state IN ('queued','open'))
+           AND (NOT $3::boolean OR t.state IN ('queued','open','waiting'))
          ORDER BY t.closed_at IS NULL DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
         [ownerId, threadId, openOnly],
       )
@@ -135,6 +158,8 @@ export function createTasks(options: {
         result: row.result,
         status: value,
         question: value === 'needs_you' ? row.question : null,
+        waitingFor: value === 'waiting' ? row.waiting_for : [],
+        nextCheck: value === 'waiting' ? (row.next_check?.toISOString() ?? null) : null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
         closedAt:
@@ -308,44 +333,92 @@ export function createTasks(options: {
 
   async function progress(turn: TurnRef, raw: unknown) {
     const input = progressInput.parse(raw);
-    const result = await withTurnLock(turn.turnId, async (client) => {
-      const task = (
-        await client.query<{ id: string; steps: string[]; step_index: number; on_it: string }>(
-          `SELECT t.id,t.steps,t.step_index,t.on_it_message_id AS on_it FROM turns u
+    const check = input.nextCheck ? new Date(input.nextCheck) : undefined;
+    const lead = check ? check.getTime() - Date.now() : 0;
+    if (check && (lead < 15 * minute || lead > 30 * 1440 * minute))
+      throw failure('nextCheck must be 15 minutes to 30 days from now.');
+    const result = await withTurnLock(
+      turn.turnId,
+      async (client) => {
+        const task = (
+          await client.query<{
+            id: string;
+            steps: string[];
+            step_index: number;
+            on_it: string;
+            channel: string | null;
+            channel_source_id: string | null;
+          }>(
+            `SELECT t.id,t.steps,t.step_index,t.on_it_message_id AS on_it,t.channel,t.channel_source_id FROM turns u
            JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
            WHERE u.id=$1 AND u.owner_id=$2 AND t.state='open' FOR NO KEY UPDATE OF t`,
-          [turn.turnId, ownerId],
+            [turn.turnId, ownerId],
+          )
+        ).rows[0];
+        if (!task) throw failure('Only an open task can change its progress.', 409);
+        const steps = input.steps ?? task.steps;
+        if (input.current !== undefined && input.current > steps.length)
+          throw failure(
+            steps.length
+              ? `current must be a step number from 1 to ${steps.length}.`
+              : 'Set steps before current.',
+          );
+        if (
+          check &&
+          (
+            await client.query<{ checks: number }>(
+              `SELECT count(*)::int AS checks FROM turns q WHERE q.owner_id=$1 AND q.session_id=$2
+                 AND q.not_before IS NOT NULL AND q.started_at IS NOT NULL
+                 AND q.created_at>COALESCE((SELECT max(r.created_at) FROM turns r
+                   WHERE r.owner_id=$1 AND r.session_id=$2 AND r.source='user'),'-infinity')`,
+              [ownerId, task.id],
+            )
+          ).rows[0]!.checks >= maxChecks
         )
-      ).rows[0];
-      if (!task) throw failure('Only an open task can change its progress.', 409);
-      const steps = input.steps ?? task.steps;
-      if (input.current !== undefined && input.current > steps.length)
-        throw failure(
-          steps.length
-            ? `current must be a step number from 1 to ${steps.length}.`
-            : 'Set steps before current.',
-        );
-      await client.query(
-        `UPDATE tasks SET steps=$2,step_index=$3,now_text=COALESCE($4,now_text),
-           state=CASE WHEN $5 THEN 'stopped' ELSE state END,
+          throw failure(
+            `This task ran ${maxChecks} planned checks since the user last wrote to it. Give the result now.`,
+            409,
+          );
+        await client.query(
+          `UPDATE tasks SET steps=$2,step_index=$3,now_text=COALESCE($4,now_text),
+           state=CASE WHEN $5 THEN 'stopped' WHEN $7::timestamptz IS NOT NULL THEN 'waiting' ELSE state END,
+           waiting_for=COALESCE($8::jsonb,waiting_for),next_check=COALESCE($7,next_check),
            closed_at=CASE WHEN $5 THEN now() ELSE closed_at END,updated_at=now()
          WHERE id=$1 AND owner_id=$6`,
-        [
-          task.id,
-          JSON.stringify(steps),
-          input.current === undefined
-            ? Math.max(0, Math.min(task.step_index, steps.length - 1))
-            : input.current - 1,
-          input.now ?? null,
-          input.stop !== undefined,
-          ownerId,
-        ],
-      );
-      if (input.stop === undefined) return 'Progress saved.';
-      await endSessionApprovals(client, [task.id], 'declined');
-      await insertAssistantMessage(client, turn, input.stop, [], undefined, task.on_it);
-      return 'The task is stopped. End now without a final message.';
-    });
+          [
+            task.id,
+            JSON.stringify(steps),
+            input.current === undefined
+              ? Math.max(0, Math.min(task.step_index, steps.length - 1))
+              : input.current - 1,
+            input.now ?? null,
+            input.stop !== undefined,
+            ownerId,
+            check ?? null,
+            input.waitingFor ? JSON.stringify(input.waitingFor) : null,
+          ],
+        );
+        if (check) {
+          await cancelPlannedChecks(client, [task.id]);
+          await enqueueTurn(checkPrompt, {
+            source: 'task',
+            sourceId: `task-check:${task.id}:${check.toISOString()}`,
+            background: true,
+            sessionId: task.id,
+            channel: task.channel ?? undefined,
+            channelSourceId: task.channel_source_id,
+            notBefore: check,
+            client,
+          });
+          return 'The task waits now. It continues in this session at nextCheck, or sooner when the user replies to it. End now without a final message.';
+        }
+        if (input.stop === undefined) return 'Progress saved.';
+        await endSessionApprovals(client, [task.id], 'declined');
+        await insertAssistantMessage(client, turn, input.stop, [], undefined, task.on_it);
+        return 'The task is stopped. End now without a final message.';
+      },
+      check !== undefined,
+    );
     refresh();
     return result;
   }
@@ -355,7 +428,7 @@ export function createTasks(options: {
       CREATE TABLE IF NOT EXISTS tasks (
         id uuid PRIMARY KEY, owner_id text NOT NULL, title text NOT NULL, now_text text NOT NULL DEFAULT '',
         state text NOT NULL DEFAULT 'open'
-          CONSTRAINT tasks_state_check CHECK (state IN ('queued','open','done','stopped','failed')),
+          CONSTRAINT tasks_state_check CHECK (state IN ('queued','open','waiting','done','stopped','failed')),
         result text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz
       );
@@ -382,10 +455,17 @@ export function createTasks(options: {
             WHERE state='open' AND on_it_message_id IS NULL;
           ALTER TABLE tasks DROP COLUMN IF EXISTS auto, DROP COLUMN IF EXISTS turn_id,
             DROP COLUMN IF EXISTS done_when, DROP COLUMN IF EXISTS waiting_for,
-            DROP COLUMN IF EXISTS next_check, ALTER COLUMN now_text SET DEFAULT '',
-            ADD CONSTRAINT tasks_state_check CHECK (state IN ('queued','open','done','stopped','failed'));
+            DROP COLUMN IF EXISTS next_check, ALTER COLUMN now_text SET DEFAULT '';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='tasks'::regclass
+          AND conname='tasks_state_check' AND pg_get_constraintdef(oid) LIKE '%''waiting''%') THEN
+          ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_state_check,
+            ADD CONSTRAINT tasks_state_check
+              CHECK (state IN ('queued','open','waiting','done','stopped','failed'));
         END IF;
       END $$;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS waiting_for jsonb NOT NULL DEFAULT '[]',
+        ADD COLUMN IF NOT EXISTS next_check timestamptz;
       ALTER TABLE turns DROP COLUMN IF EXISTS task_id;
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       CREATE INDEX IF NOT EXISTS tasks_on_it ON tasks(on_it_message_id);

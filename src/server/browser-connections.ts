@@ -277,6 +277,7 @@ export async function createBrowserConnections(
     const latest = await pool.query<{ status: string }>(
       `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
        WHERE u.session_id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL AND ${untakenTurnSql('u')}
+         AND (u.not_before IS NULL OR u.not_before<=now())
        ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
       [browserId, options.ownerId],
     );

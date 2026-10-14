@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import {
+  CalendarClock,
   ChevronDown,
   CircleAlert,
   CircleCheck,
@@ -22,6 +23,7 @@ const labels: Record<TaskStatus, string> = {
   queued: 'Queued',
   working: 'Working',
   needs_you: 'Needs you',
+  waiting: 'Waiting',
   done: 'Done',
   stopped: 'Stopped',
   failed: 'Failed',
@@ -30,11 +32,12 @@ const icons = {
   queued: Hourglass,
   working: LoaderCircle,
   needs_you: MessageCircle,
+  waiting: CalendarClock,
   done: CircleCheck,
   stopped: CircleSlash,
   failed: CircleAlert,
 };
-const order: TaskStatus[] = ['needs_you', 'working', 'queued'];
+const order: TaskStatus[] = ['needs_you', 'working', 'waiting', 'queued'];
 const views = ['current', 'scheduled', 'previous'] as const;
 const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
 const closed = (task: Task) => !order.includes(task.status);
@@ -72,6 +75,22 @@ export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): vo
         </span>
       </p>
       <p className="task-now">{headline(task)}</p>
+      {task.status === 'waiting' && (
+        <ul className="task-facts">
+          {task.waitingFor.map((wait) => (
+            <li key={`${wait.who}:${wait.via}`}>
+              <span>Waiting on</span>
+              {wait.who} · {wait.via}
+            </li>
+          ))}
+          {task.nextCheck && (
+            <li>
+              <span>Next check</span>
+              {formatDateTime(task.nextCheck, format, { weekday: true })}
+            </li>
+          )}
+        </ul>
+      )}
       {task.status === 'done' && task.onItMessageId !== null && (
         <ScheduleTask taskId={task.id} onCreated={onScheduled} />
       )}

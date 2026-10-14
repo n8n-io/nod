@@ -441,6 +441,16 @@ test(
           await context.waitForUser!('Connect the synthetic source to finish the research.');
           return { status: 'waiting_user' };
         }
+        if (context.prompt.startsWith('task-wait')) {
+          await sessionGates.get(context.prompt);
+          await context.task!.progress!({
+            waitingFor: [{ who: 'Synthetic Hotel', via: 'email' }],
+            nextCheck: new Date(Date.now() + 3_600_000).toISOString(),
+          });
+          if (context.prompt === 'task-wait-fail')
+            throw new Error('Synthetic failure after waiting');
+          return { status: 'succeeded' };
+        }
         if (context.prompt.startsWith('task-mode-')) {
           if (context.prompt === 'task-mode-ask') {
             await context.task!.progress!({ taskId: randomUUID(), now: 'Another task' }).then(
@@ -1991,6 +2001,171 @@ test(
         await waitFor(settledThread);
         await closeDispatched();
       });
+
+      await t.test(
+        'a waiting task wakes at its bounded planned check or at once for a reply, and fails like any task',
+        async () => {
+          await waitFor(settledThread);
+          const threadId = (await thread.activeThread(db.pool)).id;
+          const dispatch = async (brief: string) => {
+            const chat = await thread.submitUserMessage(`dispatch-status:${brief}`, [], {
+              channel: 'web',
+            });
+            await waitFor(() => dispatched.has(chat.turnId));
+            const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
+            const turnId = (
+              await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId])
+            ).rows[0].id as string;
+            return { taskId, onItMessageId, turnId };
+          };
+          const start = async (brief = 'task-wait') => {
+            const task = await dispatch(brief);
+            await waitFor(settled(task.turnId));
+            return task;
+          };
+          const checks = async (taskId: string) =>
+            (
+              await db.pool.query(
+                `SELECT id,source,source_id,background,status,not_before,started_at FROM turns
+                 WHERE session_id=$1 AND source_id IS DISTINCT FROM $2 ORDER BY created_at,id`,
+                [taskId, `task:${taskId}`],
+              )
+            ).rows;
+          const state = async (id: string) =>
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [id])).rows[0].state;
+          const delayed = async () =>
+            (
+              await db.pool.query(
+                `SELECT id,start_after FROM ${bossSchema}.job
+                 WHERE name='thread-drain' AND data->>'threadId'=$1 AND start_after>now()`,
+                [threadId],
+              )
+            ).rows;
+          const kick = async () => {
+            const id = await thread.enqueueTurn('session-fixture-kick', {
+              source: 'event',
+              sourceId: `waiting-fixture:${randomUUID()}`,
+            });
+            await waitFor(settled(id));
+          };
+
+          const waiting = await start();
+          const [planned] = await checks(waiting.taskId);
+          const at = planned.not_before.toISOString();
+          assert.deepEqual(
+            [planned.source, planned.source_id, planned.background, planned.status],
+            ['task', `task-check:${waiting.taskId}:${at}`, true, 'queued'],
+          );
+          assert.equal(await state(waiting.taskId), 'waiting');
+          const card = ((await request('GET', '/api/tasks')).json() as Task[]).find(
+            (task) => task.id === waiting.taskId,
+          );
+          assert.deepEqual(
+            [card?.status, card?.waitingFor, card?.nextCheck],
+            ['waiting', [{ who: 'Synthetic Hotel', via: 'email' }], at],
+          );
+          assert.deepEqual(
+            (await tasks.open(threadId)).map((task) => [task.taskId, task.status]),
+            [[waiting.taskId, 'waiting']],
+          );
+          assert.deepEqual(
+            (await delayed()).map((job) => job.start_after.toISOString()),
+            [at],
+          );
+          await kick();
+          assert.equal(await turnStatus(planned.id), 'queued');
+
+          const woke = await thread.submitUserMessage('routed-wake', [], {
+            channel: 'web',
+            replyToMessageId: waiting.onItMessageId,
+          });
+          assert.deepEqual(
+            (await checks(waiting.taskId)).map((turn) => turn.id),
+            [woke.turnId],
+          );
+          await waitFor(settled(woke.turnId));
+          assert.equal(ran(woke.turnId)?.sessionId, waiting.taskId);
+          assert.equal(await state(waiting.taskId), 'done');
+
+          const timed = await start();
+          const [check] = await checks(timed.taskId);
+          await db.pool.query("UPDATE turns SET not_before=now()-interval '1 second' WHERE id=$1", [
+            check.id,
+          ]);
+          await kick();
+          await waitFor(settled(check.id));
+          const [checked] = await checks(timed.taskId);
+          assert.equal(checked.status, 'succeeded');
+          assert.ok(checked.started_at >= checked.not_before);
+          assert.deepEqual(
+            [ran(check.id)?.sessionId, ran(check.id)?.resumed, ran(check.id)?.task?.title],
+            [timed.taskId, true, 'Synthetic status task'],
+          );
+          assert.equal(await state(timed.taskId), 'done');
+
+          let release = () => {};
+          sessionGates.set(
+            'task-wait-gated',
+            new Promise<void>((resolve) => {
+              release = resolve;
+            }),
+          );
+          const early = await dispatch('task-wait-gated');
+          await waitFor(async () => (await turnStatus(early.turnId)) === 'running');
+          const plan = (ms: number) =>
+            tasks.progress(
+              { threadId, turnId: early.turnId },
+              {
+                waitingFor: [{ who: 'Synthetic Hotel', via: 'email' }],
+                nextCheck: new Date(Date.now() + ms).toISOString(),
+              },
+            );
+          for (const ms of [60_000, 31 * 86_400_000])
+            await assert.rejects(plan(ms), { statusCode: 400 });
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,not_before,started_at,finished_at)
+             SELECT gen_random_uuid(),$1,$2,'task','Synthetic past check','succeeded',true,$3,now(),now(),now()
+             FROM generate_series(1,24)`,
+            [ownerId, threadId, early.taskId],
+          );
+          await assert.rejects(plan(3_600_000), { statusCode: 409 });
+          await db.pool.query(
+            "DELETE FROM turns WHERE session_id=$1 AND prompt='Synthetic past check'",
+            [early.taskId],
+          );
+          const reply = await thread.submitUserMessage('routed-early', [], {
+            channel: 'web',
+            replyToMessageId: early.onItMessageId,
+          });
+          release();
+          await waitFor(settled(reply.turnId));
+          assert.deepEqual(
+            (await checks(early.taskId)).map((turn) => [turn.id, turn.status]),
+            [[reply.turnId, 'succeeded']],
+          );
+          assert.equal(await state(early.taskId), 'done');
+
+          const failing = await start('task-wait-fail');
+          assert.equal(await turnStatus(failing.turnId), 'failed');
+          assert.deepEqual(await checks(failing.taskId), []);
+          assert.equal(await state(failing.taskId), 'failed');
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND reply_to_message_id=$2",
+                [failing.turnId, failing.onItMessageId],
+              )
+            ).rowCount,
+            1,
+          );
+          await thread.boss.deleteJob(
+            'thread-drain',
+            (await delayed()).map((job) => job.id),
+          );
+          await waitFor(settledThread);
+          await closeDispatched();
+        },
+      );
 
       await t.test(
         'an owner reply goes to its task: behind a running turn, after a question, into a done task or through route_to_task',

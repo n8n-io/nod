@@ -433,7 +433,7 @@ export const toolDefinitions = {
   ),
   task_progress: defineTool(
     'task_progress',
-    "Update this task's preview. It changes only this task and sends the user nothing. steps replaces the planned steps with 2 to 8 short items. current is the number of the step in progress, starting at 1. now is one short line about what you are doing. stop ends this task as stopped and posts its one-line note to the user; use it only when the user asked to stop, then end without a final message.",
+    "Update this task's preview. It changes only this task and sends the user nothing. steps replaces the planned steps with 2 to 8 short items. current is the number of the step in progress, starting at 1. now is one short line about what you are doing. waitingFor lists who the task waits for and how they will answer, such as {who:'Hotel Lisboa', via:'email'}; give it with nextCheck, an ISO 8601 time with offset 15 minutes to 30 days from now. Together they set the task to waiting and end this turn: the task continues in this session at nextCheck, or sooner when the user replies to it. stop ends this task as stopped and posts its one-line note to the user; use it only when the user asked to stop, then end without a final message.",
     Type.Object(
       {
         steps: Type.Optional(
@@ -441,6 +441,19 @@ export const toolDefinitions = {
         ),
         current: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
         now: Type.Optional(Type.String({ maxLength: 200 })),
+        waitingFor: Type.Optional(
+          Type.Array(
+            Type.Object(
+              {
+                who: Type.String({ minLength: 1, maxLength: 80 }),
+                via: Type.String({ minLength: 1, maxLength: 40 }),
+              },
+              { additionalProperties: false },
+            ),
+            { minItems: 1, maxItems: 10 },
+          ),
+        ),
+        nextCheck: Type.Optional(Type.String({ maxLength: 40 })),
         stop: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
       },
       { additionalProperties: false },
@@ -707,7 +720,7 @@ export function ottoTools(
       ? [
           bind(toolDefinitions.task_progress, async (p) => {
             const result = await context.task!.progress!(p);
-            if (p.stop) turn.endTask();
+            if (p.stop || p.nextCheck) turn.endTask();
             return result;
           }),
         ]

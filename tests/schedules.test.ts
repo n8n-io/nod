@@ -555,6 +555,51 @@ test(
       });
 
       await t.test(
+        'a planned task check is not a schedule and does not appear in the schedule list',
+        async () => {
+          const current = await thread.activeThread(db.pool);
+          const [taskId, turnId] = [randomUUID(), randomUUID()];
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,thread_id,title,state)
+             VALUES($1,$2,$3,'Synthetic waiting task','open')`,
+            [taskId, ownerId, current.id],
+          );
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id,started_at)
+             VALUES($1,$2,$3,'task','Wait for a synthetic reply.','running',true,$4,now())`,
+            [turnId, ownerId, current.id, taskId],
+          );
+          const listed = async () => ({
+            schedules: (await request('GET', '/api/schedules')).json(),
+            runs: (await request('GET', '/api/schedule-runs')).json(),
+            jobs: (
+              await db.pool.query(
+                `SELECT count(*)::int AS count FROM ${bossSchema}.job WHERE name='scheduled-task'`,
+              )
+            ).rows[0].count,
+          });
+          const before = await listed();
+          const nextCheck = new Date(Date.now() + 3_600_000).toISOString();
+          await tasks.progress(
+            { threadId: current.id, turnId },
+            { waitingFor: [{ who: 'Synthetic Hotel', via: 'email' }], nextCheck },
+          );
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                'SELECT source,source_id,status FROM turns WHERE session_id=$1 AND id<>$2',
+                [taskId, turnId],
+              )
+            ).rows,
+            [{ source: 'task', source_id: `task-check:${taskId}:${nextCheck}`, status: 'queued' }],
+          );
+          assert.deepEqual(await listed(), before);
+          await db.pool.query('DELETE FROM turns WHERE session_id=$1', [taskId]);
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [taskId]);
+        },
+      );
+
+      await t.test(
         'schedule editor changes retain the intended recurrence and exact run time',
         async () => {
           for (const [frequency, day, expected] of [

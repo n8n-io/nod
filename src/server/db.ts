@@ -45,7 +45,8 @@ export async function initializeDatabase() {
       error text,
       created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
     );
-    ALTER TABLE turns ADD COLUMN IF NOT EXISTS channel_source_id text;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS channel_source_id text,
+      ADD COLUMN IF NOT EXISTS not_before timestamptz;
     DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema=current_schema() AND table_name='turns' AND column_name='session_id') THEN
