@@ -363,11 +363,7 @@ export function createAgentBrowserComputer(options: {
                 !holding(entry) &&
                 Date.now() - entry.lastUsed >= evictIdleMs,
             )
-            .sort(
-              (a, b) =>
-                Number(a.heldAt !== undefined) - Number(b.heldAt !== undefined) ||
-                a.lastUsed - b.lastUsed,
-            )[0];
+            .sort((a, b) => a.lastUsed - b.lastUsed)[0];
           if (!candidate) return false;
           attempted.add(candidate.id);
           try {
