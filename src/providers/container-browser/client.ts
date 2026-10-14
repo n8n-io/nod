@@ -154,6 +154,7 @@ export function createBridgeComputer(options: {
         for (let end = output.indexOf('\n'); end >= 0; end = output.indexOf('\n')) {
           const line = output.slice(0, end);
           output = output.slice(end + 1);
+          if (Buffer.byteLength(line) > responseBytes) return unavailable();
           try {
             if (response) throw new Error();
             const value = JSON.parse(line);
