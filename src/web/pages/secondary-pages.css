@@ -356,6 +356,34 @@
   font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
 }
+.execution-report {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.statement-entry:has(.execution-report[open]) {
+  align-items: start;
+  border-radius: var(--radius-lg);
+}
+.execution-report summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+.execution-report ol {
+  padding-left: 20px;
+}
+.execution-usage {
+  overflow-x: auto;
+}
+.execution-usage table {
+  border-collapse: collapse;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.execution-usage th,
+.execution-usage td {
+  padding: 4px 10px 4px 0;
+  text-align: left;
+}
 .statement-empty {
   color: var(--muted-foreground);
   font-size: var(--text-control);

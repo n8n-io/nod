@@ -26,9 +26,11 @@ const buttons = ['left', 'middle', 'right'] as const;
 const clamp = (value: number) => Math.max(-2000, Math.min(2000, Math.round(value)));
 
 export function BrowserHandoff({
+  turnId,
   onDone,
   paused = false,
 }: {
+  turnId: string;
   onDone: () => Promise<void>;
   paused?: boolean;
 }) {
@@ -61,7 +63,7 @@ export function BrowserHandoff({
       while (pending.current.length) {
         const inputs = pending.current.splice(0, 100);
         try {
-          await post('/api/browser-handoff', { inputs });
+          await post('/api/browser-handoff', { turnId, inputs });
           setError('');
         } catch (reason) {
           setError(errorMessage(reason));
@@ -175,7 +177,7 @@ export function BrowserHandoff({
     setLoading(action);
     try {
       await flush();
-      await post('/api/browser-handoff/navigate', { action });
+      await post('/api/browser-handoff/navigate', { turnId, action });
       setError('');
     } catch (reason) {
       setError(errorMessage(reason));
@@ -218,7 +220,7 @@ export function BrowserHandoff({
     setShown(false);
     setFrame('');
     void apiStream(
-      `/api/browser-handoff/stream?view=${view.current}-${attempt}`,
+      `/api/browser-handoff/stream?turnId=${encodeURIComponent(turnId)}&view=${view.current}-${attempt}`,
       { signal: controller.signal },
       (body, signal) => {
         activeSignal = signal;
@@ -267,7 +269,7 @@ export function BrowserHandoff({
       controller.abort();
       release();
     };
-  }, [attempt, closed, expanded, unavailable]);
+  }, [turnId, attempt, closed, expanded, unavailable]);
 
   useEffect(() => {
     if (closed || live || failures >= 3) return;

@@ -49,6 +49,7 @@ async function fixture(
   let userPrompt = '';
   const context: RuntimeContext = {
     threadId: 'test-' + randomUUID(),
+    sessionId: 'test-' + randomUUID(),
     turnId: randomUUID(),
     prompt: 'Help with a fixture',
     history: [],

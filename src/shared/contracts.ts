@@ -42,6 +42,8 @@ export interface VerificationRequest {
 }
 export interface Turn {
   id: string;
+  sessionId?: string;
+  handoffMessageId?: string | null;
   status: TurnStatus;
   source: 'user' | 'schedule' | 'event' | 'resume';
   createdAt: string;

@@ -11,12 +11,26 @@ The short version: `src/runtime` runs each turn in a Pi session. Every tool call
 
 ## Pi sessions
 
-Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) can run any number of turns per thread at once, each in its own Pi session:
+Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) runs one chat turn and up to three background turns at once. Each session runs one turn at a time:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
-- Background turns each get a new in-memory session.
+- Background sessions save their transcript too. A reply or secure form continues that session.
+- Subagents use temporary in-memory Pi sessions. At most two subagents run across the owner's turns.
 
-Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets only the messages that background turns sent since the previous conversation turn started.
+Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets new background messages since its previous turn started.
+
+## Execution records and cost
+
+Each Pi execution has one scope: thread ID, session ID, turn ID, run ID, parent run ID, and browser ID.
+The main run uses the turn ID. Each subagent gets a new run ID and uses it as its browser ID.
+Tools and model usage keep this scope. `turn_events` records execution and tool activity without saving raw tool arguments or results.
+
+`model_usage` is the only cost ledger. Each model request reports one usage ID, including subagent, compaction, review, and memory requests.
+Repeated reports with the same ID create no extra charge record. Parent runs never add child costs again.
+All totals come from these ledger rows. Missing prices stay unknown.
+
+In **Settings → Trust & cost**, expand **Work and usage** to see agent activity and each model request.
+The view reads the same ledger, including model names, token counts, cache use, and costs.
 
 ## Keeping the context small
 
@@ -28,7 +42,7 @@ Recent chat history goes into the prompt only when Pi has no saved session. A re
 
 ## Hosted transcript checkpoints
 
-In hosted mode, the conversation transcript lives in private object storage. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
+In hosted mode, each session transcript lives in private object storage. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
 
 - **When:** before each tool, at turn boundaries and before completion.
 - **How:** each checkpoint uploads only new entries as an immutable part. A small manifest lists the parts and is written with compare-and-swap, so a stale writer can't overwrite a newer session.

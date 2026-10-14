@@ -54,6 +54,7 @@ export async function initializeDatabase() {
       END IF;
     END $$;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS parent_turn_id uuid;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS handoff_browser_id text;
     CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
       RETURN NEW;
@@ -77,6 +78,11 @@ export async function initializeDatabase() {
       summary text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS turn_events_turn_time ON turn_events(turn_id,created_at);
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS run_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS parent_run_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS session_id uuid;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS browser_id text;
+    ALTER TABLE turn_events ADD COLUMN IF NOT EXISTS call_id uuid;
     CREATE TABLE IF NOT EXISTS messages (
       id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL,
       thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),

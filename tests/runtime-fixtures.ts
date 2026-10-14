@@ -1,4 +1,10 @@
 import type { Computer, Workspace } from '../src/ports/computer.ts';
+import type { ExecutionScope } from '../src/shared/execution.ts';
+import { randomUUID } from 'node:crypto';
+
+export function fakeExecution(threadId: string, turnId = randomUUID()): ExecutionScope {
+  return { threadId, sessionId: threadId, turnId, runId: turnId, browserId: threadId };
+}
 
 export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
   return {

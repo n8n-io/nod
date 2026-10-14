@@ -62,7 +62,7 @@ stateDiagram-v2
   needs --> Stopped: you move on
 ```
 
-A failed or stopped task shows **Needs you** until you write again. Tell Otto to stop a task and it closes the card as **Stopped**.
+A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed or stopped task stays **Needs you** until you continue that work. Tell Otto to stop a task and it closes the card as **Stopped**.
 
 ## Tasks only report
 

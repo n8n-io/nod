@@ -1384,6 +1384,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
   t.after(() => runtime.dispose());
   await runtime.runTurn({
     threadId: 'capture-fixture',
+    sessionId: 'capture-fixture',
     turnId: 'capture-fixture',
     prompt: 'Inspect the synthetic receipt.',
     history: [],

@@ -21,6 +21,13 @@ Every app action is recorded, reads included.
 
 ![Settings → Trust & cost showing $0.17 spent this month of a $25 limit, a spending chart and the day's statement.](../../../assets/screens/trust-cost-light.png)
 
+## See work and model usage
+
+Expand **Work and usage** below a statement entry to see each part of the work and its model usage.
+It shows input, output, and cached tokens, plus the estimated cost of each model request.
+
+![Work and usage showing work names, model usage, and costs for a synthetic shop comparison.](../../../assets/screens/work-and-usage-light.png)
+
 ## Set a monthly limit
 
 1. Open **Settings → Trust & cost**.

@@ -92,7 +92,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         `SELECT t.id,t.title,t.done_when,t.now_text,t.result,t.state,t.waiting_for,t.next_check,
            t.created_at,t.updated_at,t.closed_at,u.status AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
-             AND n.source='user' AND n.created_at>u.created_at) AS answered,
+             AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
            CASE WHEN u.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
              WHERE m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
              ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS question

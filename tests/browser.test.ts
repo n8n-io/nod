@@ -247,11 +247,11 @@ test(
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
       const frames: Buffer[] = [];
       const post = (url: string, payload: object) =>
-        app.inject({ method: 'POST', url, payload, headers });
+        app.inject({ method: 'POST', url, payload: { turnId: nextTurnId, ...payload }, headers });
       const handoff = async (input: unknown = click) => {
         const controller = new AbortController();
         const stream = await app.inject({
-          url: '/api/browser-handoff/stream',
+          url: `/api/browser-handoff/stream?turnId=${nextTurnId}`,
           headers,
           payloadAsStream: true,
           signal: controller.signal,
@@ -279,7 +279,10 @@ test(
         [nextTurnId],
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
-      await db.pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [nextTurnId]);
+      await db.pool.query(
+        "UPDATE turns SET waiting_reason='question',handoff_browser_id=session_id::text WHERE id=$1",
+        [nextTurnId],
+      );
       assert.deepEqual(await handoff(), [200, 200, 200]);
       assert.equal(frames[0].readUInt32BE(0), Buffer.byteLength('synthetic-live-frame'));
       assert.equal(frames[0].subarray(4).toString(), 'synthetic-live-frame');
@@ -291,13 +294,39 @@ test(
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
-      assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
+      assert.equal(
+        (await request(`/api/browser-handoff/stream?turnId=${nextTurnId}`)).statusCode,
+        409,
+      );
       pageShown = true;
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Check','running',true)",
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [200, 200, 200]);
+      assert.equal(controls.length, 6);
+      const backgroundId = randomUUID();
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,waiting_reason,handoff_browser_id) VALUES($1,$2,$3,'event','Background handoff','waiting',true,'question',$1::uuid::text)",
+        [backgroundId, ownerId, next.id],
+      );
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: backgroundId, inputs: [click] })).statusCode,
+        200,
+      );
+      assert.deepEqual(controls.pop(), [backgroundId, click]);
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: foreignTurnId, inputs: [click] })).statusCode,
+        423,
+      );
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt) VALUES($1,$2,$3,$4,'resume','Continued background work')",
+        [randomUUID(), ownerId, next.id, backgroundId],
+      );
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: backgroundId, inputs: [click] })).statusCode,
+        423,
+      );
       assert.equal(controls.length, 6);
       for (const reason of ['timeout', 'revoked', 'archived', 'cancelled']) {
         const started = deferred<AbortSignal>();
@@ -324,7 +353,7 @@ test(
         const deadline = new AbortController();
         if (reason === 'timeout') t.mock.timers.enable({ apis: ['setTimeout'] });
         const pending = app.inject({
-          url: '/api/browser-handoff/stream',
+          url: `/api/browser-handoff/stream?turnId=${nextTurnId}`,
           headers,
           signal: controller.signal,
         });
@@ -379,7 +408,7 @@ test(
       const deadline = new AbortController();
       t.mock.timers.enable({ apis: ['setTimeout'] });
       const pending = app.inject({
-        url: '/api/browser-handoff/stream',
+        url: `/api/browser-handoff/stream?turnId=${nextTurnId}`,
         headers,
         signal: controller.signal,
       });
@@ -1462,6 +1491,7 @@ async function runtimeFixture(
   const runtime = createAgentRuntime({ agent, computer, workspace: fakeWorkspace() });
   const context: RuntimeContext = {
     threadId,
+    sessionId: threadId,
     turnId: randomUUID(),
     prompt: 'Open the synthetic destination after dismissing its covering dialog.',
     history: [],
@@ -1517,8 +1547,8 @@ test('every session drives its own browser, so background work never waits for t
       discard: async (id) => {
         discarded.push(id);
       },
-      hold: async (id) => {
-        held.push(id);
+      hold: async (id, until) => {
+        if (until !== null) held.push(id);
       },
     }),
     workspace: fakeWorkspace(),
@@ -1533,7 +1563,7 @@ test('every session drives its own browser, so background work never waits for t
     return runtime.runTurn({
       threadId,
       turnId,
-      browserId: sessionId,
+      sessionId: sessionId ?? threadId,
       background: sessionId !== undefined,
       resumed,
       prompt: 'Use the browser.',
@@ -1711,6 +1741,7 @@ test('a browser handoff needs an open page, so Pi reopens it instead of handing 
   try {
     const result = await runtime.runTurn({
       threadId: randomUUID(),
+      sessionId: randomUUID(),
       turnId: randomUUID(),
       prompt: 'Hand me the browser.',
       history: [],
@@ -3487,6 +3518,7 @@ async function handoffView(
     root.render(
       content ??
         createElement(BrowserHandoff, {
+          turnId: '00000000-0000-4000-8000-000000000001',
           onDone: async () => {
             completions++;
           },
@@ -3961,6 +3993,7 @@ test('chat keeps a waiting browser handoff after a background message and closes
       id: turnId,
       source: 'user',
       status: 'waiting',
+      handoffMessageId: state.messages[0].id,
       showTyping: true,
       createdAt: '2026-10-01T12:00:00.000Z',
     },
@@ -4022,6 +4055,7 @@ test('chat keeps a waiting browser handoff after a background message and closes
       },
       ...state.turns,
     ];
+    state.turns = state.turns.map((turn) => ({ ...turn, handoffMessageId: null }));
     await view.render(chat());
     assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
   } finally {
@@ -4057,6 +4091,15 @@ for (const failure of ['rejected', 'disconnected'] as const)
         conversationResetEnabled: false,
       },
     };
+    state.turns = [
+      {
+        id: state.messages[0].turnId!,
+        source: 'user',
+        status: 'waiting',
+        handoffMessageId: state.messages[0].id,
+        createdAt: state.messages[0].createdAt,
+      },
+    ];
     const view = await handoffView(
       async (path, options) => {
         if (path === '/api/apps') return Response.json([]);
@@ -4146,7 +4189,7 @@ test('the live handoff waits for a frame, merges moves and typing behind a pendi
   try {
     assert.match(
       view.streams.at(-1)!.path,
-      /^\/api\/browser-handoff\/stream\?view=[0-9a-f-]{36}-0$/,
+      /^\/api\/browser-handoff\/stream\?turnId=[0-9a-f-]{36}&view=[0-9a-f-]{36}-0$/,
     );
     await view.pointer('mousemove');
     assert.deepEqual(posted, []);

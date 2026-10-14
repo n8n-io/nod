@@ -907,15 +907,15 @@ test(
             await waitFor(settled(chat.turnId));
             assert.equal(await turnStatus(first), 'running');
             assert.equal(await turnStatus(next), 'queued');
-            assert.equal(ran(chat.turnId)?.browserId, threadId);
+            assert.equal(ran(chat.turnId)?.sessionId, threadId);
           } finally {
             release();
           }
           await waitFor(settled(next));
           assert.equal(await turnStatus(next), 'succeeded');
-          assert.equal(ran(first)?.browserId, first);
-          assert.equal(ran(next)?.browserId, first);
-          assert.equal(ran(other)?.browserId, other);
+          assert.equal(ran(first)?.sessionId, first);
+          assert.equal(ran(next)?.sessionId, first);
+          assert.equal(ran(other)?.sessionId, other);
         },
       );
 
@@ -1452,6 +1452,53 @@ test(
           ),
         );
       });
+
+      await t.test(
+        'a reply resumes the background session that asked and unrelated chat does not answer its task',
+        async () => {
+          await waitFor(settledThread);
+          const background = await thread.enqueueTurn('ask-question', {
+            source: 'event',
+            channel: 'telegram:fixture',
+          });
+          await waitFor(settled(background));
+          const question = (
+            await db.pool.query(
+              "SELECT id,thread_id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",
+              [background],
+            )
+          ).rows[0];
+          const taskId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO tasks(id,owner_id,turn_id,title,done_when,now_text) VALUES($1,$2,$3,'Background question','Account selected','Waiting for the account')",
+            [taskId, ownerId, background],
+          );
+          const unrelated = await thread.submitUserMessage('Unrelated chat request', [], {
+            channel: 'web',
+            seenMessageId: question.id,
+          });
+          await waitFor(settled(unrelated.turnId));
+          assert.equal(ran(unrelated.turnId)?.sessionId, question.thread_id);
+          assert.equal(
+            (await request('GET', '/api/tasks')).json<Task[]>().find((task) => task.id === taskId)
+              ?.status,
+            'needs_you',
+          );
+          const answer = await thread.submitUserMessage('The work account', [], {
+            channel: 'web',
+            replyToMessageId: question.id,
+          });
+          await waitFor(settled(answer.turnId));
+          assert.equal(ran(answer.turnId)?.sessionId, background);
+          assert.equal(ran(answer.turnId)?.resumed, true);
+          assert.equal(ran(answer.turnId)?.background, true);
+          const row = (
+            await db.pool.query('SELECT parent_turn_id FROM turns WHERE id=$1', [answer.turnId])
+          ).rows[0];
+          assert.equal(row.parent_turn_id, background);
+          await db.pool.query("UPDATE tasks SET state='done' WHERE id=$1", [taskId]);
+        },
+      );
 
       await t.test(
         'a task card shows what Pi reported and the state of the turn that last reported it',
