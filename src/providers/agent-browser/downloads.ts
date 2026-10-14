@@ -3,19 +3,13 @@ import { constants } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BrowserDownload } from '../../ports/computer.ts';
-import { fileBytes } from '../../shared/files.ts';
+import { fileBytes, fileName } from '../../shared/files.ts';
 
 export function downloadName(value: string | undefined, pdf = false): string {
   const name = value ?? (pdf ? 'download.pdf' : 'download');
-  if (
-    !name.trim() ||
-    name.length > 200 ||
-    /[/\\\u0000-\u001f\u007f]/.test(name) ||
-    name === '.' ||
-    name === '..'
-  )
+  if (!name.trim() || /[/\\\u0000-\u001f\u007f]/.test(name) || name === '.' || name === '..')
     throw new Error('A plain download filename is required.');
-  return name;
+  return fileName(name);
 }
 
 export function downloadFile(bytes: Buffer, name?: string, mimeType?: string): BrowserDownload {

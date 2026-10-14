@@ -128,6 +128,8 @@ test('browser file validation bounds bytes and rejects unsafe metadata', async (
   for (const name of ['../private', 'folder/file', 'folder\\file', '.', '..', 'file\nname'])
     assert.throws(() => downloadFile(browserDownloadPdf, name));
   assert.throws(() => downloadFile(Buffer.from('text'), 'file', 'text/html\r\nX-Header: value'));
+  const long = downloadFile(browserDownloadPdf, `${'report '.repeat(60)}.pdf`).name;
+  assert.ok(long.endsWith('.pdf') && Buffer.byteLength(long) <= 218);
 });
 
 test('browser captures refuse symlinks, partial files, multiple links and excessive file size', async () => {

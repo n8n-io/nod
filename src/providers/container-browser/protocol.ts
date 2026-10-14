@@ -27,7 +27,6 @@ export const browserDownloadInput = z
     name: z
       .string()
       .min(1)
-      .max(200)
       .regex(/^[^/\\\u0000-\u001f\u007f]+$/)
       .optional(),
   })
@@ -168,7 +167,6 @@ export const browserRequest = z.discriminatedUnion('method', [
           name: z
             .string()
             .min(1)
-            .max(200)
             .regex(/^[^/\\\u0000-\u001f\u007f]+$/),
           size: z.number().int().min(1).max(fileBytes),
         })
