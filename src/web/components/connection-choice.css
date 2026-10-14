@@ -126,3 +126,30 @@
   color: var(--error);
   font-size: var(--text-control);
 }
+.connection-managed,
+.connection-switch {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+.connection-switch {
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+}
+.connection-identity,
+.connection-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+  font-size: var(--text-control);
+}
+.connection-identity > svg,
+.connection-enabled > svg {
+  flex-shrink: 0;
+}
+.connection-enabled {
+  color: var(--success);
+}

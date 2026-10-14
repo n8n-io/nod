@@ -48,10 +48,12 @@ import { createLocalRuntimeTransport } from '../providers/runtime-host/local.ts'
 import { createComputerShutdownConfirmation } from '../providers/runtime-host/computer-shutdown.ts';
 import { createJevRelevanceClassifier } from '../providers/jev/relevance.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
+import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
 import { createIntegrationKeyService } from './integration-key.ts';
+import { createIntegrationAccess } from './integration-access.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -142,6 +144,7 @@ export interface ApplicationAdapters {
   inspectPrompt?: ThreadDependencies['inspectPrompt'];
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
+  integrationAccess?: ReturnType<typeof createIntegrationAccess>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
   confirmComputerShutdown?(): Promise<void>;
@@ -185,9 +188,16 @@ export function createDefaultAdapters(
     pool,
     env.OTTO_VAULT_KEY
       ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-      : process.platform === 'darwin'
-        ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
-        : createEnvironmentKeyStore(),
+      : runtimeMode !== 'local' || desktopMode
+        ? createEnvironmentKeyStore()
+        : process.platform === 'darwin'
+          ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
+          : process.platform === 'linux'
+            ? createFilesystemKeyStore({
+                dataRoot,
+                canCreate: async () => !(await sealedDataExists(pool)),
+              })
+            : createEnvironmentKeyStore(),
   );
   const models = createModelService({
     database: pool,
@@ -250,11 +260,20 @@ export function createDefaultAdapters(
     webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });
+  const integrationAccess =
+    integrationProxy && runtimeMode !== 'tenant'
+      ? createIntegrationAccess({
+          proxy: integrationProxy,
+          origin: publicOrigin,
+          desktop: desktopMode,
+        })
+      : undefined;
   const integrationKey = createIntegrationKeyService({
     ownerId,
     keyStore,
     provider: ownIntegrations,
     fixed: environmentKey ? 'own' : runtimeMode === 'tenant' ? 'otto' : undefined,
+    managed: integrationAccess,
   });
   const ottoIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
   const integrations = ottoIntegrations
@@ -375,6 +394,7 @@ export function createDefaultAdapters(
     integrations,
     ...(ottoIntegrations ? { standbyIntegrations: [ownIntegrations, ottoIntegrations] } : {}),
     integrationKey,
+    integrationAccess,
     ...(['local', 'tenant'].includes(runtimeMode)
       ? {
           directIntegrations: (
@@ -1067,6 +1087,7 @@ async function initializeApplication(
   });
   adapters.models?.register(app);
   adapters.integrationKey?.register(app, integrations);
+  adapters.integrationAccess?.register(app);
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });

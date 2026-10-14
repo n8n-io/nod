@@ -9,7 +9,9 @@ import { Steps } from '@astrojs/starlight/components';
 
 Connect Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many other apps from **Apps**. Otto uses [Composio](https://composio.dev) for these connections.
 
-By default, apps connect through Otto's connection, a hosted service run by n8n. You don't need a Composio account or key. You can [use your own Composio key](#use-your-own-composio-project) instead. Either way, you sign in to each app and choose what Otto can access.
+Choose **Easy Connect** and sign in with an allowed Google account, or [use your own Composio key](#use-your-own-composio-project). Both choices work in the desktop app and the web app, during setup and in **Settings → App connections**. Easy Connect uses n8n's hosted service and doesn't need your own Composio account.
+
+Google sign-in enables Easy Connect only. It doesn't give Otto access to Gmail or another app. You connect each app separately and choose its permissions. Only explicitly allowed email addresses can use Easy Connect. If yours isn't enabled, you can use a personal key; there is no waitlist.
 
 Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
@@ -25,11 +27,13 @@ flowchart TD
   composio --> apps[Gmail · Calendar<br/>Slack · more]
 ```
 
+![Onboarding offers Easy Connect with Google or a personal Composio key, with separate Gmail consent. Synthetic UI fixture.](../../../assets/screens/app-connections-onboarding.png)
+
 ## Connect your apps
 
 <Steps>
 
-1. Open **Apps**, search for an app and select **Connect**.
+1. Set up **Easy Connect** or **My Composio key** in **Settings → App connections**, then open **Apps**, find an app and select **Connect**.
 2. If Otto shows a code, match it with the code in the browser and confirm there. Otto then shows that it's waiting for sign-in.
 3. Sign in on the app's consent screen and choose what Otto can access. Google's sign-in screen usually shows Composio, the service that connects the app, rather than Otto. If your own Composio project uses a custom Google auth config, it shows that config's app name instead.
 4. Return to Otto when the app is connected.
@@ -40,6 +44,12 @@ flowchart TD
 
 You can also ask Otto in chat. It searches the same catalog, then sends you a private link to connect.
 
+## Renew or remove Easy Connect access
+
+Your installation stays admitted while its email is allowed, including for background app tasks. New app consent also needs a recent Google browser session. Select **Sign in again** in **Settings → App connections** if that session expires. This keeps your current project and connected accounts.
+
+Removing Easy Connect access blocks managed requests from this installation. It doesn't delete connected accounts or revoke the permissions you gave each provider. Disconnect apps first if you also want to remove those grants.
+
 ## Automatic app updates
 
 Otto checks Gmail for new mail while it's running. Otto's connection doesn't receive app webhooks, so apps such as Calendar and Slack don't wake Otto automatically. You can still ask Otto to work with them.
@@ -48,11 +58,19 @@ Source/server installs using their own Composio project can configure webhooks w
 
 ## Use your own Composio project
 
-Choose **Your own Composio** when you connect Gmail during setup, or later in **Apps**, and paste a project key from the steps below. Otto checks the key with Composio before saving it, stores it encrypted on your installation and only shows its last four characters. Apps then connect straight through your project, without a pairing code. On a source/server install, saving a key needs `OTTO_VAULT_KEY`. Without it, Otto only shows the choice when it has a saved key it can't read, so you can switch back to Otto's connection.
+Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. Otto checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project without a pairing code.
+
+The desktop app uses OS-protected storage. A local web install uses the macOS Keychain or a private per-profile key file on Linux. Other server configurations need an operator-provided Vault key. If encrypted data already exists but its key is missing, restore the original key; Otto won't replace it. See [Configuration](/deploy/configuration/#vault).
+
+Signing in with Google while you use a personal key doesn't switch projects. Otto first verifies access, then asks you to confirm the switch. A denied or cancelled sign-in leaves your key and apps unchanged.
 
 Connected accounts belong to the project they were connected through, and Otto never moves them between projects. When you switch between Otto's connection and your own key, Otto disconnects the apps connected through the one you're leaving, then switches. Connect them again afterwards. A sign-in you started before switching won't connect, so start it again too. If Otto can't disconnect an app, it keeps your current connection so you can try again. Apps it already disconnected stay disconnected.
 
+If Easy Connect access has been removed or requires sign-in, you can still switch to a valid personal key. Otto removes the old connections from this installation, but can't revoke their provider permissions through the proxy. Remove those permissions in each provider's settings if needed. A network outage doesn't allow this fallback.
+
 On a source/server install you can instead set `COMPOSIO_API_KEY` in the server environment or `.env`, then restart Otto. This pins the server to that project, so the app doesn't offer the choice. The desktop app ignores `COMPOSIO_API_KEY`.
+
+![App connections in Settings with the personal Composio key form. Synthetic UI fixture.](../../../assets/screens/app-connections-key.png)
 
 ### Create a project key
 

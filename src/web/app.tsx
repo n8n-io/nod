@@ -233,7 +233,11 @@ function Workspace({
                 <Vault hosted={session.auth.mode === 'google'} onAsk={askInChat} />
               )}
               {currentPath === '/apps' && (
-                <Apps configuration={state?.configuration} onAsk={askInChat} />
+                <Apps
+                  configuration={state?.configuration}
+                  onAsk={askInChat}
+                  onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
+                />
               )}
               {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
               {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}

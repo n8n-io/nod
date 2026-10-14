@@ -1564,16 +1564,50 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
-  async function disconnectProvider() {
+  async function disconnectProvider(skipRemoteRevocation?: () => Promise<boolean>) {
     if (!provider.configured) return;
+    const rows = (await connectionRows(configuredOwner)).filter(
+      (row) => row.provider_id === providerId && configurationMatches(row),
+    );
+    if (rows.length && (await skipRemoteRevocation?.())) {
+      await withSessionState(async () => {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(
+            `WITH removed AS (
+               DELETE FROM app_connections WHERE owner_id=$1 AND provider_id=$2
+               AND configuration_id IS NOT DISTINCT FROM $3
+               RETURNING id,account_id,pending_account_id,trigger_id
+             )
+             UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND provider_id=$2
+             AND state IN ('queued','processing') AND EXISTS (
+               SELECT 1 FROM removed WHERE removed.id=poll_connection_id
+               OR removed.account_id=integration_events.account_id
+               OR removed.pending_account_id=integration_events.account_id
+               OR removed.trigger_id=integration_events.trigger_id
+             )`,
+            [configuredOwner, providerId, provider.configurationId ?? null],
+          );
+          await client.query(
+            `DELETE FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2
+             AND configuration_id IS NOT DISTINCT FROM $3`,
+            [configuredOwner, providerId, provider.configurationId ?? null],
+          );
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+      });
+      sessions.delete(configuredOwner);
+      options.refresh?.();
+      return;
+    }
     let removed = false;
     try {
-      const rows = (await connectionRows(configuredOwner)).filter(
-        (row) =>
-          row.provider_id === providerId &&
-          (row.account_id || row.pending_account_id) &&
-          configurationMatches(row),
-      );
       for (const row of rows) {
         const kept = () => {
           throw new IntegrationError(
@@ -2270,10 +2304,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       options.refresh?.();
     }
   }
-  async function changeProvider(revoke: boolean, swap: () => Promise<void>) {
+  async function changeProvider(
+    revoke: boolean,
+    swap: () => Promise<void>,
+    skipRemoteRevocation?: () => Promise<boolean>,
+  ) {
     const change = (async () => {
       await Promise.allSettled(working);
-      if (revoke) await disconnectProvider();
+      if (revoke) await disconnectProvider(skipRemoteRevocation);
       await swap();
     })();
     switching = change.catch(() => {});

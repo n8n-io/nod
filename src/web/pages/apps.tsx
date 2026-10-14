@@ -16,7 +16,8 @@ import type { AppSetupStatus, Configuration, Connection } from '../../shared/con
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
-import { ConnectionChoice, useConnectionChoice } from '../components/connection-choice';
+import { connectionStatusText, integrationAccessReady } from '../components/connection-choice';
+import type { IntegrationKeyStatus } from '../../shared/integrations';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -282,9 +283,11 @@ export function ConnectedAccount({
 export function Apps({
   configuration,
   onAsk,
+  onManageConnection,
 }: {
   configuration?: Configuration;
   onAsk(text: string): void;
+  onManageConnection(trigger?: HTMLElement): void;
 }) {
   const {
     data: connections,
@@ -300,7 +303,7 @@ export function Apps({
     refreshing: catalogRefreshing,
     refresh: refreshCatalog,
   } = usePageData<Connection[]>('/api/apps/catalog');
-  const choice = useConnectionChoice('apps', refreshCatalog);
+  const connectionSetup = usePageData<IntegrationKeyStatus>('/api/integrations/key');
   const tabsId = useId();
   const [view, setView] = useState<'all' | 'connected'>('all');
   const [query, setQuery] = useState('');
@@ -334,7 +337,7 @@ export function Apps({
   const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
   const discoveryRequest = useRef<AbortController | null>(null);
-  const locked = Boolean(busy) || choice.switching;
+  const locked = Boolean(busy);
   const groups = connectionGroups(connections ?? [], catalog ?? []);
   const managed = groups.find((group) => group.key === manageService);
   const manageError = managed?.key === connectErrorService ? error : '';
@@ -658,6 +661,16 @@ export function Apps({
   }
   async function connect(connection: Connection, addAccount = false) {
     if (actionRequest.current || locked) return;
+    if (
+      !connection.direct &&
+      !connection.accessPaths?.length &&
+      !integrationAccessReady(connectionSetup.data)
+    ) {
+      onManageConnection(
+        document.activeElement instanceof HTMLElement ? document.activeElement : undefined,
+      );
+      return;
+    }
     const request = new AbortController();
     const external = desktopLinksAvailable();
     const popup = external
@@ -902,16 +915,28 @@ export function Apps({
           )}
         </Notice>
       )}
-      {choice.status?.switchable && (
-        <section className="apps-connection" aria-labelledby="apps-connection">
-          <h2 id="apps-connection">How Otto connects your apps</h2>
-          <ConnectionChoice
-            state={choice}
-            disabled={Boolean(busy || signIn)}
-            className="apps-connection-card"
-          />
-        </section>
-      )}
+      <section
+        className="apps-connection apps-connection-summary"
+        aria-labelledby="apps-connection"
+      >
+        <div>
+          <h2 id="apps-connection">
+            {connectionSetup.data?.mode === 'own' ? 'Your Composio project' : 'Easy Connect'}
+          </h2>
+          <p className="connection-muted" data-analytics-private>
+            {connectionSetup.data
+              ? connectionStatusText(connectionSetup.data)
+              : connectionSetup.error || 'Checking connection setup…'}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          disabled={Boolean(busy || signIn)}
+          onClick={(event) => onManageConnection(event.currentTarget)}
+        >
+          Manage connection setup
+        </Button>
+      </section>
       {!connections ? (
         loading ? (
           <Loading label="Checking apps…" />

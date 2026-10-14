@@ -19,17 +19,23 @@ const scenarios = [
   'direct-server-key-rotation',
   'different-server-project',
   'switchable-server',
+  'switchable-desktop',
+  'revoked-managed-server',
+  'signed-out-managed-server',
 ];
 assert.ok(scenarios.includes(input.scenario));
 assert.ok(['initial', 'restart'].includes(input.phase));
 assert.equal(process.env.DOTENV_CONFIG_PATH, '/dev/null');
-const switching = input.scenario === 'switchable-server';
+const switching = ['switchable-server', 'switchable-desktop'].includes(input.scenario);
+const detaching = ['revoked-managed-server', 'signed-out-managed-server'].includes(input.scenario);
 const managed =
   ['fresh-desktop', 'keyless-server', 'later-managed-desktop-restart'].includes(input.scenario) ||
-  (switching && input.phase === 'initial');
+  (switching && input.phase === 'initial') ||
+  detaching;
 const rejected =
-  ['different-server-project', 'switchable-server'].includes(input.scenario) &&
-  input.phase === 'restart';
+  ['different-server-project', 'switchable-server', 'switchable-desktop'].includes(
+    input.scenario,
+  ) && input.phase === 'restart';
 const proxyOrigin = 'https://composio.n8n.cloud';
 const directOrigin = 'https://backend.composio.dev';
 const origin = managed ? proxyOrigin : directOrigin;
@@ -88,6 +94,12 @@ let failing: string | undefined;
 let interleave: (() => Promise<void>) | undefined;
 let managedUser = '';
 let signatureChecks = 0;
+let accessChecks = 0;
+let managedAccess: 'enabled' | 'revoked' | 'sign_in_required' | 'unavailable' = 'enabled';
+const managedStatus = () => ({
+  state: managedAccess,
+  email: managedAccess === 'enabled' ? 'approved@example.test' : null,
+});
 let modelInitializationBypasses = 0;
 
 globalThis.fetch = async (resource, options) => {
@@ -105,7 +117,7 @@ globalThis.fetch = async (resource, options) => {
       bytes.toString(),
     ].join('\n');
     for (const value of privateValues) assert.equal(wire.includes(value), false);
-    if (viaProxy || (managed && !switching))
+    if (viaProxy || (managed && !switching && !detaching))
       for (const key of [...keys.keys(), 'synthetic-invalid-key'])
         assert.equal(wire.includes(key), false);
     assert.equal(request.headers.has('authorization'), false);
@@ -117,7 +129,7 @@ globalThis.fetch = async (resource, options) => {
       assert.equal(request.headers.has('x-otto-signature'), false);
       return Response.json({ version: '0.0.1' });
     }
-    if (switching) assert.ok([proxyOrigin, directOrigin].includes(url.origin));
+    if (switching || detaching) assert.ok([proxyOrigin, directOrigin].includes(url.origin));
     else assert.equal(url.origin, origin);
     let project: string;
     if (viaProxy) {
@@ -153,10 +165,24 @@ globalThis.fetch = async (resource, options) => {
     } else {
       assert.equal(request.headers.has('x-otto-signature'), false);
       const key = request.headers.get('x-api-key')!;
-      if (!switching) assert.equal(key, process.env.COMPOSIO_API_KEY);
+      if (!switching && !detaching) assert.equal(key, process.env.COMPOSIO_API_KEY);
       project = keys.get(key) ?? 'invalid';
     }
+    if (url.pathname === '/v1/access/status' && request.method === 'POST') {
+      assert.equal(viaProxy, true);
+      accessChecks++;
+      if (managedAccess === 'unavailable')
+        return Response.json({ error: 'service_unavailable' }, { status: 503 });
+      return Response.json({
+        state: managedAccess,
+        ...(managedAccess === 'enabled' ? { email: 'approved@example.test' } : {}),
+      });
+    }
     calls.push({ method: request.method, path: url.pathname, project });
+    if (viaProxy && managedAccess !== 'enabled') {
+      calls.at(-1)!.status = 403;
+      return Response.json({ error: 'proxy_access_revoked' }, { status: 403 });
+    }
     if (project === 'invalid') {
       calls.at(-1)!.status = 401;
       return Response.json({ error: 'invalid key' }, { status: 401 });
@@ -231,7 +257,7 @@ globalThis.fetch = async (resource, options) => {
       );
       for (const ids of Object.values(connected) as string[][])
         for (const id of ids) assert.equal(accounts[id], body.user_id);
-      assert.equal(body.user_id, project === 'hosted' ? managedUser : 'local-development');
+      assert.equal(body.user_id, project === 'hosted' ? managedUser : ownerId);
       const id = `trs_fixture_${state.sequence++}`;
       const value: Session['value'] = {
         session_id: id,
@@ -285,6 +311,19 @@ globalThis.fetch = async (resource, options) => {
     assert.fail('Unexpected synthetic backend route.');
   } catch (error) {
     violations.push(request.method + ' ' + url.pathname);
+    process.stderr.write(
+      JSON.stringify({
+        fixtureRequest: request.method + ' ' + url.pathname,
+        assertion: error instanceof assert.AssertionError,
+        location:
+          error instanceof Error
+            ? error.stack
+                ?.split('\n')
+                .find((line) => line.includes('at globalThis.fetch'))
+                ?.trim()
+            : undefined,
+      }) + '\n',
+    );
     throw error;
   }
 };
@@ -359,6 +398,12 @@ try {
   assert.deepEqual(await keyStatus(), {
     mode: managed ? 'otto' : 'own',
     switchable: managed || switching,
+    keyWritable: managed || switching,
+    managed: managed
+      ? managedStatus()
+      : switching
+        ? { state: 'sign_in_required', email: null }
+        : null,
     suffix: switching && !managed ? rotatedKey.slice(-4) : null,
   });
   assert.equal(redacted.includes(rotatedKey), switching && !managed);
@@ -373,7 +418,13 @@ try {
       assert.equal(refused.statusCode, 400);
     }
     assert.equal(calls.length, before);
-    assert.deepEqual(await keyStatus(), { mode: 'own', switchable: false, suffix: null });
+    assert.deepEqual(await keyStatus(), {
+      mode: 'own',
+      switchable: false,
+      keyWritable: false,
+      managed: null,
+      suffix: null,
+    });
   }
   if (input.phase === 'initial') {
     assert.equal(
@@ -449,9 +500,135 @@ try {
         (call) => call.project === (managed ? 'hosted' : rejected ? 'project-b' : 'project-a'),
       ),
     );
-    assert.equal(signatureChecks, managed ? calls.length : 0);
+    assert.equal(signatureChecks, managed ? calls.length + accessChecks : 0);
   }
   const startup = calls.slice();
+  if (detaching) {
+    const started = await app.inject({
+      method: 'POST',
+      url: '/api/apps/gmail/connect',
+      payload: {},
+    });
+    assert.equal(started.statusCode, 200, started.body);
+    const pending = attempts.at(-1)!;
+    assert.equal(
+      (await pool.query('SELECT id FROM app_connections WHERE callback_expires>now()')).rowCount,
+      1,
+    );
+    const session = await provider.createSession(ownerId, { gmail: ['ca_retained'] });
+    await pool.query(
+      `INSERT INTO integration_sessions(owner_id,provider_id,session_id,configuration_id,configuration_version)
+       VALUES($1,'composio',$2,$3,3) ON CONFLICT(owner_id) DO UPDATE SET session_id=$2,configuration_id=$3`,
+      [ownerId, session.id, provider.configurationId],
+    );
+    await pool.query(
+      `INSERT INTO integration_events(id,owner_id,provider_id,summary,state,poll_connection_id)
+       VALUES('processing-event',$1,'composio','Synthetic processing event','processing',$2)`,
+      [ownerId, input.connectionId],
+    );
+    const foreignId = randomUUID();
+    const otherConfigurationId = randomUUID();
+    const otherProviderId = randomUUID();
+    await pool.query(
+      `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id)
+       VALUES($1,'another-synthetic-owner','composio','gmail','ca_foreign',$2),
+       ($3,$4,'composio','gmail','ca_other_configuration','other-configuration'),
+       ($5,$4,'another-provider','gmail','ca_other_provider',$2)`,
+      [foreignId, provider.configurationId, otherConfigurationId, ownerId, otherProviderId],
+    );
+    await pool.query(
+      `INSERT INTO integration_events(id,owner_id,provider_id,summary,account_id,poll_connection_id)
+       VALUES('foreign-event','another-synthetic-owner','composio','Synthetic foreign event','ca_retained',$1),
+       ('other-configuration-event',$2,'composio','Synthetic other configuration event','ca_other_configuration',$3),
+       ('other-provider-event',$2,'another-provider','Synthetic other provider event','ca_other_provider',$4)`,
+      [input.connectionId, ownerId, otherConfigurationId, otherProviderId],
+    );
+    const savedRows = (await pool.query('SELECT * FROM app_connections ORDER BY id')).rows;
+    const save = () =>
+      app.inject({ method: 'PUT', url: '/api/integrations/key', payload: { key: ownKey } });
+    managedAccess = 'unavailable';
+    const unavailable = await save();
+    assert.equal(unavailable.statusCode, 400);
+    assert.equal(provider.configurationId, state.configurationId);
+    assert.deepEqual(
+      (await pool.query('SELECT * FROM app_connections ORDER BY id')).rows,
+      savedRows,
+    );
+    assert.equal((await pool.query('SELECT * FROM integration_keys')).rowCount, 0);
+    managedAccess = 'enabled';
+    failing = 'hosted';
+    const inaccessible = await save();
+    failing = undefined;
+    assert.equal(inaccessible.statusCode, 400);
+    assert.equal(provider.configurationId, state.configurationId);
+    assert.deepEqual(
+      (await pool.query('SELECT * FROM app_connections ORDER BY id')).rows,
+      savedRows,
+    );
+    managedAccess = input.scenario === 'revoked-managed-server' ? 'revoked' : 'sign_in_required';
+    const before = calls.length;
+    const switched = await save();
+    assert.equal(switched.statusCode, 200, switched.body);
+    assert.equal(switched.json().mode, 'own');
+    assert.equal(switched.json().suffix, ownKey.slice(-4));
+    assert.equal(typeof switched.json().warning, 'string');
+    assert.ok(switched.json().warning.length > 0);
+    await settle();
+    assert.ok(calls.slice(before).every((call) => call.project === 'project-a'));
+    assert.equal(state.accounts.hosted.ca_retained, managedUser);
+    assert.ok(state.sessions[session.id]);
+    assert.deepEqual(
+      (await pool.query('SELECT * FROM app_connections ORDER BY id')).rows,
+      savedRows.filter((row) =>
+        [foreignId, otherConfigurationId, otherProviderId].includes(row.id),
+      ),
+    );
+    assert.equal(
+      (await pool.query('SELECT * FROM integration_sessions WHERE owner_id=$1', [ownerId]))
+        .rowCount,
+      0,
+    );
+    assert.deepEqual(
+      (await pool.query('SELECT id,state FROM integration_events ORDER BY id')).rows,
+      [
+        { id: 'foreign-event', state: 'queued' },
+        { id: 'other-configuration-event', state: 'queued' },
+        { id: 'other-provider-event', state: 'queued' },
+        { id: 'processing-event', state: 'discarded' },
+        { id: 'retained-event', state: 'discarded' },
+      ],
+    );
+    assert.equal(
+      (await pool.query('SELECT * FROM integration_keys WHERE owner_id=$1', [ownerId])).rowCount,
+      1,
+    );
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/api/apps/callback?state=${pending}&completion_token=synthetic-completion`,
+    });
+    assert.match(String(callback.headers.location), /connection=expired/);
+    await assert.rejects(
+      service.executeApproved(ownerId, 'GMAIL_LIST_LABELS', { connectionId: input.connectionId }),
+    );
+    const directChecks = accessChecks;
+    assert.equal((await keyStatus()).mode, 'own');
+    const directId = randomUUID();
+    state.accounts['project-a'] ??= {};
+    state.accounts['project-a'].ca_detached_own = ownerId;
+    await pool.query(
+      `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id,account_checked_at)
+       VALUES($1,$2,'composio','gmail','ca_detached_own',$3,'2100-01-01')`,
+      [directId, ownerId, provider.configurationId],
+    );
+    const result = await service.executeApproved(ownerId, 'GMAIL_LIST_LABELS', {
+      connectionId: directId,
+    });
+    assert.deepEqual((result as { data: unknown }).data, {
+      labels: [{ id: 'INBOX', name: 'Inbox' }],
+    });
+    assert.equal(accessChecks, directChecks);
+    assert.ok(calls.slice(before).every((call) => call.project === 'project-a'));
+  }
   if (switching) {
     const save = (key: string) =>
       app.inject({ method: 'PUT', url: '/api/integrations/key', payload: { key } });
@@ -496,7 +673,13 @@ try {
       failing = undefined;
       assert.equal(refused.statusCode, 400);
       assert.equal(provider.configurationId, state.configurationId);
-      assert.deepEqual(await keyStatus(), { mode: 'otto', switchable: true, suffix: null });
+      assert.deepEqual(await keyStatus(), {
+        mode: 'otto',
+        switchable: true,
+        keyWritable: true,
+        managed: managedStatus(),
+        suffix: null,
+      });
       assert.deepEqual((await pool.query('SELECT * FROM integration_keys')).rows, []);
       assert.equal((await connection(input.connectionId))!.status, 'connected');
       assert.equal(state.accounts.hosted.ca_retained, managedUser);
@@ -516,7 +699,13 @@ try {
       assert.equal(raced.statusCode, 409);
       assert.equal(saved!.statusCode, 200);
       assert.equal(saved!.body.includes(ownKey), false);
-      assert.deepEqual(saved!.json(), { mode: 'own', switchable: true, suffix: ownKey.slice(-4) });
+      assert.deepEqual(saved!.json(), {
+        mode: 'own',
+        switchable: true,
+        keyWritable: true,
+        managed: managedStatus(),
+        suffix: ownKey.slice(-4),
+      });
       assert.ok(redacted.includes(ownKey));
       assert.equal(redacted.includes('synthetic-invalid-key'), false);
       assert.deepEqual(
@@ -535,6 +724,7 @@ try {
       );
       await settle();
       const switched = calls.length;
+      const directAccessChecks = accessChecks;
       state.ownConnectionId = randomUUID();
       state.accounts['project-a'] = { ca_own: ownerId };
       await pool.query(
@@ -552,6 +742,8 @@ try {
       assert.deepEqual(rotated.json(), {
         mode: 'own',
         switchable: true,
+        keyWritable: true,
+        managed: managedStatus(),
         suffix: rotatedKey.slice(-4),
       });
       assert.notEqual(provider.configurationId, firstConfiguration);
@@ -571,6 +763,8 @@ try {
       state.ownAttempt = attempts.at(-1);
       state.accounts['project-a'].ca_pending_own = ownerId;
       assert.ok(calls.slice(switched).every((call) => call.project === 'project-a'));
+      await keyStatus();
+      assert.equal(accessChecks, directAccessChecks);
       assert.ok(calls.every((call) => !(call.method === 'DELETE' && call.path.includes('ca_own'))));
       state.accounts.hosted.ca_late = managedUser;
       await abandoned(`state=${managedAttempt}&completion_token=synthetic-completion`);
@@ -595,6 +789,7 @@ try {
           getKey: async () => assert.fail('An unconfigured key store has no key.'),
         },
         provider: createComposioProvider({}),
+        managed: { status: async () => managedStatus() },
       });
       await recovering.initialize();
       const unsealed = Fastify();
@@ -609,6 +804,8 @@ try {
       assert.deepEqual((await request('GET')).json(), {
         mode: 'own',
         switchable: true,
+        keyWritable: false,
+        managed: { state: 'sign_in_required', email: null },
         suffix: null,
       });
       const unsaved = await request('PUT');
@@ -616,11 +813,15 @@ try {
       assert.deepEqual((await request('GET')).json(), {
         mode: 'own',
         switchable: true,
+        keyWritable: false,
+        managed: { state: 'sign_in_required', email: null },
         suffix: null,
       });
       assert.deepEqual((await request('DELETE')).json(), {
         mode: 'otto',
-        switchable: false,
+        switchable: true,
+        keyWritable: false,
+        managed: managedStatus(),
         suffix: null,
       });
       assert.equal(
@@ -632,10 +833,14 @@ try {
       await unsealed.close();
     } else {
       const ownConnection = state.ownConnectionId!;
+      const directAccessChecks = accessChecks;
+      assert.equal(directAccessChecks, 0);
       assert.equal(provider.configurationId, state.ownConfigurationId);
       assert.deepEqual(await labels(ownConnection), {
         labels: [{ id: 'INBOX', name: 'Inbox' }],
       });
+      await keyStatus();
+      assert.equal(accessChecks, directAccessChecks);
       const stale = randomUUID();
       state.accounts.hosted = { ca_stale: managedUser };
       await pool.query(
@@ -652,15 +857,32 @@ try {
       assert.deepEqual(disconnected.json(), { ok: true });
       assert.ok(deleted('/api/v3.1/connected_accounts/ca_stale', 'hosted'));
       assert.equal(await connection(stale), undefined);
+      managedAccess = 'revoked';
+      const protectedKey = (await pool.query('SELECT * FROM vault_app_grants')).rows;
+      const beforeDeniedSwitch = calls.length;
+      const deniedSwitch = await app.inject({ method: 'DELETE', url: '/api/integrations/key' });
+      assert.equal(deniedSwitch.statusCode, 400);
+      assert.equal(provider.configurationId, state.ownConfigurationId);
+      assert.equal(calls.length, beforeDeniedSwitch);
+      assert.deepEqual((await pool.query('SELECT * FROM vault_app_grants')).rows, protectedKey);
+      assert.equal((await keyStatus()).managed.state, 'revoked');
+      assert.deepEqual(await labels(ownConnection), { labels: [{ id: 'INBOX', name: 'Inbox' }] });
       const gone = randomUUID();
       await pool.query(
         `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id)
          VALUES($1,$2,'composio','gmail','ca_gone',$3)`,
         [gone, ownerId, provider.configurationId],
       );
+      managedAccess = 'enabled';
       const switched = calls.length;
       const removed = await app.inject({ method: 'DELETE', url: '/api/integrations/key' });
-      assert.deepEqual(removed.json(), { mode: 'otto', switchable: true, suffix: null });
+      assert.deepEqual(removed.json(), {
+        mode: 'otto',
+        switchable: true,
+        keyWritable: true,
+        managed: managedStatus(),
+        suffix: null,
+      });
       assert.equal(provider.configurationId, state.configurationId);
       assert.deepEqual((await pool.query('SELECT * FROM integration_keys')).rows, []);
       assert.deepEqual((await pool.query('SELECT * FROM vault_app_grants')).rows, []);
@@ -703,6 +925,7 @@ try {
       origin,
       calls: startup,
       signatureChecks,
+      accessChecks,
       periodicWorkers: 'frozen; foreground routing and account continuity only',
     }) + '\n',
   );

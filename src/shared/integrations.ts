@@ -11,7 +11,25 @@ export interface IntegrationServiceInfo {
 export type IntegrationKeyStatus = {
   mode: 'otto' | 'own';
   switchable: boolean;
+  keyWritable: boolean;
   suffix: string | null;
+  managed: IntegrationManagedAccess | null;
+  warning?: string;
+};
+
+export type IntegrationManagedAccess = {
+  state: 'sign_in_required' | 'enabled' | 'denied' | 'revoked' | 'unavailable';
+  email: string | null;
+};
+
+export type IntegrationAccessAttempt = {
+  id: string;
+  url: string;
+  expiresAt: number;
+};
+
+export type IntegrationAccessProgress = {
+  status: 'pending' | 'authorized' | 'completed' | 'cancelled' | 'denied';
 };
 
 export const integrationServices: Record<

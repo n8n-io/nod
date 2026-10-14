@@ -206,7 +206,13 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         : gmail.some((connection) => connection.status !== 'not_configured')
           ? undefined
           : 'gmail';
-  const canConnect = !loading && !unavailable && !keyNeeded && !choice.switching;
+  const canConnect =
+    !loading &&
+    !unavailable &&
+    !keyNeeded &&
+    choice.ready &&
+    !choice.switching &&
+    !choice.signingIn;
 
   async function connect() {
     if (request.current || !canConnect) return;
@@ -318,8 +324,12 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       <p className="ob-email-muted">
         {choice.mode === 'own'
           ? 'Save your Composio key first.'
-          : 'Switch to Otto’s connection first.'}
+          : 'Enable Easy Connect and confirm the switch first.'}
       </p>
+    );
+  else if (keyStatus?.mode === 'otto' && !choice.ready)
+    status = (
+      <p className="ob-email-muted">Enable Easy Connect above, then connect Gmail separately.</p>
     );
   else if (unavailable)
     status = (

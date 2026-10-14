@@ -7,6 +7,7 @@ import {
   KeyRound,
   Globe,
   MapPin,
+  Plug,
   LogOut,
   Monitor,
   Moon,
@@ -45,6 +46,7 @@ import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { DesktopOptions, useDesktopSettings } from './desktop-settings';
+import { ConnectionSettings } from './connection-choice';
 import { Memory } from '../pages/memory';
 import { Trust } from '../pages/trust';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
@@ -363,19 +365,21 @@ export function AccountSettings({
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
   const tabs: AccountTab[] = desktop
-    ? ['General', 'Models', 'Preferences', 'Memory', 'Trust']
+    ? ['General', 'Models', 'App connections', 'Preferences', 'Memory', 'Trust']
     : account.local
-      ? ['Models', 'Appearance', 'Preferences', 'Memory', 'Trust']
-      : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory', 'Trust'];
+      ? ['Models', 'App connections', 'Appearance', 'Preferences', 'Memory', 'Trust']
+      : ['Profile', 'Models', 'App connections', 'Appearance', 'Preferences', 'Memory', 'Trust'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
+  const [connectionDirty, setConnectionDirty] = useState(false);
   const [name, setName] = useState(account.user.name);
   const pending = useRef(false);
   pending.current =
     modelDirty ||
     preferencesDirty ||
+    connectionDirty ||
     native.busy ||
     account.saving ||
     name.trim() !== account.user.name;
@@ -476,15 +480,17 @@ export function AccountSettings({
               const Icon =
                 value === 'Models'
                   ? KeyRound
-                  : value === 'Profile'
-                    ? UserRound
-                    : value === 'Memory'
-                      ? Brain
-                      : value === 'Trust'
-                        ? ShieldCheck
-                        : value === 'Appearance' || value === 'General'
-                          ? Sun
-                          : SlidersHorizontal;
+                  : value === 'App connections'
+                    ? Plug
+                    : value === 'Profile'
+                      ? UserRound
+                      : value === 'Memory'
+                        ? Brain
+                        : value === 'Trust'
+                          ? ShieldCheck
+                          : value === 'Appearance' || value === 'General'
+                            ? Sun
+                            : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -673,6 +679,9 @@ export function AccountSettings({
               {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
               {tab === 'Memory' && <Memory />}
               {tab === 'Trust' && <Trust />}
+              {tab === 'App connections' && (
+                <ConnectionSettings onDirtyChange={setConnectionDirty} />
+              )}
               {tab === 'Models' && (
                 <>
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />

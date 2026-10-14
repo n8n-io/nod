@@ -7,7 +7,7 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to the model provider and apps you choose. With Otto's connection, the default, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project. Feedback and usage analytics are optional.
+By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to the model provider and apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project. Feedback and usage analytics are optional.
 
 ## Where your data lives
 
@@ -43,6 +43,8 @@ flowchart LR
 | Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                     |
 | n8n                                       | App requests and results when you use Otto's connection, feedback you send, and masked usage analytics if you opt in                                                 |
 
+Google sign-in for Easy Connect sends identity information to Google and n8n's connection service. That service stores your verified email, Google account identifier, installation admission, and expiring sign-in state. It discards Google's access and ID tokens after validation. Signing in doesn't grant access to Gmail. Removing proxy access doesn't delete provider accounts.
+
 Your model keys and your Composio key, if you use one, stay on your installation. Keys you save in the app are stored encrypted, and Otto only shows the last four characters of a Composio key. Otto's connection doesn't need a Composio key. Provider keys never enter a prompt, Otto's workspace or its browser.
 
 ## Usage analytics
@@ -64,7 +66,7 @@ Otto learns only from your own short messages, never from its replies, tool resu
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Otto to forget something.
 - **Vault items.** Open the item in **Vault → Saved** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
-- **Composio key.** Switch to Otto's connection in **Apps**. This deletes your saved key and disconnects the apps you connected through your project.
+- **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
 - **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. In hosted mode, ask your operator.
 
 :::caution

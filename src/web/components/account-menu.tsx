@@ -6,7 +6,14 @@ import { ConnectionMenu } from './connection-menu';
 import { desktopSettingsAvailable } from '../lib/desktop';
 
 export type AccountTab =
-  'Profile' | 'General' | 'Appearance' | 'Preferences' | 'Models' | 'Memory' | 'Trust';
+  | 'Profile'
+  | 'General'
+  | 'Appearance'
+  | 'Preferences'
+  | 'Models'
+  | 'App connections'
+  | 'Memory'
+  | 'Trust';
 export interface AccountControls {
   user: AccountUser;
   local: boolean;

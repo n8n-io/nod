@@ -7,9 +7,12 @@ import {
   randomBytes,
   randomUUID,
   verify,
+  webcrypto,
+  type JsonWebKey,
 } from 'node:crypto';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { get as httpGet } from 'node:http';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -37,6 +40,10 @@ import {
 } from '../src/ports/integrations.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { createComposioProxy } from '../src/providers/composio/proxy.ts';
+import {
+  createIntegrationAccess,
+  renderIntegrationAccessBridge,
+} from '../src/server/integration-access.ts';
 import { createDirectProvider } from '../src/providers/direct/integrations.ts';
 import { createDirectOAuth } from '../src/providers/direct/oauth.ts';
 import { withDirectMcp } from '../src/providers/direct/mcp.ts';
@@ -510,6 +517,441 @@ test('managed integration requests bind SDK calls to a private persisted install
   );
 });
 
+test('managed proxy access binds browser enrollment to the installation and a private native bridge', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-managed-access-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const brokerOrigin = 'https://composio.example.test';
+  let admission: 'sign_in_required' | 'enabled' | 'revoked' = 'sign_in_required';
+  const enrollments = new Map<
+    string,
+    {
+      challenge: string;
+      origin: string;
+      status: 'pending' | 'authorized' | 'completed' | 'cancelled' | 'denied';
+    }
+  >();
+  const calls: string[] = [];
+  const identities = new Set<string>();
+  let holdPoll: (() => Promise<void>) | undefined;
+  const proxy = createComposioProxy({
+    dataRoot: root,
+    ownerId: 'synthetic-managed-access',
+    url: brokerOrigin,
+    request: async (resource, options) => {
+      const request = new Request(resource, options);
+      const url = new URL(request.url);
+      const bytes = Buffer.from(await request.arrayBuffer());
+      const body = JSON.parse(bytes.toString());
+      assert.equal(url.origin, brokerOrigin);
+      assert.equal(request.headers.has('x-api-key'), false);
+      assert.equal(request.headers.has('authorization'), false);
+      const publicKey = request.headers.get('x-otto-public-key')!;
+      identities.add(publicKey);
+      assert.ok(
+        verify(
+          null,
+          Buffer.from(
+            [
+              'otto-composio-v1',
+              request.method,
+              url.origin,
+              url.pathname,
+              request.headers.get('x-otto-timestamp'),
+              request.headers.get('x-otto-request-id'),
+              createHash('sha256').update(bytes).digest('hex'),
+            ].join('\n'),
+          ),
+          createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey }, format: 'jwk' }),
+          Buffer.from(request.headers.get('x-otto-signature')!, 'base64url'),
+        ),
+      );
+      calls.push(url.pathname);
+      if (url.pathname === '/v1/access/status')
+        return Response.json({
+          state: admission,
+          ...(admission === 'enabled' ? { email: 'approved@example.test' } : {}),
+        });
+      if (url.pathname === '/v1/access/start') {
+        const id = randomBytes(32).toString('base64url');
+        assert.equal(body.browserKey.d, undefined);
+        createPublicKey({ key: body.browserKey, format: 'jwk' });
+        enrollments.set(id, {
+          challenge: body.challenge,
+          origin: body.uiOrigin,
+          status: 'pending',
+        });
+        return Response.json({
+          id,
+          url: `${brokerOrigin}/api/auth/enroll?id=${id}`,
+          expiresAt: Date.now() + 60_000,
+        });
+      }
+      if (url.pathname === '/v1/access/revoke') {
+        admission = 'revoked';
+        return Response.json({ state: admission });
+      }
+      const enrolled = enrollments.get(body.id);
+      assert.ok(enrolled);
+      if (url.pathname === '/v1/access/poll') {
+        const status = enrolled.status;
+        await holdPoll?.();
+        return Response.json({ status });
+      }
+      if (url.pathname === '/v1/access/cancel') {
+        enrolled.status = 'cancelled';
+        return Response.json({ cancelled: true });
+      }
+      assert.equal(url.pathname, '/v1/access/complete');
+      assert.equal(enrolled.status, 'authorized');
+      assert.equal(body.challenge, enrolled.challenge);
+      enrolled.status = 'completed';
+      admission = 'enabled';
+      return Response.json({ state: admission, email: 'approved@example.test' });
+    },
+  });
+  await proxy.initialize();
+  const browser = await webcrypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign', 'verify'],
+  );
+  const browserKey = await webcrypto.subtle.exportKey('jwk', browser.publicKey);
+  const access = createIntegrationAccess({
+    proxy,
+    origin: 'https://otto.example.test',
+    desktop: true,
+  });
+  const app = Fastify();
+  const ownerKey = randomBytes(32).toString('base64url');
+  registerLocalAccess(app, 4310, { key: ownerKey, desktop: true });
+  access.register(app);
+  t.after(() => app.close());
+  const ownerHeaders = { host: '127.0.0.1:4310', 'x-otto-desktop-token': ownerKey };
+  const route = (
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    payload?: Record<string, unknown>,
+  ) =>
+    app.inject({
+      method,
+      url: `/api/integrations/access${path}`,
+      headers: ownerHeaders,
+      ...(payload === undefined ? {} : { payload }),
+    });
+
+  await t.test(
+    'owner routes require local authority and completion requires the exact approved enrollment',
+    async () => {
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/integrations/access/start',
+            headers: { host: '127.0.0.1:4310' },
+            payload: { browserKey },
+          })
+        ).statusCode,
+        401,
+      );
+      assert.equal(calls.length, 0);
+      assert.equal(
+        (
+          await route('POST', '/start', {
+            browserKey: { ...browserKey, d: randomBytes(32).toString('base64url') },
+          })
+        ).statusCode,
+        400,
+      );
+      assert.deepEqual(await access.status(), { state: 'sign_in_required', email: null });
+      const response = await route('POST', '/start', { browserKey });
+      assert.equal(response.statusCode, 200);
+      const started = response.json();
+      assert.equal(new URL(started.url).searchParams.get('id'), started.id);
+      assert.equal(enrollments.get(started.id)!.origin, 'https://otto.example.test');
+      assert.equal(JSON.stringify(started).includes(ownerKey), false);
+      assert.equal(JSON.stringify(started).includes(enrollments.get(started.id)!.challenge), false);
+      assert.equal((await route('POST', '/complete', { id: started.id })).statusCode, 400);
+      assert.equal(calls.filter((path) => path === '/v1/access/complete').length, 0);
+      enrollments.get(started.id)!.status = 'authorized';
+      assert.deepEqual((await route('GET', `/status?id=${started.id}`)).json(), {
+        status: 'authorized',
+      });
+      assert.deepEqual((await route('POST', '/complete', { id: started.id })).json(), {
+        state: 'enabled',
+        email: 'approved@example.test',
+      });
+      await route('POST', '/complete', { id: started.id });
+      assert.equal(calls.filter((path) => path === '/v1/access/complete').length, 1);
+      assert.deepEqual((await route('DELETE', '')).json(), { state: 'revoked', email: null });
+      assert.deepEqual(await access.status(), { state: 'revoked', email: null });
+    },
+  );
+
+  await t.test(
+    'superseded, cancelled and denied attempts cannot enable the installation',
+    async () => {
+      const first = (await route('POST', '/start', { browserKey })).json();
+      const second = (await route('POST', '/start', { browserKey })).json();
+      assert.equal(enrollments.get(first.id)!.status, 'cancelled');
+      enrollments.get(first.id)!.status = 'authorized';
+      assert.equal((await route('POST', '/complete', { id: first.id })).statusCode, 400);
+      assert.deepEqual((await route('GET', `/status?id=${first.id}`)).json(), {
+        status: 'cancelled',
+      });
+      enrollments.get(second.id)!.status = 'denied';
+      assert.deepEqual((await route('GET', `/status?id=${second.id}`)).json(), {
+        status: 'denied',
+      });
+      assert.equal((await route('POST', '/complete', { id: second.id })).statusCode, 400);
+      const third = (await route('POST', '/start', { browserKey })).json();
+      await route('POST', '/cancel', { id: third.id });
+      assert.equal((await route('POST', '/complete', { id: third.id })).statusCode, 400);
+      assert.equal(admission, 'revoked');
+    },
+  );
+
+  await t.test('expiry and a late authorized poll cannot restore a cancelled attempt', async () => {
+    const started = await access.start({ browserKey });
+    enrollments.get(started.id)!.status = 'authorized';
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    holdPoll = () => {
+      entered();
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    };
+    const pending = access.progress(started.id);
+    const rejection = assert.rejects(pending);
+    await waiting;
+    await access.cancel(started.id);
+    release();
+    await rejection;
+    holdPoll = undefined;
+    assert.deepEqual(await access.progress(started.id), { status: 'cancelled' });
+    await assert.rejects(access.complete(started.id));
+    const native = await access.start({ native: true });
+    const clock = t.mock.method(Date, 'now', () => native.expiresAt + 1);
+    try {
+      assert.deepEqual(await access.progress(native.id), { status: 'cancelled' });
+      await assert.rejects(access.complete(native.id));
+      await assert.rejects(fetch(native.url));
+    } finally {
+      clock.mock.restore();
+    }
+    assert.equal(admission, 'revoked');
+  });
+
+  await t.test(
+    'native bootstrap is single-use and its fresh-port API requires the private scoped header',
+    async () => {
+      const started = (await route('POST', '/start', { native: true })).json();
+      const url = new URL(started.url);
+      assert.equal(url.hostname, '127.0.0.1');
+      assert.equal(url.protocol, 'http:');
+      assert.equal(url.search, '');
+      assert.match(url.pathname, /^\/[A-Za-z0-9_-]{43}$/);
+      assert.equal(started.url.includes(ownerKey), false);
+      const foreignHost = await new Promise<number | undefined>((resolve, reject) => {
+        httpGet(started.url, { headers: { host: 'attacker.example.test' } }, (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode));
+        }).on('error', reject);
+      });
+      assert.equal(foreignHost, 403);
+      const page = await fetch(started.url);
+      assert.equal(page.status, 200);
+      assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
+      assert.match(page.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
+      assert.equal(page.headers.has('set-cookie'), false);
+      const html = await page.text();
+      const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
+      assert.equal((await fetch(started.url)).status, 403);
+      assert.equal((await fetch(`${url.origin}/status`)).status, 403);
+      assert.equal(
+        (
+          await fetch(`${url.origin}/start`, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              origin: 'https://attacker.example.test',
+              'x-otto-bridge': bridgeKey,
+            },
+            body: JSON.stringify({ browserKey }),
+          })
+        ).status,
+        403,
+      );
+      const enrolled = await fetch(`${url.origin}/start`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: url.origin,
+          'x-otto-bridge': bridgeKey,
+        },
+        body: JSON.stringify({ browserKey }),
+      });
+      assert.equal(enrolled.status, 200);
+      const brokerAttempt = (await enrolled.json()) as { id: string };
+      assert.notEqual(brokerAttempt.id, started.id);
+      assert.equal(enrollments.get(brokerAttempt.id)!.origin, url.origin);
+      assert.equal(
+        (
+          await fetch(`${url.origin}/start`, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              origin: url.origin,
+              'x-otto-bridge': bridgeKey,
+            },
+            body: JSON.stringify({ browserKey }),
+          })
+        ).status,
+        404,
+      );
+      assert.deepEqual(
+        await (
+          await fetch(`${url.origin}/status`, { headers: { 'x-otto-bridge': bridgeKey } })
+        ).json(),
+        { status: 'pending' },
+      );
+      enrollments.get(brokerAttempt.id)!.status = 'authorized';
+      assert.deepEqual((await route('POST', '/complete', { id: started.id })).json(), {
+        state: 'enabled',
+        email: 'approved@example.test',
+      });
+      await assert.rejects(
+        fetch(`${url.origin}/status`, { headers: { 'x-otto-bridge': bridgeKey } }),
+      );
+    },
+  );
+
+  await t.test(
+    'the native page signs only the exact popup challenge using its own ephemeral browser key',
+    async () => {
+      const { JSDOM } = await import('jsdom');
+      const id = randomBytes(32).toString('base64url');
+      const uiOrigin = 'http://127.0.0.1:54321';
+      const bridgeKey = randomBytes(32).toString('base64url');
+      let exported: JsonWebKey | undefined;
+      let launched!: () => void;
+      const opened = new Promise<void>((resolve) => {
+        launched = resolve;
+      });
+      let proof!: (value: unknown) => void;
+      const signed = new Promise<unknown>((resolve) => {
+        proof = resolve;
+      });
+      const proofs: unknown[] = [];
+      let brokerStatus = 'pending';
+      let statusReads = 0;
+      let poll: (() => void) | undefined;
+      const popup = {
+        closed: false,
+        location: {
+          set href(value: string) {
+            assert.equal(value, `${brokerOrigin}/api/auth/enroll?id=${id}`);
+            launched();
+          },
+        },
+        close() {},
+        postMessage(value: unknown, target: string) {
+          assert.equal(target, brokerOrigin);
+          proofs.push(value);
+          proof(value);
+        },
+      };
+      const dom = new JSDOM(
+        renderIntegrationAccessBridge(brokerOrigin, 'synthetic-nonce', bridgeKey),
+        {
+          url: `${uiOrigin}/synthetic`,
+          runScripts: 'dangerously',
+          beforeParse(window) {
+            Object.defineProperty(window, 'crypto', { value: webcrypto });
+            window.TextEncoder = TextEncoder;
+            window.open = () => popup as unknown as Window;
+            window.setTimeout = ((callback: () => void) => {
+              poll = callback;
+              return 1;
+            }) as typeof window.setTimeout;
+            window.clearTimeout = () => {
+              poll = undefined;
+            };
+            window.fetch = async (path, options) => {
+              assert.equal(new Headers(options?.headers).get('x-otto-bridge'), bridgeKey);
+              if (path === '/status') {
+                statusReads++;
+                return Response.json({ status: brokerStatus });
+              }
+              assert.equal(path, '/start');
+              exported = JSON.parse(String(options!.body)).browserKey;
+              assert.equal(exported!.d, undefined);
+              return Response.json({
+                id,
+                url: `${brokerOrigin}/api/auth/enroll?id=${id}`,
+                expiresAt: Date.now() + 60_000,
+              });
+            };
+          },
+        },
+      );
+      t.after(() => dom.window.close());
+      dom.window.document.querySelector<HTMLButtonElement>('#continue')!.click();
+      await opened;
+      const challenge = `otto-proxy-access-v1\n${id}\n${uiOrigin}\n${randomBytes(32).toString('base64url')}`;
+      const deliver = (origin: string, source: unknown, value: unknown) =>
+        dom.window.dispatchEvent(
+          new dom.window.MessageEvent('message', { origin, source: source as Window, data: value }),
+        );
+      const value = { type: 'otto:proxy-access:challenge', id, challenge };
+      deliver('https://attacker.example.test', popup, value);
+      deliver(brokerOrigin, {}, value);
+      deliver(brokerOrigin, popup, { ...value, id: randomBytes(32).toString('base64url') });
+      deliver(brokerOrigin, popup, { ...value, challenge: 'arbitrary-signature-input' });
+      deliver(brokerOrigin, popup, {
+        ...value,
+        challenge: `otto-proxy-access-v1\n${id}\n${uiOrigin}\n`,
+      });
+      const now = dom.window.Date.now;
+      dom.window.Date.now = () => now() + 120_000;
+      deliver(brokerOrigin, popup, value);
+      dom.window.Date.now = now;
+      deliver(brokerOrigin, popup, { ...value, challenge: challenge + 'x'.repeat(513) });
+      await delay(0);
+      assert.equal(proofs.length, 0);
+      deliver(brokerOrigin, popup, value);
+      const result = (await signed) as { type: string; id: string; signature: string };
+      assert.equal(result.type, 'otto:proxy-access:proof');
+      assert.equal(result.id, id);
+      assert.equal(Buffer.from(result.signature, 'base64url').length, 64);
+      assert.ok(
+        verify(
+          'sha256',
+          Buffer.from(challenge),
+          { key: createPublicKey({ key: exported!, format: 'jwk' }), dsaEncoding: 'ieee-p1363' },
+          Buffer.from(result.signature, 'base64url'),
+        ),
+      );
+      deliver(brokerOrigin, popup, value);
+      await delay(0);
+      assert.equal(proofs.length, 1);
+      popup.closed = true;
+      brokerStatus = 'authorized';
+      const previousReads = statusReads;
+      assert.ok(poll);
+      poll();
+      await delay(0);
+      assert.equal(statusReads, previousReads + 1);
+      assert.equal(poll, undefined);
+      assert.equal(proofs.length, 1);
+    },
+  );
+  assert.equal(identities.size, 1);
+});
+
 for (const [scenario, name, restart] of [
   ['fresh-desktop', 'fresh desktop uses managed routing', false],
   ['keyless-server', 'keyless server uses managed routing', false],
@@ -517,6 +959,21 @@ for (const [scenario, name, restart] of [
   ['direct-server-key-rotation', 'server key rotation retains same-project accounts', true],
   ['different-server-project', 'another server project cannot adopt saved accounts', true],
   ['switchable-server', 'an owner key switch revokes apps connected the other way', true],
+  [
+    'revoked-managed-server',
+    'a revoked managed installation can explicitly switch to its own key',
+    false,
+  ],
+  [
+    'signed-out-managed-server',
+    'a signed-out managed installation can explicitly switch to its own key',
+    false,
+  ],
+  [
+    'switchable-desktop',
+    'desktop BYOK survives restart and refuses a revoked managed destination',
+    true,
+  ],
 ] as const) {
   test(
     `default Composio adapters: ${name}`,
@@ -530,14 +987,16 @@ for (const [scenario, name, restart] of [
       const databaseUrl = new URL(process.env.TEST_DATABASE_URL!);
       databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
       const desktop = scenario.includes('desktop');
-      const keyless = scenario === 'keyless-server' || scenario === 'switchable-server';
+      const switching = scenario === 'switchable-server' || scenario === 'switchable-desktop';
+      const keyless =
+        scenario === 'keyless-server' || switching || scenario.endsWith('-managed-server');
       const connectionId = randomUUID();
       for (const phase of restart ? ['initial', 'restart'] : ['initial']) {
         const managed =
-          desktop || (keyless && (phase === 'initial' || scenario === 'keyless-server'));
+          (desktop && !switching) ||
+          (keyless && (phase === 'initial' || scenario === 'keyless-server'));
         const rejected =
-          phase === 'restart' &&
-          (scenario === 'different-server-project' || scenario === 'switchable-server');
+          phase === 'restart' && (scenario === 'different-server-project' || switching);
         const result = spawnSync(
           process.execPath,
           [
@@ -11385,6 +11844,14 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     BroadcastChannel: Channel,
     IS_REACT_ACT_ENVIRONMENT: true,
     fetch: async (path: unknown, init: RequestInit = {}) => {
+      if (path === '/api/integrations/key')
+        return Response.json({
+          mode: 'otto',
+          switchable: true,
+          keyWritable: true,
+          suffix: null,
+          managed: { state: 'enabled', email: 'approved@example.test' },
+        });
       if (path === '/api/apps') {
         inventoryReads++;
         return Response.json(appInventory);
@@ -11558,7 +12025,16 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   };
   try {
     pageDataCache.clear();
-    await act(async () => root.render(createElement(Apps)));
+    await act(async () =>
+      root.render(
+        createElement(Apps, {
+          onAsk() {},
+          onManageConnection() {
+            assert.fail('The enabled managed fixture must retain connector consent.');
+          },
+        }),
+      ),
+    );
     await settle();
     assert.match(dom.window.document.body.textContent!, /Synthetic discovery read failed/);
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
@@ -11624,7 +12100,16 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(timers.size, 0);
     discoveryStatus = 'pending';
     dom.window.history.replaceState(null, '', `/apps?connect=${id}`);
-    await act(async () => root.render(createElement(Apps)));
+    await act(async () =>
+      root.render(
+        createElement(Apps, {
+          onAsk() {},
+          onManageConnection() {
+            assert.fail('The enabled managed fixture must retain connector consent.');
+          },
+        }),
+      ),
+    );
     await settle();
     const completedForm = dom.window.document.querySelector('.app-discovery-dialog form')!;
     completedForm.querySelector<HTMLInputElement>('[name="clientId"]')!.value = 'fixture-client';

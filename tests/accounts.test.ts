@@ -16,7 +16,19 @@ import pg from 'pg';
 import { makeSignature } from 'better-auth/crypto';
 import { createGoogleAuthentication } from '../src/providers/better-auth/index.ts';
 import { createKeychainKeyStore } from '../src/providers/keychain/key-store.ts';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createFilesystemKeyStore } from '../src/providers/filesystem/key-store.ts';
+import { openCredential, sealCredential } from '../src/server/vault.ts';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
@@ -1149,6 +1161,118 @@ describe('keychain', () => {
     sealed = false;
     assert.equal((await store.getKey()).length, 32);
     assert.equal(adds, 1);
+  });
+});
+
+describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
+  test('concurrent instances publish one private key and decrypt after restart', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-vault-key-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await chmod(root, 0o755);
+    const stores = Array.from({ length: 12 }, () =>
+      createFilesystemKeyStore({ dataRoot: root, canCreate: async () => true }),
+    );
+    const keys = await Promise.all(stores.map((store) => store.getKey()));
+    const path = join(root, 'vault', 'master-key');
+    const saved = await readFile(path, 'utf8');
+    assert.equal(Buffer.from(saved, 'base64').length, 32);
+    for (const key of keys) assert.equal(key.toString('base64'), saved);
+    assert.equal((await lstat(path)).mode & 0o777, 0o600);
+    assert.equal((await lstat(join(root, 'vault'))).mode & 0o777, 0o700);
+    assert.deepEqual(await readdir(join(root, 'vault')), ['master-key']);
+    const entry = { id: randomUUID(), owner_id: 'synthetic-owner', origin: 'https://example.test' };
+    const secret = { username: 'synthetic@example.test', password: 'synthetic-secret' };
+    const ciphertext = sealCredential(keys[0], entry, secret);
+    keys[0].fill(0);
+    assert.equal(keys[1].toString('base64'), saved);
+    const alias = join(root, 'trusted-alias');
+    await symlink(root, alias);
+    const restored = createFilesystemKeyStore({
+      dataRoot: alias,
+      canCreate: async () => {
+        throw new Error('An existing key must not need creation permission.');
+      },
+    });
+    assert.deepEqual(openCredential(await restored.getKey(), { ...entry, ciphertext }), secret);
+    assert.deepEqual(openCredential(await stores[0].getKey(), { ...entry, ciphertext }), secret);
+  });
+
+  test('missing keys cannot replace sealed data and explicit retry preserves the new key', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-vault-missing-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    let sealed = true;
+    const store = createFilesystemKeyStore({ dataRoot: root, canCreate: async () => !sealed });
+    const failed = await Promise.allSettled([store.getKey(), store.getKey()]);
+    assert.ok(failed.every((result) => result.status === 'rejected'));
+    await assert.rejects(lstat(join(root, 'vault', 'master-key')), { code: 'ENOENT' });
+    assert.deepEqual(await readdir(join(root, 'vault')), []);
+    sealed = false;
+    const key = await store.getKey();
+    sealed = true;
+    assert.deepEqual(await store.getKey(), key);
+    await rm(join(root, 'vault', 'master-key'));
+    await assert.rejects(store.getKey(), /missing/);
+    assert.deepEqual(await readdir(join(root, 'vault')), []);
+  });
+
+  test('unsafe paths and invalid key contents are refused without replacement', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-vault-unsafe-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const original = join(root, 'original');
+    const originalKey = await createFilesystemKeyStore({
+      dataRoot: original,
+      canCreate: async () => true,
+    }).getKey();
+    for (const variant of [
+      'symbolic directory',
+      'symbolic key',
+      'permissive directory',
+      'permissive key',
+      'writable root',
+      'nonregular key',
+      'invalid key',
+    ]) {
+      await t.test(variant, async () => {
+        const dataRoot = join(root, variant.replaceAll(' ', '-'));
+        const directory = join(dataRoot, 'vault');
+        const path = join(directory, 'master-key');
+        await mkdir(dataRoot, { mode: 0o700 });
+        if (variant === 'symbolic directory') await symlink(join(original, 'vault'), directory);
+        else {
+          await mkdir(directory, { mode: 0o700 });
+          if (variant === 'symbolic key')
+            await symlink(join(original, 'vault', 'master-key'), path);
+          else if (variant === 'nonregular key') await mkdir(path);
+          else
+            await writeFile(
+              path,
+              variant === 'invalid key' ? 'invalid' : originalKey.toString('base64'),
+              { mode: 0o600 },
+            );
+          if (variant === 'permissive key') await chmod(path, 0o644);
+          if (variant === 'permissive directory') await chmod(directory, 0o755);
+        }
+        if (variant === 'writable root') await chmod(dataRoot, 0o777);
+        const previous = await lstat(path);
+        let creationChecks = 0;
+        const store = createFilesystemKeyStore({
+          dataRoot,
+          canCreate: async () => {
+            creationChecks++;
+            return true;
+          },
+        });
+        await assert.rejects(store.getKey());
+        assert.equal(creationChecks, 0);
+        const current = await lstat(path);
+        assert.equal(current.ino, previous.ino);
+        assert.equal(current.mode, previous.mode);
+      });
+    }
+    assert.equal(
+      await readFile(join(original, 'vault', 'master-key'), 'utf8'),
+      originalKey.toString('base64'),
+    );
   });
 });
 

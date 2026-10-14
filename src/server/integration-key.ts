@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IntegrationProvider } from '../ports/integrations.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
-import type { IntegrationKeyStatus } from '../shared/integrations.ts';
+import type { IntegrationKeyStatus, IntegrationManagedAccess } from '../shared/integrations.ts';
 import { pool, transaction } from './db.ts';
 import { IntegrationError } from './integrations.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
@@ -18,6 +18,10 @@ export function createIntegrationKeyService(options: {
   keyStore: CredentialKeyStore;
   provider: IntegrationProvider;
   fixed?: IntegrationKeyStatus['mode'];
+  managed?: {
+    status(): Promise<IntegrationManagedAccess>;
+    observedStatus?(): IntegrationManagedAccess;
+  };
 }) {
   const { ownerId, provider, fixed } = options;
   let vault: Awaited<ReturnType<typeof createAppGrantVault>>;
@@ -43,11 +47,19 @@ export function createIntegrationKeyService(options: {
     own = Boolean(key);
     suffix = key?.slice(-4) ?? null;
   }
-  function status(): IntegrationKeyStatus {
+  async function status(): Promise<IntegrationKeyStatus> {
     return {
       mode: own ? 'own' : 'otto',
-      switchable: !fixed && (options.keyStore.configured || own),
+      switchable: !fixed && (options.keyStore.configured || own || Boolean(options.managed)),
+      keyWritable: !fixed && options.keyStore.configured,
       suffix,
+      managed: options.managed
+        ? own
+          ? (options.managed.observedStatus?.() ?? { state: 'sign_in_required', email: null })
+          : await options.managed
+              .status()
+              .catch(() => ({ state: 'unavailable' as const, email: null }))
+        : null,
     };
   }
   async function verify(key: string) {
@@ -86,7 +98,7 @@ export function createIntegrationKeyService(options: {
   }
   return {
     get mode() {
-      return status().mode;
+      return own ? 'own' : 'otto';
     },
     async initialize() {
       if (fixed) return;
@@ -108,7 +120,11 @@ export function createIntegrationKeyService(options: {
     register(
       app: FastifyInstance,
       integrations: {
-        changeProvider(revoke: boolean, swap: () => Promise<void>): Promise<void>;
+        changeProvider(
+          revoke: boolean,
+          swap: () => Promise<void>,
+          skipRemoteRevocation?: () => Promise<boolean>,
+        ): Promise<void>;
       },
     ) {
       function change(key?: string) {
@@ -118,11 +134,35 @@ export function createIntegrationKeyService(options: {
               'This installation sets its app connection in its settings.',
             );
           if (key !== undefined) await verify(key);
+          else if (!options.managed || (await options.managed.status()).state !== 'enabled')
+            throw new IntegrationKeyError(
+              'Sign in with an approved Google account before switching to Otto’s connection.',
+            );
+          let detached = false;
           await integrations.changeProvider(
-            status().mode !== (key === undefined ? 'otto' : 'own'),
+            own !== (key !== undefined),
             () => (key === undefined ? remove() : save(key)),
+            !own && key !== undefined && options.managed
+              ? async () => {
+                  const access = await options.managed!.status();
+                  detached = access.state === 'revoked' || access.state === 'sign_in_required';
+                  if (!detached && access.state !== 'enabled')
+                    throw new IntegrationKeyError(
+                      'Otto couldn’t check your managed connection, so nothing changed. Try again.',
+                    );
+                  return detached;
+                }
+              : undefined,
           );
-          return status();
+          return {
+            ...(await status()),
+            ...(detached
+              ? {
+                  warning:
+                    'Your key is saved. Previous managed app permissions remain with their providers; remove them there if needed.',
+                }
+              : {}),
+          };
         });
         pending = result.catch(() => {});
         return result;

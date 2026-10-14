@@ -12,13 +12,13 @@ This page gives a security or IT team what it needs to assess Otto: where it run
 
 ## Deployment options
 
-|                     | Desktop app                            | From source                     | Hosted                                          |
-| ------------------- | -------------------------------------- | ------------------------------- | ----------------------------------------------- |
-| Runs on             | The user's Mac or Windows PC           | A macOS or Linux machine        | Cloudflare containers, one runtime per user     |
-| Data stored         | On the device, in a private VM         | `.local/` and Docker volumes    | A database schema and R2 bucket per user        |
-| Encryption key held | macOS Keychain or OS-protected storage | Keychain or `OTTO_VAULT_KEY`    | Derived per user from the operator's master key |
-| Network exposure    | Loopback only, per-launch token        | Loopback only, owner access key | Google sign-in through a gateway                |
-| Saved cards         | Supported                              | Supported                       | <Badge text="Refused" variant="caution" />      |
+|                     | Desktop app                            | From source                                             | Hosted                                          |
+| ------------------- | -------------------------------------- | ------------------------------------------------------- | ----------------------------------------------- |
+| Runs on             | The user's Mac or Windows PC           | A macOS or Linux machine                                | Cloudflare containers, one runtime per user     |
+| Data stored         | On the device, in a private VM         | `.local/` and Docker volumes                            | A database schema and R2 bucket per user        |
+| Encryption key held | macOS Keychain or OS-protected storage | Keychain, private Linux profile key or `OTTO_VAULT_KEY` | Derived per user from the operator's master key |
+| Network exposure    | Loopback only, per-launch token        | Loopback only, owner access key                         | Google sign-in through a gateway                |
+| Saved cards         | Supported                              | Supported                                               | <Badge text="Refused" variant="caution" />      |
 
 ## How data flows
 

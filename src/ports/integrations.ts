@@ -1,6 +1,30 @@
-import type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
+import type {
+  IntegrationService,
+  IntegrationServiceInfo,
+  IntegrationAccessAttempt,
+  IntegrationAccessProgress,
+  IntegrationManagedAccess,
+} from '../shared/integrations.ts';
 import type { Connection } from '../shared/contracts.ts';
 export type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
+export interface IntegrationAccessProvider {
+  origin: string;
+  accessStatus(): Promise<IntegrationManagedAccess>;
+  startAccess(
+    browserKey: unknown,
+    origin: string,
+    challenge: string,
+    signal?: AbortSignal,
+  ): Promise<IntegrationAccessAttempt>;
+  pollAccess(id: string, signal?: AbortSignal): Promise<IntegrationAccessProgress>;
+  completeAccess(
+    id: string,
+    challenge: string,
+    signal?: AbortSignal,
+  ): Promise<IntegrationManagedAccess>;
+  cancelAccess(id: string): Promise<{ cancelled: true }>;
+  revokeAccess(): Promise<IntegrationManagedAccess>;
+}
 export type ConnectedApp = Pick<
   Connection,
   | 'slug'

@@ -15,9 +15,26 @@ import { link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { IntegrationFile } from '../../ports/integrations.ts';
+import type { IntegrationManagedAccess } from '../../shared/integrations.ts';
 
 const stateSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const pendingPrefix = 'pending_';
+const accessState = z
+  .object({
+    state: z.enum(['sign_in_required', 'enabled', 'revoked']),
+    email: z.email().max(320).optional(),
+  })
+  .strict();
+const browserKeySchema = z
+  .object({
+    kty: z.literal('EC'),
+    crv: z.literal('P-256'),
+    x: stateSchema,
+    y: stateSchema,
+    ext: z.literal(true).optional(),
+    key_ops: z.array(z.literal('verify')).max(1).optional(),
+  })
+  .strict();
 
 export function createComposioProxy(options: {
   dataRoot: string;
@@ -242,7 +259,100 @@ export function createComposioProxy(options: {
   return {
     client,
     ownerId: options.ownerId,
+    origin,
     initialize,
+    async accessStatus(): Promise<IntegrationManagedAccess> {
+      const result = accessState.parse(await rpc('/v1/access/status', {}, { timeout: 10_000 }));
+      return { state: result.state, email: result.email ?? null };
+    },
+    async startAccess(
+      browserKey: unknown,
+      uiOrigin: string,
+      challenge: string,
+      signal?: AbortSignal,
+    ) {
+      const ui = new URL(uiOrigin);
+      const loopback =
+        ui.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(ui.hostname);
+      const hostname = ui.hostname.replace(/\.$/, '');
+      const publicHttps =
+        ui.protocol === 'https:' &&
+        hostname.includes('.') &&
+        !hostname.endsWith('.localhost') &&
+        !/^\d+\.\d+\.\d+\.\d+$/.test(hostname) &&
+        !hostname.startsWith('[');
+      if (ui.origin !== uiOrigin || (!loopback && !publicHttps) || (ui.port && Number(ui.port) < 1))
+        throw new Error('The sign-in origin is invalid.');
+      const result = z
+        .object({
+          id: stateSchema,
+          url: z.url().max(2000),
+          expiresAt: z.number().int(),
+        })
+        .strict()
+        .parse(
+          await rpc(
+            '/v1/access/start',
+            {
+              browserKey: browserKeySchema.parse(browserKey),
+              uiOrigin,
+              challenge: stateSchema.parse(challenge),
+            },
+            { signal, timeout: 10_000 },
+          ),
+        );
+      const redirect = new URL(result.url);
+      if (
+        redirect.origin !== origin ||
+        redirect.pathname !== '/api/auth/enroll' ||
+        redirect.searchParams.size !== 1 ||
+        redirect.searchParams.get('id') !== result.id ||
+        redirect.hash ||
+        redirect.username ||
+        redirect.password ||
+        result.expiresAt <= Date.now() ||
+        result.expiresAt > Date.now() + 10 * 60_000
+      )
+        throw new Error('The sign-in response is invalid.');
+      return result;
+    },
+    async pollAccess(id: string, signal?: AbortSignal) {
+      return z
+        .object({
+          status: z.enum(['pending', 'authorized', 'completed', 'cancelled', 'denied']),
+        })
+        .strict()
+        .parse(
+          await rpc('/v1/access/poll', { id: stateSchema.parse(id) }, { signal, timeout: 10_000 }),
+        );
+    },
+    async completeAccess(
+      id: string,
+      challenge: string,
+      signal?: AbortSignal,
+    ): Promise<IntegrationManagedAccess> {
+      const result = accessState.parse(
+        await rpc(
+          '/v1/access/complete',
+          {
+            id: stateSchema.parse(id),
+            challenge: stateSchema.parse(challenge),
+          },
+          { signal, timeout: 10_000 },
+        ),
+      );
+      return { state: result.state, email: result.email ?? null };
+    },
+    async cancelAccess(id: string) {
+      return z
+        .object({ cancelled: z.literal(true) })
+        .strict()
+        .parse(await rpc('/v1/access/cancel', { id: stateSchema.parse(id) }, { timeout: 10_000 }));
+    },
+    async revokeAccess(): Promise<IntegrationManagedAccess> {
+      const result = accessState.parse(await rpc('/v1/access/revoke', {}, { timeout: 10_000 }));
+      return { state: result.state, email: result.email ?? null };
+    },
     get userId() {
       return requiredIdentity().userId;
     },

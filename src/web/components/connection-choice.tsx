@@ -1,21 +1,23 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
-import { KeyRound, LoaderCircle } from 'lucide-react';
+import { Check, KeyRound, LoaderCircle } from 'lucide-react';
 import type { Connection } from '../../shared/contracts';
 import type { IntegrationKeyStatus } from '../../shared/integrations';
 import { usePageData } from '../hooks/use-page-data';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import { api, errorMessage } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
+import { startIntegrationAccess, type IntegrationAccessAttempt } from '../lib/integration-access';
 import { cn } from '../lib/utils';
+import { GoogleMark } from './account-avatar';
 import { OttoGlyph } from './motion';
 import { Button, Input } from './ui';
 
 type Mode = IntegrationKeyStatus['mode'];
 
 const modes: { id: Mode; name: string; sub: string }[] = [
-  { id: 'otto', name: 'Otto’s connection', sub: 'Recommended. Nothing to set up.' },
-  { id: 'own', name: 'Your own Composio', sub: 'Use your Composio API key.' },
+  { id: 'otto', name: 'Easy Connect', sub: 'Continue with Google.' },
+  { id: 'own', name: 'My Composio key', sub: 'Use your own project.' },
 ];
 
 export const connectionRoutes: Record<Mode, string> = {
@@ -28,14 +30,45 @@ function disconnects(names: string[]) {
   return `Switching disconnects ${list}. You’ll connect ${names.length > 1 ? 'them' : 'it'} again after.`;
 }
 
-export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () => unknown) {
+export function integrationAccessReady(status: IntegrationKeyStatus | null) {
+  if (!status) return false;
+  return status.mode === 'own'
+    ? !!status.suffix || !status.switchable
+    : status.managed === null || status.managed.state === 'enabled';
+}
+
+export function connectionStatusText(status: IntegrationKeyStatus) {
+  if (status.mode === 'own')
+    return status.suffix
+      ? `Using your Composio key ending in ••${status.suffix}`
+      : status.switchable
+        ? 'Your saved key needs attention.'
+        : 'Using your configured Composio project.';
+  if (!status.managed) return 'Your installation manages app connections.';
+  if (status.managed.state === 'enabled') return status.managed.email ?? 'Google access enabled';
+  if (status.managed.state === 'denied') return 'Easy Connect is not enabled for this email.';
+  if (status.managed.state === 'revoked') return 'Access for this Otto installation was removed.';
+  if (status.managed.state === 'unavailable') return 'Easy Connect is unavailable right now.';
+  return 'Sign in with Google to use Easy Connect.';
+}
+
+export function useConnectionChoice(
+  area: 'onboarding' | 'apps' | 'settings',
+  onChanged?: () => unknown,
+) {
   const apps = usePageData<Connection[]>('/api/apps');
-  const [status, setStatus] = useState<IntegrationKeyStatus | null>(null);
+  const saved = usePageData<IntegrationKeyStatus>('/api/integrations/key');
+  const status = saved.data;
   const [choice, setChoice] = useState<Mode>();
   const [editing, setEditing] = useState(false);
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [switching, setSwitching] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [removingAccess, setRemovingAccess] = useState(false);
+  const accessAttempt = useRef<IntegrationAccessAttempt | null>(null);
+  const accessGeneration = useRef(0);
   const active = useRef(false);
   const keyField = useRef<HTMLInputElement>(null);
   const savedKey = useRef<HTMLParagraphElement>(null);
@@ -57,25 +90,36 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
   ];
 
   async function reload() {
-    try {
-      const next = await api<IntegrationKeyStatus>('/api/integrations/key');
-      if (active.current) setStatus(next);
-    } catch {}
+    await saved.refresh();
+  }
+
+  async function refresh() {
+    await Promise.all([
+      saved.refresh(),
+      pageDataCache.refresh('/api/apps', true),
+      pageDataCache.refresh('/api/apps/catalog', true),
+      pageDataCache.refresh('/api/configuration', true),
+      onChanged?.(),
+    ]);
   }
 
   useEffect(() => {
     active.current = true;
-    void reload();
     return () => {
       active.current = false;
+      accessGeneration.current++;
+      const attempt = accessAttempt.current;
+      accessAttempt.current = null;
+      void attempt?.cancel().catch(() => {});
     };
   }, []);
 
   async function apply(value?: string) {
-    if (switching || checking) return;
+    if (switching || signingIn || checking) return;
     const capture = analyticsForCurrentSession();
     setSwitching(true);
     setError('');
+    setNotice('');
     let next: IntegrationKeyStatus | undefined;
     let failure = '';
     try {
@@ -89,20 +133,16 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
       failure = errorMessage(cause);
       capture('otto_ui_error', { area, action: 'save' });
     }
-    await Promise.all([
-      next || reload(),
-      pageDataCache.refresh('/api/apps', true),
-      pageDataCache.refresh('/api/configuration', true),
-      onChanged?.(),
-    ]);
+    if (next) saved.update(() => next!);
+    await refresh();
     if (!active.current) return;
     flushSync(() => {
       setSwitching(false);
       if (next) {
-        setStatus(next);
         setChoice(undefined);
         setEditing(false);
         setKey('');
+        setNotice(next.warning ?? '');
       } else {
         setError(failure);
         if (value === undefined) setChoice(undefined);
@@ -114,11 +154,13 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
   }
 
   function pick(next: Mode) {
-    if (!status || next === mode || switching) return;
+    if (!status || next === mode || switching || signingIn) return;
     flushSync(() => {
       setError('');
+      setNotice('');
       setEditing(false);
       setKey('');
+      setRemovingAccess(false);
       setChoice(next === status.mode ? undefined : next);
     });
     keyField.current?.focus();
@@ -129,6 +171,7 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
       setEditing(value);
       setKey('');
       setError('');
+      setNotice('');
     });
     (value ? keyField : savedKey).current?.focus();
   }
@@ -140,15 +183,75 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
     void apply(value);
   }
 
+  function signIn() {
+    if (switching || accessAttempt.current || !status?.managed) return;
+    accessGeneration.current++;
+    const attempt = startIntegrationAccess();
+    accessAttempt.current = attempt;
+    setSigningIn(true);
+    setError('');
+    setNotice('');
+    void attempt.done
+      .catch((cause) => {
+        if (
+          active.current &&
+          accessAttempt.current === attempt &&
+          !(cause instanceof DOMException && cause.name === 'AbortError')
+        )
+          setError(errorMessage(cause));
+      })
+      .finally(async () => {
+        if (!active.current || accessAttempt.current !== attempt) return;
+        accessAttempt.current = null;
+        setSigningIn(false);
+        await refresh();
+      });
+  }
+
+  function cancelSignIn() {
+    const generation = ++accessGeneration.current;
+    const attempt = accessAttempt.current;
+    accessAttempt.current = null;
+    setSigningIn(false);
+    void attempt
+      ?.cancel()
+      .catch((cause) => {
+        if (active.current && accessGeneration.current === generation)
+          setError(errorMessage(cause));
+      })
+      .finally(() => refresh());
+  }
+
+  async function removeAccess() {
+    if (switching || signingIn) return;
+    setSwitching(true);
+    setError('');
+    setNotice('');
+    try {
+      await api('/api/integrations/access', { method: 'DELETE' });
+      setRemovingAccess(false);
+    } catch (cause) {
+      if (active.current) setError(errorMessage(cause));
+    } finally {
+      await refresh();
+      if (active.current) setSwitching(false);
+    }
+  }
+
   return {
     status,
     mode,
     switching,
+    signingIn,
+    ready: integrationAccessReady(status),
+    dirty: switching || signingIn || !!key,
+    loadError: saved.error,
     reload,
     view: {
       editing,
       key,
       error,
+      notice,
       checking,
       linked,
       keyField,
@@ -158,6 +261,11 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
       pick,
       edit,
       save,
+      signIn,
+      cancelSignIn,
+      removingAccess,
+      confirmRemoval: (value: boolean) => setRemovingAccess(value),
+      removeAccess,
       type: (value: string) => {
         setKey(value);
         setError('');
@@ -167,7 +275,7 @@ export function useConnectionChoice(area: 'onboarding' | 'apps', onChanged?: () 
 }
 
 export function ConnectionChoice({
-  state: { status, mode, switching, view },
+  state: { status, mode, switching, signingIn, loadError, reload, view },
   disabled = false,
   className,
 }: {
@@ -176,14 +284,35 @@ export function ConnectionChoice({
   className?: string;
 }) {
   const id = useId();
-  if (!status?.switchable || !mode) return null;
-  const locked = disabled || switching;
+  if (!status || !mode)
+    return (
+      <div className={cn('connection-choice', className)}>
+        <p className="connection-muted" role="status">
+          {loadError || 'Checking connection setup…'}
+        </p>
+        {loadError && (
+          <Button variant="outline" onClick={() => void reload()}>
+            Try again
+          </Button>
+        )}
+      </div>
+    );
+  const locked = disabled || switching || signingIn;
   const confirmLocked = locked || view.checking;
   const changing = mode !== status.mode;
-  const unreadable = status.mode === 'own' && !status.suffix;
+  const unreadable = status.mode === 'own' && !status.suffix && status.switchable;
   const unknown = !view.linked && !view.checking;
+  const detaching =
+    changing &&
+    status.mode === 'otto' &&
+    mode === 'own' &&
+    (status.managed?.state === 'revoked' || status.managed?.state === 'sign_in_required') &&
+    (unknown || !!view.linked?.length);
   let warning = '';
-  if (changing && !unreadable)
+  if (detaching)
+    warning =
+      'Switching removes these connections from Otto. Permissions remain with their providers; remove them in provider settings if needed.';
+  else if (changing && !unreadable)
     warning = unknown
       ? 'Switching disconnects apps connected the current way.'
       : view.linked?.length
@@ -203,18 +332,22 @@ export function ConnectionChoice({
                 ••{status.suffix}
               </span>
             </>
+          ) : status.switchable ? (
+            'Otto can’t read your saved key. Save it again or choose Easy Connect.'
           ) : (
-            'Otto can’t read your saved key. Save it again or switch to Otto’s connection.'
+            'Using the Composio key configured for this installation.'
           )}
         </p>
-        <button
-          type="button"
-          className="connection-link"
-          disabled={locked}
-          onClick={() => view.edit(true)}
-        >
-          Change
-        </button>
+        {status.switchable && (
+          <button
+            type="button"
+            className="connection-link"
+            disabled={locked || !status.keyWritable}
+            onClick={() => view.edit(true)}
+          >
+            Change
+          </button>
+        )}
       </div>
     );
   else if (mode === 'own')
@@ -233,7 +366,7 @@ export function ConnectionChoice({
             maxLength={16384}
             placeholder="ak_…"
             value={view.key}
-            disabled={locked}
+            disabled={locked || !status.keyWritable}
             aria-invalid={!!view.error}
             aria-describedby={view.error ? `${id}-error` : undefined}
             data-analytics-private
@@ -242,11 +375,11 @@ export function ConnectionChoice({
           <Button
             type="submit"
             variant="outline"
-            disabled={confirmLocked}
+            disabled={confirmLocked || !status.keyWritable}
             aria-describedby={warning ? `${id}-warning` : undefined}
           >
             {switching && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-            {switching ? 'Checking' : 'Save'}
+            {switching ? 'Checking' : changing ? 'Save and switch' : 'Save'}
           </Button>
         </div>
         <p className="connection-muted">
@@ -255,6 +388,11 @@ export function ConnectionChoice({
           </a>
           . It’s encrypted and never shown to the AI.
         </p>
+        {!status.keyWritable && (
+          <p className="connection-error">
+            Otto can’t open its secure key store. Your current setup hasn’t changed.
+          </p>
+        )}
         {warning && (
           <p id={`${id}-warning`} className="connection-warning">
             {warning}
@@ -271,6 +409,115 @@ export function ConnectionChoice({
           </button>
         )}
       </form>
+    );
+  else if (status.managed)
+    panel = (
+      <div className="connection-managed">
+        {status.managed.email && (
+          <p className="connection-identity" data-analytics-private>
+            <GoogleMark />
+            {status.managed.email}
+          </p>
+        )}
+        {signingIn ? (
+          <div className="connection-saved" role="status">
+            <LoaderCircle size={16} className="spin" aria-hidden="true" />
+            <p>Finish signing in in your browser.</p>
+            <Button variant="ghost" size="sm" onClick={view.cancelSignIn}>
+              Cancel
+            </Button>
+          </div>
+        ) : status.managed.state === 'enabled' ? (
+          <>
+            <p className="connection-enabled">
+              <Check size={16} aria-hidden="true" />
+              Access enabled for this Otto installation.
+            </p>
+            <Button variant="outline" disabled={locked} onClick={view.signIn}>
+              <GoogleMark />
+              Sign in again
+            </Button>
+            {changing && (
+              <div className="connection-switch">
+                {warning && (
+                  <p id={`${id}-warning`} className="connection-warning">
+                    {warning}
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  disabled={confirmLocked}
+                  aria-describedby={warning ? `${id}-warning` : undefined}
+                  onClick={() => void view.apply()}
+                >
+                  {switching ? 'Switching' : 'Switch to Easy Connect'}
+                </Button>
+              </div>
+            )}
+            {view.removingAccess ? (
+              <div className="connection-switch">
+                <p className="connection-warning">
+                  Removing access stops this installation from using Easy Connect. It does not sign
+                  you out of Google.
+                </p>
+                <div className="connection-row">
+                  <Button
+                    variant="outline"
+                    disabled={locked}
+                    onClick={() => void view.removeAccess()}
+                  >
+                    Confirm removal
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={locked}
+                    onClick={() => view.confirmRemoval(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="connection-link"
+                disabled={locked}
+                onClick={() => view.confirmRemoval(true)}
+              >
+                Remove access
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="connection-muted">
+              {status.managed.state === 'denied'
+                ? 'Easy Connect isn’t enabled for this email. You can use your own Composio key.'
+                : status.managed.state === 'revoked'
+                  ? 'Access for this Otto installation was removed. Sign in again to check your access.'
+                  : status.managed.state === 'unavailable'
+                    ? 'Easy Connect is unavailable right now. Try again or use your own Composio key.'
+                    : 'Use an enabled Gmail or Google Workspace account. You’ll connect each app separately.'}
+            </p>
+            <Button
+              variant="outline"
+              disabled={locked || status.managed.state === 'unavailable'}
+              onClick={view.signIn}
+            >
+              <GoogleMark />
+              Continue with Google
+            </Button>
+            {status.managed.state === 'unavailable' && (
+              <Button variant="ghost" disabled={locked} onClick={() => void reload()}>
+                Try again
+              </Button>
+            )}
+          </>
+        )}
+        <p className="connection-muted">
+          Google sign-in gives you Easy Connect access. It does not give Otto access to Gmail.
+        </p>
+      </div>
     );
   else if (changing)
     panel = (
@@ -291,33 +538,40 @@ export function ConnectionChoice({
 
   return (
     <div className={cn('connection-choice', className)}>
-      <div className="connection-modes" role="group" aria-label="How Otto connects your apps">
-        {modes.map((item) => (
-          <button
-            key={item.id}
-            ref={(node) => {
-              view.tiles.current[item.id] = node;
-            }}
-            type="button"
-            className="connection-mode"
-            aria-pressed={item.id === mode}
-            disabled={locked}
-            onClick={() => view.pick(item.id)}
-          >
-            {item.id === 'otto' ? (
-              <OttoGlyph size={24} mode="still" />
-            ) : (
-              <KeyRound size={24} aria-hidden="true" />
-            )}
-            <span className="connection-mode-text">
-              <span className="connection-mode-name">{item.name}</span>
-              <span className="connection-muted">{item.sub}</span>
-            </span>
-          </button>
-        ))}
-      </div>
+      {status.switchable && (
+        <div className="connection-modes" role="group" aria-label="How Otto connects your apps">
+          {modes.map((item) => (
+            <button
+              key={item.id}
+              ref={(node) => {
+                view.tiles.current[item.id] = node;
+              }}
+              type="button"
+              className="connection-mode"
+              aria-pressed={item.id === mode}
+              disabled={locked}
+              onClick={() => view.pick(item.id)}
+            >
+              {item.id === 'otto' ? (
+                <OttoGlyph size={24} mode="still" />
+              ) : (
+                <KeyRound size={24} aria-hidden="true" />
+              )}
+              <span className="connection-mode-text">
+                <span className="connection-mode-name">{item.name}</span>
+                <span className="connection-muted">{item.sub}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       <p className="connection-muted">{connectionRoutes[mode]}</p>
       {panel}
+      {view.notice && (
+        <p role="status" className="connection-warning">
+          {view.notice}
+        </p>
+      )}
       {view.error && (
         <p id={`${id}-error`} role="alert" className="connection-error">
           {view.error}
@@ -325,4 +579,13 @@ export function ConnectionChoice({
       )}
     </div>
   );
+}
+
+export function ConnectionSettings({ onDirtyChange }: { onDirtyChange(dirty: boolean): void }) {
+  const choice = useConnectionChoice('settings');
+  useEffect(() => {
+    onDirtyChange(choice.dirty);
+    return () => onDirtyChange(false);
+  }, [choice.dirty, onDirtyChange]);
+  return <ConnectionChoice state={choice} />;
 }

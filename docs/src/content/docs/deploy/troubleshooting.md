@@ -25,7 +25,7 @@ You ran `docker compose` yourself before Otto created the database password. Run
 
 ### Configure OTTO_VAULT_KEY in server settings before saving a connection.
 
-Otto has no key to encrypt saved credentials. This happens outside macOS, where there's no Keychain. Add a key to `.env`, then restart Otto.
+Otto has no key to encrypt saved credentials. Local macOS and Linux web installs normally create a protected key automatically. Other server configurations need an explicit key. If saved encrypted data exists, restore its original key instead of generating a new one. For a fresh server only, add a key to `.env`, then restart Otto.
 
 ```sh title="Terminal"
 sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak

@@ -51,7 +51,7 @@ Keys set here become server-managed connections. They stay in server memory and 
 
 ## Apps and Composio
 
-Desktop and source/server installs use Otto's connection by default, without a Composio key. The owner can switch to their own Composio key in the app; see [Apps](/connect/apps/#use-your-own-composio-project). Setting `COMPOSIO_API_KEY` pins a source/server install to its own project instead, and the app no longer offers the choice. Source/server installs can customize the settings below. The desktop app ignores `COMPOSIO_API_KEY` and `OTTO_COMPOSIO_PROXY_URL`.
+Desktop and source/server installs offer Google sign-in for Otto's connection or a personal Composio key. Managed access requires an exact email allowed by the proxy operator. The owner can select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project). Setting `COMPOSIO_API_KEY` pins a source/server install to its own project instead, and the app no longer offers the choice. Source/server installs can customize the settings below. The desktop app ignores `COMPOSIO_API_KEY` and `OTTO_COMPOSIO_PROXY_URL`.
 
 | Variable                           | What it does                                                                                                           | Default           |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------- |
@@ -72,11 +72,13 @@ Webhook and auth-config settings apply only when Otto uses your own Composio pro
 
 ## Vault
 
-| Variable         | What it does                                                                                                                                                                    | Default |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved logins, cards and model keys. Required outside macOS. On macOS, if it's empty, Otto keeps a key in the Keychain item `dev.otto.vault`. | Empty   |
+| Variable         | What it does                                                                                                                                                                                                     | Default |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved credentials and overrides automatic local storage. Local macOS uses Keychain; local Linux web uses a private profile file. Other server modes require a configured key. | Empty   |
 
-Create a key with `openssl rand -base64 32`.
+For an explicitly managed server key, create it with `openssl rand -base64 32`. Local Linux web installs keep their generated key at `OTTO_DATA_ROOT/vault/master-key`, outside the sandbox. The directory and key must be owned by the server user and private. Desktop uses its existing OS-protected key; hosted tenant keys remain operator-managed.
+
+Otto never generates a replacement when encrypted data already exists. Restore the original key if it is missing. Back up the private key separately alongside the encrypted database; a database backup alone cannot recover saved credentials.
 
 :::danger[Back up the Vault key]
 Saved credentials can't be read without it. Keep a copy somewhere safe, outside the repository.
