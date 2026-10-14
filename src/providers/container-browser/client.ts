@@ -17,6 +17,7 @@ import {
   browserCardInput,
   browserRequest,
   browserResponse,
+  browserSession,
   imageBytes,
   responseBytes,
   viewFrame,
@@ -37,7 +38,7 @@ export function createBridgeComputer(options: {
   drainTimeoutMs?: number;
 }): Computer & { quiesce(): Promise<boolean> } {
   let disposed = false;
-  let uncertain = false;
+  const uncertain = new Set<string>();
   let sequence = 0;
   let statusSequence = 0;
   let status = 'Workspace browser is ready.';
@@ -45,14 +46,14 @@ export function createBridgeComputer(options: {
     string,
     { sequence: number; value: ReturnType<NonNullable<Computer['screenStatus']>> }
   >();
-  const pending = new Set<Promise<unknown>>();
-  const cancellations = new Set<() => void>();
+  const pending = new Map<Promise<unknown>, string>();
+  const cancellations = new Map<() => void, string>();
   const views = new Map<string, Set<(input: unknown) => void>>();
   const pins = new Map<string, Promise<boolean> | undefined>();
   let live = false;
   let unpinned: Promise<void> | undefined;
   let disposing: Promise<void> | undefined;
-  let recovering: Promise<void> | undefined;
+  const recoveries = new Map<string, Promise<void>>();
   const reopenNotice =
     'Explicitly reopen the website or saved browser session to start a new page. The previous action may have completed; do not repeat it.';
 
@@ -89,28 +90,38 @@ export function createBridgeComputer(options: {
 
   async function pinned(id: string) {
     const threadId = threadIdentity(id);
-    if (!uncertain)
+    if (!uncertain.has(''))
       await cleared().catch((error: unknown) => {
-        if (uncertain) throw error;
+        if (uncertain.has('')) throw error;
       });
     if (pins.has(threadId) && !pins.get(threadId)) sendPin(threadId);
     await pins.get(threadId);
     return threadId;
   }
 
-  function recover() {
-    recovering ??= (async () => {
-      for (const cancel of cancellations) cancel();
-      await Promise.allSettled([...pending]);
-      await call({ method: 'dispose' });
-      if (disposed) return;
-      uncertain = false;
-      screens.clear();
-      forgetPins();
-    })().finally(() => {
-      recovering = undefined;
-    });
-    return recovering;
+  function recover(threadId: string) {
+    const session = uncertain.has('') ? '' : threadId;
+    let recovery = recoveries.get(session);
+    if (!recovery) {
+      recovery = (async () => {
+        for (const [cancel, owner] of cancellations) if (!session || owner === session) cancel();
+        await Promise.allSettled(
+          [...pending].flatMap(([request, owner]) =>
+            !session || owner === session ? [request] : [],
+          ),
+        );
+        if (session) await call({ method: 'close', threadId: session });
+        else {
+          await call({ method: 'dispose' });
+          if (disposed) return;
+          uncertain.clear();
+          screens.clear();
+          forgetPins();
+        }
+      })().finally(() => recoveries.delete(session));
+      recoveries.set(session, recovery);
+    }
+    return recovery;
   }
 
   function updateMetadata(value: BrowserMetadata, order: number, input: BrowserCall) {
@@ -136,23 +147,30 @@ export function createBridgeComputer(options: {
     if (Buffer.byteLength(encoded) > browserRequestBytes)
       return Promise.reject(new Error('The browser request is too large.'));
     const available = options.available?.(input) !== false;
-    if (input.method !== 'dispose' && (disposed || uncertain || !available)) {
+    const session = browserSession(input) ?? '';
+    const fenced =
+      uncertain.has('') ||
+      (uncertain.has(session) && !['pin', 'unpin', 'close', 'discard'].includes(input.method));
+    if (input.method !== 'dispose' && (disposed || fenced || !available)) {
       if (
         !disposed &&
-        uncertain &&
+        fenced &&
         available &&
         (input.method === 'bindProfile' ||
           (input.method === 'act' && input.input.action === 'open'))
       ) {
         if (input.method === 'act') browserUrl(input.input.url ?? '');
         const { threadId } = input;
-        return recover()
+        return recover(threadId)
+          .catch((error: unknown) => {
+            if (!disposed) throw error;
+          })
           .then(() => pinned(threadId))
           .then(() => call(input, signal));
       }
       return Promise.reject(
         new Error(
-          uncertain && !disposed && available
+          fenced && !disposed && available
             ? `The workspace browser is unavailable. ${reopenNotice}`
             : 'The workspace browser is unavailable. Restart Otto before continuing.',
         ),
@@ -165,7 +183,7 @@ export function createBridgeComputer(options: {
         child = options.launch(input);
         if (input.method !== 'dispose' && input.method !== 'quiesce') live = true;
       } catch {
-        uncertain = true;
+        uncertain.add('');
         return reject(
           new Error(`The workspace browser is unavailable. Start its container. ${reopenNotice}`),
         );
@@ -187,10 +205,10 @@ export function createBridgeComputer(options: {
         signal?.removeEventListener('abort', cancel);
         cancellations.delete(cancel);
       };
-      const unavailable = () => {
+      const unavailable = (scope = '') => {
         if (settled) return;
         settled = true;
-        uncertain = true;
+        uncertain.add(scope);
         cleanup();
         child.stdin.destroy();
         child.kill('SIGKILL');
@@ -201,12 +219,12 @@ export function createBridgeComputer(options: {
         cancelling = true;
         clearTimeout(timer);
         if (!response) child.stdin.write(JSON.stringify({ type: 'cancel', id: request.id }) + '\n');
-        drainTimer = setTimeout(unavailable, options.drainTimeoutMs ?? 15_000);
+        drainTimer = setTimeout(() => unavailable(session), options.drainTimeoutMs ?? 15_000);
       }
       signal?.addEventListener('abort', cancel, { once: true });
-      cancellations.add(cancel);
-      child.stdin.on('error', unavailable);
-      child.on('error', unavailable);
+      cancellations.set(cancel, session);
+      child.stdin.on('error', () => unavailable());
+      child.on('error', () => unavailable());
       child.stderr.resume();
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
@@ -232,6 +250,8 @@ export function createBridgeComputer(options: {
         updateMetadata(response.metadata, order, input);
         if (cancelling || (!response.ok && response.error === 'cancelled'))
           return reject(new Error('Browser operation cancelled.'));
+        if (response.ok && (input.method === 'close' || input.method === 'discard'))
+          uncertain.delete(session);
         if (response.ok) return resolve(response.result);
         if (browserErrorMessage(response.error))
           return reject(
@@ -246,7 +266,7 @@ export function createBridgeComputer(options: {
       child.stdin.write(encoded);
       if (signal?.aborted) cancel();
     });
-    pending.add(result);
+    pending.set(result, session);
     void result.finally(() => pending.delete(result)).catch(() => {});
     return result;
   }
@@ -254,7 +274,12 @@ export function createBridgeComputer(options: {
   async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
     const threadId = threadIdentity(id);
     signal.throwIfAborted();
-    if (disposed || uncertain || options.available?.({ method: 'view', threadId }) === false)
+    if (
+      disposed ||
+      uncertain.has('') ||
+      uncertain.has(threadId) ||
+      options.available?.({ method: 'view', threadId }) === false
+    )
       throw new Error('The workspace browser is unavailable.');
     const request = browserRequest.parse({
       method: 'view',
@@ -283,7 +308,7 @@ export function createBridgeComputer(options: {
     const open = views.get(threadId) ?? new Set();
     views.set(threadId, open.add(send));
     signal.addEventListener('abort', cancel, { once: true });
-    cancellations.add(cancel);
+    cancellations.set(cancel, threadId);
     write({ type: 'request', request });
     try {
       let buffered = '';
@@ -340,7 +365,7 @@ export function createBridgeComputer(options: {
       await call({ method: 'deleteProfile', profileId });
     },
     screenStatus: (id) => screens.get(threadIdentity(id))?.value ?? { state: 'unavailable' },
-    status: () => (uncertain && !disposed ? reopenNotice : status),
+    status: () => (uncertain.size && !disposed ? reopenNotice : status),
     act: async (id, input, signal) =>
       observationSchema.parse(
         await call({ method: 'act', threadId: await pinned(id), input }, signal),
@@ -475,8 +500,8 @@ export function createBridgeComputer(options: {
     dispose: () => {
       disposing ??= (async () => {
         disposed = true;
-        for (const cancel of cancellations) cancel();
-        await Promise.allSettled([...pending]);
+        for (const cancel of cancellations.keys()) cancel();
+        await Promise.allSettled([...pending.keys()]);
         await call({ method: 'dispose' });
         screens.clear();
         pins.clear();

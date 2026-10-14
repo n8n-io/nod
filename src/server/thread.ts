@@ -40,6 +40,7 @@ export const boss = new PgBoss({
 });
 const running = new Map<string, AbortController>();
 const inflight = new Map<string, Promise<void>>();
+const executing = new Set<string>();
 const toolRefreshes = new Set<string>();
 let stopping = false;
 
@@ -115,6 +116,7 @@ export interface ThreadDependencies {
   taskProgress?: (turn: TurnRef, input: unknown) => Promise<unknown>;
   openTasks?: (threadId: string) => Promise<NonNullable<RuntimeContext['openTasks']>>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
+  discardBrowser?: (sessionId: string) => Promise<void>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
     turn: TurnRef,
@@ -899,10 +901,13 @@ async function failTurn(turnId: string, error = 'Interrupted.') {
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
   const interrupted = await pool.query(
-    "SELECT id FROM turns WHERE owner_id=$1 AND status='running'",
+    "SELECT id,background,session_id FROM turns WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
-  for (const turn of interrupted.rows) await failTurn(turn.id);
+  for (const turn of interrupted.rows) {
+    if (turn.background) await dependencies.discardBrowser?.(turn.session_id).catch(() => {});
+    await failTurn(turn.id);
+  }
   await sendDrain(undefined, (await activeThread()).id);
   const start = () =>
     boss.work<{ threadId: string }>(
@@ -939,7 +944,7 @@ async function claimTurns(threadId: string) {
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [threadId, ownerId],
     );
-    const sessions = new Set(busy.rows.map((row) => row.session_id as string));
+    const sessions = new Set([...executing, ...busy.rows.map((row) => row.session_id as string)]);
     let tasks = busy.rows.filter((row) => row.task_session).length;
     const claimed = rows.filter((row) => {
       if (sessions.has(row.session_id) || (row.task_session && tasks >= maxRunningTasks))
@@ -1001,8 +1006,10 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
   for (const turn of await claimTurns(threadId)) {
+    executing.add(turn.session_id);
     const work = executeTurn(turn, dependencies)
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
+      .finally(() => executing.delete(turn.session_id))
       .then(() => drainNext(threadId))
       .finally(refresh);
     inflight.set(turn.id, work);
@@ -1531,6 +1538,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     if (signal.aborted) outcome = 'cancelled';
+    else if (turn.background && (turn.source === 'resume' || turn.continued))
+      await dependencies.discardBrowser?.(turn.session_id).catch(() => {});
     const limit =
       !signal.aborted && error instanceof Error && error.message === spendingLimitReached;
     if ((await failTurn(turnId, limit ? spendingLimitReached : undefined)) && !limit)

@@ -126,6 +126,7 @@ test(
     await accounts.initialize();
     const userMessages = thread.createUserMessageService({ confirmAction: approvals.chat });
     const discarded: string[] = [];
+    const discardedBrowsers: string[] = [];
     const forgottenSessions: string[] = [];
     const failingForgets = new Set<string>();
     const planInputs: Array<{ owner: string; input: object }> = [];
@@ -353,6 +354,9 @@ test(
           }
           return artifact;
         },
+      },
+      discardBrowser: async (sessionId) => {
+        discardedBrowsers.push(sessionId);
       },
       runTurn: async (context) => {
         runs.push(context);
@@ -846,7 +850,12 @@ test(
             "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,started_at) VALUES($1,'local-development',$3,'user','Do not repeat','running',false,now()),($2,'local-development',$3,'schedule','Do not repeat quietly','running',true,now())",
             [foreground, background, threadId],
           );
+          const browsersBefore = discardedBrowsers.length;
           await thread.startThreadWorkers(dependencies);
+          assert.deepEqual(
+            discardedBrowsers.slice(browsersBefore).sort(),
+            [taskId, background].sort(),
+          );
           await waitFor(async () => (await turnStatus(missingJob)) === 'succeeded');
           await waitFor(
             async () =>
@@ -1390,6 +1399,23 @@ test(
           assert.equal(row.status, 'failed');
           assert.match(row.error, /spending limit was reached/);
         }
+        const sessions = [...background.slice(0, 2), chat.threadId];
+        assert.equal(
+          sessions.some((id) => discardedBrowsers.includes(id)),
+          false,
+        );
+        const continued = await thread.enqueueTurn('limit continued fixture', {
+          source: 'resume',
+          sourceId: `connection:${randomUUID()}`,
+          background: true,
+          sessionId: background[0],
+        });
+        await waitFor(settled(continued));
+        assert.equal(await turnStatus(continued), 'failed');
+        assert.deepEqual(
+          sessions.map((id) => discardedBrowsers.includes(id)),
+          [true, false, false],
+        );
       });
 
       await t.test(
@@ -2782,6 +2808,35 @@ test(
           const after = await thread.submitUserMessage('after stop', [], { channel: 'web' });
           await waitFor(settled(after.turnId));
           assert.equal(await turnStatus(after.turnId), 'succeeded');
+
+          let finishStopped = () => {};
+          sessionGates.set(
+            'session-fixture-stop-settle',
+            new Promise<void>((resolve) => {
+              finishStopped = resolve;
+            }),
+          );
+          const stopped = await start('session-fixture-stop-settle');
+          await waitFor(() => Boolean(ran(stopped.turnId)));
+          assert.equal(
+            (await request('POST', `/api/tasks/${stopped.taskId}/stop`)).statusCode,
+            200,
+          );
+          assert.deepEqual(discarded.splice(discards), [stopped.taskId]);
+          const [stoppedNote] = await notes(stopped);
+          const reply = await thread.submitUserMessage('reply while stopping', [], {
+            channel: 'web',
+            replyToMessageId: stoppedNote,
+          });
+          const probe = await thread.submitUserMessage('probe while stopping', [], {
+            channel: 'web',
+          });
+          await waitFor(settled(probe.turnId));
+          assert.equal(await turnStatus(reply.turnId), 'queued');
+          finishStopped();
+          await waitFor(settled(reply.turnId));
+          assert.equal(await turnStatus(reply.turnId), 'succeeded');
+          assert.equal(ran(reply.turnId)?.sessionId, stopped.taskId);
         },
       );
 

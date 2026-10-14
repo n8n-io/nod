@@ -772,6 +772,9 @@ async function initializeApplication(
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
+      discardBrowser: async (sessionId) => {
+        await computer.discard?.(sessionId);
+      },
       spendingLimitReached: ledger.limitReached,
       observe: adapters.observe,
       inspectPrompt: adapters.inspectPrompt,

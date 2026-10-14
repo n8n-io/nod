@@ -15,6 +15,7 @@ import {
   browserFrame,
   browserMetadata,
   browserResponse,
+  browserSession,
   browserSocketPath,
   imageBytes,
   responseBytes,
@@ -34,13 +35,7 @@ type Namespace = {
 };
 
 function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadata {
-  const threadId =
-    request &&
-    ('threadId' in request
-      ? request.threadId
-      : request.method === 'injectCredentials' || request.method === 'fillCard'
-        ? request.input.threadId
-        : undefined);
+  const threadId = request && browserSession(request);
   try {
     const screen = threadId ? computer?.screenStatus?.(threadId) : undefined;
     return browserMetadata.parse({
@@ -247,7 +242,7 @@ export async function startContainerBrowserWorker(
     socket.on('close', () => {
       controller.abort();
       connections.delete(socket);
-      if (!terminal && request && !['quiesce', 'view'].includes(request.method))
+      if (!terminal && request && request.method !== 'quiesce' && !browserSession(request))
         void dispose(request.namespace).catch(() => {});
     });
     const view = async (computer: Computer, threadId: string, id: string) => {

@@ -326,7 +326,8 @@ export function createAgentBrowserComputer(options: {
   onDiagnostic?(event: BrowserDiagnostic): void;
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
-  const discarded = new Set<string>();
+  const generations = new Map<string, number>();
+  const discards = new Map<string, Promise<void>>();
   const pinned = new Set<string>();
   const keptSecrets = new Map<string, Set<string>>();
   const slotQueue: SlotTicket[] = [];
@@ -420,14 +421,15 @@ export function createAgentBrowserComputer(options: {
       }
     };
   }
-  function assertNotDiscarded(id: string) {
-    threadIdentity(id);
-    if (discarded.has(id)) throw new Error('This conversation was reset. Its browser is gone.');
+  const generationOf = (id: string) => generations.get(threadIdentity(id)) ?? 0;
+  function assertCurrent(id: string, generation: number) {
+    if (generationOf(id) !== generation)
+      throw new Error('This browser session ended. Its page is gone.');
   }
 
-  function stateFor(id: string): BrowserState {
+  function stateFor(id: string, generation = generationOf(id)): BrowserState {
     if (disposed) throw new Error('The browser service has stopped.');
-    assertNotDiscarded(id);
+    assertCurrent(id, generation);
     let state = browsers.get(id);
     if (!state) {
       const secrets = keptSecrets.get(id) ?? new Set<string>();
@@ -555,6 +557,13 @@ export function createAgentBrowserComputer(options: {
       }
     }
     if (expired()) throw new Error('The browser session has expired. Open the URL again.');
+    if (
+      state.saved.profileId &&
+      (await screens.load(state.id))?.profileId !== state.saved.profileId
+    ) {
+      delete state.saved.profileId;
+      delete state.saved.restoreSession;
+    }
     state.started = true;
     return true;
   }
@@ -764,8 +773,8 @@ export function createAgentBrowserComputer(options: {
   async function recoverBrowser(
     id: string,
     allowSensitive = false,
+    generation = generationOf(id),
   ): Promise<BrowserState | undefined> {
-    threadIdentity(id);
     const existing = browsers.get(id);
     if (existing) return existing;
     if (disposed) return undefined;
@@ -797,7 +806,7 @@ export function createAgentBrowserComputer(options: {
         typeof info.socketDir !== 'string'
       )
         return undefined;
-      const state = stateFor(id);
+      const state = stateFor(id, generation);
       state.saved = saved;
       state.socket = resolve(info.socketDir, `${browserSessionId(id)}.sock`);
       state.recovered = true;
@@ -946,8 +955,11 @@ export function createAgentBrowserComputer(options: {
     const gesture = visualGesture(input);
     if (input.waitMs !== undefined && (!Number.isInteger(input.waitMs) || input.waitMs < 0))
       throw new Error('Choose a non-negative wait.');
+    const generation = generationOf(id);
+    await discards.get(id);
     const savedProfile = input.action === 'open' ? await screens.load(id) : null;
-    if (input.action === 'open' && !browsers.has(id)) await recoverBrowser(id, true);
+    if (input.action === 'open' && !browsers.has(id)) await recoverBrowser(id, true, generation);
+    assertCurrent(id, generation);
     const existing = input.action === 'open' ? browsers.get(id) : undefined;
     if (
       existing &&
@@ -958,7 +970,7 @@ export function createAgentBrowserComputer(options: {
         existing.privateDocument)
     )
       await closeBrowser(id);
-    const state = stateFor(id);
+    const state = stateFor(id, generation);
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
       state.saved.restoreSession = savedProfile.restoreSession;
@@ -1867,13 +1879,14 @@ export function createAgentBrowserComputer(options: {
     signal?: AbortSignal,
   ): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
-    assertNotDiscarded(id);
-    await inLine({}, () => bindFree(id, profileId), signal);
+    const generation = generationOf(id);
+    await discards.get(id);
+    await inLine({}, () => bindFree(id, profileId, generation), signal);
   }
 
-  async function bindFree(id: string, profileId: string): Promise<boolean> {
-    assertNotDiscarded(id);
-    const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
+  async function bindFree(id: string, profileId: string, generation: number): Promise<boolean> {
+    assertCurrent(id, generation);
+    const previous = browsers.get(id) ?? (await recoverBrowser(id, true, generation));
     if (previous?.saved.profileId === profileId) {
       if (!previous.saved.restoreSession) {
         previous.saved.restoreSession = true;
@@ -1886,8 +1899,8 @@ export function createAgentBrowserComputer(options: {
     }
     if (previous?.injecting) throw new BrowserLockedError();
     const holders: BrowserState[] = [];
-    for (const otherId of await screens.profileScreens(profileId)) {
-      if (otherId === id) continue;
+    const others = (await screens.profileScreens(profileId)).filter((otherId) => otherId !== id);
+    for (const otherId of others) {
       const other = browsers.get(otherId) ?? (await recoverBrowser(otherId, true));
       if (!other) continue;
       if (pinned.has(otherId)) return false;
@@ -1895,12 +1908,20 @@ export function createAgentBrowserComputer(options: {
         throw new BrowserLockedError();
       holders.push(other);
     }
+    assertCurrent(id, generation);
     if (previous) await closeBrowser(id);
     for (const other of holders) {
       if (pinned.has(other.id)) return false;
       await closeBrowser(other.id);
     }
-    const state = stateFor(id);
+    for (const otherId of others) {
+      const saved = await screens.load(otherId);
+      if (saved?.profileId !== profileId) continue;
+      delete saved.profileId;
+      delete saved.restoreSession;
+      await screens.save(otherId, saved);
+    }
+    const state = stateFor(id, generation);
     state.saved = {
       version: 1,
       url: '',
@@ -1937,16 +1958,26 @@ export function createAgentBrowserComputer(options: {
 
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
-    discarded.add(id);
-    await closeBrowser(id);
-    keptSecrets.delete(id);
-    await Promise.all([
-      rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
-      rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
-      rm(resolve(runtimeRoot, `screen-${id}.capture.png`), { force: true }),
-      screens.delete(id),
-    ]);
-    screenStatuses.delete(id);
+    generations.set(id, generationOf(id) + 1);
+    freeSlot();
+    const pending = Promise.resolve(discards.get(id)).then(async () => {
+      await closeBrowser(id);
+      keptSecrets.delete(id);
+      await Promise.all([
+        rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
+        rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
+        rm(resolve(runtimeRoot, `screen-${id}.capture.png`), { force: true }),
+        screens.delete(id),
+      ]);
+      screenStatuses.delete(id);
+    });
+    const settled: Promise<void> = pending
+      .catch(() => {})
+      .then(() => {
+        if (discards.get(id) === settled) discards.delete(id);
+      });
+    discards.set(id, settled);
+    await pending;
   }
 
   function browserStatus(): string {

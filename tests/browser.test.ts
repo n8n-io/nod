@@ -1302,7 +1302,7 @@ test(
   },
 );
 
-test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
+test('discarding a session closes its browser and deletes only its throwaway data, and the session can browse again in a fresh browser', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
@@ -1329,15 +1329,13 @@ test('discarding a thread closes its browser and deletes only its throwaway data
     }
     for (const screen of screens) await writeFile(join(runtime, screen), 'synthetic');
     await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
+    const oldPage = fixture.pages.get('old')!;
+    oldPage.input.value = 'synthetic-old-page-state';
     await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' });
     await computer.bindProfile!('bound', savedProfile);
     await computer.discard!('old');
     await computer.discard!('bound');
-    await assert.rejects(
-      computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' }),
-      /was reset/,
-    );
-    await assert.rejects(computer.bindProfile!('old', savedProfile), /was reset/);
+    assert.equal(oldPage.closed, true);
     assert.equal(commands.filter((command) => command === 'close').length, 1);
     assert.deepEqual(
       (await readdir(join(runtime, 'profiles'))).sort(),
@@ -1353,6 +1351,37 @@ test('discarding a thread closes its browser and deletes only its throwaway data
       (await computer.act('other', { action: 'snapshot' })).url,
       'https://1.1.1.1/login',
     );
+    await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
+    const reopened = fixture.pages.get('old')!;
+    assert.notEqual(reopened, oldPage);
+    assert.equal(reopened.input.value, '');
+    await computer.bindProfile!('old', savedProfile);
+    await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
+    assert.equal(fixture.pages.get(savedProfile)?.closed, false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a call that waited through a discard is refused, so the ended session never takes a saved profile', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-generation-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  const profile = randomUUID();
+  const open = (id: string) => computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' });
+  try {
+    await computer.bindProfile!('holder', profile);
+    await open('holder');
+    await computer.pin!('holder');
+    const late = assert.rejects(computer.bindProfile!('task', profile), /session ended/);
+    await delay(50);
+    await computer.discard!('task');
+    await late;
+    await computer.unpin!('holder');
+    await open('task');
+    assert.equal(fixture.pages.get('task')?.closed, false);
+    assert.equal(fixture.pages.get(profile)?.closed, false);
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -2063,8 +2092,8 @@ function workerComputer() {
     unpin: async (id) => {
       calls.push({ method: 'unpin', input: id });
     },
-    close: async () => {
-      calls.push({ method: 'close' });
+    close: async (id) => {
+      calls.push({ method: 'close', input: id });
     },
     discard: async (id) => {
       calls.push({ method: 'discard', input: id });
@@ -2478,15 +2507,21 @@ async function interruptedBrowser(fixture: Awaited<ReturnType<typeof harness>>, 
 }
 
 for (const method of ['open', 'bindProfile'] as const)
-  test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
+  test(`an explicit ${method} after a wedged call closes only that session's browser, and other sessions keep working`, async () => {
     const fixture = await harness();
     const dataRoot = `/synthetic/recover-${method}`;
     const interrupted = await interruptedBrowser(fixture, dataRoot);
     try {
-      const other = fixture.client('/synthetic/other-session');
-      await other.act('task', { action: 'snapshot' });
-      const otherInstance = fixture.instance('/synthetic/other-session');
       const { computer, instance, release } = interrupted;
+      const close = instance.computer.close;
+      instance.computer.close = async (id) => {
+        await release.promise;
+        await close(id);
+      };
+      instance.setAct(async (_id, input) => ({
+        text: 'Synthetic page',
+        url: input.url ?? 'https://example.com/',
+      }));
       await computer.pin!('task');
       const launches = fixture.launches.length;
       await assert.rejects(computer.act('task', { action: 'open', url: 'x'.repeat(8193) }));
@@ -2499,11 +2534,13 @@ for (const method of ['open', 'bindProfile'] as const)
         /unavailable/,
       );
       assert.equal(fixture.launches.length, launches);
+      assert.equal((await computer.act('chat', { action: 'snapshot' })).text, 'Synthetic page');
+      const profile = randomUUID();
       let settled = false;
       const recovery = (
         method === 'open'
           ? computer.act('task', { action: 'open', url: 'https://example.com/reopened' })
-          : computer.bindProfile!('task', randomUUID())
+          : computer.bindProfile!('task', profile)
       ).then(
         () => {
           settled = true;
@@ -2518,25 +2555,19 @@ for (const method of ['open', 'bindProfile'] as const)
       assert.equal(settled, false);
       release.resolve();
       assert.equal(await recovery, undefined);
-      const restored = fixture.instance(dataRoot);
-      assert.notEqual(restored, instance);
-      assert.deepEqual(
-        instance.calls.map(({ method }) => method),
-        ['act', 'act', 'dispose'],
-      );
-      assert.equal(restored.calls.length, 2);
-      assert.deepEqual(restored.calls[0], { method: 'pin', input: 'task' });
-      if (method === 'open')
-        assert.deepEqual(restored.calls[1], {
-          method: 'act',
-          input: { action: 'open', url: 'https://example.com/reopened' },
-        });
-      else assert.equal(restored.calls[1].method, 'bindProfile');
+      assert.equal(fixture.instance(dataRoot), instance);
+      assert.deepEqual(instance.calls.slice(2), [
+        { method: 'pin', input: 'task' },
+        { method: 'act', input: { action: 'snapshot' } },
+        { method: 'close', input: 'task' },
+        method === 'open'
+          ? { method: 'act', input: { action: 'open', url: 'https://example.com/reopened' } }
+          : { method: 'bindProfile', input: profile },
+      ]);
       await computer.act('task', { action: 'snapshot' });
-      await other.act('task', { action: 'snapshot' });
-      assert.equal(fixture.instance('/synthetic/other-session'), otherInstance);
+      await computer.act('chat', { action: 'snapshot' });
       assert.equal(
-        otherInstance.calls.some(({ method }) => method === 'dispose'),
+        instance.calls.some(({ method }) => method === 'dispose'),
         false,
       );
     } finally {
@@ -2546,7 +2577,7 @@ for (const method of ['open', 'bindProfile'] as const)
   });
 
 for (const failure of ['failed', 'unacknowledged'] as const)
-  test(`a ${failure} namespace cleanup leaves explicit browser recovery fenced`, async () => {
+  test(`a ${failure} session cleanup leaves explicit browser recovery fenced`, async () => {
     const fixture = await harness();
     const dataRoot = `/synthetic/recover-${failure}`;
     const interrupted = await interruptedBrowser(fixture, dataRoot);
@@ -2554,15 +2585,15 @@ for (const failure of ['failed', 'unacknowledged'] as const)
     let blocked = true;
     try {
       const { computer, instance, release } = interrupted;
-      const close = instance.computer.dispose;
+      const close = instance.computer.close;
       const closeStarted = deferred();
-      instance.computer.dispose = async () => {
+      instance.computer.close = async (id) => {
         if (blocked) {
           closeStarted.resolve();
           if (failure === 'failed') throw new Error('Synthetic cleanup failed');
           await finishClose.promise;
         }
-        await close();
+        await close(id);
       };
       const failed = assert.rejects(
         computer.act('task', { action: 'open', url: 'https://example.com/reopened' }),
@@ -2570,7 +2601,6 @@ for (const failure of ['failed', 'unacknowledged'] as const)
       release.resolve();
       await closeStarted.promise;
       await failed;
-      assert.equal(fixture.instance(dataRoot), instance);
       const calls = fixture.launches.length;
       await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
       await assert.rejects(
@@ -2582,8 +2612,15 @@ for (const failure of ['failed', 'unacknowledged'] as const)
       blocked = false;
       finishClose.resolve();
       await computer.act('task', { action: 'open', url: 'https://example.com/reopened' });
-      assert.notEqual(fixture.instance(dataRoot), instance);
-      assert.equal(fixture.instance(dataRoot).calls.length, 1);
+      assert.equal(fixture.instance(dataRoot), instance);
+      assert.deepEqual(instance.calls.at(-1), {
+        method: 'act',
+        input: { action: 'open', url: 'https://example.com/reopened' },
+      });
+      assert.equal(
+        instance.calls.some(({ method }) => method === 'dispose'),
+        false,
+      );
     } finally {
       blocked = false;
       finishClose.resolve();

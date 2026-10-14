@@ -217,6 +217,12 @@ export type BrowserCall = BrowserRequest extends infer R
     ? Omit<R, 'id' | 'namespace'>
     : never
   : never;
+export const browserSession = (call: BrowserCall) =>
+  'threadId' in call
+    ? call.threadId
+    : call.method === 'injectCredentials' || call.method === 'fillCard'
+      ? call.input.threadId
+      : undefined;
 export const browserFrame = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request'), request: browserRequest }).strict(),
   z.object({ type: z.literal('cancel'), id: z.uuid() }).strict(),

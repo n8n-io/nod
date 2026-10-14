@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import pg from 'pg';
 import type { BrowserConnectionRequest } from '../src/ports/agent.ts';
 import type { Computer } from '../src/ports/computer.ts';
 import { createBrowserConnections } from '../src/server/browser-connections.ts';
+import { createBrowserFixture } from './browser-fixture.ts';
+import { stagedLoginBrowser } from './login-fixture.ts';
 
 test(
   'browser profiles require an explicit observed sign-in outcome and retain owner and turn fences',
@@ -273,3 +278,30 @@ test(
     }
   },
 );
+
+test('a saved profile that moves to another session never opens again in the session that had it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-profile-move-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  const profile = randomUUID();
+  const open = (id: string) => computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' });
+  try {
+    await computer.bindProfile!('first', profile);
+    await open('first');
+    await computer.close('first');
+    await computer.bindProfile!('second', profile);
+    await open('first');
+    assert.equal(fixture.pages.has(profile), false);
+    assert.equal(fixture.pages.get('first')?.closed, false);
+    await open('second');
+    assert.equal(fixture.pages.get(profile)?.closed, false);
+    await computer.bindProfile!('first', profile);
+    assert.equal(fixture.pages.has(profile), false);
+    await open('second');
+    assert.equal(fixture.pages.has(profile), false);
+    assert.equal(fixture.pages.get('second')?.closed, false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

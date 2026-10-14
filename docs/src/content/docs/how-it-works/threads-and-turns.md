@@ -194,13 +194,16 @@ When the next chat turn resumes its Pi session, it receives the messages other s
 A session opens its browser on its first browser call, so a session that never browses never starts one. No session waits for another session's browser.
 
 - The chat's browser is the one Otto hands to you, and the browser page shows it.
-- A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
+- A background session's browser is deleted when the session ends without waiting, also when its turn fails before it starts or Otto restarts during it, or when **Stop** or reset cancels it. Otto can't tell whether a turn that a restart ended had browsed, so deleting its browser can start the browser container once when Otto starts.
+- A task that opens again after it closed gets a new browser. Its saved logins and saved browser sessions still work, but its old pages, cookies and downloads are gone. A browser call that started before the deletion is refused, so it can't reopen the old browser or take a saved browser session.
 - The browser container keeps at most four session browsers live at once: enough for the chat and three other sessions. Subagent browsers don't count toward the four. They have two slots of their own, so up to six browsers can be live.
 - To make room, the container closes the browser used least recently in the same group: a session browser for a session, a subagent browser for a subagent. It never closes the browser of a session whose turn is running, or a browser held for you. A subagent's idle browser can close to make room for another subagent.
 - When no browser can close, a new one waits in line for a free slot. Sessions and subagents wait in separate lines. After two minutes the wait fails, so Otto can tell you or try again. **Stop** cancels the wait.
 - The container never closes a running turn's browser to free a saved browser session for another session either. That session waits in the same line.
 - A running turn pins its session's browser. When Otto starts, it clears the pins an earlier run left before it uses the browser, so a crash can't keep a browser pinned. After the browser container recovers, Otto pins the session again before it reopens the page.
 - A closed browser keeps its profile until it's used again. Otto still hides the secret values it entered there when the session opens it again.
+- A saved browser session belongs to one session at a time. When another session takes it, the session that had it opens its next page in its own profile, so two browsers never run on one signed-in profile.
+- A browser call that never finishes blocks only its own session. Its other calls fail until it opens a page again. That open closes its browser first and starts a new page, and the other sessions keep theirs. When the browser container itself fails, every session's calls fail until one session opens a page, which closes every browser and starts fresh.
 - A session that pauses on a question, approval or sign-in keeps its open page for 30 minutes, even when that turn didn't browse. Pausing never starts a browser for a session that has none.
 - Two settings set the limits for every computer provider: `maxLiveSessions` for sessions and `maxSubagentSessions` for subagents, in [`src/providers/container-browser/config.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/container-browser/config.ts). Measure memory with six live browsers on an E2B sandbox with 2 CPUs and 3 GB before you raise either.
 
@@ -229,11 +232,11 @@ Stop works on one session or on all of them:
 
 Stop locks the thread, then cancels the queued, running and waiting turns in its scope and aborts the running ones. In the same transaction, for each session it cancelled, it declines the open confirmations, closes the secure forms, verification code and payment requests, and closes the task as **Stopped** with a short note that replies to its "On it" message. Then it deletes the browser of each background session it cancelled.
 
-A task ID that belongs to another owner or an earlier thread returns `404`. A task with nothing queued, running or waiting has nothing to stop, so its row stays as it is. A reply to a stopped task opens it again. Stop can't undo an external action that already started. Ordinary turns have no time limit.
+A task ID that belongs to another owner or an earlier thread returns `404`. A task with nothing queued, running or waiting has nothing to stop, so its row stays as it is. A reply to a stopped task opens it again. A session's next turn starts only after its stopped turn has finished in the server, so the old turn's cleanup can't close the new turn's browser. Stop can't undo an external action that already started. Ordinary turns have no time limit.
 
 Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
 
-A task turn that fails closes the task as **Failed** in the same transaction. It declines the task's open confirmations and posts a short note as a reply to the task's "On it" message, so you hear about it on Telegram and WhatsApp too. Nothing reruns. Your reply opens the task again. If a reply of yours already waits in the task's session, the task stays open and runs it next, with the note in its first instruction. Schedule and event sessions fail silently.
+A task turn that fails closes the task as **Failed** in the same transaction. It declines the task's open confirmations and posts a short note as a reply to the task's "On it" message, so you hear about it on Telegram and WhatsApp too. Otto deletes the task's browser before the turn ends. Nothing reruns. Your reply opens the task again. If a reply of yours already waits in the task's session, the task stays open and runs it next, with the note in its first instruction. Schedule and event sessions fail silently.
 
 When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model. A task's note is that notice.
 
