@@ -1355,6 +1355,38 @@ test(
 );
 
 test(
+  'replies go out between inbound messages so a busy inbox cannot hold them back',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const sentBefore: number[] = [];
+    const channels = await create({
+      submit: async (_text, sourceId, client, channel) => {
+        sentBefore.push(posts.length);
+        const turnId = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [turnId, threadId, sourceId, channel],
+        );
+        return turnId;
+      },
+    });
+    try {
+      receive('111', 'a1', 'chat-a1');
+      await channels.drain();
+      await reply((await turnOf('a1')).turn_id, 'first reply', randomUUID(), 1);
+      receive('222', 'b1', 'chat-b1');
+      receive('111', 'a2', 'chat-a2');
+      await channels.drain();
+      assert.deepEqual(sentBefore, [0, 0, 1]);
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'first reply' }]);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
   'a failing inbound message does not stop replies and a committed one is announced to the web chat',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
