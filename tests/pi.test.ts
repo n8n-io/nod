@@ -30,8 +30,10 @@ import { createFilesystemObjectStore } from '../src/providers/object-storage/fil
 import {
   closeInterruptedCalls,
   createPiCheckpoint,
+  openLocalSession,
   readPiSessionEntries,
   rebaseAt,
+  removedCredential,
   removedImage,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
@@ -691,31 +693,231 @@ test('a durable saved session above the rebase size is rebased on load with the 
   }
 });
 
-test('screenshots from a long turn are pruned from the saved session instead of filling it', async () => {
+function legacyLogin(manager: SessionManager, password = 'synthetic-legacy-password') {
+  const usage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  const call = (id: string, name: string, args: Record<string, string>, timestamp: number) =>
+    manager.appendMessage({
+      role: 'assistant',
+      api: 'openai-responses',
+      provider: 'openai',
+      model: 'fixture',
+      timestamp,
+      stopReason: 'toolUse',
+      content: [{ type: 'toolCall', id, name, arguments: args }],
+      usage,
+    });
+  manager.appendMessage({ role: 'user', content: 'Sign in to the fixture site.', timestamp: 1 });
+  call('legacy', 'get_credential', {}, 2);
+  manager.appendMessage({
+    role: 'toolResult',
+    toolCallId: 'legacy',
+    toolName: 'get_credential',
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ username: 'fixture-user', password }),
+      },
+    ],
+    details: {},
+    isError: false,
+    timestamp: 3,
+  });
+  call('typed', 'browser', { action: 'fill', selector: '@e2', text: password }, 4);
+  manager.appendMessage({
+    role: 'toolResult',
+    toolCallId: 'typed',
+    toolName: 'browser',
+    content: [{ type: 'text', text: 'Filled.' }],
+    details: {},
+    isError: false,
+    timestamp: 5,
+  });
+}
+
+async function filesUnder(directory: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...(await filesUnder(path)));
+    else found.push(path);
+  }
+  return found;
+}
+
+test('a saved session loses old plaintext logins from model context and storage when it loads', async () => {
   const f = await fixture();
   try {
-    const durable = await createPiCheckpoint({
+    const original = await createPiCheckpoint({
       store: f.store,
       threadId: f.threadId,
-      directory: f.directory,
+      directory: join(f.directory, 'old'),
     });
-    const image = (index: number) => `${index}`.padEnd(4 * 1024 * 1024, 'A');
-    for (let index = 0; index < 20; index++) {
-      durable.manager.appendMessage({
-        role: 'toolResult',
-        toolCallId: `shot-${index}`,
-        toolName: 'browser',
-        content: [{ type: 'image', data: image(index), mimeType: 'image/png' }],
-        details: {},
-        isError: false,
-        timestamp: index,
-      });
-      await durable.checkpoint();
+    legacyLogin(original.manager);
+    await original.checkpoint();
+    const restored = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'new'),
+    });
+    const context = JSON.stringify(restored.manager.buildSessionContext().messages);
+    assert.equal(context.includes('synthetic-legacy-password'), false);
+    assert.ok(context.includes(removedCredential));
+    for (const file of await filesUnder(join(f.directory, 'objects')))
+      assert.equal((await readFile(file, 'utf8')).includes('synthetic-legacy-password'), false);
+
+    const local = join(f.directory, 'local');
+    await mkdir(local);
+    legacyLogin(SessionManager.create(local, local));
+    const opened = openLocalSession(local);
+    assert.equal(
+      JSON.stringify(opened.buildSessionContext().messages).includes('synthetic-legacy-password'),
+      false,
+    );
+    const files = (await readdir(local)).filter((name) => name.endsWith('.jsonl'));
+    assert.equal(files.length, 1);
+    assert.equal(
+      (await readFile(join(local, files[0]!), 'utf8')).includes('synthetic-legacy-password'),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('short legacy passwords are removed after compaction without changing message types', async () => {
+  const f = await fixture();
+  try {
+    const manager = SessionManager.inMemory(f.directory);
+    legacyLogin(manager, 'q');
+    const kept = manager.getLeafId()!;
+    manager.appendCompaction('The saved password was q.', kept, 50, { value: 'q' });
+    manager.appendMessage({ role: 'user', content: 'Use the password q.', timestamp: 6 });
+    manager.appendMessage({
+      role: 'bashExecution',
+      command: 'printf q',
+      output: 'q',
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 7,
+    });
+    manager.appendMessage({
+      role: 'assistant',
+      api: 'openai-responses',
+      provider: 'openai',
+      model: 'fixture',
+      timestamp: 8,
+      stopReason: 'stop',
+      content: [{ type: 'thinking', thinking: 'The password was q.' }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    await f.store.write(
+      `sessions/${f.threadId}.jsonl`,
+      Buffer.from(
+        [manager.getHeader(), ...manager.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
+      ),
+      { expectedVersion: null },
+    );
+    const restored = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'new'),
+    });
+    assert.doesNotMatch(
+      JSON.stringify(restored.manager.buildSessionContext().messages),
+      /password (?:was )?q/,
+    );
+    assert.ok(
+      restored.manager.buildSessionContext().messages.some((message) => message.role === 'user'),
+    );
+    await restored.checkpoint();
+    assert.doesNotMatch(await savedText(f), /get_credential|"value":"q"|password (?:was )?q/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('legacy passwords are removed from embedded JSON strings', async () => {
+  const f = await fixture();
+  try {
+    const password = 'synthetic"quoted\\password';
+    const manager = SessionManager.inMemory(f.directory);
+    legacyLogin(manager, password);
+    manager.appendMessage({ role: 'user', content: JSON.stringify({ password }), timestamp: 6 });
+    await f.store.write(
+      `sessions/${f.threadId}.jsonl`,
+      Buffer.from(
+        [manager.getHeader(), ...manager.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
+      ),
+      { expectedVersion: null },
+    );
+    const restored = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'new'),
+    });
+    const texts = restored.manager
+      .buildSessionContext()
+      .messages.flatMap((message) =>
+        'content' in message
+          ? typeof message.content === 'string'
+            ? [message.content]
+            : message.content.filter((part) => part.type === 'text').map((part) => part.text)
+          : [],
+      );
+    for (const text of texts) {
+      assert.equal(text.includes(password), false);
+      assert.equal(text.includes(JSON.stringify(password).slice(1, -1)), false);
     }
-    const saved = await savedText(f);
-    assert.ok(Buffer.byteLength(saved) < 64 * 1024 * 1024);
-    assert.ok(saved.includes(removedImage));
-    assert.ok(saved.includes(image(19)));
+    await restored.checkpoint();
+    assert.doesNotMatch(await savedText(f), /synthetic.*quoted/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a local summary is scrubbed with credentials from its retained earlier file', async () => {
+  const f = await fixture();
+  try {
+    const local = join(f.directory, 'local');
+    await mkdir(local);
+    const older = SessionManager.create(local, local);
+    legacyLogin(older);
+    const current = SessionManager.create(local, local);
+    current.appendMessage({ role: 'user', content: 'Read the report.', timestamp: 6 });
+    current.appendCompaction(
+      'Use fixture-user with synthetic-legacy-password.',
+      current.getLeafId(),
+      50,
+    );
+    const activeFile = current.getSessionFile()!;
+    const { utimes } = await import('node:fs/promises');
+    await utimes(activeFile, new Date(Date.now() + 1000), new Date(Date.now() + 1000));
+    const opened = openLocalSession(local);
+    assert.doesNotMatch(
+      JSON.stringify(opened.buildSessionContext().messages),
+      /fixture-user|synthetic-legacy-password/,
+    );
+    const files = await filesUnder(local);
+    assert.equal(files.length, 1);
+    assert.doesNotMatch(
+      await readFile(files[0]!, 'utf8'),
+      /fixture-user|synthetic-legacy-password/,
+    );
   } finally {
     await f.close();
   }
@@ -725,7 +927,7 @@ test('failed checkpoint cleanup blocks startup and preserves the published sessi
   const f = await fixture();
   try {
     const original = await createPiCheckpoint({ ...f, directory: f.directory });
-    compactedHistory(original.manager, 'x'.repeat(Math.ceil(rebaseAt / 5)));
+    legacyLogin(original.manager);
     await original.checkpoint();
     const store = {
       ...f.store,
@@ -738,7 +940,16 @@ test('failed checkpoint cleanup blocks startup and preserves the published sessi
       /could not be saved/,
     );
     const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'restored') });
-    assert.deepEqual(visibleContext(restored.manager), visibleContext(original.manager));
+    assert.doesNotMatch(
+      JSON.stringify(restored.manager.buildSessionContext().messages),
+      /fixture-user|synthetic-legacy-password/,
+    );
+    assert.match(
+      JSON.stringify(restored.manager.buildSessionContext().messages),
+      /removed from context/,
+    );
+    for (const file of await filesUnder(join(f.directory, 'objects')))
+      assert.doesNotMatch(await readFile(file, 'utf8'), /fixture-user|synthetic-legacy-password/);
   } finally {
     await f.close();
   }
@@ -3204,5 +3415,35 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('screenshots from a long turn are pruned from the saved session instead of filling it', async () => {
+  const f = await fixture();
+  try {
+    const durable = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: f.directory,
+    });
+    const image = (index: number) => `${index}`.padEnd(4 * 1024 * 1024, 'A');
+    for (let index = 0; index < 20; index++) {
+      durable.manager.appendMessage({
+        role: 'toolResult',
+        toolCallId: `shot-${index}`,
+        toolName: 'browser',
+        content: [{ type: 'image', data: image(index), mimeType: 'image/png' }],
+        details: {},
+        isError: false,
+        timestamp: index,
+      });
+      await durable.checkpoint();
+    }
+    const saved = await savedText(f);
+    assert.ok(Buffer.byteLength(saved) < 64 * 1024 * 1024);
+    assert.ok(saved.includes(removedImage));
+    assert.ok(saved.includes(image(19)));
+  } finally {
+    await f.close();
   }
 });
