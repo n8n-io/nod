@@ -12,18 +12,72 @@ const domain = z
     /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$/,
   );
 
-const taskLabel = z
-  .string()
-  .max(48)
-  .regex(/^[a-z]+(?:_[a-z]+){0,2}$/);
-export const taskType = taskLabel;
-export const taskAction = taskLabel;
-export const taskSubject = taskLabel;
+export const taskType = z.enum([
+  'research',
+  'communication',
+  'document_creation',
+  'data_analysis',
+  'file_management',
+  'scheduling',
+  'monitoring',
+  'app_setup',
+  'translation',
+  'software_development',
+  'transaction',
+  'unknown',
+]);
+export const taskAction = z.enum([
+  'find',
+  'read',
+  'summarize',
+  'compare',
+  'analyze',
+  'draft',
+  'create',
+  'edit',
+  'send',
+  'organize',
+  'delete',
+  'schedule',
+  'monitor',
+  'connect',
+  'disconnect',
+  'translate',
+  'extract',
+  'convert',
+  'run',
+  'purchase',
+  'book',
+  'unknown',
+]);
+export const taskSubject = z.enum([
+  'web',
+  'email',
+  'message',
+  'document',
+  'spreadsheet',
+  'file',
+  'calendar',
+  'contact',
+  'task',
+  'automation',
+  'app',
+  'code',
+  'image',
+  'audio',
+  'video',
+  'product',
+  'unknown',
+]);
 export const taskActivities = z
   .array(
     z.string().refine((value) => {
       const parts = value.split(':');
-      return parts.length === 2 && parts.every((part) => taskLabel.safeParse(part).success);
+      return (
+        parts.length === 2 &&
+        taskAction.safeParse(parts[0]).success &&
+        taskSubject.safeParse(parts[1]).success
+      );
     }),
   )
   .min(1)
@@ -43,6 +97,21 @@ export const frictionReason = z.enum([
   'execution_failure',
   'unclear',
 ]);
+export const serviceFailureReason = z.enum([
+  'authentication',
+  'permission',
+  'rate_limited',
+  'timeout',
+  'unavailable',
+  'invalid_request',
+  'cancelled',
+  'unknown',
+]);
+const connectionProperties = z.object({
+  app: z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/),
+  domain: domain.optional(),
+  connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
+});
 const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const turnProperties = z.object({
   source: z.enum(['user', 'schedule', 'event', 'resume']),
@@ -109,30 +178,13 @@ export const analyticsEvent = z.discriminatedUnion('event', [
   z
     .object({
       event: z.literal('otto_connection_changed'),
-      properties: z
-        .object({
-          app: z.enum([
-            'gmail',
-            'googlecalendar',
-            'googledrive',
-            'googlesheets',
-            'googledocs',
-            'slack',
-            'notion',
-            'linear',
-            'custom',
-          ]),
-          domain: domain.optional(),
-          connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
+      properties: connectionProperties
+        .extend({
           status: z.enum(['started', 'connected', 'failed', 'disconnected']),
           failure_reason: z
-            .enum([
-              'invalid_configuration',
-              'authorization_failed',
-              'verification_failed',
-              'cancelled',
-              'unavailable',
-              'unknown',
+            .union([
+              serviceFailureReason,
+              z.enum(['invalid_configuration', 'authorization_failed', 'verification_failed']),
             ])
             .optional(),
         })
@@ -142,23 +194,31 @@ export const analyticsEvent = z.discriminatedUnion('event', [
   z
     .object({
       event: z.literal('otto_service_used'),
-      properties: z
-        .object({
-          app: z.enum([
-            'gmail',
-            'googlecalendar',
-            'googledrive',
-            'googlesheets',
-            'googledocs',
-            'slack',
-            'notion',
-            'linear',
-            'custom',
-          ]),
-          domain: domain.optional(),
-          connection_method: z.enum(['managed_app', 'browser', 'http', 'mcp', 'cli']),
+      properties: connectionProperties
+        .extend({
+          operation_phase: z.enum(['preparation', 'execution']).optional(),
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           duration_ms: duration,
+          failure_reason: serviceFailureReason.optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_connection_observed'),
+      properties: connectionProperties.strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('otto_vault_imported'),
+      properties: z
+        .object({
+          domains: z
+            .array(z.union([domain, z.literal('unavailable')]))
+            .min(1)
+            .max(100),
         })
         .strict(),
     })
@@ -214,9 +274,10 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       event: z.literal('otto_task_analysis'),
       properties: z
         .object({
-          outcome: z.enum(['analyzed', 'unavailable', 'invalid', 'failed']),
+          outcome: z.enum(['analyzed', 'unavailable', 'invalid', 'failed', 'queue_full']),
           source: z.enum(['user', 'schedule', 'event', 'resume']),
           task_count: z.number().int().min(0).max(8).optional(),
+          unknown_label_count: z.number().int().min(0).max(200).optional(),
         })
         .strict(),
     })

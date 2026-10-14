@@ -562,6 +562,7 @@ test(
               })),
             );
           }
+          captured.length = 0;
           const customCron = '15 8 1,15 * 1-5';
           const custom = await create({ cron: customCron });
           const draft = readSchedule(custom.cron!);
@@ -583,6 +584,7 @@ test(
             ['2035-10-28', 'Europe/Lisbon', '2035-10-28T09:05:00.000Z'],
             ['2035-10-27', 'Asia/Kathmandu', '2035-10-27T03:20:00.000Z'],
           ]) {
+            captured.length = 0;
             const schedule = await create({ kind: 'once', runAt: '2035-10-27T12:00:00Z' });
             const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
               runAt: scheduleRunAt(date, '09:05', timeZone),
@@ -599,6 +601,13 @@ test(
             await deliver([job]);
             assert.equal((await runs(schedule.id))[0].scheduledFor, expected);
             await request('DELETE', `/api/schedules/${schedule.id}`);
+            assert.deepEqual(
+              captured,
+              ['create', 'update', 'delete'].map((operation) => ({
+                event: 'otto_schedule_changed',
+                properties: { operation, schedule_kind: 'once', cadence: 'once' },
+              })),
+            );
           }
         },
       );

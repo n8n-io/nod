@@ -3348,7 +3348,7 @@ test(
   },
 );
 
-async function feedbackFixture(t: TestContext) {
+async function feedbackFixture(t: TestContext, enabled = true) {
   const schema = `test_feedback_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -3374,6 +3374,7 @@ async function feedbackFixture(t: TestContext) {
   };
   const accepted = new Map<string, { payloadHash: string; receipt: FeedbackReceipt }>();
   const delivery = createN8nFeedback({
+    enabled,
     url: 'https://feedback.example.test/intake',
     request: async (_url, options) => {
       assert.equal(options?.redirect, 'error');
@@ -3532,6 +3533,9 @@ test(
     const f = await feedbackFixture(t);
     const first = await f.open();
     const second = await f.open();
+    const context = await first.app.inject({ url: '/api/feedback/context' });
+    assert.equal(context.json().enabled, true);
+    assert.equal(context.json().recipient, 'feedback.example.test');
     const snapshotResponse = await first.app.inject({
       method: 'POST',
       url: '/api/feedback/report',
@@ -4035,6 +4039,30 @@ test(
   },
 );
 
+test(
+  'disabled feedback exposes no recipient and never submits or reconciles outbound',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t, false);
+    const { app, ownerId } = await f.open();
+    const context = (await app.inject({ url: '/api/feedback/context' })).json();
+    assert.equal(context.enabled, false);
+    assert.equal(context.recipient, null);
+    const input = f.submission();
+    const response = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(response.statusCode, 503);
+    await f.pool.query(
+      `INSERT INTO feedback_submissions(owner_id,id,request_hash,payload_hash,status,created_at)
+       VALUES($1,$2,$3,$3,'unknown',now()-interval '1 hour')`,
+      [ownerId, input.submissionId, 'a'.repeat(64)],
+    );
+    const receipt = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(receipt.json().status, 'unknown');
+    assert.equal(f.state.envelopes.length, 0);
+    assert.equal(f.state.statusRequests.length, 0);
+  },
+);
+
 test('feedback intake accepts only matching Linear receipts and never retries a failed or redirected request', async (t) => {
   const input: FeedbackEnvelope = {
     schemaVersion: 1,
@@ -4117,6 +4145,99 @@ test('feedback intake accepts only matching Linear receipts and never retries a 
     request: async () => Response.json(valid),
   });
   assert.deepEqual(await delivery.submit(input), valid);
+  await t.test(
+    'custom intake accepts only receipts inside its approved issue collection',
+    async () => {
+      let issueUrl: unknown = 'https://issues.example.test/projects/otto/issues/ABC-123';
+      const requests: unknown[] = [];
+      const custom = createN8nFeedback({
+        url: 'https://feedback.example.test/intake',
+        receiptUrlPrefix: 'https://issues.example.test/projects/otto/issues/',
+        token: 'synthetic-feedback-token',
+        request: async (url, options) => {
+          assert.equal(String(url), 'https://feedback.example.test/intake');
+          assert.equal(
+            new Headers(options?.headers).get('x-otto-feedback-token'),
+            'synthetic-feedback-token',
+          );
+          requests.push(JSON.parse(String(options?.body)));
+          return Response.json({ ...valid, issueUrl });
+        },
+      });
+      assert.equal(custom.recipient, 'feedback.example.test');
+      assert.deepEqual(await custom.submit(input), { ...valid, issueUrl });
+      assert.deepEqual(await custom.status(input.submissionId, input.payloadHash), {
+        ...valid,
+        issueUrl,
+      });
+      assert.deepEqual(requests, [
+        input,
+        { action: 'status', submissionId: input.submissionId, payloadHash: input.payloadHash },
+      ]);
+      for (const invalid of [
+        'https://issues.example.test/projects/otto/issues',
+        'https://issues.example.test/projects/otto/issues/',
+        'https://issues.example.test/projects/otto/issues-foreign/ABC-123',
+        'https://issues.example.test/projects/other/issues/ABC-123',
+        'https://issues.example.test.foreign.test/projects/otto/issues/ABC-123',
+        'https://issues.example.test:444/projects/otto/issues/ABC-123',
+        'https://linear.app/n8n/issue/LAB-123',
+        'http://issues.example.test/projects/otto/issues/ABC-123',
+        'https://name:secret@issues.example.test/projects/otto/issues/ABC-123',
+        'https://issues.example.test/projects/otto/issues/ABC-123?token=synthetic',
+        'https://issues.example.test/projects/otto/issues/ABC-123#private',
+        'https://issues.example.test/projects/otto/issues/../issues/ABC-123',
+        'https://issues.example.test/projects/otto/issues/%2e%2e/issues/ABC-123',
+        'https://issues.example.test/projects/otto/issues/ABC-123%2fsecret',
+        'https://issues.example.test/projects/otto/issues/ABC-123%5Csecret',
+        'https://issues.example.test/projects/otto/issues/ABC-123%252fsecret',
+        'https://issues.example.test/projects/otto/issues/ABC-123\\secret',
+        ['https://issues.example.test/projects/otto/issues/ABC-123'],
+      ]) {
+        issueUrl = invalid;
+        assert.deepEqual(await custom.submit(input), {
+          submissionId: input.submissionId,
+          status: 'unknown',
+        });
+      }
+      const disabled = createN8nFeedback({
+        enabled: false,
+        url: 'invalid disabled configuration',
+        receiptUrlPrefix: 'invalid disabled configuration',
+        request: async () => {
+          throw new Error('Disabled feedback made an outbound request.');
+        },
+      });
+      assert.equal(disabled.configured, false);
+      assert.equal(disabled.recipient, null);
+      assert.equal((await disabled.submit(input)).status, 'rejected');
+      assert.equal(
+        (await disabled.status(input.submissionId, input.payloadHash)).status,
+        'rejected',
+      );
+      for (const invalid of [
+        'http://issues.example.test/issues/',
+        'https://issues.example.test/',
+        'https://issues.example.test/issues',
+        'https://name:secret@issues.example.test/issues/',
+        'https://issues.example.test/issues/?token=synthetic',
+        'https://issues.example.test/issues/#private',
+        'https://issues.example.test/private/../issues/',
+        'https://issues.example.test/%2e%2e/issues/',
+        'https://issues.example.test/issues%2f',
+        'https://issues.example.test/issues%5c',
+        'https://issues.example.test/issues%252f',
+        'https://issues.example.test/issues\\private',
+        'https://issues.example.test/issues%broken',
+      ])
+        assert.throws(() =>
+          createN8nFeedback({
+            url: 'https://feedback.example.test/intake',
+            receiptUrlPrefix: invalid,
+          }),
+        );
+    },
+  );
   await t.test(
     'delivery preserves bounded explanations without trusting malformed messages',
     async () => {
@@ -5089,6 +5210,12 @@ test(
         .map((event) => event.properties.task_count),
       [1, 1, 1],
     );
+    assert.deepEqual(
+      f.events
+        .filter((event) => event.event === 'otto_task_analysis')
+        .map((event) => event.properties.unknown_label_count),
+      [0, 5, 5],
+    );
     const exported = JSON.stringify(f.events);
     for (const privateValue of [
       first.id,
@@ -5359,7 +5486,11 @@ test(
     const f = await conversationAnalyticsFixture(t);
     f.analytics.setUsageData(f.ownerId, true);
     let answer: unknown;
-    const processor = await f.processor(async () => answer);
+    let classificationInput: unknown;
+    const processor = await f.processor(async ({ input }) => {
+      classificationInput = input;
+      return answer;
+    });
     const seed = await f.turn();
     const task = (messageId: string) => ({
       task_id: null,
@@ -5397,6 +5528,31 @@ test(
       (turn) => ({
         tasks: [{ ...task(turn.messageId), task_subject: 'Synthetic private document title' }],
         frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_type: 'cedar_acquisition' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_action: 'ada_linden' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_subject: 'cedar_acquisition' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: ['find:web', 'find:ada_linden'] }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [],
+        frustration: {
+          signal: 'explicit_complaint',
+          reason: 'output_quality',
+          task_type: 'cedar_acquisition',
+          message_ids: [turn.messageId],
+        },
       }),
       (turn) => ({
         tasks: [
@@ -5534,6 +5690,85 @@ test(
     assert.equal(
       (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
       1,
+    );
+    await f.pool.query(
+      'UPDATE analytics_tasks SET task_type=$1,task_action=$2,task_subject=$3,task_activities=$4 WHERE id=$5',
+      ['cedar_acquisition', 'ada_linden', 'cedar_acquisition', ['find:ada_linden'], taskId],
+    );
+    const legacy = await f.turn({ at: baseTime + (invalid.length + 2) * 5_000 });
+    answer = {
+      tasks: [
+        {
+          ...task(legacy.messageId),
+          task_id: taskId,
+          request_message_id: null,
+          task_type: 'unknown',
+          task_action: 'unknown',
+          task_subject: 'unknown',
+          task_activities: ['unknown:unknown'],
+        },
+      ],
+      frustration: null,
+    };
+    processor.start(legacy.id)();
+    await processor.drain();
+    const unknown = f.events.filter((event) => event.event === 'otto_task_updated').at(-1)!;
+    assert.equal(unknown.properties.task_type, 'unknown');
+    assert.equal(unknown.properties.task_action, 'unknown');
+    assert.equal(unknown.properties.task_subject, 'unknown');
+    assert.deepEqual(unknown.properties.task_activities, ['unknown:unknown']);
+    assert.equal(
+      f.events.filter((event) => event.event === 'otto_task_analysis').at(-1)!.properties
+        .unknown_label_count,
+      5,
+    );
+    for (const privateLabel of ['cedar_acquisition', 'ada_linden']) {
+      assert.ok(!JSON.stringify(f.events).includes(privateLabel));
+      assert.ok(!JSON.stringify(classificationInput).includes(privateLabel));
+    }
+  },
+);
+
+test(
+  'conversation analytics reports queue overflow without classifying dropped turns',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    t.after(release);
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    let start!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    let calls = 0;
+    const processor = await f.processor(async () => {
+      calls++;
+      start();
+      await gate;
+      return { tasks: [], frustration: null };
+    });
+    const turns = await Promise.all(
+      Array.from({ length: 33 }, (_, index) => f.turn({ at: Date.now() + index * 5_000 })),
+    );
+    for (const turn of turns) processor.start(turn.id)();
+    await entered;
+    assert.equal(calls, 1);
+    release();
+    await processor.drain();
+    assert.equal(calls, 32);
+    const health = f.events.filter((event) => event.event === 'otto_task_analysis');
+    assert.equal(health.filter((event) => event.properties.outcome === 'analyzed').length, 32);
+    const dropped = health.filter((event) => event.properties.outcome === 'queue_full');
+    assert.equal(dropped.length, 1);
+    assert.equal(dropped[0].properties.source, 'user');
+    assert.ok(!JSON.stringify(dropped).includes(turns.at(-1)!.id));
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+      32,
     );
   },
 );

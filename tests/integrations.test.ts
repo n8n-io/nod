@@ -14,6 +14,7 @@ import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/
 import { DiscoveredSignInRequired, type DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
+  IntegrationConnectionError,
   IntegrationInboxCursorExpired,
   type IntegrationFile,
   type IntegrationProvider,
@@ -26,7 +27,11 @@ import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/dis
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
-import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
+import {
+  createAnalytics,
+  registerAnalyticsRoutes,
+  type AnalyticsEvent,
+} from '../src/server/analytics.ts';
 import { analyticsDomain, captureConnection } from '../src/server/analytics-connections.ts';
 import { channelReply } from '../src/server/channels.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
@@ -60,6 +65,7 @@ test('connection analytics retain only service domains and reviewed app identifi
     capture,
     {
       app: 'gmail',
+      publicApp: true,
       connection_method: 'managed_app',
       endpoint: 'https://connect.composio.dev/private',
     },
@@ -901,6 +907,8 @@ test(
           domain: 'google.com',
           connection_method: 'managed_app',
           outcome,
+          ...(outcome === 'failed' ? { failure_reason: 'unknown' } : {}),
+          ...(outcome === 'cancelled' ? { failure_reason: 'cancelled' } : {}),
         })),
       );
     } finally {
@@ -1114,7 +1122,13 @@ async function appsFixture(
   listing: Partial<
     Pick<
       Parameters<typeof createIntegrations>[1],
-      'browserConnections' | 'browserAccounts' | 'wake' | 'readWorkspaceFile' | 'learnWritingStyle'
+      | 'browserConnections'
+      | 'browserAccounts'
+      | 'wake'
+      | 'readWorkspaceFile'
+      | 'learnWritingStyle'
+      | 'analytics'
+      | 'analyticsConsent'
     >
   > = {},
 ) {
@@ -1236,6 +1250,77 @@ async function appsFixture(
     callbacks,
   };
 }
+
+test(
+  'managed service analytics preserve public catalog identity and measure preparation failures without account data',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
+    const analytics = await createAnalytics({
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '/unused',
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+    });
+    const owner = 'local-development';
+    analytics.setUsageData(owner, true, randomUUID());
+    t.after(() => analytics.shutdown());
+    const f = await appsFixture(
+      t,
+      {},
+      {
+        analytics: analytics.forOwner(owner),
+        analyticsConsent: () => analytics.consent(owner),
+      },
+    );
+    f.provider.supportedServices = [...integrationServiceIds, 'github'];
+    const connected = await f.connect('github');
+    assert.deepEqual(
+      captured.map(({ properties }) => [properties.app, properties.status]),
+      [
+        ['github', 'started'],
+        ['github', 'connected'],
+      ],
+    );
+    f.provider.supportedServices = undefined;
+    f.provider.listServices = async () => {
+      throw new Error('The synthetic catalog is offline.');
+    };
+    const createSession = f.provider.createSession;
+    f.provider.createSession = async () => {
+      throw new IntegrationConnectionError('permission', 'session');
+    };
+    await assert.rejects(
+      f.service.execute(owner, 'GITHUB_LIST_REPOSITORIES', {
+        connectionId: connected.connectionId,
+      }),
+    );
+    assert.equal(captured.at(-1)?.properties.app, 'github');
+    assert.equal(captured.at(-1)?.properties.failure_reason, 'permission');
+    f.provider.createSession = createSession;
+    await f.service.execute(owner, 'GITHUB_LIST_REPOSITORIES', {
+      connectionId: connected.connectionId,
+    });
+    assert.equal(captured.at(-1)?.properties.outcome, 'succeeded');
+    assert.equal((await f.service.analyticsConnections())[0].app, 'github');
+    assert.equal(JSON.stringify(captured).includes(String(connected.accountId)), false);
+    assert.equal(JSON.stringify(captured).includes(String(connected.connectionId)), false);
+    assert.equal(JSON.stringify(captured).includes('current-session'), false);
+    assert.equal(JSON.stringify(captured).includes('consent.example.com'), false);
+    await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
+      connected.connectionId,
+    ]);
+    captured.length = 0;
+    await assert.rejects(
+      f.service.execute(owner, 'GITHUB_LIST_REPOSITORIES', {
+        connectionId: connected.connectionId,
+      }),
+    );
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].properties.operation_phase, 'preparation');
+    assert.equal(captured[0].properties.failure_reason, 'invalid_request');
+  },
+);
 
 test(
   'managed app discovery keeps consent and underscore tool routing bound to owned accounts',
@@ -5292,6 +5377,7 @@ test(
           app: 'custom',
           connection_method,
           outcome: 'cancelled',
+          failure_reason: 'cancelled',
         })),
       );
       blocked = undefined;
@@ -5357,6 +5443,7 @@ test(
           app: 'custom',
           connection_method: 'cli',
           outcome,
+          ...(outcome === 'failed' ? { failure_reason: 'unknown' } : {}),
         })),
       );
 
@@ -5599,8 +5686,148 @@ test(
         ['http', 'succeeded'],
         ['http', 'succeeded'],
         ['mcp', 'succeeded'],
-      ].map(([connection_method, outcome]) => ({ app: 'custom', connection_method, outcome })),
+      ].map(([connection_method, outcome]) => ({
+        app: 'custom',
+        connection_method,
+        outcome,
+        ...(outcome === 'failed'
+          ? { failure_reason: connection_method === 'http' ? 'invalid_request' : 'unknown' }
+          : {}),
+      })),
     );
+  },
+);
+
+test(
+  'discovered service analytics include credential preparation without private details or revived consent',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const ownerId = 'local-development';
+    const grantVault = await createAppGrantVault(f.pool, {
+      ownerId,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
+    });
+    const { createAnalytics } = await import('../src/server/analytics.ts');
+    const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
+    const analytics = await createAnalytics({
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '',
+      provider: { capture: (event) => events.push(event), shutdown: async () => {} },
+    });
+    t.after(() => analytics.shutdown());
+    analytics.setUsageData(ownerId, true, randomUUID());
+    let refreshFailure: unknown = new DiscoveredSignInRequired();
+    let calls = 0;
+    let waiting: Promise<void> | undefined;
+    let entered = () => {};
+    const service = await createDiscoveredConnections(f.pool, {
+      ownerId,
+      baseUrl: 'http://127.0.0.1:4310',
+      grantVault,
+      analytics: analytics.forOwner(ownerId),
+      analyticsConsent: () => analytics.consent(ownerId),
+      transport: {
+        validateEndpoint: async (endpoint) => endpoint,
+        http: async () => ({ status: 200, body: null }),
+        listTools: async () => [{ name: 'read', inputSchema: {} }],
+        callTool: async () => {
+          calls++;
+          entered();
+          await waiting;
+          return { private: 'Synthetic private tool content' };
+        },
+      },
+      oauth: {
+        begin: async () => assert.fail('No sign-in is expected.'),
+        finish: async () => assert.fail('No sign-in is expected.'),
+        refresh: async (_endpoint, saved) => {
+          if (refreshFailure) throw refreshFailure;
+          return { ...saved, expiresAt: Date.now() + 300_000 };
+        },
+      },
+    });
+    const connectionId = randomUUID();
+    const pathId = randomUUID();
+    await f.pool.query(
+      'INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths) VALUES($1,$2,$3,$4,$5,$6)',
+      [
+        connectionId,
+        ownerId,
+        'private-fixture-name',
+        'Private fixture app',
+        'Private fixture account',
+        JSON.stringify([
+          { id: pathId, kind: 'mcp', endpoint: 'https://tenant.example.com/mcp', auth: 'oauth' },
+        ]),
+      ],
+    );
+    await grantVault.put(
+      connectionId,
+      JSON.stringify({
+        expiresAt: Date.now() - 1,
+        tokens: { access_token: 'synthetic-private-token', token_type: 'Bearer' },
+      }),
+    );
+    const execute = () =>
+      service.execute('CONNECTED_MCP_CALL', { connectionId, pathId, tool: 'read' });
+    await assert.rejects(execute(), /Connect this account again/);
+    assert.equal(calls, 0);
+    assert.equal(events.at(-1)?.properties.failure_reason, 'authentication');
+    refreshFailure = Object.assign(new Error('Synthetic private token exchange error'), {
+      status: 429,
+    });
+    await assert.rejects(execute(), /Connect this account again/);
+    assert.equal(calls, 0);
+    assert.equal(events.at(-1)?.properties.failure_reason, 'rate_limited');
+    refreshFailure = new Error('Synthetic private token exchange detail');
+    await assert.rejects(execute(), (error) => {
+      assert.equal((error as Error).message, 'Connect this account again.');
+      assert.ok(!JSON.stringify(error).includes('Synthetic private'));
+      return true;
+    });
+    assert.equal(events.at(-1)?.properties.failure_reason, 'unknown');
+    refreshFailure = undefined;
+    await execute();
+    assert.deepEqual(
+      events.map((event) => event.properties.outcome),
+      ['failed', 'failed', 'failed', 'succeeded'],
+    );
+    assert.ok(
+      events.every(
+        (event) => event.properties.domain === 'example.com' && event.properties.app === 'custom',
+      ),
+    );
+    let release = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inFlight = execute();
+    await started;
+    analytics.setUsageData(ownerId, false, randomUUID());
+    analytics.setUsageData(ownerId, true, randomUUID());
+    release();
+    await inFlight;
+    assert.equal(events.length, 4);
+    waiting = undefined;
+    await execute();
+    assert.equal(events.length, 5);
+    assert.equal((await service.analyticsConnections()).length, 1);
+    const serialized = JSON.stringify(events);
+    for (const value of [
+      'tenant.',
+      'private-fixture-name',
+      'Private fixture account',
+      'Synthetic private',
+      'synthetic-private-token',
+      connectionId,
+      pathId,
+    ])
+      assert.ok(!serialized.includes(value));
   },
 );
 
@@ -6155,9 +6382,13 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     next_cursor: null,
   }));
   let result: Record<string, unknown> = {};
+  let transportFailure: Error | undefined;
   t.mock.method(client.sessions, 'create', async () => ({
     sessionId: 'fixture-session',
-    execute: async () => result,
+    execute: async () => {
+      if (transportFailure) throw transportFailure;
+      return result;
+    },
   }));
   const session = await createComposioProvider({ client }).createSession('local-development', {});
   for (const failure of [
@@ -6174,6 +6405,27 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
   });
   result = { data: { successful: true, id: 'fixture-message' }, error: null };
   assert.deepEqual(await session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'), result);
+  const { withServiceAnalytics } = await import('../src/server/analytics-connections.ts');
+  const captured: AnalyticsEvent[] = [];
+  for (const failure of [
+    new APIConnectionTimeoutError(),
+    new APIConnectionError({ cause: new Error('Synthetic private host') }),
+    new Error('Synthetic private text says 401 permission rate limit'),
+  ]) {
+    transportFailure = failure;
+    await assert.rejects(
+      withServiceAnalytics(
+        (event) => captured.push(event),
+        { app: 'gmail', publicApp: true, connection_method: 'managed_app' },
+        () => session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'),
+      ),
+    );
+  }
+  assert.deepEqual(
+    captured.map((event) => event.event === 'otto_service_used' && event.properties.failure_reason),
+    ['timeout', 'unavailable', 'unknown'],
+  );
+  assert.doesNotMatch(JSON.stringify(captured), /Synthetic|fixture-account|private|401/);
 });
 
 test(

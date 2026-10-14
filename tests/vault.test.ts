@@ -2010,6 +2010,7 @@ test(
       await t.test(
         'card analytics omit values and do not count unchanged edits or repeated deletes',
         async () => {
+          captured.length = 0;
           const entry = await create();
           assert.equal((await update(entry.id, input)).statusCode, 200);
           assert.equal(
@@ -2550,6 +2551,39 @@ test(
       );
 
       await t.test(
+        'large imports batch only committed normalized domains within the hosted capture limit',
+        async () => {
+          captured.length = 0;
+          const response = await app.inject({
+            method: 'POST',
+            url: '/api/vault/import',
+            headers,
+            payload: {
+              logins: Array.from({ length: 501 }, (_, i) => ({
+                label: `Private imported ${i}`,
+                origin: `https://private${i}.example.com`,
+                username: `private-${i}@example.test`,
+                password: 'private-import-secret',
+              })),
+            },
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          assert.equal(response.json().imported, 501);
+          const batches = captured.filter((event) => event.event === 'otto_vault_imported');
+          assert.equal(batches.length, 6);
+          assert.equal(batches.flatMap((event) => event.properties.domains).length, 501);
+          assert.ok(
+            batches.every((event) =>
+              event.properties.domains.every((domain) => domain === 'example.com'),
+            ),
+          );
+          assert.ok(batches.every((event) => analyticsEvent.safeParse(event).success));
+          assert.doesNotMatch(JSON.stringify(batches), /private|secret|username|password/);
+          captured.length = 0;
+        },
+      );
+
+      await t.test(
         'an import adds new logins encrypted and keeps the ones already saved',
         async () => {
           const existing = await app.inject({
@@ -2599,13 +2633,12 @@ test(
           });
           assert.equal(imported.statusCode, 200);
           assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
-          assert.deepEqual(
-            captured,
-            ['example.com', 'example.org'].map((domain) => ({
-              event: 'otto_vault_changed',
-              properties: { item_type: 'login', operation: 'create', source: 'import', domain },
-            })),
-          );
+          assert.deepEqual(captured, [
+            {
+              event: 'otto_vault_imported',
+              properties: { domains: ['example.com', 'example.org'] },
+            },
+          ]);
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
@@ -5587,6 +5620,9 @@ const { createElement, act } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { Sidebar } = await import('./src/web/components/sidebar.tsx');
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(Sidebar, {path:'/', unreadCount:73, collapsed:false, onToggle() {}, onNavigate() {}})));
+const stylesheet = document.createElement('style');
+document.head.append(stylesheet);
+stylesheet.sheet.insertRule('.fixture-stylesheet { background-image: url("file:///synthetic-private-local/image.png") }');
 await import('posthog-js/dist/posthog-recorder.js');
 const events = [];
 const record = window.__PosthogExtensions__.rrweb.record;
@@ -5604,6 +5640,7 @@ stop();
 const recordedNodes = [];
 function visit(node) { recordedNodes.push(node); node.childNodes?.forEach(visit); }
 visit(events.find(event => event.type === 2).data.node);
+assert.ok(recordedNodes.some(node => node.attributes?._cssText?.includes('.fixture-stylesheet')));
 const badges = recordedNodes.filter(node => node.attributes?.class === 'chat-unread-badge');
 assert.equal(badges.length, document.querySelectorAll('.chat-unread-badge').length);
 assert.ok(badges.length > 0);
@@ -5749,6 +5786,7 @@ test(
       [
         'disabled',
         'desktop_disabled',
+        'batched_optin',
         'queued_event',
         'replay',
         'late_config',
@@ -5766,7 +5804,7 @@ test(
             process.execPath,
             ['--import', 'tsx', '--input-type=module'],
             {
-              timeoutMs: 25_000,
+              timeoutMs: 40_000,
               input:
                 `const scenario = ${JSON.stringify(scenario)};\n` +
                 String.raw`
@@ -5866,6 +5904,21 @@ if (scenario==='desktop_disabled') {
   analytics.capturePageview('/');
 }
 assert.equal(requests.length,0);
+if (scenario==='batched_optin') {
+  phase='enabled';
+  analytics.configureAnalytics(enabled('a'),'web');
+  sdk.set_config({api_transport:'fetch'});
+  await wait(350);
+  analytics.captureAnalytics('otto_settings_viewed',{tab:'models'});
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  await wait(3500);
+  assert.ok(requests.some(request => events(request).some(event => event.event==='otto_settings_viewed') && events(request).some(event => event.event==='otto_chat_stop_requested')), 'The opted-in events must arrive in the same SDK batch.');
+  assert.ok(requests.flatMap(events).every(event => event.properties.distinct_id==='hosted:fixture-a'));
+  assert.ok(!JSON.stringify(requests).includes('synthetic-private'));
+  await sdk.shutdown();
+  dom.window.close();
+  process.exit(0);
+}
 if (['cross_tab','failed_revoke','peer_failed_revoke','stale_peer_grant'].includes(scenario)) {
   const {act,createElement} = await import('react');
   const {createRoot} = await import('react-dom/client');

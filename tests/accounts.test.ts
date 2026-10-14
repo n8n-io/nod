@@ -20,6 +20,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
+import {
+  captureConnectionInventory,
+  withServiceAnalytics,
+} from '../src/server/analytics-connections.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { gunzipSync } from 'node:zlib';
 import {
@@ -443,66 +447,157 @@ describe('account routes', () => {
     }
   });
 
-  test('a delayed account read cannot restore consent after a saved revocation', async (t) => {
-    let saved: StoredAccount = {
-      theme: 'system',
-      onboardingCompleted: true,
-      displayName: null,
-      usageData: true,
-    };
-    const captured: unknown[] = [];
-    const analytics = await createAnalytics({
-      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
-      deployment: 'hosted',
-      environment: 'production',
-      dataRoot: '.',
-    });
-    analytics.setUsageData('alex', true);
-    let release: () => void;
-    let reached: () => void;
-    const ready = new Promise<void>((resolve) => {
-      reached = resolve;
-    });
-    let hold = true;
-    const app = Fastify();
-    t.after(() => app.close());
-    createAccountSession({
-      origin: 'http://localhost:4399',
-      analytics,
-      localUser: { id: 'alex', name: 'Synthetic', email: null, avatarUrl: null },
-      accounts: {
-        async read() {
-          const snapshot = { ...saved };
-          if (hold) {
-            hold = false;
+  test(
+    'durable opt-out does not wait for an earlier tenant profile sync or revive when it completes',
+    { skip: !process.env.TEST_DATABASE_URL, timeout: 10_000 },
+    async (t) => {
+      const schema = `test_consent_sync_${randomUUID().replaceAll('-', '')}`;
+      const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+      await root.query(`CREATE SCHEMA ${schema}`);
+      const database = new pg.Pool({
+        connectionString: process.env.TEST_DATABASE_URL,
+        options: `-c search_path=${schema}`,
+      });
+      const accounts = createAccountStore(database);
+      await accounts.initialize();
+      const analytics = await createAnalytics({
+        provider: { capture: () => {}, shutdown: async () => {} },
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      const app = Fastify();
+      let reached!: () => void;
+      let release!: () => void;
+      let persisted!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const revoked = new Promise<void>((resolve) => {
+        persisted = resolve;
+      });
+      const profiles: boolean[] = [];
+      t.after(async () => {
+        release();
+        await app.close();
+        await analytics.shutdown();
+        await database.end();
+        await root.query(`DROP SCHEMA ${schema} CASCADE`);
+        await root.end();
+      });
+      createAccountSession({
+        origin: 'http://localhost:4399',
+        analytics,
+        localUser: { id: 'alex', name: 'Synthetic', email: null, avatarUrl: null },
+        accounts: {
+          ...accounts,
+          async update(owner, input) {
+            const result = await accounts.update(owner, input);
+            if (input.usageData === false) persisted();
+            return result;
+          },
+        },
+        async usageDataChanged(session) {
+          const consent = await accounts.readConsent(session.user.id);
+          profiles.push(consent.enabled);
+          if (profiles.length === 1) {
             reached();
-            await new Promise<void>((resolve) => {
-              release = resolve;
-            });
+            await hold;
           }
-          return snapshot;
         },
-        async update(_owner, input) {
-          return (saved = { ...saved, ...input });
+      }).register(app);
+      const update = (usageData: boolean) =>
+        app.inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers: { origin: 'http://localhost:4399' },
+          payload: { usageData },
+        });
+      const granting = update(true);
+      await ready;
+      const revoking = update(false);
+      await revoked;
+      assert.deepEqual(await accounts.readConsent('alex'), { enabled: false, revision: '2' });
+      assert.equal(analytics.configuration('alex').enabled, false);
+      const current = await app.inject({ url: '/api/session' });
+      assert.equal(current.json().settings.usageData, false);
+      release();
+      for (const response of await Promise.all([granting, revoking])) {
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.json().analytics.enabled, false);
+      }
+      assert.deepEqual(profiles, [true, false]);
+      assert.deepEqual(await accounts.readConsent('alex'), { enabled: false, revision: '2' });
+    },
+  );
+
+  test(
+    'a delayed account read cannot restore consent after a saved revocation',
+    { timeout: 10_000 },
+    async (t) => {
+      let saved: StoredAccount = {
+        theme: 'system',
+        onboardingCompleted: true,
+        displayName: null,
+        usageData: true,
+      };
+      const captured: unknown[] = [];
+      const analytics = await createAnalytics({
+        provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      analytics.setUsageData('alex', true);
+      let release: () => void;
+      let reached: () => void;
+      const ready = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let hold = true;
+      const app = Fastify();
+      t.after(() => app.close());
+      createAccountSession({
+        origin: 'http://localhost:4399',
+        analytics,
+        localUser: { id: 'alex', name: 'Synthetic', email: null, avatarUrl: null },
+        accounts: {
+          async read() {
+            const snapshot = { ...saved };
+            if (hold) {
+              hold = false;
+              reached();
+              await new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            }
+            return snapshot;
+          },
+          async update(_owner, input) {
+            return (saved = { ...saved, ...input });
+          },
         },
-      },
-    }).register(app);
-    const earlier = app.inject({ url: '/api/session' });
-    await ready;
-    const revoked = await app.inject({
-      method: 'PATCH',
-      url: '/api/account',
-      headers: { origin: 'http://localhost:4399' },
-      payload: { usageData: false },
-    });
-    assert.equal(revoked.statusCode, 200);
-    release!();
-    const resumed = await earlier;
-    assert.equal(resumed.json().settings.usageData, false);
-    assert.equal(resumed.json().analytics.enabled, false);
-    analytics.capture('alex', { event: 'otto_chat_stopped' });
-    assert.deepEqual(captured, []);
-  });
+      }).register(app);
+      const earlier = app.inject({ url: '/api/session' });
+      await ready;
+      const revoked = await app.inject({
+        method: 'PATCH',
+        url: '/api/account',
+        headers: { origin: 'http://localhost:4399' },
+        payload: { usageData: false },
+      });
+      assert.equal(revoked.statusCode, 200);
+      release!();
+      const resumed = await earlier;
+      assert.equal(resumed.json().settings.usageData, false);
+      assert.equal(resumed.json().analytics.enabled, false);
+      analytics.capture('alex', { event: 'otto_chat_stopped' });
+      assert.deepEqual(captured, []);
+    },
+  );
 
   test('account preparation requires a current same-origin principal and never accepts provider or owner input', async (t) => {
     const f = await fixture();
@@ -669,6 +764,93 @@ describe('account routes', () => {
 });
 
 describe('analytics privacy', () => {
+  test('connection inventories normalize domains, require public app identity and discard revoked reads', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '.',
+    });
+    t.after(() => analytics.shutdown());
+    let reads = 0;
+    const read = async () => {
+      reads++;
+      return [
+        { app: 'github', publicApp: true, connection_method: 'managed_app' as const },
+        { app: 'private_customer', connection_method: 'managed_app' as const },
+        {
+          connection_method: 'http' as const,
+          endpoint: 'https://private.example.com/secret?key=private',
+        },
+        { connection_method: 'http' as const, endpoint: 'https://another.example.com' },
+      ];
+    };
+    await captureConnectionInventory(analytics, 'owner', read);
+    assert.equal(reads, 0);
+    analytics.setUsageData('owner', true, '1');
+    await captureConnectionInventory(analytics, 'owner', read);
+    assert.equal(captured.length, 3);
+    assert.deepEqual(
+      captured.map((e) => [e.properties.app, e.properties.domain]),
+      [
+        ['github', undefined],
+        ['custom', undefined],
+        ['custom', 'example.com'],
+      ],
+    );
+    assert.doesNotMatch(JSON.stringify(captured), /private_customer|private\.example|secret|key=/);
+    let release!: (value: Awaited<ReturnType<typeof read>>) => void;
+    const pending = captureConnectionInventory(
+      analytics,
+      'owner',
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    while (!release) await new Promise((resolve) => setImmediate(resolve));
+    analytics.setUsageData('owner', false, '2');
+    analytics.setUsageData('owner', true, '3');
+    release(await read());
+    await pending;
+    assert.equal(captured.length, 3);
+    await captureConnectionInventory(analytics, 'owner', async () => []);
+    assert.equal(captured.length, 3);
+  });
+
+  test('service failures export bounded status categories without provider response text', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '.',
+    });
+    t.after(() => analytics.shutdown());
+    analytics.setUsageData('owner', true, '1');
+    const failure = Object.assign(new Error('private provider response and token'), {
+      status: 429,
+    });
+    await assert.rejects(
+      withServiceAnalytics(
+        analytics.forOwner('owner'),
+        {
+          connection_method: 'http',
+          endpoint: 'https://team.example.com/private?token=private',
+          consentRevision: '1',
+        },
+        async () => {
+          throw failure;
+        },
+      ),
+      (error) => error === failure,
+    );
+    assert.equal(captured[0]?.properties.failure_reason, 'rate_limited');
+    assert.equal(captured[0]?.properties.domain, 'example.com');
+    assert.doesNotMatch(JSON.stringify(captured), /private|token|team\.example/);
+  });
+
   test('analytics run scopes isolate concurrent owners and discard inherited work after consent changes', async (t) => {
     const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({

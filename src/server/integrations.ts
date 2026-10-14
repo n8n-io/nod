@@ -32,7 +32,13 @@ import type { TurnRef } from './thread.ts';
 import { privateEmailResult } from './integration-result.ts';
 import { withoutSecretKeys } from './redaction.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
-import { captureConnection, withServiceAnalytics } from './analytics-connections.ts';
+import {
+  captureConnection,
+  captureServiceFailure,
+  serviceFailureReason,
+  withServiceAnalytics,
+  type AnalyticsConnection,
+} from './analytics-connections.ts';
 import {
   hasWorkspaceFiles,
   uploadWorkspaceFiles,
@@ -109,6 +115,7 @@ type ConnectionRow = {
 type IntegrationOptions = {
   admission?: WorkAdmission;
   analytics?: CaptureAnalytics;
+  analyticsConsent?: () => { enabled: boolean; revision?: string };
   ownerId: string;
   wake(
     prompt: string,
@@ -182,6 +189,14 @@ export function eventOverview(toolkit: string, trigger: string, data: Record<str
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
   const configuredOwner = z.string().min(1).max(200).parse(options.ownerId);
   const provider = options.provider;
+  function connectionAnalytics(app: string): AnalyticsConnection {
+    return {
+      app,
+      publicApp: slugSchema.safeParse(app).success,
+      connection_method: 'managed_app',
+      consentRevision: options.analyticsConsent?.().revision ?? 'disabled',
+    };
+  }
   function track(
     app: string,
     status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
@@ -190,20 +205,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       { event: 'otto_connection_changed' }
     >['properties']['failure_reason'],
   ) {
-    captureConnection(
-      options.analytics,
-      { app, connection_method: 'managed_app' },
-      status,
-      failureReason,
-    );
+    captureConnection(options.analytics, connectionAnalytics(app), status, failureReason);
   }
   function connectionFailure(error: unknown) {
     if (error instanceof IntegrationAuthConfigurationError) return 'invalid_configuration';
-    if (error instanceof IntegrationConnectionError)
-      return error.reason === 'authorization' || error.reason === 'permission'
-        ? 'authorization_failed'
-        : 'unavailable';
-    return 'unknown';
+    return serviceFailureReason(error);
   }
   const providerId = z
     .string()
@@ -664,6 +670,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       }));
   }
 
+  async function analyticsConnections(): Promise<AnalyticsConnection[]> {
+    return (await connectionRows(configuredOwner))
+      .filter((row) => row.account_id && row.account_active && !row.revoked)
+      .map((row) => connectionAnalytics(row.slug));
+  }
+
   async function icon(connectionId: string) {
     const fetchIcon = options.icon;
     if (!fetchIcon || !z.uuid().safeParse(connectionId).success) return null;
@@ -1084,20 +1096,31 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         throw new IntegrationError('Discovered connections are unavailable.', 503);
       return options.discovered.execute(action, args, turn, signal);
     }
-    const row = await selectedConnection(ownerId, action, args);
+    assertOwner(ownerId);
+    const connectionId = z.uuid().safeParse(args.connectionId);
+    const observed = connectionId.success
+      ? (await connectionRows(ownerId)).find((row) => row.id === connectionId.data)
+      : undefined;
+    const known = observed ?? (await selectedConnection(ownerId, action, args));
+    const connection = connectionAnalytics(known.slug);
     try {
-      const { connectionId: _connectionId, ...providerArgs } = args;
-      return await withAccountSession(ownerId, [row], signal, async (session) => {
-        const current = await selectedConnection(ownerId, action, args);
-        if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
-        signal?.throwIfAborted();
-        return withServiceAnalytics(
-          options.analytics,
-          { app: row.slug, connection_method: 'managed_app' },
-          () => session.execute(action, providerArgs, row.account_id!, signal),
-          signal,
-        );
-      });
+      return await withServiceAnalytics(
+        options.analytics,
+        connection,
+        async () => {
+          const row = await selectedConnection(ownerId, action, args);
+          const { connectionId: _connectionId, ...providerArgs } = args;
+          const result = await withAccountSession(ownerId, [row], signal, async (session) => {
+            const current = await selectedConnection(ownerId, action, args);
+            if (current.account_id !== row.account_id)
+              throw new IntegrationError('The selected account changed.', 409);
+            signal?.throwIfAborted();
+            return session.execute(action, providerArgs, row.account_id!, signal);
+          });
+          return result;
+        },
+        signal,
+      );
     } catch (error) {
       throw new IntegrationError(failure('The app request failed', error), 502);
     }
@@ -1257,45 +1280,57 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     assertOwner(ownerId);
     signal?.throwIfAborted();
     if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
-    const connectionId = z.string().uuid().optional().parse(args.connectionId);
-    const slug = await actionToolkit(ownerId, action, connectionId);
-    const row = await selectConnection(ownerId, slug, connectionId);
-    if (hasWorkspaceFiles(args)) {
-      const read = options.readWorkspaceFile;
-      if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
-      let remaining = maxFileSize;
-      args = (await withAccountSession(ownerId, [row], signal, async (session) => {
-        if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
-        return uploadWorkspaceFiles(
-          args,
-          async (input) => {
-            signal?.throwIfAborted();
-            if (!remaining)
-              throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
-            const bytes = await read(turn, input.workspaceFile, remaining);
-            if (!bytes.byteLength || bytes.byteLength > remaining)
-              throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
-            remaining -= bytes.byteLength;
-            signal?.throwIfAborted();
-            return {
-              name: input.name ?? basename(input.workspaceFile),
-              mimeType: input.mimeType,
-              bytes,
-            };
-          },
-          async (file) => {
-            signal?.throwIfAborted();
-            const result = await session.upload!(action, file, signal);
-            signal?.throwIfAborted();
-            return result;
-          },
-        );
-      })) as Record<string, unknown>;
-      const current = await selectConnection(ownerId, slug, row.id);
-      if (current.account_id !== row.account_id)
-        throw new IntegrationError('The selected account changed.');
+    const started = performance.now();
+    const consent = options.analyticsConsent?.();
+    let connection: AnalyticsConnection | undefined;
+    try {
+      const connectionId = z.string().uuid().optional().parse(args.connectionId);
+      const slug = await actionToolkit(ownerId, action, connectionId);
+      connection = connectionAnalytics(slug);
+      connection.consentRevision = consent?.revision ?? 'disabled';
+      connection.operation_phase = 'preparation';
+      const row = await selectConnection(ownerId, slug, connectionId);
+      if (hasWorkspaceFiles(args)) {
+        const read = options.readWorkspaceFile;
+        if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
+        let remaining = maxFileSize;
+        args = (await withAccountSession(ownerId, [row], signal, async (session) => {
+          if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
+          return uploadWorkspaceFiles(
+            args,
+            async (input) => {
+              signal?.throwIfAborted();
+              if (!remaining)
+                throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+              const bytes = await read(turn, input.workspaceFile, remaining);
+              if (!bytes.byteLength || bytes.byteLength > remaining)
+                throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+              remaining -= bytes.byteLength;
+              signal?.throwIfAborted();
+              return {
+                name: input.name ?? basename(input.workspaceFile),
+                mimeType: input.mimeType,
+                bytes,
+              };
+            },
+            async (file) => {
+              signal?.throwIfAborted();
+              const result = await session.upload!(action, file, signal);
+              signal?.throwIfAborted();
+              return result;
+            },
+          );
+        })) as Record<string, unknown>;
+        const current = await selectConnection(ownerId, slug, row.id);
+        if (current.account_id !== row.account_id)
+          throw new IntegrationError('The selected account changed.');
+      }
+      return { ...args, connectionId: row.id };
+    } catch (error) {
+      if (connection?.publicApp)
+        captureServiceFailure(options.analytics, connection, error, started, signal);
+      throw error;
     }
-    return { ...args, connectionId: row.id };
   }
 
   function gmailMailbox(value: string) {
@@ -1851,6 +1886,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     list,
     catalog,
     connectedApps,
+    analyticsConnections,
     manageConnections: async (
       action: 'list' | 'connect' | 'propose' | 'discover',
       service?: string,

@@ -1259,123 +1259,139 @@ describe('tenant control', () => {
     assert.equal(failedRequests, 1);
   });
 
-  test('missed opt-out and re-enable reject queued tenant exports and invalidate prior work', async () => {
-    let enabled = true;
-    let revision = '1';
-    const captured: { owner: string; delivery: unknown }[] = [];
-    const f = fixture({
-      consent: async () => ({ enabled, revision }),
-      capture: (owner, _event, delivery) => captured.push({ owner, delivery }),
-    });
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let entered!: () => void;
-    const sending = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    let completed!: () => void;
-    const delivered = new Promise<void>((resolve) => {
-      completed = resolve;
-    });
-    let requests = 0;
-    let events = 0;
-    const provider = createTenantAnalytics({
-      origin: 'http://otto.control',
-      ownerId: f.ownerA,
-      environment: f.environment,
-      generation: '1',
-      secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
-      fetch: async (input, init) => {
-        requests++;
-        const request = new Request(input as URL, init);
-        const body = (await request.clone().json()) as { kind: string };
-        if (body.kind === 'event' && ++events === 1) {
-          entered();
-          await blocked;
-          const response = await f.handle(request);
-          completed();
-          return response;
-        }
-        return f.handle(request);
-      },
-    });
-    provider.capture(
-      { distinctId: `hosted:${f.ownerA}`, event: 'otto_chat_stopped', properties: {} },
-      new AbortController().signal,
-    );
-    await Promise.resolve();
-    assert.equal(requests, 0);
-    assert.equal(await provider.permitted!(), true);
-    const analytics = await createAnalytics({
-      provider,
-      deployment: 'hosted',
-      environment: 'production',
-      dataRoot: '.',
-    });
-    analytics.setUsageData(f.ownerA, true);
-    assert.equal(await analytics.permitted(f.ownerA), true);
-    const original = analytics.consent(f.ownerA);
-    analytics.capture(f.ownerA, { event: 'otto_chat_stopped' });
-    await sending;
-    enabled = false;
-    revision = '2';
-    enabled = true;
-    revision = '3';
-    release();
-    await delivered;
-    assert.deepEqual(captured, []);
-    assert.equal(await analytics.permitted(f.ownerA), false);
-    assert.equal(original.signal.aborted, true);
-    assert.equal(provider.consentRevision, revision);
-    assert.equal(await analytics.permitted(f.ownerA), true);
-    analytics.capture(f.ownerA, { event: 'otto_chat_stopped' }, { consentRevision: '1' });
-    analytics.capture(f.ownerA, { event: 'otto_chat_stopped' });
-    await analytics.shutdown();
-    assert.deepEqual(captured, [{ owner: f.ownerA, delivery: { consentRevision: '3' } }]);
-    assert.equal(events, 2);
-  });
+  test(
+    'missed opt-out and re-enable reject queued tenant exports and invalidate prior work',
+    { timeout: 5_000 },
+    async (t) => {
+      let enabled = true;
+      let revision = '1';
+      const captured: { owner: string; delivery: unknown }[] = [];
+      const f = fixture({
+        consent: async () => ({ enabled, revision }),
+        capture: (owner, _event, delivery) => captured.push({ owner, delivery }),
+      });
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered!: () => void;
+      const sending = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let completed!: () => void;
+      const delivered = new Promise<void>((resolve) => {
+        completed = resolve;
+      });
+      let requests = 0;
+      let events = 0;
+      const provider = createTenantAnalytics({
+        origin: 'http://otto.control',
+        ownerId: f.ownerA,
+        environment: f.environment,
+        generation: '1',
+        secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
+        fetch: async (input, init) => {
+          requests++;
+          const request = new Request(input as URL, init);
+          const body = (await request.clone().json()) as { kind: string };
+          if (body.kind === 'event' && ++events === 1) {
+            entered();
+            await blocked;
+            const response = await f.handle(request);
+            completed();
+            return response;
+          }
+          return f.handle(request);
+        },
+      });
+      provider.capture(
+        { distinctId: `hosted:${f.ownerA}`, event: 'otto_chat_stopped', properties: {} },
+        new AbortController().signal,
+      );
+      await Promise.resolve();
+      assert.equal(requests, 0);
+      assert.equal(await provider.permitted!(), true);
+      const analytics = await createAnalytics({
+        provider,
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      t.after(async () => {
+        release();
+        await analytics.shutdown();
+      });
+      analytics.setUsageData(f.ownerA, true);
+      assert.equal(await analytics.permitted(f.ownerA), true);
+      const original = analytics.consent(f.ownerA);
+      analytics.capture(f.ownerA, { event: 'otto_chat_stopped' });
+      await sending;
+      enabled = false;
+      revision = '2';
+      enabled = true;
+      revision = '3';
+      release();
+      await delivered;
+      assert.deepEqual(captured, []);
+      assert.equal(await analytics.permitted(f.ownerA), false);
+      assert.equal(original.signal.aborted, true);
+      assert.equal(provider.consentRevision, revision);
+      assert.equal(await analytics.permitted(f.ownerA), true);
+      analytics.capture(f.ownerA, { event: 'otto_chat_stopped' }, { consentRevision: '1' });
+      analytics.capture(f.ownerA, { event: 'otto_chat_stopped' });
+      await analytics.shutdown();
+      assert.deepEqual(captured, [{ owner: f.ownerA, delivery: { consentRevision: '3' } }]);
+      assert.equal(events, 2);
+    },
+  );
 
-  test('late consent reads cannot restore an earlier tenant revision', async () => {
-    let revision = '1';
-    const f = fixture({
-      consent: async () => ({ enabled: true, revision }),
-      capture: () => {},
-    });
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let entered!: () => void;
-    const reading = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    let requests = 0;
-    const provider = createTenantAnalytics({
-      origin: 'http://otto.control',
-      ownerId: f.ownerA,
-      environment: f.environment,
-      generation: '1',
-      secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
-      fetch: async (input, init) => {
-        const response = await f.handle(new Request(input as URL, init));
-        if (++requests === 1) {
-          entered();
-          await blocked;
-        }
-        return response;
-      },
-    });
-    const stale = provider.permitted!();
-    await reading;
-    revision = '3';
-    assert.equal(await provider.permitted!(), true);
-    release();
-    assert.equal(await stale, false);
-    assert.equal(provider.consentRevision, '3');
-    await provider.shutdown();
-  });
+  test(
+    'late consent reads cannot restore an earlier tenant revision',
+    { timeout: 5_000 },
+    async (t) => {
+      let revision = '1';
+      const f = fixture({
+        consent: async () => ({ enabled: true, revision }),
+        capture: () => {},
+      });
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered!: () => void;
+      const reading = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let requests = 0;
+      const provider = createTenantAnalytics({
+        origin: 'http://otto.control',
+        ownerId: f.ownerA,
+        environment: f.environment,
+        generation: '1',
+        secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
+        fetch: async (input, init) => {
+          const response = await f.handle(new Request(input as URL, init));
+          if (++requests === 1) {
+            entered();
+            await blocked;
+          }
+          return response;
+        },
+      });
+      t.after(async () => {
+        release();
+        await provider.shutdown();
+      });
+      const stale = provider.permitted!();
+      await reading;
+      revision = '3';
+      assert.equal(await provider.permitted!(), true);
+      release();
+      assert.equal(await stale, false);
+      assert.equal(provider.consentRevision, '3');
+      await provider.shutdown();
+    },
+  );
 
   test('control signatures bind the owner and lease while account bodies cannot select an owner', async () => {
     const f = fixture();

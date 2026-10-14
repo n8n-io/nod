@@ -660,6 +660,7 @@ export function AccountSettings({
                       checked={account.usageData}
                       disabled={account.saving}
                       aria-label="Share usage data"
+                      aria-describedby={`${id}-usage-data`}
                       onCheckedChange={(usageData) => {
                         setError('');
                         void account.onUsageData(usageData).catch((cause) => {
@@ -668,9 +669,13 @@ export function AccountSettings({
                       }}
                     />
                   </div>
-                  <p className="account-preference-hint" data-analytics-public>
-                    Help improve Otto by sharing usage data. Messages, files and keys are not sent
-                    to analytics.
+                  <p
+                    id={`${id}-usage-data`}
+                    className="account-preference-hint"
+                    data-analytics-public
+                  >
+                    Share usage insights with the Otto team at n8n. Your model derives them from
+                    chats; messages, files and keys are not sent to PostHog.
                   </p>
                 </>
               )}

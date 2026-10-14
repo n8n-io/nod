@@ -781,7 +781,16 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         origins.push(origin);
       }
     }, pool);
-    for (const origin of origins) track('login', 'create', 'import', origin);
+    for (let index = 0; index < origins.length; index += 100) {
+      options.analytics?.({
+        event: 'otto_vault_imported',
+        properties: {
+          domains: origins
+            .slice(index, index + 100)
+            .map((origin) => analyticsDomain(origin) ?? 'unavailable'),
+        },
+      });
+    }
     return result;
   }
 

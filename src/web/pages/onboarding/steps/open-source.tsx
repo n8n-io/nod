@@ -56,9 +56,9 @@ export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) 
             the app. A screenshot helps a lot, and we read every message.
           </Bubble>,
           <Bubble className="ob-open-usage">
-            <p>
-              Help improve Otto by sharing <strong>usage data</strong>. Messages, files and keys are
-              not sent to analytics.
+            <p id={`${id}-usage-data`}>
+              Share usage insights with the Otto team at n8n. Your model derives them from chats;
+              messages, files and keys are not sent to PostHog.
             </p>
             <div className="ob-open-toggle">
               <Switch
@@ -66,6 +66,7 @@ export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) 
                 checked={enabled}
                 disabled={!usage || busy}
                 aria-busy={saving !== null}
+                aria-describedby={`${id}-usage-data`}
                 onCheckedChange={(value) => void change(value)}
               />
               <label htmlFor={id}>Share usage data · you can change this in Settings</label>

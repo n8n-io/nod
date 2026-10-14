@@ -79,7 +79,6 @@ export function createAccountSession(options: {
       .catch(() => {})
       .then(async () => {
         const account = await options.accounts.update(owner, input);
-        if (input.usageData !== undefined) await options.usageDataChanged?.(session);
         const consent = await options.accounts.readConsent?.(owner);
         const enabled = consent?.enabled ?? account.usageData;
         if (accountVersions.get(owner) === version)
@@ -87,11 +86,11 @@ export function createAccountSession(options: {
         return { ...account, usageData: enabled };
       });
     accountUpdates.set(owner, update);
-    try {
-      return await update;
-    } finally {
+    const account = await update.finally(() => {
       if (accountUpdates.get(owner) === update) accountUpdates.delete(owner);
-    }
+    });
+    if (input.usageData !== undefined) await options.usageDataChanged?.(session);
+    return account;
   }
   async function principal(request: FastifyRequest) {
     if (principals.has(request)) return principals.get(request) ?? null;

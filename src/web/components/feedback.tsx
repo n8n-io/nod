@@ -884,6 +884,11 @@ function FeedbackDraftDialog({
                 </div>
               </div>
             )}
+            {context?.enabled && context.recipient && (
+              <p className="feedback-send-notice">
+                Sends your feedback and selected attachments to {context.recipient}.
+              </p>
+            )}
             {(contextError || (context && !context.enabled)) && (
               <div className="feedback-send-notice" role={contextError ? 'alert' : 'status'}>
                 <span>{contextError || 'Sending isn’t enabled in this build.'}</span>

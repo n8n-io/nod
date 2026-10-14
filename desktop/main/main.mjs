@@ -647,8 +647,12 @@ function baseEnvironment() {
       'LOCALAPPDATA',
       'TEMP',
       'TMP',
+      'OTTO_FEEDBACK_ENABLED',
+      'OTTO_FEEDBACK_URL',
+      'OTTO_FEEDBACK_TOKEN',
+      'OTTO_FEEDBACK_RECEIPT_URL_PREFIX',
     ]
-      .filter((key) => process.env[key])
+      .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),
   );
 }
@@ -954,6 +958,7 @@ async function startEngine({ runtime, signal }) {
   for (const field of ['COMPOSIO_API_KEY', 'OTTO_VAULT_KEY'])
     if (providerEnvironment[field]) knownSecrets.add(providerEnvironment[field]);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
+  if (process.env.OTTO_FEEDBACK_TOKEN) knownSecrets.add(process.env.OTTO_FEEDBACK_TOKEN);
   const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
   const environment = {
     ...baseEnvironment(),
@@ -973,8 +978,7 @@ async function startEngine({ runtime, signal }) {
     OTTO_BIND_HOST: '127.0.0.1',
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
-    OTTO_FEEDBACK_URL:
-      process.env.OTTO_FEEDBACK_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/feedback',
+    ...(process.env.OTTO_FEEDBACK_URL === '' ? { OTTO_FEEDBACK_ENABLED: 'false' } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
     COMPUTER_PROVIDER: 'docker',
   };

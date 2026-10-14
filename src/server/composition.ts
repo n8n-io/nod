@@ -7,7 +7,13 @@ import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/a
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
-import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
+import {
+  analyticsEnabled,
+  analyticsEnvironment,
+  createAnalytics,
+  type CaptureAnalytics,
+} from './analytics.ts';
+import { captureConnectionInventory } from './analytics-connections.ts';
 import { createConversationAnalytics } from './conversation-analytics.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
@@ -166,6 +172,16 @@ export interface ApplicationAdapters {
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
 ): ApplicationAdapters {
+  const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/otto/feedback';
+  const feedbackUrl = env.OTTO_FEEDBACK_URL ?? defaultFeedbackUrl;
+  const feedbackEnabled = env.OTTO_FEEDBACK_ENABLED !== 'false';
+  if (
+    feedbackEnabled &&
+    feedbackUrl &&
+    feedbackUrl !== defaultFeedbackUrl &&
+    !env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX
+  )
+    throw new Error('Set OTTO_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
   const provider = env.LLM_PROVIDER || 'openai';
   if (!['openai', 'anthropic', 'openrouter'].includes(provider))
     throw new Error('LLM_PROVIDER must be openai, anthropic or openrouter.');
@@ -375,8 +391,12 @@ export function createDefaultAdapters(
     },
     linkPreviews: createPublicLinkPreviewProvider(),
     feedback: createN8nFeedback({
-      url: env.OTTO_FEEDBACK_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/feedback',
+      enabled: feedbackEnabled,
+      url: feedbackUrl,
       token: env.OTTO_FEEDBACK_TOKEN,
+      receiptUrlPrefix:
+        feedbackUrl === defaultFeedbackUrl ? undefined : env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
+      recipient: feedbackUrl === defaultFeedbackUrl ? 'n8n' : undefined,
     }),
     get model() {
       return models.current;
@@ -411,7 +431,16 @@ async function initializeApplication(
     appVersion:
       process.env.OTTO_APP_VERSION || process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE,
   });
-  const captureAnalytics = analytics.forOwner(ownerId);
+  let observeConnections: (() => Promise<void>) | undefined;
+  const captureAnalytics: CaptureAnalytics = (event, delivery) => {
+    analytics.capture(ownerId, event, delivery);
+    if (
+      event.event === 'otto_connection_changed' &&
+      ['connected', 'disconnected'].includes(event.properties.status)
+    )
+      void observeConnections?.();
+  };
+  const analyticsConsent = () => analytics.consent(ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const deploymentDrain = createTenantDrain({
@@ -501,6 +530,7 @@ async function initializeApplication(
   });
   const discovered = await createDiscoveredConnections(pool, {
     analytics: captureAnalytics,
+    analyticsConsent,
     ownerId,
     baseUrl: publicOrigin,
     grantVault,
@@ -529,6 +559,7 @@ async function initializeApplication(
     : undefined;
   const integrations = await createIntegrations(pool, {
     analytics: captureAnalytics,
+    analyticsConsent,
     admission,
     ownerId,
     provider: adapters.integrations,
@@ -571,6 +602,7 @@ async function initializeApplication(
   });
   browserConnections = await createBrowserConnections(pool, {
     analytics: captureAnalytics,
+    analyticsConsent,
     ownerId,
     computer,
     refresh,
@@ -651,6 +683,25 @@ async function initializeApplication(
         : ((await accountProfiles.read())?.usageData ?? false),
     localConsent?.revision,
   );
+  let pendingInventory = Promise.resolve();
+  observeConnections = () =>
+    (pendingInventory = pendingInventory
+      .then(() =>
+        captureConnectionInventory(analytics, ownerId, async () =>
+          (
+            await Promise.all([
+              integrations.analyticsConnections(),
+              discovered.analyticsConnections(),
+              browserConnections.analyticsConnections(),
+            ])
+          ).flat(),
+        ),
+      )
+      .catch(() => {}));
+  const stopConnectionInventory = analytics.subscribe(ownerId, (enabled) => {
+    if (enabled) void observeConnections?.();
+  });
+  void observeConnections();
   const conversationAnalytics = createConversationAnalytics({
     pool,
     ownerId,
@@ -963,6 +1014,7 @@ async function initializeApplication(
     context: await feedbackContext({ runtimeMode, environment: process.env }),
     delivery: adapters.feedback ?? {
       configured: false,
+      recipient: null,
       submit: async (input) => ({ submissionId: input.submissionId, status: 'rejected' }),
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
@@ -1119,6 +1171,7 @@ async function initializeApplication(
     }
   }
   app.addHook('onClose', async () => {
+    stopConnectionInventory();
     const failures: unknown[] = [];
     for (const close of [
       () => channels?.close(),

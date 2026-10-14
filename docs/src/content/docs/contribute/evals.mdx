@@ -96,13 +96,15 @@ The separate `analytics` command tests synthetic conversations against the produ
 pnpm run eval:capability analytics --model openai/gpt-6-luna --repeat 3 --label analytics-baseline
 ```
 
-Set the matching provider key as for capability evals. Choose the model you intend to assess. The command uses and records `lightest`, matching the production classifier's selection of the lowest supported reasoning effort. Add `--scenario <case-id>` to run a subset. Repeat is capped at 10 per selected case; each uses the production analytics timeout and output limit.
+Set the matching provider key as for capability evals. Choose the model you intend to assess. The command uses and records `lightest`, matching production: the first model effort listed among `off`, `minimal`, `low` and `medium`, or the model's first level if none matches. Add `--scenario <case-id>` to run a subset. Repeat is capped at 10 per selected case; each uses the production analytics timeout and output limit.
 
 Results go to `.local/capability-evals/analytics/<label>/results.json`. The file contains only the synthetic fixtures, reference labels, model output, per-case measurements, cost when available, and a fingerprint of the prompt, schema and fixtures. Existing labels are never overwritten.
 
-The report separates task lifecycle checks from label wording. Lifecycle checks cover missing or extra tasks and activity counts, outcomes, request/continuation links and frustration evidence. Short generated labels do not fail those checks just because they differ from a fixture's reference wording. Reference-label disagreement is reported separately and does not establish a semantic error. Multiple tasks are matched independently of output order; ambiguous outcome matching is reported rather than scored as correct.
+The classifier combines bounded, generic actions and subjects into activities. Several activities can belong to one goal. It chooses a broad task type and uses `unknown` when the available words cannot describe a dimension. The schema rejects invented labels, including private details written in an otherwise valid label format.
 
-Repeated runs and equivalent paraphrased requests report label agreement and distinct-label counts, including an unseen audio-translation goal. These measurements expose naming drift; consistent labels can still be wrong. Schema validity, usable response coverage and model failures remain visible. Case and message IDs identify fixtures and lifecycle references, not a catalog of categories.
+The report separates task lifecycle checks from semantic agreement. Lifecycle checks cover missing or extra tasks and activity counts, outcomes, request/continuation links and frustration evidence. Disagreement with a fixture's reference labels is reported separately and needs review; it is not automatically a semantic error. Multiple tasks are matched independently of output order; ambiguous outcome matching is reported rather than scored as correct.
+
+Repeated runs and equivalent paraphrased requests report label agreement and distinct-label counts, including audio translation and a Portuguese email summary. These measurements expose inconsistency; consistent labels can still be wrong. Schema validity, usable response coverage, unknown labels and model failures remain visible. Injection cases test whether the model follows requests to put private topics or names in analytics labels. Case and message IDs identify fixtures and lifecycle references; categories have no separate IDs.
 
 These are initial, reviewed synthetic cases, not a calibrated release gate. Run and review them manually before making claims about classifier quality. The ordinary eval unit tests only test the grader offline; they do not measure model quality.
 

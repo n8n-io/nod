@@ -70,7 +70,7 @@ test('analytics grading detects lifecycle errors and matches tasks independently
       {
         ...reopened.expected.tasks[0],
         task_id: null,
-        task_type: 'other',
+        task_type: 'unknown',
         task_action: 'edit',
         task_subject: 'document',
         task_activities: ['edit:document'],
@@ -318,16 +318,16 @@ test('analytics grading measures false frustration signals, missed signals and u
   assert.equal(summary.scored, 3);
 });
 
-test('analytics grading accepts open labels while measuring reference agreement separately', () => {
+test('analytics grading bounds exported labels and measures unknown coverage separately', () => {
   const item = analyticsCases.find((item) => item.id === 'holdout-audio-translation')!;
   const score = scoreAnalytics(item, {
     ...item.expected,
     tasks: [
       {
         ...item.expected.tasks[0],
-        task_type: 'language_conversion',
-        task_subject: 'recording',
-        task_activities: ['translate:recording'],
+        task_type: 'unknown',
+        task_subject: 'file',
+        task_activities: ['translate:file'],
       },
     ],
   });
@@ -340,12 +340,16 @@ test('analytics grading accepts open labels while measuring reference agreement 
   assert.equal(score.referenceLabels.extraActivities, 1);
   assert.equal(score.tasks.missingActivities, 0);
   assert.equal(score.tasks.extraActivities, 0);
+  assert.equal(score.unknownLabels, 1);
   for (const task_type of [
     'person@example.test',
     'private.example.test',
     'invoice_1234',
     'one_two_three_four',
     'x'.repeat(49),
+    'cedar_acquisition',
+    'ada_linden',
+    'language_conversion',
   ]) {
     assert.equal(
       scoreAnalytics(item, {
@@ -355,18 +359,39 @@ test('analytics grading accepts open labels while measuring reference agreement 
       false,
     );
   }
+  for (const task_activities of [['translate:ada_linden'], ['cedar_acquisition:audio']]) {
+    assert.equal(
+      scoreAnalytics(item, {
+        ...item.expected,
+        tasks: [{ ...item.expected.tasks[0], task_activities }],
+      }).valid,
+      false,
+    );
+  }
+  const summary = summarizeAnalytics([
+    { case: item.id, attempt: 1, durationMs: 0, status: 'scored', score },
+    {
+      case: item.id,
+      attempt: 2,
+      durationMs: 0,
+      status: 'scored',
+      score: scoreAnalytics(item, item.expected),
+    },
+  ]);
+  assert.equal(summary.unknownLabels, 1);
+  assert.equal(summary.unknownLabelRate, 0.5);
 });
 
-test('analytics grading exposes ambiguous outcomes instead of matching open labels by outcome', () => {
+test('analytics grading exposes ambiguous outcomes instead of matching unknown labels by outcome', () => {
   const item = analyticsCases.find((item) => item.id === 'holdout-same-type-mixed-outcomes')!;
   const score = scoreAnalytics(item, {
     ...item.expected,
     tasks: item.expected.tasks.map((task) => ({
       ...task,
-      task_type: 'outreach',
-      task_action: 'dispatch',
-      task_subject: 'notification',
-      task_activities: ['dispatch:notification'],
+      task_type: 'communication',
+      task_action: 'send',
+      task_subject: 'unknown',
+      task_activities: ['send:unknown'],
     })),
   });
   assert.equal(score.valid, true);
@@ -381,7 +406,7 @@ test('analytics stability compares repetitions and paraphrases without equating 
   assert.equal('equivalenceGroup' in item.input, false);
   const changed = {
     ...item.expected,
-    tasks: [{ ...item.expected.tasks[0], task_type: 'email_management' }],
+    tasks: [{ ...item.expected.tasks[0], task_type: 'research' }],
   };
   const attempts = [item.expected, item.expected, changed].map((output, index) => ({
     case: item.id,
