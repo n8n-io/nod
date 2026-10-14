@@ -306,6 +306,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     status = (
       <AppAccessRecovery
         key={signInUrl}
+        onCancel={cancel}
         onRenewed={() => {
           cancel();
           setAccessRenewed(true);

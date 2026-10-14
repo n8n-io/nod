@@ -5247,6 +5247,156 @@ test('managed integration admission preserves personal-key connections until an 
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+for (const signingIn of [false, true])
+  test(`onboarding can cancel Gmail access recovery ${signingIn ? 'during' : 'before'} Google sign-in and choose a personal key`, async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 20_000,
+      input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/onboarding', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ResizeObserver: class { observe() {} disconnect() {} },
+        ...Object.fromEntries(['Node', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = query => ({ matches: query === '(prefers-reduced-motion: reduce)', addEventListener() {}, removeEventListener() {} });
+      window.ottoDesktop = { openExternal: async () => {} };
+      const requests = [];
+      const status = { mode: 'otto', switchable: true, suffix: null, keyWritable: true, managed: { state: 'enabled', email: 'alex@example.test' } };
+      globalThis.fetch = async (path, options = {}) => {
+        requests.push({ path, method: options.method ?? 'GET' });
+        if (path === '/api/integrations/key') return Response.json(status);
+        if (path === '/api/configuration') return Response.json({ integrationsReady: true });
+        if (path === '/api/apps') return Response.json([{ slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false }]);
+        if (path === '/api/apps/gmail/connect') return Response.json({ url: 'https://broker.fixture.test/connect?ticket=synthetic-gmail', attempt: 'A'.repeat(43) });
+        if (path === '/api/apps/setup-status') {
+          const { hashes } = JSON.parse(options.body);
+          return Response.json({ completed: [], apps: [{ hash: hashes[0], slug: 'gmail', name: 'Gmail', signInRequired: true }] });
+        }
+        if (path === '/api/integrations/access/start') return Response.json({ id: 'synthetic-renewal', url: 'http://127.0.0.1:49152/' + 'B'.repeat(43), expiresAt: Date.now() + 60_000 });
+        if (path.startsWith('/api/integrations/access/status?')) return Response.json({ status: 'pending' });
+        if (path === '/api/integrations/access/cancel') return Response.json({ ok: true });
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Email } = await import('./src/web/pages/onboarding/steps/email.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      const root = createRoot(document.querySelector('#root'));
+      const settle = () => act(async () => new Promise(resolve => setTimeout(resolve, 30)));
+      try {
+        await act(async () => root.render(createElement(Email, { arrived: 'back', onNext() {}, onBack() {} })));
+        await settle();
+        const connect = document.querySelector('.ob-gmail-connect');
+        assert.equal(connect.disabled, false);
+        await act(async () => connect.click());
+        await settle();
+        assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'waiting');
+        assert.equal(document.querySelectorAll('.connection-mode')[1].disabled, true);
+        if (${signingIn}) {
+          await act(async () => document.querySelector('.app-connect-actions .button').click());
+          await settle();
+        }
+        const cancel = [...document.querySelectorAll('.ob-email-gmail button')].find(button => button.textContent.trim() === 'Cancel');
+        assert.ok(cancel, 'The owned Gmail attempt must remain cancellable during recovery');
+        await act(async () => cancel.click());
+        await settle();
+        assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'idle');
+        const ownKey = document.querySelectorAll('.connection-mode')[1];
+        assert.equal(ownKey.disabled, false);
+        await act(async () => ownKey.click());
+        assert.ok(document.querySelector('.connection-key input[type="password"]'));
+        assert.equal(status.mode, 'otto');
+        assert.equal(status.managed.state, 'enabled');
+        assert.equal(requests.filter(item => item.path === '/api/apps/gmail/connect').length, 1);
+        assert.equal(requests.filter(item => item.path === '/api/integrations/access/start').length, ${signingIn ? 1 : 0});
+        assert.equal(requests.filter(item => item.path === '/api/integrations/access/cancel').length, ${signingIn ? 1 : 0});
+        assert.equal(requests.some(item => item.path === '/api/integrations/key' && item.method !== 'GET'), false);
+      } finally {
+        await act(async () => root.unmount());
+        pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+  });
+
+test('completed Google recovery retries configuration reload without repeating authentication', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'Event', 'Element', 'HTMLElement'].map(name => [name, dom.window[name]])),
+      });
+      window.ottoDesktop = { openExternal: async () => {} };
+      const status = { mode: 'otto', switchable: true, suffix: null, keyWritable: true, managed: { state: 'sign_in_required', email: null } };
+      const requests = [];
+      let reload = 0;
+      let renewed = 0;
+      globalThis.fetch = async (path, options = {}) => {
+        requests.push({ path, method: options.method ?? 'GET' });
+        if (path === '/api/integrations/access/start') return Response.json({ id: 'synthetic-renewal', url: 'http://127.0.0.1:49152/' + 'B'.repeat(43), expiresAt: Date.now() + 60_000 });
+        if (path.startsWith('/api/integrations/access/status?')) return Response.json({ status: 'authorized' });
+        if (path === '/api/integrations/access/complete') return Response.json({ state: 'enabled', email: 'alex@example.test' });
+        if (path === '/api/integrations/key') {
+          reload++;
+          if (reload === 1) return Response.json({ error: 'Synthetic configuration unavailable' }, { status: 503 });
+          return Response.json(reload === 2 ? status : { ...status, managed: { state: 'enabled', email: 'alex@example.test' } });
+        }
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AppAccessRecovery } = await import('./src/web/components/app-connection-dialog.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      const root = createRoot(document.querySelector('#root'));
+      const settle = () => act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+      try {
+        pageDataCache.update('/api/integrations/key', () => status);
+        await act(async () => root.render(createElement(AppAccessRecovery, { onRenewed() { renewed++; } })));
+        await act(async () => document.querySelector('.app-connect-actions .button').click());
+        await settle();
+        assert.equal(reload, 1);
+        assert.equal(renewed, 0, 'Google completion must not close recovery with a failed configuration refresh');
+        assert.ok(pageDataCache.getSnapshot('/api/integrations/key').error);
+        assert.equal(pageDataCache.getSnapshot('/api/integrations/key').data.managed.state, 'sign_in_required');
+        await act(async () => document.querySelector('.app-connect-actions .button').click());
+        await settle();
+        assert.equal(reload, 2);
+        assert.equal(renewed, 0, 'A stale disabled configuration must not complete recovery');
+        await act(async () => document.querySelector('.app-connect-actions .button').click());
+        await settle();
+        assert.equal(reload, 3);
+        assert.equal(renewed, 1);
+        assert.equal(pageDataCache.getSnapshot('/api/integrations/key').data.managed.state, 'enabled');
+        assert.equal(requests.filter(item => item.path === '/api/integrations/access/start').length, 1);
+        assert.equal(requests.filter(item => item.path === '/api/integrations/access/complete').length, 1);
+        assert.equal(requests.some(item => item.path === '/api/integrations/access/cancel'), false);
+        assert.equal(requests.some(item => item.path === '/api/integrations/key' && item.method !== 'GET'), false);
+      } finally {
+        await act(async () => root.unmount());
+        pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('onboarding migrates legacy progress through email once and preserves current answers across reloads', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

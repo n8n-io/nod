@@ -324,7 +324,8 @@ export function SetupActions({
       };
       flushSync(() => setSignIn(pending));
       timer.current = window.setTimeout(() => void check(), pollDelay());
-      if (!pending.opened) {
+      if (pending.signInRequired) popup?.close();
+      else if (!pending.opened) {
         if (external) {
           await openConnection(href);
           opened.current.add(href);

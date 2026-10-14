@@ -12567,18 +12567,35 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     );
     assert.equal(dialog(), null);
     assert.equal(timers.size, 0);
-    Object.assign(dom.window, { ottoDesktop: desktopBridge });
     signInRequired = true;
-    await render('browser-access-recovery');
+    await render('web-browser-access-recovery');
     await waitFor(() => buttons().length === 3 && Boolean(buttons()[0].querySelector('img')));
+    const reservedPopups = popups.length;
     await act(async () => buttons()[0].click());
     await waitFor(() => Boolean(dialog()?.querySelector('.app-connect-actions .button')));
+    assert.equal(popups.length, reservedPopups + 1);
+    assert.equal(popups.at(-1)!.location.href, 'about:blank');
+    assert.equal(popups.at(-1)!.closed, true);
+    assert.equal(accessStarts, 0);
+    await close();
+    assert.equal(timers.size, 0);
+    Object.assign(dom.window, { ottoDesktop: desktopBridge });
+    await render('browser-access-recovery');
+    await waitFor(() => buttons().length === 3 && Boolean(buttons()[0].querySelector('img')));
+    const launchesBeforeRecovery = [...opened];
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('.app-connect-actions .button')));
+    assert.deepEqual(opened, launchesBeforeRecovery);
     assert.equal(accessStarts, 0);
     assert.equal(code(), undefined);
     const renew = dialog()!.querySelector<HTMLButtonElement>('.app-connect-actions .button')!;
     await act(async () => renew.click());
     await waitFor(() => Boolean(finishAccess));
     assert.equal(accessStarts, 1);
+    assert.deepEqual(opened, [
+      ...launchesBeforeRecovery,
+      'http://127.0.0.1:49152/' + 'A'.repeat(43),
+    ]);
     assert.equal(renew.disabled, true);
     signInRequired = false;
     await poll();
