@@ -577,9 +577,8 @@
 .chat-page .message .message-body {
   --message-background: var(--surface-subtle);
   flex: 0 1 auto;
-  max-width: min(82%, 640px);
   padding: 8px 16px;
-  border-radius: 24px;
+  border-radius: 22px;
   background: var(--message-background);
   color: var(--foreground);
   overflow-x: auto;
@@ -588,6 +587,124 @@
   --message-background: var(--chat-sent);
   padding: 8px 16px;
   color: var(--chat-sent-foreground);
+}
+.chat-page .message-bubble {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(82%, 640px);
+}
+.chat-page .message-bubble.has-reaction {
+  margin-bottom: 10px;
+}
+.chat-page .reaction-pin {
+  position: absolute;
+  bottom: -0.5em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+  font-size: var(--reaction-pin-size);
+  line-height: 1;
+  text-shadow:
+    2px 0 0 var(--reaction-pin-edge),
+    1.97px 0.35px 0 var(--reaction-pin-edge),
+    1.88px 0.68px 0 var(--reaction-pin-edge),
+    1.73px 1px 0 var(--reaction-pin-edge),
+    1.53px 1.29px 0 var(--reaction-pin-edge),
+    1.29px 1.53px 0 var(--reaction-pin-edge),
+    1px 1.73px 0 var(--reaction-pin-edge),
+    0.68px 1.88px 0 var(--reaction-pin-edge),
+    0.35px 1.97px 0 var(--reaction-pin-edge),
+    0 2px 0 var(--reaction-pin-edge),
+    -0.35px 1.97px 0 var(--reaction-pin-edge),
+    -0.68px 1.88px 0 var(--reaction-pin-edge),
+    -1px 1.73px 0 var(--reaction-pin-edge),
+    -1.29px 1.53px 0 var(--reaction-pin-edge),
+    -1.53px 1.29px 0 var(--reaction-pin-edge),
+    -1.73px 1px 0 var(--reaction-pin-edge),
+    -1.88px 0.68px 0 var(--reaction-pin-edge),
+    -1.97px 0.35px 0 var(--reaction-pin-edge),
+    -2px 0 0 var(--reaction-pin-edge),
+    -1.97px -0.35px 0 var(--reaction-pin-edge),
+    -1.88px -0.68px 0 var(--reaction-pin-edge),
+    -1.73px -1px 0 var(--reaction-pin-edge),
+    -1.53px -1.29px 0 var(--reaction-pin-edge),
+    -1.29px -1.53px 0 var(--reaction-pin-edge),
+    -1px -1.73px 0 var(--reaction-pin-edge),
+    -0.68px -1.88px 0 var(--reaction-pin-edge),
+    -0.35px -1.97px 0 var(--reaction-pin-edge),
+    0 -2px 0 var(--reaction-pin-edge),
+    0.35px -1.97px 0 var(--reaction-pin-edge),
+    0.68px -1.88px 0 var(--reaction-pin-edge),
+    1px -1.73px 0 var(--reaction-pin-edge),
+    1.29px -1.53px 0 var(--reaction-pin-edge),
+    1.53px -1.29px 0 var(--reaction-pin-edge),
+    1.73px -1px 0 var(--reaction-pin-edge),
+    1.88px -0.68px 0 var(--reaction-pin-edge),
+    1.97px -0.35px 0 var(--reaction-pin-edge),
+    0 1.5px 2.5px var(--reaction-pin-shadow);
+}
+.chat-page .reaction-pin.is-new {
+  animation: reaction-pin-in 340ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.chat-page .message-user .reaction-pin {
+  left: 10px;
+}
+.chat-page .message-assistant .reaction-pin {
+  right: 10px;
+  cursor: pointer;
+  transition:
+    translate 160ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    scale 160ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.chat-page .message-assistant .reaction-pin::after {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+.chat-page .message-assistant .reaction-pin:hover:not(:disabled) {
+  translate: 0 -2px;
+  scale: 1.12;
+}
+.chat-page .message-assistant .reaction-pin:active:not(:disabled) {
+  scale: 0.9;
+}
+.chat-page .message-assistant .reaction-pin:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.chat-page .reaction-pin.is-leaving {
+  pointer-events: none;
+  animation: reaction-pin-out 180ms ease-in forwards;
+}
+@keyframes reaction-pin-in {
+  0% {
+    opacity: 0;
+    scale: 0.2;
+  }
+  60% {
+    opacity: 1;
+    scale: 1.18;
+  }
+  100% {
+    scale: 1;
+  }
+}
+@keyframes reaction-pin-out {
+  to {
+    opacity: 0;
+    scale: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .reaction-pin {
+    animation: none;
+    transition: none;
+  }
 }
 .chat-page .message .message-text {
   font-size: var(--text-body);
@@ -678,57 +795,6 @@
 .chat-page .attachment-cards:last-child {
   margin-bottom: 0;
 }
-.chat-page .message-reactions {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-}
-.chat-page .message-reaction {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 8px 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.chat-page .message-reaction .reaction-emoji {
-  font-size: 15px;
-}
-.chat-page .message-reaction.is-mine {
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  cursor: pointer;
-}
-.chat-page button.message-reaction:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-soft), var(--accent) 12%);
-}
-.chat-page .message-reaction.is-new {
-  animation: message-reaction-pop 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-@keyframes message-reaction-pop {
-  from {
-    opacity: 0;
-    scale: 0.6;
-  }
-  to {
-    opacity: 1;
-    scale: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-page .message-reaction.is-new {
-    animation: none;
-  }
-}
 .chat-page .message-tools {
   display: flex;
   align-items: center;
@@ -771,10 +837,10 @@
   .chat-page .message-row {
     min-height: 58px;
   }
-  .chat-page .message .message-body {
+  .chat-page .message .message-bubble {
     max-width: calc(100% - 62px);
   }
-  .chat-page .message-user .message-body {
+  .chat-page .message-user .message-bubble {
     max-width: calc(100% - 60px);
   }
   .chat-page .message-tools {
@@ -810,7 +876,7 @@
   max-width: min(82%, 640px);
   margin: 0;
   padding: 8px 16px;
-  border-radius: 24px;
+  border-radius: 22px;
   background: var(--surface-subtle);
   font-size: var(--text-body);
   line-height: 1.6;
