@@ -126,6 +126,7 @@ export async function createApprovals(
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
+    CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='OTTO_memory_save';
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 
