@@ -41,7 +41,7 @@ Otto doesn't ask for passwords or card numbers in chat. It uses a saved login or
 
 To stop Otto, select **Stop** next to the send button.
 
-Stop ends the work that's running, including background runs, and cancels queued messages and open questions. It doesn't cancel your schedules. It can't undo something that already happened, such as an email that was already sent.
+Stop ends the chat's running work and cancels your queued messages and the chat's open questions. It stops only the chat: tasks and background runs, such as a schedule that's running, keep going. To stop a task, see [Stop a task](/use/tasks/#stop-a-task). Stop can't undo something that already happened, such as an email that was already sent.
 
 Otto never repeats a task on its own. If a task fails or Otto restarts in the middle of one, it tells you. Check what happened, then say "continue" if you want it to carry on.
 

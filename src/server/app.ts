@@ -21,6 +21,7 @@ import {
   activeThread,
   reactToAssistantMessage,
   resetThread,
+  stopSession,
   stopThread,
   submitUserMessage,
 } from './thread.ts';
@@ -370,11 +371,20 @@ export async function createApp(dependencies: AppDependencies = {}) {
       channel: 'web',
     });
   });
-  app.post('/api/thread/stop', async () => {
-    const { browsers } = await stopThread();
+  const stopped = ({ browsers }: { browsers: string[] }) => {
     for (const id of browsers) void dependencies.computer?.discard?.(id).catch(() => {});
     return { ok: true };
+  };
+  app.post('/api/thread/stop', async (request) => {
+    const { scope } = z
+      .object({ scope: z.literal('chat').optional() })
+      .strict()
+      .parse(request.body ?? {});
+    return stopped(await (scope ? stopSession(scope) : stopThread()));
   });
+  app.post<{ Params: { id: string } }>('/api/tasks/:id/stop', async (request) =>
+    stopped(await stopSession({ taskId: z.uuid().parse(request.params.id) })),
+  );
   app.get('/api/events', async (request, reply) => {
     reply.hijack();
     streams.add(reply.raw);

@@ -3087,12 +3087,26 @@ test(
         'personal data and schedules stay owner-scoped and atomic with the queue',
         async () => {
           const foreignTask = randomUUID();
+          const foreignThread = await thread.activeThread(db.pool, 'another-owner');
           await db.pool.query(
-            "INSERT INTO tasks(id,owner_id,title,now_text) VALUES($1,'another-owner','Fixture task','Fixture step')",
-            [foreignTask],
+            "INSERT INTO tasks(id,owner_id,thread_id,title,now_text) VALUES($1,'another-owner',$2,'Fixture task','Fixture step')",
+            [foreignTask, foreignThread.id],
+          );
+          const foreignTurn = randomUUID();
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,session_id) VALUES($1,'another-owner',$2,'task','Fixture step','running',true,$3)",
+            [foreignTurn, foreignThread.id, foreignTask],
           );
           assert.deepEqual((await request('GET', '/api/tasks')).json(), []);
-          const foreignThread = await thread.activeThread(db.pool, 'another-owner');
+          assert.equal((await request('POST', `/api/tasks/${foreignTask}/stop`)).statusCode, 404);
+          assert.deepEqual(
+            [
+              await turnStatus(foreignTurn),
+              (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [foreignTask])).rows[0]
+                .state,
+            ],
+            ['running', 'open'],
+          );
           await db.pool.query(
             'INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,$3,$4,$5)',
             [randomUUID(), 'another-owner', 'user', 'BoundarySecretKeyword', foreignThread.id],

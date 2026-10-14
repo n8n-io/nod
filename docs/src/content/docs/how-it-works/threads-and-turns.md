@@ -109,7 +109,9 @@ The Tasks page reads each task's status from its row and the turns of its sessio
 - **Working** while one of its turns runs.
 - **Queued** while its latest turn waits for a free place, as a new task does while three other tasks run. A resume after your answer waits the same way.
 - **Needs you** while its latest turn waits for you.
-- **Failed** when its latest turn failed, and **Stopped** when it was cancelled, for example by **Stop all**.
+- **Failed** when its latest turn failed, and **Stopped** when its latest turn was cancelled, as a reset does.
+
+Stop closes the task's row as **Stopped** itself. See [Stop and failures](#stop-and-failures).
 
 A failed or stopped task isn't on the chat's list of open tasks. A turn in another session, such as a chat message, never changes a task's status.
 
@@ -209,7 +211,19 @@ The client side lives in [`src/web/hooks/use-app-state.ts`](https://github.com/n
 
 ## Stop and failures
 
-**Stop** aborts running turns and cancels queued and waiting turns in every session. It can't undo an external action that already started. Ordinary turns have no time limit.
+Stop works on one session or on all of them:
+
+| Scope         | Route                                   |
+| ------------- | --------------------------------------- |
+| The chat      | `POST /api/thread/stop {scope: 'chat'}` |
+| One task      | `POST /api/tasks/<id>/stop`             |
+| Every session | `POST /api/thread/stop`                 |
+
+**Stop** next to the send button stops only the chat, so tasks and other background sessions keep running. **Stop** on the **Browser** page stops every session.
+
+Stop locks the thread, then cancels the queued, running and waiting turns in its scope and aborts the running ones. In the same transaction, for each session it cancelled, it declines the open confirmations, closes the secure forms, verification code and payment requests, and closes the task as **Stopped** with a short note that replies to its "On it" message. Then it deletes the browser of each background session it cancelled.
+
+A task ID that belongs to another owner or an earlier thread returns `404`. A task with nothing queued, running or waiting has nothing to stop, so its row stays as it is. A reply to a stopped task opens it again. Stop can't undo an external action that already started. Ordinary turns have no time limit.
 
 Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
 

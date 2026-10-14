@@ -526,18 +526,18 @@ export async function submitUserMessage(
   return result;
 }
 
-async function cancelTurns(client: PoolClient, threadId: string) {
+async function cancelTurns(client: PoolClient, threadId: string, sessionId: string | null = null) {
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND status IN ('queued','running','waiting') RETURNING id,session_id",
-    [threadId, ownerId],
+    `UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2
+       AND status IN ('queued','running','waiting') AND ($3::uuid IS NULL OR session_id=$3)
+     RETURNING id,session_id`,
+    [threadId, ownerId, sessionId],
   );
+  const sessions = [...new Set(current.rows.map((row) => row.session_id as string))];
   return {
     ids: current.rows.map((row) => row.id as string),
-    browsers: [
-      ...new Set(
-        current.rows.map((row) => row.session_id as string).filter((id) => id !== threadId),
-      ),
-    ],
+    sessions,
+    browsers: sessions.filter((id) => id !== threadId),
   };
 }
 
@@ -545,14 +545,67 @@ function abortTurns(ids: string[]) {
   for (const id of ids) running.get(id)?.abort();
 }
 
-export async function stopThread() {
-  const cancelled = await transaction(async (client) =>
-    cancelTurns(client, (await lockThread(client)).id),
+const stopNote = 'Stopped. Reply to this message to pick it up again.';
+
+async function closeSessions(client: PoolClient, threadId: string, sessions: string[]) {
+  if (!sessions.length) return;
+  const tables = (
+    await client.query(
+      `SELECT to_regclass('approvals') IS NOT NULL AS approvals,
+         to_regclass('credential_requests') IS NOT NULL AS credential_requests,
+         to_regclass('vault_payments') IS NOT NULL AS vault_payments`,
+    )
+  ).rows[0];
+  if (tables.approvals) await endSessionApprovals(client, sessions, 'declined');
+  for (const table of ['credential_requests', 'vault_payments'])
+    if (tables[table])
+      await client.query(
+        `UPDATE ${table} SET status='superseded' WHERE owner_id=$1 AND thread_id=$2
+           AND status='pending' AND COALESCE(browser_id,thread_id::text)=ANY($3::text[])`,
+        [ownerId, threadId, sessions],
+      );
+  await client.query(
+    `WITH closed AS (
+       UPDATE tasks SET state='stopped',closed_at=now(),updated_at=now()
+       WHERE owner_id=$1 AND thread_id=$2 AND id=ANY($3::uuid[])
+         AND state NOT IN ('done','stopped','failed')
+       RETURNING id,on_it_message_id)
+     INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id,created_at)
+     SELECT gen_random_uuid(),$1,'assistant',$4,$2,u.id,c.on_it_message_id,clock_timestamp()
+     FROM closed c JOIN LATERAL (SELECT id FROM turns WHERE owner_id=$1 AND session_id=c.id
+       ORDER BY created_at DESC,id DESC LIMIT 1) u ON true
+     WHERE c.on_it_message_id IS NOT NULL`,
+    [ownerId, threadId, sessions, stopNote],
   );
+}
+
+async function stop(session: 'chat' | { taskId: string } | null) {
+  const cancelled = await transaction(async (client) => {
+    const thread = await lockThread(client);
+    const sessionId = session === 'chat' ? thread.id : (session?.taskId ?? null);
+    if (
+      sessionId !== null &&
+      sessionId !== thread.id &&
+      !(
+        await client.query('SELECT 1 FROM tasks WHERE id=$1 AND owner_id=$2 AND thread_id=$3', [
+          sessionId,
+          ownerId,
+          thread.id,
+        ])
+      ).rowCount
+    )
+      throw httpError('Task not found.', 404);
+    const cancelled = await cancelTurns(client, thread.id, sessionId);
+    await closeSessions(client, thread.id, cancelled.sessions);
+    return cancelled;
+  });
   abortTurns(cancelled.ids);
   refresh();
   return { browsers: cancelled.browsers };
 }
+
+export const stopThread = () => stop(null);
+export const stopSession = (session: 'chat' | { taskId: string }) => stop(session);
 
 export async function resetThread(expectedThreadId: string) {
   const result = await transaction(async (client) => {

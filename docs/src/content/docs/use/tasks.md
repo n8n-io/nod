@@ -24,6 +24,12 @@ To answer a task's confirmation, reply yes or no to the confirmation or to any o
 - A task's confirmation stays open for 24 hours. A yes after that gets a short reply that the question expired, and nothing runs. Reply to the task again to pick it up.
 - When a task finishes or stops, its open confirmations close without running.
 
+## Stop a task
+
+To stop one task, reply "stop" to any of its messages. The task closes as **Stopped**. **Stop** next to the send button stops only the chat, so your tasks keep running.
+
+When a task stops, its open confirmations, sign-in forms and payment requests close without running, its browser closes and Otto posts a short note as a reply to "On it". Stopping can't undo anything that already reached a website or app. To pick the task up again, reply to any of its messages.
+
 ## Three views
 
 | View          | Shows                                                                          |

@@ -47,7 +47,7 @@ test(
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
     owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending',
-    expires_at timestamptz NOT NULL DEFAULT now()+interval '10 minutes'
+    expires_at timestamptz NOT NULL DEFAULT now()+interval '10 minutes',browser_id text
   )`);
     const ordinary: string[] = [];
     const injected: Array<{ owner: string; turnId: string; code: string; requestId: string }> = [];

@@ -48,7 +48,7 @@ When you say yes to an app action, the server runs that saved action once. If it
 
 ## Stop and restarts
 
-**Stop** cancels running, queued and waiting tasks. A form or code you submit late can't restart them. Stop can't undo anything that already reached a website or app.
+**Stop** cancels the running, queued and waiting work of what you stop: the chat, one task, or everything. It declines that work's open confirmations and closes its secure forms and payment requests, so a yes, form or code you send late can't restart it. Stop can't undo anything that already reached a website or app.
 
 After Otto restarts, any claim or confirmed action that was still running becomes uncertain. Nothing that was in progress runs again.
 

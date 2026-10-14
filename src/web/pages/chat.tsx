@@ -781,7 +781,7 @@ export function Chat({
     setStopping(true);
     setError('');
     try {
-      await post('/api/thread/stop');
+      await post('/api/thread/stop', { scope: 'chat' });
       captureAnalytics('otto_chat_stop_requested');
       await refresh();
     } catch (cause) {

@@ -2449,39 +2449,144 @@ test(
         assert.doesNotMatch(String(logged.mock.calls[0].arguments[0]), /private-fixture/);
       });
 
-      await t.test('stop cancels the running turn and every queued turn', async () => {
-        block('stop running');
-        const runningTurn = await thread.submitUserMessage('stop running', [], { channel: 'web' });
-        await waitFor(() => Boolean(ran(runningTurn.turnId)));
-        const queued = await thread.submitUserMessage('stop queued', [], { channel: 'web' });
-        const scheduled = await thread.enqueueTurn('stop scheduled', {
-          source: 'schedule',
-          sourceId: `schedule:${randomUUID()}`,
-        });
-        await thread.stopThread();
-        await waitFor(() => abortedPrompts.has('stop running'));
-        await delay(700);
-        for (const turnId of [runningTurn.turnId, queued.turnId, scheduled])
-          assert.equal(await turnStatus(turnId), 'cancelled');
-        assert.equal(ran(queued.turnId), undefined);
-        assert.equal(
-          runs.some((context) => context.turnId === scheduled),
-          false,
-        );
-        assert.equal(
-          (
-            await db.pool.query(
-              'SELECT count(*)::int AS count FROM messages WHERE turn_id=ANY($1::uuid[]) AND role=$2',
-              [[runningTurn.turnId, queued.turnId, scheduled], 'assistant'],
-            )
-          ).rows[0].count,
-          0,
-        );
-        await waitFor(settledThread);
-        const after = await thread.submitUserMessage('after stop', [], { channel: 'web' });
-        await waitFor(settled(after.turnId));
-        assert.equal(await turnStatus(after.turnId), 'succeeded');
-      });
+      await t.test(
+        'stop ends one task or only the chat, and Stop all ends every session',
+        async () => {
+          await waitFor(settledThread);
+          const threadId = (await thread.activeThread(db.pool)).id;
+          const start = async (brief: string) => {
+            const chat = await thread.submitUserMessage(`dispatch-status:${brief}`, [], {
+              channel: 'web',
+            });
+            await waitFor(() => dispatched.has(chat.turnId));
+            await waitFor(settled(chat.turnId));
+            const { taskId, onItMessageId } = dispatched.get(chat.turnId)!;
+            const turnId = (
+              await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId])
+            ).rows[0].id as string;
+            return { taskId, onItMessageId, turnId };
+          };
+          const state = async (taskId: string) =>
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [taskId])).rows[0].state;
+          const notes = async (task: { taskId: string; onItMessageId: string }) =>
+            (
+              await db.pool.query(
+                `SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id
+               WHERE u.session_id=$1 AND m.role='assistant' AND m.reply_to_message_id=$2`,
+                [task.taskId, task.onItMessageId],
+              )
+            ).rows.map((row) => row.id as string);
+          const discards = discarded.length;
+          block('stop-task-a');
+          block('stop-task-b');
+          const a = await start('stop-task-a');
+          const b = await start('stop-task-b');
+          const asking = await start('ask-question');
+          await waitFor(settled(asking.turnId));
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [asking.turnId]);
+          await approvals.request({ threadId, turnId: asking.turnId }, 'FIXTURE_WRITE', {});
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='approval' WHERE id=$1",
+            [asking.turnId],
+          );
+          const approval = (
+            await db.pool.query('SELECT id FROM approvals WHERE turn_id=$1', [asking.turnId])
+          ).rows[0].id as string;
+          block('stop chat');
+          const chat = await thread.submitUserMessage('stop chat', [], { channel: 'web' });
+          await waitFor(() => [a.turnId, b.turnId, chat.turnId].every((id) => Boolean(ran(id))));
+
+          assert.equal((await request('POST', `/api/tasks/${randomUUID()}/stop`)).statusCode, 404);
+          assert.equal((await request('POST', `/api/tasks/${a.taskId}/stop`)).statusCode, 200);
+          await waitFor(() => abortedPrompts.has('stop-task-a'));
+          assert.deepEqual(
+            [await turnStatus(a.turnId), await turnStatus(b.turnId), await turnStatus(chat.turnId)],
+            ['cancelled', 'running', 'running'],
+          );
+          assert.deepEqual(discarded.slice(discards), [a.taskId]);
+          assert.deepEqual([await state(a.taskId), await state(b.taskId)], ['stopped', 'open']);
+          const [note, ...extra] = await notes(a);
+          assert.ok(note);
+          assert.deepEqual(extra, []);
+          const open = new Set((await tasks.open(threadId)).map((task) => task.taskId));
+          assert.deepEqual(
+            [open.has(a.taskId), open.has(b.taskId), open.has(asking.taskId)],
+            [false, true, true],
+          );
+
+          const executedBefore = executed;
+          assert.equal((await request('POST', `/api/tasks/${asking.taskId}/stop`)).statusCode, 200);
+          assert.equal(await turnStatus(asking.turnId), 'cancelled');
+          assert.equal(
+            (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval])).rows[0]
+              .status,
+            'declined',
+          );
+          await assert.rejects(
+            approvals.answer({ approvalId: approval, approved: true, channel: 'web' }),
+            { statusCode: 409 },
+          );
+          assert.equal(executed, executedBefore);
+          assert.deepEqual(discarded.slice(discards), [a.taskId, asking.taskId]);
+
+          assert.equal(
+            (await request('POST', '/api/thread/stop', { scope: 'chat' })).statusCode,
+            200,
+          );
+          await waitFor(() => abortedPrompts.has('stop chat'));
+          assert.deepEqual(
+            [await turnStatus(chat.turnId), await turnStatus(b.turnId)],
+            ['cancelled', 'running'],
+          );
+          assert.equal(discarded.length, discards + 2);
+
+          const reopened = await thread.submitUserMessage('reopened after stop', [], {
+            channel: 'web',
+            replyToMessageId: note,
+          });
+          await waitFor(settled(reopened.turnId));
+          assert.equal(ran(reopened.turnId)?.sessionId, a.taskId);
+
+          block('stop running');
+          const runningTurn = await thread.submitUserMessage('stop running', [], {
+            channel: 'web',
+          });
+          await waitFor(() => Boolean(ran(runningTurn.turnId)));
+          const queued = await thread.submitUserMessage('stop queued', [], { channel: 'web' });
+          const scheduled = await thread.enqueueTurn('stop scheduled', {
+            source: 'schedule',
+            sourceId: `schedule:${randomUUID()}`,
+          });
+          assert.equal((await request('POST', '/api/thread/stop')).statusCode, 200);
+          await waitFor(
+            () => abortedPrompts.has('stop running') && abortedPrompts.has('stop-task-b'),
+          );
+          await delay(700);
+          for (const turnId of [runningTurn.turnId, queued.turnId, scheduled, b.turnId])
+            assert.equal(await turnStatus(turnId), 'cancelled');
+          assert.equal(await state(b.taskId), 'stopped');
+          assert.equal((await notes(b)).length, 1);
+          assert.ok(discarded.splice(discards).includes(b.taskId));
+          assert.equal(ran(queued.turnId), undefined);
+          assert.equal(
+            runs.some((context) => context.turnId === scheduled),
+            false,
+          );
+          assert.equal(
+            (
+              await db.pool.query(
+                'SELECT count(*)::int AS count FROM messages WHERE turn_id=ANY($1::uuid[]) AND role=$2',
+                [[runningTurn.turnId, queued.turnId, scheduled], 'assistant'],
+              )
+            ).rows[0].count,
+            0,
+          );
+          await waitFor(settledThread);
+          const after = await thread.submitUserMessage('after stop', [], { channel: 'web' });
+          await waitFor(settled(after.turnId));
+          assert.equal(await turnStatus(after.turnId), 'succeeded');
+        },
+      );
 
       await t.test('stopped turns cannot write replies, events, or invoke tools', async () => {
         const { turnId: id } = await thread.submitUserMessage('cancel-fence-fixture');
