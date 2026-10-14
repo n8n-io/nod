@@ -154,9 +154,27 @@ Only a confirmation has Yes and No buttons. The owner answers a free-text questi
 
 The preview reads `state.tasks`, not the message row. Thus, a preview outside the 150-message window stays live.
 
+UI rules from the step 5 screenshot check:
+
+- The "On it" bubble shows no quote of the owner's message, because it sits below that message. The server keeps the reply target for the channels.
+- A task reply (check-in, question, result, stop and failure notes) shows a task quote: the tasks icon and the task title. A click on it shows the "On it" message and opens the preview. It does not quote the "On it" text.
+- The summary line never repeats the pill or the open question. A Queued task says "Starts when another task finishes". An open Needs you card on the Tasks page shows the now line or "Waiting for your answer" in the summary line.
+- A task with no steps has no step bar row.
+- A stopped task shows its unfinished steps as not started.
+- Below 640 px, the cards in a bubble use the full width of the message column, and the title can use two lines.
+- A card in a card (the artifact card in an open Done preview) has no border and no own background.
+- The preview header and the artifact card in a bubble have a hover state: `box-shadow: 0 0 0 1px var(--border)`.
+- On the Tasks page, **Show in chat** and **Schedule task** are in one row, with the same button style.
+
 ### 4.6 Tasks strip
 
-The strip is above the composer. It shows when 2 or more tasks are open, or when one task needs the owner. Each chip shows the title and the status, and has a small Stop button for that task. A click on the chip scrolls the chat to the "On it" message and opens its preview. The strip has **Stop all**.
+The strip is above the composer. It shows when 2 or more tasks are open, or when one task needs the owner. Each chip shows the status icon and the title, and has a small Stop button for that task. The status is in the icon, the tone and the accessible name, not in visible text. A click on the chip scrolls the chat to the "On it" message and opens its preview.
+
+- The strip shows at most 3 chips, in the order Needs you, Working, Waiting, Queued. More tasks give a "+N" chip that opens the Tasks page.
+- Below 640 px, the strip is one summary chip, for example "4 tasks · 1 needs you", that opens the Tasks page.
+- **Stop all** shows only when 2 or more tasks are open.
+- A Stop button is at least 32 px (40 px below 640 px).
+- The chip row never clips a chip.
 
 ### 4.7 Tasks page
 
@@ -165,6 +183,13 @@ The page keeps its tabs **Current**, **Scheduled** and **Previous**. **Current**
 ### 4.8 Artifacts
 
 A deliverable result carries one artifact card inside the result bubble. On web, the card opens the side panel (`<aside>` in `.workspace-body`). Documents (Markdown, PDF, images) render in the panel. HTML pages render later, in a sandboxed frame. On Telegram, document artifacts go as a PDF file that replies to the result. On WhatsApp, Otto sends no files: the result text tells the owner to open the artifact in Otto.
+
+Rules from step 5 (WP-26):
+
+- The PDF comes from the small PDF writer in `src/server/pdf.ts` (moved from `usagePdf`), with no new dependency. It parses the Markdown with `remark` and never fetches a link or an image.
+- Only Markdown (`text/markdown`, `text/x-markdown`) of a task result is converted. A PDF, an image or another file goes unchanged, as a reply to the result.
+- The PDF fonts cover Windows-1252 only. The text is normalised to NFC first. A document with other letters (for example Polish, Cyrillic or Chinese) goes as the `.md` file, so a garbled PDF never goes out. An embedded font is later work.
+- A task result never sends an artifact link to WhatsApp. When the task lookup fails, the outbox treats the message as a task result (it fails closed). Other files on a channel without file delivery keep the existing behaviour.
 
 ### 4.9 Owner messages and routing
 
@@ -213,6 +238,17 @@ Rules from step 4 (WP-11):
 - `channel_outbox.provider_message_ids` (`text[]`, GIN index) keeps every provider ID of a split or attachment send. It replaces `provider_message_id`. The migration copies the old IDs into the new column, so a reply to a message sent before the upgrade still finds its target. A send that fails after some parts went out keeps the IDs of the parts that were delivered.
 - A verification code that replies to a message gets its target in `chatVerification.accept`, before an inbox row exists, so the code is never stored as plain text. Other messages get their target in `drainInbox`. A target that is gone (for example after reset) makes the message a plain message; the drain pass does not fail.
 - Only a Telegram 429 is retried. A WhatsApp rate-limit error is still marked uncertain.
+
+Rules from step 5 (WP-25):
+
+- The Chat SDK wraps button data, so Telegram messages with buttons and all Telegram edits use the Bot API directly, and WhatsApp reply buttons use the Graph API directly. Callback data stays `a:<approvalId>:y|n` and `s:<taskId>`. These messages keep Markdown links as Telegram links (the same formatter as the normal path), or at least as "text (url)".
+- Telegram webhooks are registered again once for each new set of `allowed_updates` (a version in the channel summary), not at each start. The registration never blocks startup, and a failure does not skip the other rows. A webhook set up by hand in `.env` is not changed; the docs tell those owners to allow `callback_query`.
+- After an answer, a close or the 24-hour expiry, an edit removes Yes and No from a Telegram confirmation. WhatsApp cannot edit, so its buttons stay, and a late press runs nothing.
+- **Stop task** is a button only on Telegram. On WhatsApp the owner replies "stop", because a button cannot be removed when the task ends.
+- A press goes through the same checks as a message. A WhatsApp press is saved as a receipt before it runs, so a repeated delivery runs once. A WhatsApp press that runs nothing gets a short text reply without a turn.
+- A confirmation longer than 4096 characters (Telegram) or 1024 characters (WhatsApp) goes without buttons; the owner replies yes or no.
+- An "On it" message sent before the upgrade gets no live preview.
+- The outbox asks for task data only for the messages it sends, and the edit queue asks for open tasks in its own query.
 
 ## 5. Engine design
 
@@ -328,7 +364,7 @@ Rules from step 4:
 - The runtime makes the folder path from `WorkspaceSession.path` and gives it to Pi as `AgentSessionOptions.cwd`. The server does not know the sandbox path, so `RuntimeContext` has no cwd field.
 - The folder is made on the first workspace command of a task turn, so a turn that does not use the workspace does not wake a paused sandbox.
 - The task folder applies to every relative file path of a task: `share_file`, publish, app `workspaceFile` inputs, and the files the server writes (app results, large results, background downloads, confirmed-action results).
-- A confirmed action finds its folder from the task of its turn, the same way as the save side. Thus, a task's app action that needs the owner's yes reads the same file after the yes as before it.
+- A task's app action uploads its workspace files before the trust check asks (`integrations.prepare`), so the yes runs on the uploaded copy and reads no file after the yes. A confirmed action gets the folder of its task (`approvals.run`), and its result files are saved in the task folder. The save is in server code that the tests reach (step 5).
 - The attachments of the owner message that starts a task are staged into the task folder at the first task turn.
 - The folder is only Pi's default working directory. It is not a boundary: every session can read and write the whole thread workspace.
 
@@ -1067,7 +1103,7 @@ Status on main: missing.
 
 **Files.** `src/server/channels.ts`, `src/providers/chat-sdk/index.ts`, `src/server/artifacts.ts`
 
-**Keep.** Files on WhatsApp stay private links. Delivery is never replayed.
+**Keep.** A task result sends no artifact link to WhatsApp; other files keep the existing behaviour. Delivery is never replayed.
 
 **Tests.**
 
@@ -1154,6 +1190,7 @@ Status on main: missing.
 
 - evals/src/scenarios: 'two tasks at once' (a research task and a browser task run in parallel; the chat answers a quick question meanwhile), 'answer the right task' (two open questions; a reply-targeted answer reaches only its task) and 'continue a done task' (a reply to a result books from the shortlist).
 - Maintainers run them; they call live models and never run in CI tests.
+- Step 5 result: the harness has a `tasks` capability that runs its scenarios with `OTTO_TASKS=true`, and every other scenario runs with `OTTO_TASKS=false`. `session.send()` can reply to a message without waiting for tasks, and the trace records each turn's session. The three scenarios have `calibration: 'pending'` until a maintainer runs them (`pnpm run eval:capability run --capability tasks --repeat 3`).
 
 **Files.** `evals/src/scenarios`
 
@@ -1206,6 +1243,7 @@ Risks for main as it is now (022b9960), with the work package that removes each 
 | R35 | Removing the report cards (WP-19) removes the card for work that waits for other people.                                                                                                       | A chased reply has no status and no check.                                                                   | Medium | WP-29                         |
 | R36 | A late chat-turn cleanup in a second server process could unpin the pin of a newer chat turn, because a chat Stop does not change the chat's browser generation.                               | The newer chat turn's browser can be closed at the cap. Only multi-process deployments are affected.         | Low    | Accepted (step 4)             |
 | R37 | The retention job holds a task row lock while it deletes files (up to 30 s). A reply to that task waits under the thread lock.                                                                 | Rare stall of one owner's thread writes for up to 30 s.                                                      | Low    | Accepted (step 4)             |
+| R38 | Vault code compares database times (`turns.started_at`, `vault_uses.created_at`) with the server clock (`Date.now()`, `credential_entered_at`). Exists on main.                                | When the clocks differ, a fill can be refused, or the once-only check of an automatic code can miss a fill.  | Medium | S5-FIX (one clock)            |
 
 ## 8. Invariants to keep
 
@@ -1280,6 +1318,7 @@ Each step updates its own pages in the same change, in the house style of `write
 - docs/src/content/docs/get-started/glossary.md (Task, Turn, Session, Check-in)
 - docs/src/content/docs/get-started/first-conversation.mdx ('On it…' naming, Stop)
 - docs/src/content/docs/use/spending.md (cost per task, if shown)
+- docs/src/content/docs/contribute/evals.mdx (task scenarios, the `tasks` capability)
 - docs/src/assets/screens/tasks-light.png and card-tasks-{light,dark}.png (retake). Add a chat screenshot with an "On it" preview card and the Tasks strip. Step 4 could not retake them, because the agents do not run the app.
 
 ## 11. Build order and gates
