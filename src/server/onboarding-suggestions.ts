@@ -10,6 +10,7 @@ import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
 import { verificationMail } from './integration-result.ts';
 import { lockThread } from './thread.ts';
+import { unsafe } from './memory-tree.ts';
 
 type Source = SuggestedTask['source'];
 type PreparedSuggestions = { intro: string; tasks: Array<Omit<SuggestedTask, 'id'>> };
@@ -51,7 +52,7 @@ function readableInbox(items: InboxSnippet[]) {
   return items.flatMap((item) => {
     const subject = decoded(item.subject);
     const snippet = decoded(item.snippet);
-    if (verificationMail(`${subject}\n${snippet}`)) return [];
+    if (verificationMail(`${subject}\n${snippet}`) || unsafe(subject, snippet)) return [];
     return [{ subject: plain(subject), snippet: plain(snippet) }];
   });
 }
