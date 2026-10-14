@@ -1322,6 +1322,40 @@ test('the bug report reads only the requested saved Pi session', async () => {
   }
 });
 
+test('forgetting a task session deletes its transcript and checkpoint objects and keeps the chat', async () => {
+  const f = await fixture();
+  const taskKey = randomUUID();
+  const parts = join(f.directory, 'objects', 'sessions', taskKey);
+  try {
+    for (const objectStore of [undefined, f.store]) {
+      const sessionRoot = join(f.directory, objectStore ? 'hosted' : 'local');
+      const { agent, ask } = answeringAgent(sessionRoot, objectStore);
+      const saved = async (threadId: string) =>
+        JSON.stringify(await readPiSessionEntries({ threadId, sessionRoot, objectStore }));
+      try {
+        await ask(f.threadId, 'Synthetic chat request');
+        await ask(taskKey, 'Synthetic task request');
+        await ask(taskKey, 'Synthetic task follow-up');
+        assert.match(await saved(taskKey), /Synthetic task follow-up/);
+        if (objectStore) assert.ok((await readdir(parts)).some((name) => name.endsWith('.jsonl')));
+        await agent.forget!(taskKey);
+        assert.equal(existsSync(join(sessionRoot, taskKey)), false);
+        assert.equal(await saved(taskKey), '[]');
+        assert.match(await saved(f.threadId), /Synthetic chat request/);
+      } finally {
+        await agent.dispose();
+      }
+    }
+    assert.deepEqual(
+      (await readdir(parts)).filter((name) => name.endsWith('.jsonl')),
+      [],
+    );
+    assert.equal(existsSync(join(f.directory, 'objects', 'sessions', `${taskKey}.jsonl`)), false);
+  } finally {
+    await f.close();
+  }
+});
+
 test('real Pi awaits durable final checkpoints and restores a conversation in a fresh actor directory', async () => {
   const f = await fixture();
   const prompts: string[] = [];

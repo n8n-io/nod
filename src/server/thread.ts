@@ -39,7 +39,7 @@ export const boss = new PgBoss({
   max: runtimeMode === 'tenant' ? 2 : 10,
 });
 const running = new Map<string, AbortController>();
-const inflight = new Set<Promise<void>>();
+const inflight = new Map<string, Promise<void>>();
 const toolRefreshes = new Set<string>();
 let stopping = false;
 
@@ -546,8 +546,17 @@ function abortTurns(ids: string[]) {
 }
 
 const stopNote = 'Stopped. Reply to this message to pick it up again.';
+const failedNote =
+  'I couldn’t finish this task. Check anything I may have started outside, then reply to this message to pick it up again.';
+export const noteStream = () => `note:${randomUUID()}`;
+const noteSql = `m.stream_id LIKE 'note:%'`;
 
-async function closeSessions(client: PoolClient, threadId: string, sessions: string[]) {
+async function closeSessions(
+  client: PoolClient,
+  threadId: string,
+  sessions: string[],
+  note: string | null = stopNote,
+) {
   if (!sessions.length) return;
   const tables = (
     await client.query(
@@ -570,12 +579,13 @@ async function closeSessions(client: PoolClient, threadId: string, sessions: str
        WHERE owner_id=$1 AND thread_id=$2 AND id=ANY($3::uuid[])
          AND state NOT IN ('done','stopped','failed')
        RETURNING id,on_it_message_id)
-     INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id,created_at)
-     SELECT gen_random_uuid(),$1,'assistant',$4,$2,u.id,c.on_it_message_id,clock_timestamp()
+     INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id,stream_id,created_at)
+     SELECT gen_random_uuid(),$1,'assistant',$4::text,$2,u.id,c.on_it_message_id,
+       'note:'||gen_random_uuid(),clock_timestamp()
      FROM closed c JOIN LATERAL (SELECT id FROM turns WHERE owner_id=$1 AND session_id=c.id
        ORDER BY created_at DESC,id DESC LIMIT 1) u ON true
-     WHERE c.on_it_message_id IS NOT NULL`,
-    [ownerId, threadId, sessions, stopNote],
+     WHERE c.on_it_message_id IS NOT NULL AND $4::text IS NOT NULL`,
+    [ownerId, threadId, sessions, note],
   );
 }
 
@@ -607,18 +617,43 @@ async function stop(session: 'chat' | { taskId: string } | null) {
 export const stopThread = () => stop(null);
 export const stopSession = (session: 'chat' | { taskId: string }) => stop(session);
 
-export async function resetThread(expectedThreadId: string) {
+export async function resetThread(
+  expectedThreadId: string,
+  forgetTasks?: (taskIds: string[]) => Promise<void>,
+) {
   const result = await transaction(async (client) => {
     const thread = await lockThread(client);
     if (thread.id !== expectedThreadId)
       throw httpError('This conversation has changed. Reload it before clearing messages.');
     const cancelled = await cancelTurns(client, thread.id);
+    const tasks = (
+      await client.query<{ id: string }>(
+        'SELECT id FROM tasks WHERE owner_id=$1 AND thread_id=$2',
+        [ownerId, thread.id],
+      )
+    ).rows.map((row) => row.id);
+    await closeSessions(client, thread.id, tasks, null);
     await client.query('UPDATE threads SET archived_at=now(),updated_at=now() WHERE id=$1', [
       thread.id,
     ]);
-    return { cancelled, previousThreadId: thread.id, threadId: (await activeThread(client)).id };
+    return {
+      cancelled,
+      tasks,
+      previousThreadId: thread.id,
+      threadId: (await activeThread(client)).id,
+    };
   });
   abortTurns(result.cancelled.ids);
+  if (forgetTasks && result.tasks.length) {
+    const key = `reset:${result.previousThreadId}`;
+    const work = Promise.allSettled(result.cancelled.ids.map((id) => inflight.get(id)))
+      .then(() => forgetTasks(result.tasks))
+      .catch(() =>
+        console.error('Reset could not delete every task session. The hourly job tries again.'),
+      );
+    inflight.set(key, work);
+    void work.finally(() => inflight.delete(key));
+  }
   const { browsers } = result.cancelled;
   refresh();
   return {
@@ -802,7 +837,42 @@ function describeFailure(error: unknown) {
   return [...fields, ...frames].join(' | ');
 }
 
-async function interruptTurn(turnId: string) {
+async function failTask(client: PoolClient, turnId: string, note: string) {
+  const task = (
+    await client.query<{
+      id: string;
+      thread_id: string;
+      on_it_message_id: string;
+      continues: boolean;
+    }>(
+      `SELECT t.id,t.thread_id,t.on_it_message_id,EXISTS (SELECT 1 FROM turns q
+         WHERE q.owner_id=t.owner_id AND q.session_id=t.id AND q.status='queued') AS continues
+       FROM turns u JOIN tasks t ON t.id=u.session_id AND t.owner_id=u.owner_id AND t.thread_id=u.thread_id
+       WHERE u.id=$1 AND u.owner_id=$2 AND t.on_it_message_id IS NOT NULL
+         AND t.state IN ('queued','open')
+       FOR NO KEY UPDATE OF t`,
+      [turnId, ownerId],
+    )
+  ).rows[0];
+  if (!task) return;
+  if (!task.continues) {
+    await client.query(
+      "UPDATE tasks SET state='failed',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2",
+      [task.id, ownerId],
+    );
+    await endSessionApprovals(client, [task.id], 'declined');
+  }
+  await insertAssistantMessage(
+    client,
+    { threadId: task.thread_id, turnId },
+    note,
+    [],
+    noteStream(),
+    task.on_it_message_id,
+  );
+}
+
+async function failTurn(turnId: string, error = 'Interrupted.') {
   return transaction(async (client) => {
     await lockThread(client);
     const turn = (
@@ -812,8 +882,10 @@ async function interruptTurn(turnId: string) {
       )
     ).rows[0];
     if (!turn) return false;
-    await finishTurn(client, turnId, 'failed', { error: 'Interrupted.' });
-    if (!turn.background)
+    await finishTurn(client, turnId, 'failed', { error });
+    const limit = error === spendingLimitReached;
+    if (turn.background) await failTask(client, turnId, limit ? error : failedNote);
+    else if (!limit)
       await insertAssistantMessage(
         client,
         { threadId: turn.thread_id, turnId },
@@ -830,7 +902,7 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
     "SELECT id FROM turns WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
-  for (const turn of interrupted.rows) await interruptTurn(turn.id);
+  for (const turn of interrupted.rows) await failTurn(turn.id);
   await sendDrain(undefined, (await activeThread()).id);
   const start = () =>
     boss.work<{ threadId: string }>(
@@ -846,7 +918,7 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
       start,
       stop: async (id) => {
         await boss.offWork(queue, { id, wait: true });
-        await Promise.allSettled([...inflight]);
+        await Promise.allSettled([...inflight.values()]);
       },
     });
   else await start();
@@ -933,8 +1005,8 @@ async function drainThread(threadId: string, dependencies: ThreadDependencies) {
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
       .then(() => drainNext(threadId))
       .finally(refresh);
-    inflight.add(work);
-    void work.finally(() => inflight.delete(work));
+    inflight.set(turn.id, work);
+    void work.finally(() => inflight.delete(turn.id));
   }
 }
 
@@ -995,14 +1067,15 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
        SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
-       COALESCE(u.session_id<>$6 AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
+       COALESCE((u.session_id<>$6 OR ${noteSql}) AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
        AND CASE
          WHEN NOT $5::boolean THEN NOT EXISTS (SELECT 1 FROM tasks t
            WHERE t.owner_id=$1 AND t.id=u.session_id AND t.result_message_id IS DISTINCT FROM m.id)
-         WHEN $7::uuid IS NOT NULL THEN m.created_at<=boundary.at AND (m.id=$7 OR u.session_id=$6)
+         WHEN $7::uuid IS NOT NULL THEN (m.created_at<=boundary.at OR ${noteSql})
+           AND (m.id=$7 OR u.session_id=$6)
          ELSE m.created_at<=boundary.at AND (u.id IS NULL OR u.session_id=$6 OR (u.session_id=$2
            AND u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))
        END
@@ -1270,12 +1343,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       else refresh();
     };
     const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
-    if (await dependencies.spendingLimitReached?.()) {
-      await current((client) =>
-        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
-      );
-      return;
-    }
+    if (await dependencies.spendingLimitReached?.()) throw new Error(spendingLimitReached);
     await emit('started', 'Turn started.');
     const result = await dependencies.runTurn({
       threadId,
@@ -1463,11 +1531,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     if (signal.aborted) outcome = 'cancelled';
-    if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached)
-      await current((client) =>
-        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
-      );
-    else if (await interruptTurn(turnId))
+    const limit =
+      !signal.aborted && error instanceof Error && error.message === spendingLimitReached;
+    if ((await failTurn(turnId, limit ? spendingLimitReached : undefined)) && !limit)
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     dependencies.analytics?.({
@@ -1487,7 +1553,7 @@ export async function stopThreadWorkers() {
   for (const controller of running.values()) controller.abort();
   await boss.stop({ graceful: true, timeout: 5000 });
   await Promise.race([
-    Promise.allSettled([...inflight]),
+    Promise.allSettled([...inflight.values()]),
     new Promise((resolve) => setTimeout(resolve, 5000).unref()),
   ]);
 }

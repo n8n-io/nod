@@ -17,9 +17,9 @@ Pi is the agent harness Otto runs on. It keeps the transcript, calls the model a
 - A task's turns share the task's saved session, whose session ID is the task ID. A task that continues after a question or a confirmation still has its earlier tool results.
 - Schedule and event turns and subagents each get a new in-memory session, which saves nothing.
 
-A saved session is stored under its session ID: its own folder on disk, or its own object in hosted mode. The chat's session ID is the thread ID. Loading or cleaning up one saved session never reads or removes another session's files.
+A saved session is stored under its session ID: its own folder on disk, or its own object in hosted mode. The chat's session ID is the thread ID. Loading or cleaning up one saved session never reads or removes another session's files. A task's saved session is deleted 30 days after the task closes, and at once when the conversation is reset.
 
-Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets only the messages that background turns sent since the previous conversation turn started.
+Recent chat history goes into the prompt only when Pi has no saved session. A resumed chat session gets only the messages that background turns sent since the previous conversation turn started. A resumed task session gets only the notes the server posted to the task since its previous turn started, such as a stop or failure note.
 
 ## Keeping the context small
 

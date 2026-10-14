@@ -243,5 +243,6 @@ export interface AgentSession {
 export interface Agent {
   nativeTools?: AgentToolMetadata[];
   open(options: AgentSessionOptions): Promise<AgentSession>;
+  forget?(sessionKey: string): Promise<void>;
   dispose(): void | Promise<void>;
 }

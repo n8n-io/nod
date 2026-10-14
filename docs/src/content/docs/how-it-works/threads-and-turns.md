@@ -111,9 +111,8 @@ The Tasks page reads each task's status from its row and the turns of its sessio
 - **Working** while one of its turns runs.
 - **Queued** while its latest turn waits for a free place, as a new task does while three other tasks run. A resume after your answer waits the same way.
 - **Needs you** while its latest turn waits for you.
-- **Failed** when its latest turn failed, and **Stopped** when its latest turn was cancelled, as a reset does.
 
-Stop closes the task's row as **Stopped** itself. See [Stop and failures](#stop-and-failures).
+Stop and reset close the task's row as **Stopped**, and a failed turn closes it as **Failed**. See [Stop and failures](#stop-and-failures).
 
 A failed or stopped task isn't on the chat's list of open tasks. A turn in another session, such as a chat message, never changes a task's status.
 
@@ -130,6 +129,10 @@ A task turn runs in task mode, which replaces the rules of a background session:
 
 A task keeps a saved Pi session under its task ID, and every turn of the task continues it. So a resume after a confirmation, a secure form or a new app connection doesn't repeat the request in its prompt. The task's transcript already has it.
 
+The notes the server posts to a task aren't in its transcript: the stop note, the failure note and the reply to an expired question. So the task's next turn gets every note posted since its previous turn started, in its first instruction.
+
+An hourly job deletes a closed task's saved Pi session and its browser profile 30 days after the task closes. A reset deletes them at once. A reply after that still opens the task, but in a new Pi session that starts from your message that started the task and the task's own messages. The server records the deletion only after both are gone, so the next hourly run tries again after a failure or a restart, also for a reset's tasks.
+
 The chat sees each task only through its "On it" message and its latest result. The task's questions, links and other messages stay out of the chat's context. With `OTTO_TASKS` on, every chat turn also gets the list of open tasks, each with its ID, title, status and the ID of its "On it" message, so Otto knows what's running. The list is in the turn message, not the system prompt, so a status change doesn't change the chat's prompt.
 
 ### Replies to a task
@@ -138,7 +141,7 @@ Your reply to any message of a task goes to that task: its "On it" message, a qu
 
 - **While the task works.** The running turn takes your reply at its next step, as the chat takes a follow-up. See [Messages you send while Otto works](#messages-you-send-while-otto-works). A reply with attachments, or one that arrives after the turn's last step, waits behind the running turn and runs after it. The task stays open until your reply has run. If the running turn stops the task first, your reply opens it again when it starts.
 - **While the task waits for you.** Your reply starts the task's next turn. A yes or no that replies to the confirmation, or to any other message of a task with one open confirmation, answers it and queues a `resume` turn in the task's session. Any other reply cancels the task's open confirmations. A confirmation the task asks while an earlier reply of yours waits is cancelled too, and your yes or no to it reaches the task as an ordinary reply. So an action you were asked about can't run twice.
-- **After the task closed.** A reply to a done, stopped or failed task opens it again as **Queued**, in the same session and saved Pi session. It runs when fewer than three other tasks work.
+- **After the task closed.** A reply to a done, stopped or failed task opens it again as **Queued**, in the same session. Within 30 days of closing, it also continues the same saved Pi session. It runs when fewer than three other tasks work.
 
 ### Answers to a task's confirmation
 
@@ -230,15 +233,19 @@ A task ID that belongs to another owner or an earlier thread returns `404`. A ta
 
 Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
 
-When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model.
+A task turn that fails closes the task as **Failed** in the same transaction. It declines the task's open confirmations and posts a short note as a reply to the task's "On it" message, so you hear about it on Telegram and WhatsApp too. Nothing reruns. Your reply opens the task again. If a reply of yours already waits in the task's session, the task stays open and runs it next, with the note in its first instruction. Schedule and event sessions fail silently.
+
+When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model. A task's note is that notice.
 
 ## Reset
 
 Reset is a development tool. In a local development build, **Clear messages** archives the thread and cancels its turns. The next turn starts a new Pi session, workspace and browser.
 
-| Archived                               | Deleted                                                    | Kept                                                                                         |
-| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions, saved browser routines and memory |
+Reset closes the thread's open tasks as **Stopped**, without a note, because nobody reads the archived thread. When the turns it cancelled have finished, it deletes the saved Pi session and browser profile of every task on the thread.
+
+| Archived                               | Deleted                                                                                                          | Kept                                                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens, and each task's saved Pi session and browser profile | Accounts, Vault, task rows, schedules, saved browser sessions, saved browser routines and memory |
 
 The web client sends its `threadId` with each message, so a late message from before the reset is refused.
 

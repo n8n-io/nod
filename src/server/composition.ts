@@ -519,7 +519,15 @@ async function initializeApplication(
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
   await personal.initialize({ workers: options.workers });
-  const tasks = createTasks({ pool, ownerId, refresh });
+  const tasks = createTasks({
+    pool,
+    ownerId,
+    refresh,
+    forgetSession: async (taskId) => {
+      await adapters.agent.forget?.(taskId);
+      await computer.discard?.(taskId);
+    },
+  });
   await tasks.initialize();
   const tasksEnabled = process.env.OTTO_TASKS === 'true';
   const triage = createTriage({
@@ -754,6 +762,7 @@ async function initializeApplication(
   if (options.workers !== false) {
     await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
+    await tasks.startRetention(consumers);
     await startThreadWorkers({
       analytics: captureAnalytics,
       consumers,
@@ -995,6 +1004,7 @@ async function initializeApplication(
     messageCosts: ledger.messageCosts,
     tasks: tasks.read,
     sessionCosts: ledger.sessionCosts,
+    forgetTasks: tasks.forget,
     computer,
     runtime,
     configuration: () =>

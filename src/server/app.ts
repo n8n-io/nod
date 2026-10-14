@@ -93,6 +93,7 @@ export interface AppDependencies {
   ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
   tasks?: (threadId: string) => Promise<Task[]>;
   sessionCosts?: (sessionIds: string[]) => Promise<Record<string, number | null>>;
+  forgetTasks?: (taskIds: string[]) => Promise<void>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -275,7 +276,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!configuration().conversationResetEnabled)
       return reply.code(404).send({ error: 'Not found.' });
     const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
-    const { previousThreadId, browsers, ...reset } = await resetThread(threadId);
+    const { previousThreadId, browsers, ...reset } = await resetThread(
+      threadId,
+      dependencies.forgetTasks,
+    );
     for (const id of [previousThreadId, ...browsers])
       void dependencies.computer?.discard?.(id).catch(() => {});
     return reset;

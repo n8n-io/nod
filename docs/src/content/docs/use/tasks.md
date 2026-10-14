@@ -30,6 +30,14 @@ To stop one task, reply "stop" to any of its messages. The task closes as **Stop
 
 When a task stops, its open confirmations, sign-in forms and payment requests close without running, its browser closes and Otto posts a short note as a reply to "On it". Stopping can't undo anything that already reached a website or app. To pick the task up again, reply to any of its messages.
 
+## When a task fails
+
+When an error or a restart ends a task, it closes as **Failed** and Otto posts a short note as a reply to "On it". Its open confirmations close without running. Otto never runs a failed task again on its own, because it may have started something outside. Check what it did, then reply to any of its messages to pick it up again. The task reads the note with your reply.
+
+## How long a task keeps its work
+
+Otto deletes a closed task's transcript, its record of what it read and did, and its browser 30 days after the task closes. You can still reply to the task after that. It then starts again from your messages and its own messages, without the tool results it had before.
+
 ## Three views
 
 | View          | Shows                                                                          |
@@ -59,7 +67,7 @@ A done task has **Schedule task**, which turns the same work into a [schedule](/
 | **Needs you** | Otto asked you something. Reply to it.   |
 | **Done**      | Finished, with the result on the card.   |
 | **Stopped**   | Closed before it finished.               |
-| **Failed**    | An error ended it.                       |
+| **Failed**    | An error or a restart ended it.          |
 
 ```mermaid
 stateDiagram-v2

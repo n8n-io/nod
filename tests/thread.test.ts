@@ -126,6 +126,8 @@ test(
     await accounts.initialize();
     const userMessages = thread.createUserMessageService({ confirmAction: approvals.chat });
     const discarded: string[] = [];
+    const forgottenSessions: string[] = [];
+    const failingForgets = new Set<string>();
     const planInputs: Array<{ owner: string; input: object }> = [];
     let planAnswer: (owner: string) => unknown = () => null;
     let planGate: Promise<void> | undefined;
@@ -164,13 +166,21 @@ test(
       startOnboarding: onboarding.complete,
       planningTasks: onboarding.planning,
       tasks: (threadId) => tasks.read(threadId),
+      forgetTasks: (ids) => tasks.forget(ids),
       messageCosts: async () => {
         if (pricingUnavailable) throw new Error('Synthetic pricing failure.');
         return {};
       },
     });
     onboarding.registerRoutes(app);
-    const tasks = createTasks({ pool: db.pool, ownerId });
+    const tasks = createTasks({
+      pool: db.pool,
+      ownerId,
+      forgetSession: async (id) => {
+        if (failingForgets.has(id)) throw new Error('Synthetic forget failure');
+        forgottenSessions.push(id);
+      },
+    });
     await tasks.initialize();
     personal.registerRoutes(app);
     tasks.registerRoutes(app);
@@ -807,6 +817,22 @@ test(
       await t.test(
         'worker start interrupts running turns once without retrying them and drains queued turns',
         async () => {
+          const taskId = randomUUID();
+          const taskTurn = randomUUID();
+          const [taskSource, onIt] = [randomUUID(), randomUUID()];
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$3,'user','Compare the synthetic shops',$4),($2,$3,'assistant','On it.',$4)",
+            [taskSource, onIt, ownerId, threadId],
+          );
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,thread_id,title,instruction,source_message_id,on_it_message_id,channel,state)
+             VALUES($1,$2,$3,'Synthetic restart task','Compare the synthetic shops',$4,$5,'web','open')`,
+            [taskId, ownerId, threadId, taskSource, onIt],
+          );
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,status,background,started_at,session_id) VALUES($1,$2,$3,'task',$4,'Do not repeat the task','running',true,now(),$5)",
+            [taskTurn, ownerId, threadId, `task:${taskId}`, taskId],
+          );
           const missingJob = await thread.enqueueTurn('recovery-fixture', {
             source: 'schedule',
             sourceId: 'recovery-fixture',
@@ -854,6 +880,37 @@ test(
               )
             ).rowCount,
             0,
+          );
+
+          assert.equal(await turnStatus(taskTurn), 'failed');
+          assert.equal(Boolean(ran(taskTurn)), false);
+          const failed = (
+            await db.pool.query('SELECT state,closed_at FROM tasks WHERE id=$1', [taskId])
+          ).rows[0];
+          assert.equal(failed.state, 'failed');
+          assert.ok(failed.closed_at);
+          const [note, ...extra] = (
+            await db.pool.query(
+              "SELECT id,text,reply_to_message_id FROM messages WHERE turn_id=$1 AND role='assistant'",
+              [taskTurn],
+            )
+          ).rows;
+          assert.equal(note?.reply_to_message_id, onIt);
+          assert.deepEqual(extra, []);
+          assert.equal(
+            (await db.pool.query('SELECT id FROM turns WHERE session_id=$1', [taskId])).rowCount,
+            1,
+          );
+          const reply = await thread.submitUserMessage('Pick the synthetic task up again', [], {
+            channel: 'web',
+            replyToMessageId: note.id,
+          });
+          await waitFor(settled(reply.turnId));
+          const resumed = ran(reply.turnId)!;
+          assert.equal(resumed.sessionId, taskId);
+          assert.deepEqual(
+            resumed.history.filter((item) => item.unseen).map((item) => item.text),
+            [note.text],
           );
         },
       );
@@ -1704,6 +1761,16 @@ test(
             current = await cards();
             assert.equal(current.get(failing.taskId)?.status, 'failed');
             assert.ok(current.get(failing.taskId)?.closedAt);
+            assert.deepEqual(
+              (
+                await db.pool.query(
+                  `SELECT t.state,m.text FROM tasks t JOIN messages m ON m.reply_to_message_id=t.on_it_message_id
+                   WHERE t.id=$1 AND m.turn_id=$2`,
+                  [failing.taskId, failing.turnId],
+                )
+              ).rows,
+              [{ state: 'failed', text: spendingLimitReached }],
+            );
             let open = await listed(working.threadId);
             assert.equal(open.get(working.onItMessageId), 'working');
             assert.equal(open.has(failing.onItMessageId), false);
@@ -2670,6 +2737,12 @@ test(
           });
           await waitFor(settled(reopened.turnId));
           assert.equal(ran(reopened.turnId)?.sessionId, a.taskId);
+          assert.deepEqual(
+            ran(reopened.turnId)!
+              .history.filter((item) => item.unseen)
+              .map((item) => item.text),
+            [(await db.pool.query('SELECT text FROM messages WHERE id=$1', [note])).rows[0].text],
+          );
 
           block('stop running');
           const runningTurn = await thread.submitUserMessage('stop running', [], {
@@ -3207,6 +3280,17 @@ test(
             [approvalTurn.turnId],
           );
 
+          const [openTask, doneTask] = [randomUUID(), randomUUID()];
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,thread_id,title,state,closed_at)
+             VALUES($1,$3,$4,'Open synthetic task','open',NULL),($2,$3,$4,'Done synthetic task','done',now())`,
+            [openTask, doneTask, ownerId, firstThreadId],
+          );
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,waiting_reason,background,session_id) VALUES($1,$2,$3,'task','Open synthetic task','waiting','question',true,$4)",
+            [randomUUID(), ownerId, firstThreadId, openTask],
+          );
+
           const foreignResetThread = randomUUID();
           await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'reset-other-owner')", [
             foreignResetThread,
@@ -3249,8 +3333,31 @@ test(
             ).rows[0].archived_at,
             null,
           );
-          assert.deepEqual(discarded, [firstThreadId]);
+          assert.deepEqual(discarded, [firstThreadId, openTask]);
           assert.equal('previousThreadId' in reset.json(), false);
+          await waitFor(
+            async () =>
+              (
+                await db.pool.query(
+                  'SELECT 1 FROM tasks WHERE id=ANY($1::uuid[]) AND forgotten_at IS NOT NULL',
+                  [[openTask, doneTask]],
+                )
+              ).rowCount === 2,
+          );
+          assert.ok([openTask, doneTask].every((id) => forgottenSessions.includes(id)));
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                `SELECT state,closed_at IS NOT NULL AS closed,forgotten_at IS NOT NULL AS forgotten
+                 FROM tasks WHERE id=ANY($1::uuid[]) ORDER BY title DESC`,
+                [[openTask, doneTask]],
+              )
+            ).rows,
+            [
+              { state: 'stopped', closed: true, forgotten: true },
+              { state: 'done', closed: true, forgotten: true },
+            ],
+          );
           assert.deepEqual(
             (
               await db.pool.query(
@@ -3378,6 +3485,56 @@ test(
           );
         },
       );
+
+      await t.test('closed tasks lose their saved sessions 30 days after closing', async (t) => {
+        t.after(() => failingForgets.clear());
+        const archived = randomUUID();
+        await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+          archived,
+          ownerId,
+        ]);
+        const ids: string[] = Array.from({ length: 8 }, () => randomUUID());
+        const [old, , , reclosed, , , reset, failing] = ids;
+        await db.pool.query(
+          `INSERT INTO tasks(id,owner_id,thread_id,title,state,closed_at,forgotten_at) VALUES
+           ($1,$9,NULL,'Old synthetic task','done',now()-interval '31 days',NULL),
+           ($2,$9,NULL,'Recent synthetic task','failed',now()-interval '29 days',NULL),
+           ($3,$9,NULL,'Forgotten synthetic task','stopped',now()-interval '40 days',now()-interval '9 days'),
+           ($4,$9,NULL,'Reclosed synthetic task','done',now()-interval '31 days',now()-interval '35 days'),
+           ($5,$9,NULL,'Open synthetic task','open',NULL,NULL),
+           ($6,'synthetic-other-owner',NULL,'Foreign synthetic task','done',now()-interval '31 days',NULL),
+           ($7,$9,$10,'Reset synthetic task','stopped',now()-interval '1 day',NULL),
+           ($8,$9,NULL,'Failing synthetic task','stopped',now()-interval '32 days',NULL)`,
+          [...ids, ownerId, archived],
+        );
+        const erased = (from: number) =>
+          forgottenSessions
+            .slice(from)
+            .filter((id) => ids.includes(id))
+            .sort();
+        const marked = async () =>
+          (
+            await db.pool.query(
+              `SELECT title FROM tasks WHERE id=ANY($1::uuid[]) AND forgotten_at>now()-interval '1 day'
+               ORDER BY title`,
+              [ids],
+            )
+          ).rows.map((row) => row.title);
+        failingForgets.add(failing);
+        const first = forgottenSessions.length;
+        await assert.rejects(tasks.expire(), /Synthetic forget failure/);
+        assert.deepEqual(erased(first), [old, reclosed, reset].sort());
+        assert.deepEqual(await marked(), [
+          'Old synthetic task',
+          'Reclosed synthetic task',
+          'Reset synthetic task',
+        ]);
+        failingForgets.clear();
+        const retry = forgottenSessions.length;
+        await tasks.expire();
+        assert.deepEqual(erased(retry), [failing]);
+        assert.ok((await marked()).includes('Failing synthetic task'));
+      });
 
       await t.test(
         'history paging and reactions stay inside the owner’s active thread',

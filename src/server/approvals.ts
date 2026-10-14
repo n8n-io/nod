@@ -7,6 +7,7 @@ import {
   enqueueTurn,
   insertAssistantMessage,
   lockThread,
+  noteStream,
   withTurnLock,
   type SubmitUserMessageResult,
   type TurnRef,
@@ -428,7 +429,14 @@ export async function createApprovals(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6)",
       [messageId, ownerId, input.text, input.threadId, turn.turnId, input.replyToMessageId ?? null],
     );
-    await insertAssistantMessage(client, turn, expiredQuestion, [], undefined, approval.task_on_it);
+    await insertAssistantMessage(
+      client,
+      turn,
+      expiredQuestion,
+      [],
+      noteStream(),
+      approval.task_on_it,
+    );
     await client.query(
       "UPDATE approvals SET status='expired',confirmation_reply_id=$2 WHERE id=$1 AND owner_id=$3",
       [approval.id, messageId, ownerId],

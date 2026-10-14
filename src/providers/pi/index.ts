@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -28,6 +28,7 @@ import {
   keptImages,
   openLocalSession,
   removedImage,
+  removePiCheckpoint,
 } from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
@@ -512,6 +513,13 @@ export function createPiAgent(options: {
         },
         dispose,
       };
+    },
+    async forget(sessionKey) {
+      await rm(resolve(options.sessionRoot, threadIdentity(sessionKey)), {
+        recursive: true,
+        force: true,
+      });
+      if (options.objectStore) await removePiCheckpoint(options.objectStore, sessionKey);
     },
     async dispose() {
       disposed = true;

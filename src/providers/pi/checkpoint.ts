@@ -104,6 +104,23 @@ async function readSession(store: PrivateObjectStore, sessionKey: string) {
   };
 }
 
+export async function removePiCheckpoint(store: PrivateObjectStore, sessionKey: string) {
+  const key = `sessions/${threadIdentity(sessionKey)}.jsonl`;
+  const saved = await store.read(key, objectBytes);
+  if (!saved) return;
+  let manifest: { parts?: unknown; obsolete?: unknown } | undefined;
+  try {
+    manifest = JSON.parse(Buffer.from(saved.bytes).toString('utf8'));
+  } catch {
+    manifest = undefined;
+  }
+  const parts = [manifest?.parts, manifest?.obsolete]
+    .flatMap((list) => (Array.isArray(list) ? list : []))
+    .filter((part): part is string => typeof part === 'string' && partId.test(part));
+  await Promise.all(parts.map((part) => store.remove(`sessions/${sessionKey}/${part}.jsonl`)));
+  await store.remove(key);
+}
+
 function chunks(rows: object[]) {
   const bytes = Buffer.from(rows.map((row) => JSON.stringify(row) + '\n').join(''));
   const result: Buffer[] = [];

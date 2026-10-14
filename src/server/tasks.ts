@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
+  boss,
   endSessionApprovals,
   enqueueTurn,
   insertAssistantMessage,
@@ -18,6 +19,7 @@ import { turnChain, untakenTurnSql } from './turn-chain.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 import { answered } from './trust.ts';
+import type { WorkConsumers } from './work-admission.ts';
 
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const dispatchInput = z
@@ -73,8 +75,14 @@ function status(row: Row): TaskStatus {
 }
 
 const ended = (value: TaskStatus) => value === 'failed' || value === 'stopped';
+const retention = 'task-retention';
 
-export function createTasks(options: { pool: Pool; ownerId: string; refresh?: () => void }) {
+export function createTasks(options: {
+  pool: Pool;
+  ownerId: string;
+  refresh?: () => void;
+  forgetSession?: (taskId: string) => Promise<void>;
+}) {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
 
@@ -363,7 +371,8 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS check_ins integer NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS last_check_in_at timestamptz,
-        ADD COLUMN IF NOT EXISTS result_message_id uuid REFERENCES messages(id);
+        ADD COLUMN IF NOT EXISTS result_message_id uuid REFERENCES messages(id),
+        ADD COLUMN IF NOT EXISTS forgotten_at timestamptz;
       DO $$ BEGIN
         IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='tasks'::regclass
           AND attname IN ('auto','done_when') AND NOT attisdropped) THEN
@@ -428,6 +437,51 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     };
   }
 
+  async function forget(ids: string[]) {
+    const failures: unknown[] = [];
+    for (const id of ids) {
+      try {
+        await options.forgetSession?.(id);
+        await pool.query('UPDATE tasks SET forgotten_at=now() WHERE id=$1 AND owner_id=$2', [
+          id,
+          ownerId,
+        ]);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length) throw failures[0];
+  }
+
+  async function expire() {
+    const expired = await pool.query<{ id: string }>(
+      `SELECT t.id FROM tasks t LEFT JOIN threads th ON th.id=t.thread_id AND th.owner_id=t.owner_id
+       WHERE t.owner_id=$1 AND t.state IN ('done','stopped','failed')
+         AND (t.closed_at<now()-interval '30 days' OR th.archived_at IS NOT NULL)
+         AND (t.forgotten_at IS NULL OR t.forgotten_at<t.closed_at)
+       ORDER BY t.closed_at,t.id`,
+      [ownerId],
+    );
+    await forget(expired.rows.map((row) => row.id));
+  }
+
+  async function startRetention(consumers?: WorkConsumers) {
+    await boss.createQueue(retention, { retryLimit: 0 });
+    await boss.schedule(retention, '17 * * * *', {}, { tz: 'UTC' });
+    const start = () =>
+      boss.work(retention, () =>
+        expire().catch(() =>
+          console.error('Old task sessions could not be deleted. The next run tries again.'),
+        ),
+      );
+    if (consumers)
+      await consumers.register({
+        start,
+        stop: (id) => boss.offWork(retention, { id, wait: true }),
+      });
+    else await start();
+  }
+
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/tasks', () => read());
     app.get<{ Params: { id: string } }>('/api/tasks/:id/schedule-draft', (request) =>
@@ -435,5 +489,16 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
     );
   }
 
-  return { initialize, dispatch, route, progress, open, read, registerRoutes };
+  return {
+    initialize,
+    dispatch,
+    route,
+    progress,
+    open,
+    read,
+    forget,
+    expire,
+    startRetention,
+    registerRoutes,
+  };
 }
