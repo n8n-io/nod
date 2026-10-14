@@ -120,7 +120,8 @@ export const statusOf = (entry: Entry) =>
 export function freeSlug(tree: Tree, target: Area, base: string) {
   const taken = new Set(tree.entries.filter((entry) => entry.area === target).map((e) => e.slug));
   let value = base;
-  for (let n = 2; taken.has(value); n++) value = `${base.slice(0, 44)}-${n}`;
+  for (let n = 2; taken.has(value); n++)
+    value = `${base.slice(0, 47 - String(n).length).replace(/-+$/, '')}-${n}`;
   return value;
 }
 

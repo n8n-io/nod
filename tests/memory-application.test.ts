@@ -15,9 +15,11 @@ import { applyReflect } from '../src/server/memory-ops.ts';
 import {
   emptyTree,
   fits,
+  freeSlug,
   indexLayout,
   parse,
   render,
+  slug,
   type Entry,
   type Tree,
 } from '../src/server/memory-tree.ts';
@@ -713,6 +715,17 @@ test('the memory file round-trips, skips unsafe or invalid entries and reads old
     ),
   );
   assert.deepEqual([consolidated.entries, consolidated.archive], [[coffee], [merged]]);
+});
+
+test('generated slugs stay valid after a thousand collisions', () => {
+  const base = `${'a'.repeat(42)}-bcdef`;
+  const tree = treeOf();
+  for (let index = 0; index < 1001; index++) {
+    const next = freeSlug(tree, 'about', base);
+    assert.ok(slug.safeParse(next).success, next);
+    tree.entries.push(entry({ slug: next, text: `Synthetic note ${index}.` }));
+  }
+  assert.equal(new Set(tree.entries.map((item) => item.slug)).size, 1001);
 });
 
 test('a full memory file sheds the oldest archive entries before refusing a save', () => {
