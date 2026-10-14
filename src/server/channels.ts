@@ -73,11 +73,11 @@ interface OutboxRow extends ChannelIdentity {
 }
 const messageSchema = z.object({
   channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
-  accountId: z.string().min(1).max(256),
-  senderId: z.string().min(1).max(256),
-  messageId: z.string().min(1).max(256),
-  threadId: z.string().min(1).max(1024),
-  text: z.string().trim().min(1).max(24000),
+  accountId: z.string().min(1),
+  senderId: z.string().min(1),
+  messageId: z.string().min(1),
+  threadId: z.string().min(1),
+  text: z.string().trim().min(1),
   sentAt: z.date(),
 });
 
@@ -400,7 +400,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   }
 
   async function drainInbox() {
-    for (let index = 0; index < 25 && !closed && !replacing; index++) {
+    while (!closed && !replacing) {
       const pending = (
         await pool.query<InboxRow>(
           "SELECT * FROM channel_inbox WHERE state='pending' AND owner_id=$1 ORDER BY created_at LIMIT 1",
@@ -417,7 +417,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           [pending.source_id, ownerId],
         );
         const row = result.rows[0];
-        if (!row) return false;
+        if (!row) return;
         if (!permitted(row)) {
           await client.query(
             "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
@@ -440,6 +440,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         return true;
       }, pool);
+      if (submitted === undefined) break;
       if (submitted) options.refresh?.();
     }
   }
@@ -457,7 +458,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ON CONFLICT(message_id) DO NOTHING`,
       [ownerId],
     );
-    for (let index = 0; index < 25 && !closed && !replacing; index++) {
+    while (!closed && !replacing) {
       const result = await pool.query<OutboxRow>(
         `WITH claimed AS (
         UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
@@ -505,7 +506,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           const requested = z
             .array(z.object({ id: z.uuid() }))
             .min(1)
-            .max(10)
             .parse(row.attachments);
           const unique = [...new Map(requested.map((item) => [item.id, item])).values()];
           if (!options.resolveAttachments || !row.message_thread_id)
@@ -522,12 +522,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               name: resolved[index].name,
               url: `${appOrigin}/api/artifacts/${id}`,
             }));
-        } catch {
-          await pool.query(
-            "UPDATE channel_outbox SET state='blocked',reason='attachment_unavailable',updated_at=now() WHERE message_id=$1",
-            [row.message_id],
-          );
-          continue;
+        } catch (cause) {
+          logFailure('channel_attachment_unavailable', cause);
+          attachments = undefined;
+          privateLinks = [];
         }
       }
       if (closed || replacing || !permitted(row)) {

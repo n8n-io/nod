@@ -1103,14 +1103,15 @@ test(
         { id: randomUUID() },
       ]);
       await channels.drain();
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
+      assert.match(JSON.stringify(sent[3].body), /Missing file\.[\s\S]*available in Otto/);
       assert.deepEqual(
         (
           await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
             missingReply,
           ])
         ).rows[0],
-        { state: 'blocked', reason: 'attachment_unavailable' },
+        { state: 'sent', reason: null },
       );
       assert.equal(sent.find((message) => message.provider === 'telegram')?.body.chat_id, '123456');
       assert.equal(
@@ -1121,7 +1122,7 @@ test(
       assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
 
       await sendWhatsApp(
         whatsappPayload('wamid.old', undefined, undefined, Math.floor(Date.now() / 1000) - 172800),
@@ -1140,7 +1141,22 @@ test(
         ).rows[0],
         { state: 'blocked', reason: 'reply_window_closed' },
       );
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
+
+      const paragraphs = Array.from({ length: 30 }, (_, index) =>
+        `Paragraph ${index} ${'detail '.repeat(40)}`.trim(),
+      );
+      await addReply('channel:telegram:987:123456:10', paragraphs.join('\n\n'));
+      await channels.drain();
+      const parts = sent
+        .slice(4)
+        .map((message) =>
+          String(
+            (message.body.rich_message as { markdown?: string })?.markdown ?? message.body.text,
+          ),
+        );
+      assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
+      assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
 
       failSend = true;
       const uncertainId = await addReply('channel:telegram:987:123456:10');
