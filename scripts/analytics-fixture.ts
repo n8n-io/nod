@@ -18,6 +18,7 @@ function decode(value: unknown): unknown {
   return value;
 }
 let completed = false;
+let usageData = false;
 let user = 'fixture-owner-one';
 let deployment: 'local' | 'hosted' = 'hosted';
 const configuration = {
@@ -30,13 +31,16 @@ const configuration = {
 };
 const messages: unknown[] = [];
 const session = () => ({
-  auth: { mode: 'google', googleAvailable: true },
+  auth: {
+    mode: deployment === 'local' ? 'local' : 'google',
+    googleAvailable: deployment === 'hosted',
+  },
   user: { id: user, name: privateText, email: `${privateText}@example.test`, avatarUrl: null },
-  settings: { theme: 'system', onboardingCompleted: completed, usageData: true },
+  settings: { theme: 'system', onboardingCompleted: completed, usageData },
   capabilities: { developer: true },
   analytics: {
-    enabled: true,
-    distinctId: `hosted:${user}`,
+    enabled: usageData,
+    distinctId: usageData ? `${deployment}:${user}` : null,
     deployment,
     environment: 'development',
   },
@@ -73,8 +77,10 @@ const models = {
   selection: { connectionId: 'fixture-model', modelId: 'fixture-model', effort: 'high' },
   subscriptionAvailable: false,
 };
+await mkdir(resolve('.local'), { recursive: true });
+await writeFile(output, '[]\n');
 const vite = await createViteServer({
-  server: { middlewareMode: true, hmr: false },
+  server: { middlewareMode: true, hmr: false, ws: false },
   plugins: [
     {
       name: 'synthetic-analytics-destination',
@@ -89,6 +95,7 @@ const vite = await createViteServer({
   ],
 });
 const server = createServer(async (request, response) => {
+  response.setHeader('content-security-policy', "connect-src 'self'");
   const url = new URL(request.url ?? '/', origin);
   const json = (value: unknown) => {
     response.setHeader('content-type', 'application/json');
@@ -121,7 +128,6 @@ const server = createServer(async (request, response) => {
       let decoded = JSON.parse(body.toString());
       if (!Array.isArray(decoded)) decoded = decoded.batch ?? [decoded];
       events.push(...decoded);
-      await mkdir(resolve('.local'), { recursive: true });
       await writeFile(output, JSON.stringify(events, null, 2));
     } catch {
       response.statusCode = 400;
@@ -133,12 +139,18 @@ const server = createServer(async (request, response) => {
   }
   if (url.pathname === '/__fixture__/summary') {
     const serialized = JSON.stringify(decode(events));
-    json({ count: events.length, privateDataLeaked: serialized.includes(privateText), events });
+    json({
+      enabled: usageData,
+      count: events.length,
+      privateDataLeaked: serialized.includes(privateText),
+      events,
+    });
     return;
   }
   if (url.pathname === '/__fixture__/switch') {
     user = 'fixture-owner-two';
     deployment = 'local';
+    usageData = false;
     json({ ok: true });
     return;
   }
@@ -158,10 +170,24 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/api/session') json(session());
   else if (url.pathname === '/api/account') {
     completed = body.onboardingCompleted ?? completed;
+    if (typeof body.usageData === 'boolean') usageData = body.usageData;
     json(session());
   } else if (url.pathname === '/api/account/prepare') json({ ok: true });
   else if (url.pathname === '/api/account/welcome') json({ ok: true });
-  else if (url.pathname === '/api/configuration') json(configuration);
+  else if (url.pathname === '/api/onboarding/interview' && request.method === 'POST')
+    json({
+      ack: privateText,
+      question:
+        body.answers.length === 1
+          ? 'What would make this synthetic project successful?'
+          : 'What can I take off your plate? Or tell me anything else on your mind.',
+    });
+  else if (url.pathname === '/api/onboarding/interview' && request.method === 'PUT')
+    json({ ok: true });
+  else if (url.pathname === '/api/onboarding/suggestions' && request.method === 'POST') {
+    response.statusCode = 202;
+    json({ ok: true });
+  } else if (url.pathname === '/api/configuration') json(configuration);
   else if (url.pathname === '/api/models') json(models);
   else if (url.pathname === '/api/preferences') json(preferences);
   else if (url.pathname === '/api/state')
@@ -177,10 +203,45 @@ const server = createServer(async (request, response) => {
       reactions: [],
     });
     json({ messageId: body.clientMessageId, turnId: 'fixture-turn' });
-  } else if (url.pathname === '/api/channel-settings') json([]);
+  } else if (url.pathname === '/api/channel-settings') json({ ready: false, channels: [] });
+  else if (url.pathname === '/api/channels') json({ channels: [], error: null });
+  else if (url.pathname === '/api/browser' && request.method === 'GET')
+    json({ currentBrowser: null });
+  else if (url.pathname === '/api/schedule-runs' && request.method === 'GET')
+    json({ runs: [], nextCursor: null });
+  else if (url.pathname === '/api/vault/activity' && request.method === 'GET')
+    json({ week: { signIns: 0, payments: 0, held: 0 }, entries: [] });
   else if (url.pathname === '/api/privacy')
     json({ content: 'Synthetic analytics validation. All requests stay on localhost.' });
-  else if (['/api/apps', '/api/vault', '/api/goals', '/api/schedules'].includes(url.pathname))
+  else if (url.pathname === '/api/memory' && request.method === 'GET')
+    json({ saving: false, sensitive: false, notes: [], archive: [] });
+  else if (url.pathname === '/api/trust' && request.method === 'GET')
+    json({
+      entries: [],
+      next: null,
+      week: { things: 0, actions: 0, spentUsd: 0 },
+      month: {
+        start: '2026-01-01T00:00:00.000Z',
+        days: 31,
+        elapsedDays: 1,
+        spentUsd: 0,
+        forecastUsd: 0,
+        daily: [0],
+        unpriced: false,
+      },
+      limit: null,
+    });
+  else if (
+    request.method === 'GET' &&
+    [
+      '/api/apps',
+      '/api/apps/catalog',
+      '/api/vault',
+      '/api/vault/sessions',
+      '/api/tasks',
+      '/api/schedules',
+    ].includes(url.pathname)
+  )
     json([]);
   else {
     response.statusCode = 404;

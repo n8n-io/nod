@@ -158,7 +158,13 @@ After a desktop UI build, check the real Electron renderer and recorder:
 node desktop/scripts/check-analytics.mjs
 ```
 
-For a manual web walkthrough, run `pnpm exec tsx scripts/analytics-fixture.ts` and open `http://127.0.0.1:4358`. It uses a synthetic token and a local collector, and writes captured batches to `.local/analytics-fixture.json`. None of these checks prove that live events reach PostHog.
+For a manual web walkthrough, run `pnpm exec tsx scripts/analytics-fixture.ts` and open `http://127.0.0.1:4358`. The fixture uses synthetic data and restricts browser connections to localhost. Starting it clears `.local/analytics-fixture.json`.
+
+1. Leave **Share usage data** off. Open `http://127.0.0.1:4358/__fixture__/summary` in another tab; `enabled` must be `false` and `count` must remain zero.
+2. Turn sharing on in onboarding or **Settings → Appearance**, navigate the fixture, and wait for captured batches. Refresh the summary: `count` should increase and `privateDataLeaked` must stay `false`. Inspect events in `.local/analytics-fixture.json`.
+3. Turn sharing off, reload the fixture, and continue navigating. The summary must show `enabled: false` and its event count must stop increasing.
+
+This walkthrough exercises the browser SDK with synthetic APIs. The integration tests cover server analytics and task classification; neither proves live delivery to PostHog.
 
 ## Related resources
 
