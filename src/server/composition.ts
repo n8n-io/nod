@@ -109,6 +109,7 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
+  reactToAssistantMessage,
   resumeAfterConnection,
   resumeAfterCredentials,
   resumeAfterPayment,
@@ -589,7 +590,13 @@ async function initializeApplication(
     },
     (reply) => trust.answer(reply),
   );
-  const reactions = createAgentReactionService({ pool, ownerId, refresh });
+  const reactions = createAgentReactionService({
+    pool,
+    ownerId,
+    refresh,
+    deliver: async (messageId, reaction) =>
+      channels ? channels.react(messageId, reaction) : 'absent',
+  });
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
   const accountProfiles = createAccountProfileStore(pool, ownerId);
   await (localAccounts ?? accountProfiles).initialize();
@@ -1000,6 +1007,8 @@ async function initializeApplication(
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
+      reacted: (messageId, reaction) =>
+        reactToAssistantMessage(messageId, reaction, adapters.model.configured),
       activeThread: (client) => activeThread(client),
       commandReply: async (command, client, threadId, link) => {
         const now = new Date();

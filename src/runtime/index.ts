@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
+import { setTimeout as wait } from 'node:timers/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import type {
@@ -423,9 +424,20 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
       };
-      const tools = bind({ ...shared, browserId, delegate }, async () => {
-        browsed = true;
-      });
+      const followUps: string[] = [];
+      const followUp = (text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed) throw new Error('Write the follow-up line.');
+        if (followUps.length) return 'A follow-up is already queued.';
+        followUps.push(trimmed);
+        return 'Queued. It goes out as its own message right after your reply; do not repeat it.';
+      };
+      const tools = bind(
+        { ...shared, browserId, delegate, ...(context.background ? {} : { followUp }) },
+        async () => {
+          browsed = true;
+        },
+      );
       const instruct = (instruction: string) =>
         `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
@@ -507,6 +519,11 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
+      if (status === 'succeeded')
+        for (const text of followUps) {
+          await wait(1200, undefined, { signal });
+          await deliverReply(text);
+        }
       waitingForUser = status !== 'succeeded';
       return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
     } finally {

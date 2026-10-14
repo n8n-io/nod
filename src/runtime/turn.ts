@@ -14,4 +14,5 @@ export interface Turn {
   ): Promise<void>;
   confirm(result: unknown): Promise<unknown>;
   delegate?(title: string, instruction: string): Promise<string>;
+  followUp?(text: string): string;
 }

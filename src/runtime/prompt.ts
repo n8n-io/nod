@@ -12,7 +12,7 @@ const guides = coreSkills
   .join('\n\n');
 const formatExample = new Date('2026-03-07T15:30:00Z');
 const replyStyle =
-  'Keep your reply brief and direct: the main conclusion, what needs attention, and the next step. Leave supporting detail for a follow-up and briefly offer it when useful. When the user requests detail or a complete deliverable, provide it. Keep decision-critical uncertainty and urgent guidance in the answer.';
+  'Keep your reply brief and direct: the main conclusion, what needs attention, and the next step. Leave supporting detail for a follow-up. When the job will clearly come up again and no schedule already covers it, queue the offer to keep doing it with follow_up early ("Want this every Monday morning?") and end the result without another next step; otherwise end with one next step, such as briefly offering the detail you left out. When the user requests detail or a complete deliverable, provide it. Keep decision-critical uncertainty and urgent guidance in the answer.';
 
 export function systemPrompt(workspace: WorkspaceSession, skills?: SkillLibrary) {
   return `${ottoPersonality}

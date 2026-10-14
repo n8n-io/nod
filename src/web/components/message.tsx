@@ -175,6 +175,9 @@ export function MessageBubble({
     message.role === 'user'
       ? reactionEmoji(message.reactions?.find((item) => item.actor === 'assistant')?.reaction ?? '')
       : '';
+  const shownReaction = reaction || agentReaction;
+  const mountedReaction = useRef(shownReaction);
+  const reactionClass = `message-reaction${reaction ? ' is-mine' : ''}${shownReaction && shownReaction !== mountedReaction.current ? ' is-new' : ''}`;
   useEffect(() => {
     setSelectedName('');
     setReaction(
@@ -463,31 +466,33 @@ export function MessageBubble({
             </div>
           )}
         </div>
-        {(reaction || agentReaction) && (
-          <div className="message-footer">
-            <div className="message-meta">
-              {reaction && (
-                <button
-                  className="selected-reaction"
-                  disabled={reacting}
-                  onClick={() => void react(reaction)}
-                  aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
-                  title={selectedName || reactionName(reaction)}
-                >
-                  <ReactionGlyph value={reaction} />
-                </button>
-              )}
-              {agentReaction && (
-                <span
-                  className="selected-reaction agent-reaction"
-                  role="img"
-                  aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
-                  title={`Otto reacted: ${reactionName(agentReaction)}`}
-                >
-                  <ReactionGlyph value={agentReaction} />
-                </span>
-              )}
-            </div>
+        {shownReaction && (
+          <div className="message-reactions">
+            {reaction ? (
+              <button
+                key={reaction}
+                type="button"
+                className={reactionClass}
+                disabled={reacting}
+                onClick={() => void react(reaction)}
+                aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
+                title={`You reacted with ${selectedName || reactionName(reaction)}`}
+              >
+                <ReactionGlyph value={reaction} />
+                <span className="reaction-count">1</span>
+              </button>
+            ) : (
+              <span
+                key={agentReaction}
+                className={reactionClass}
+                role="img"
+                aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
+                title={`Otto reacted with ${reactionName(agentReaction)}`}
+              >
+                <ReactionGlyph value={agentReaction} />
+                <span className="reaction-count">1</span>
+              </span>
+            )}
           </div>
         )}
         {error && <Notice>{error}</Notice>}

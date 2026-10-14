@@ -4,12 +4,14 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
+import { isMessageReaction } from '../shared/emoji.ts';
 import { transaction } from './transaction.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
   ChannelPairingRequest,
   InboundMessage,
+  InboundReaction,
   MessagingAttachment,
   MessagingTransport,
 } from '../ports/messaging.ts';
@@ -39,6 +41,7 @@ interface ChannelOptions {
     answer?: ChatConfirmationInput['answer'],
   ) => Promise<string>;
   answer?: (text: string, channel: string) => Promise<ChatConfirmationInput['answer']>;
+  reacted?: (messageId: string, reaction: string | null) => Promise<unknown>;
   subscribe: (listener: () => void) => () => void;
   refresh?: () => void;
   intervalMs?: number;
@@ -79,6 +82,13 @@ const messageSchema = z.object({
   threadId: z.string().min(1).max(1024),
   text: z.string().trim().min(1).max(24000),
   sentAt: z.date(),
+});
+const reactionSchema = z.object({
+  channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
+  accountId: z.string().min(1).max(256),
+  senderId: z.string().min(1).max(256),
+  messageId: z.string().min(1).max(256),
+  reaction: z.string().max(64).refine(isMessageReaction).nullable(),
 });
 
 function conversationChannel(row: ChannelIdentity) {
@@ -237,6 +247,56 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       inbox.sourceId,
     ]);
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
+  }
+
+  async function acceptReaction(input: InboundReaction, channelId: string) {
+    const parsed = reactionSchema.safeParse(input);
+    if (!parsed.success || parsed.data.channelId !== channelId || !options.reacted) return;
+    const { accountId, senderId, messageId, reaction } = parsed.data;
+    const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
+    if (closed || replacing || !permitted(identity)) return;
+    try {
+      const target = await pool.query<{ id: string }>(
+        `SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
+         WHERE m.owner_id=$5 AND th.owner_id=$5 AND th.archived_at IS NULL AND m.role='assistant' AND m.id IN (
+           SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+           WHERE o.provider_message_id=$4
+             AND i.provider=$1 AND i.account_id=$2 AND i.sender_id=$3 AND i.owner_id=$5)
+         LIMIT 1`,
+        [channelId, accountId, senderId, messageId, ownerId],
+      );
+      if (target.rows[0]) await options.reacted(target.rows[0].id, reaction);
+    } catch (cause) {
+      logFailure('channel_reaction_failed', cause);
+    }
+  }
+
+  async function react(messageId: string, reaction: string | null) {
+    const row = (
+      await pool.query<ChannelIdentity & { source_id: string; thread_id: string; at: Date }>(
+        'SELECT provider,account_id,sender_id,source_id,thread_id,received_at AS at FROM channel_inbox WHERE message_id=$1 AND owner_id=$2',
+        [messageId, ownerId],
+      )
+    ).rows[0];
+    if (!row) return 'absent' as const;
+    const prefix = `channel:${row.provider}:${row.account_id}:`;
+    const replyWindowMs = channels.find((channel) => channel.id === row.provider)?.replyWindowMs;
+    if (
+      closed ||
+      replacing ||
+      !transport.react ||
+      !permitted(row) ||
+      !row.source_id.startsWith(prefix) ||
+      (replyWindowMs !== undefined && Date.now() - row.at.getTime() >= replyWindowMs)
+    )
+      return 'unsupported' as const;
+    return transport.react({
+      channelId: row.provider,
+      accountId: row.account_id,
+      threadId: row.thread_id,
+      messageId: row.source_id.slice(prefix.length),
+      reaction,
+    });
   }
 
   function permitted(row: ChannelIdentity) {
@@ -582,6 +642,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             await transport.poll?.(
               (message) => accept(message, message.channelId),
               completePairing,
+              (reaction) => acceptReaction(reaction, reaction.channelId),
             );
           } catch (cause) {
             pollingFailed = true;
@@ -698,6 +759,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             return reply.code(503).send({ error: 'Channel configuration changed. Try again.' });
           if (result.status >= 200 && result.status < 300) {
             for (const message of result.messages ?? []) await accept(message, channelId);
+            for (const reaction of result.reactions ?? [])
+              await acceptReaction(reaction, channelId);
             if (result.messages?.length) void drain();
             if (result.pairing?.channelId === channelId) await completePairing(result.pairing);
           }
@@ -708,5 +771,5 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     });
   }
 
-  return { registerRoutes, drain, close, replaceTransport, announcePairing };
+  return { registerRoutes, drain, close, replaceTransport, announcePairing, react };
 }

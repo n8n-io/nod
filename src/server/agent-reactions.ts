@@ -16,12 +16,13 @@ export function createAgentReactionService(dependencies: {
   pool: Pool;
   ownerId: string;
   refresh(): void;
+  deliver?(messageId: string, reaction: string | null): Promise<'sent' | 'unsupported' | 'absent'>;
 }) {
   async function react(input: AgentReactionInput): Promise<AgentReactionResult> {
     input.signal?.throwIfAborted();
     if (input.reaction !== null && !isMessageReaction(input.reaction))
       throw new Error('Choose one emoji reaction.');
-    const result = await transaction(async (client): Promise<AgentReactionResult> => {
+    let result = await transaction(async (client): Promise<AgentReactionResult> => {
       let result: AgentReactionResult;
       const thread = await lockThread(client, dependencies.ownerId);
       input.signal?.throwIfAborted();
@@ -36,7 +37,7 @@ export function createAgentReactionService(dependencies: {
       if (!current.rowCount) throw new Error('This turn is no longer active.');
       input.signal?.throwIfAborted();
       const turn = current.rows[0];
-      if (turn.channel !== 'web' || turn.source !== 'user') {
+      if (turn.source !== 'user') {
         result = { status: 'skipped', reason: 'unavailable' };
       } else {
         const target = await client.query(
@@ -81,6 +82,19 @@ export function createAgentReactionService(dependencies: {
       input.signal?.throwIfAborted();
       return result;
     }, dependencies.pool);
+    if (result.status === 'updated' && dependencies.deliver) {
+      const shown = input.reaction === null ? null : reactionEmoji(input.reaction);
+      const delivered = await dependencies
+        .deliver(input.messageId, shown)
+        .catch(() => 'unsupported' as const);
+      if (delivered === 'unsupported' && shown !== null) {
+        await dependencies.pool.query(
+          'UPDATE messages SET assistant_reaction=NULL,assistant_reacted_at=NULL WHERE id=$1 AND owner_id=$3 AND assistant_reaction=$2',
+          [input.messageId, shown, dependencies.ownerId],
+        );
+        result = { status: 'skipped', reason: 'unsupported' };
+      }
+    }
     if (result.status === 'updated') dependencies.refresh();
     return result;
   }

@@ -157,6 +157,11 @@ export const toolDefinitions = {
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
   ),
+  follow_up: defineTool(
+    'follow_up',
+    'Queue one short line that goes out as its own message right after your result, like a second text. Use it for an offer to keep doing a job, in your first response as soon as you know the job will come up again. Never repeat it in your reply.',
+    Type.Object({ text: Type.String({ minLength: 1, maxLength: 300 }) }),
+  ),
   delegate: defineTool(
     'delegate',
     "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Two run at once and further calls wait for a slot. A subagent cannot delegate, sign in, pay or open saved browser sessions; do those yourself.",
@@ -172,7 +177,7 @@ export const toolDefinitions = {
   ),
   react_to_message: defineTool(
     'react_to_message',
-    'Occasionally react to a user message with one emoji (web only, one per message, five-minute cooldown). null removes it. Never a substitute for an answer or permission.',
+    'Occasionally react to a user message with one emoji, like a friend in a chat, when it fits: a yes to something you offered (✅), thanks, good news, a joke or a finished job. Less is more; most messages get none. It never replaces your reply, never changes what you write and is never an answer or permission. Works on web, Telegram and WhatsApp; Telegram takes only its standard reactions, such as 👍 ❤️ 🔥 🎉 👏 😁 🙏 👌 💯 🤝 👀 🤗 😎. One per message, at most one every five minutes. null removes it.',
     Type.Object({
       messageId: Type.String({ pattern: '^[0-9a-fA-F-]{36}$' }),
       reaction: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
@@ -501,6 +506,9 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
       : []),
+    ...(turn.followUp
+      ? [bind(toolDefinitions.follow_up, async (p) => turn.followUp!(p.text))]
+      : []),
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
@@ -510,15 +518,11 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     bind(toolDefinitions.react_to_message, async (p) => {
       if (p.reaction !== null && !isMessageReaction(p.reaction))
         throw new Error('Choose one emoji reaction.');
-      if (
-        context.background ||
-        (context.channel && context.channel !== 'web') ||
-        !context.reactToMessage
-      )
+      if (context.background || !context.reactToMessage)
         return {
           status: 'skipped',
           reason: 'unavailable',
-          message: 'Reactions are only available in the web conversation.',
+          message: 'Reactions are only available in the conversation.',
         };
       return context.reactToMessage(p.messageId, p.reaction);
     }),

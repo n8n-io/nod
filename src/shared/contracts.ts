@@ -11,7 +11,7 @@ export interface Artifact {
 export type MessageReaction = string;
 export type AgentReactionResult =
   | { status: 'updated' | 'unchanged' }
-  | { status: 'skipped'; reason: 'cooldown' | 'already_reacted' | 'unavailable' };
+  | { status: 'skipped'; reason: 'cooldown' | 'already_reacted' | 'unavailable' | 'unsupported' };
 export interface Message {
   id: string;
   role: 'user' | 'assistant';

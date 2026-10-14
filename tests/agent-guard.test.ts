@@ -903,3 +903,32 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
 });
+
+test('a queued follow-up goes out once as its own message after the reply, never from a background or waiting turn', async () => {
+  const offer = 'Want this every Monday morning?';
+  const done = await fixture(async (tools, emit) => {
+    assert.match(JSON.stringify(await call(tools, 'follow_up', { text: offer })), /Queued/);
+    assert.match(
+      JSON.stringify(await call(tools, 'follow_up', { text: 'Another offer' })),
+      /already/,
+    );
+    emit({ type: 'final', text: 'Here are the top three posts.' });
+  });
+  assert.equal(done.result.status, 'succeeded');
+  assert.deepEqual(done.replies, ['Here are the top three posts.', offer]);
+
+  const background = await fixture(
+    async (tools) => {
+      assert.equal(tools.has('follow_up'), false);
+    },
+    { background: true },
+  );
+  assert.deepEqual(background.replies, []);
+
+  const waiting = await fixture(async (tools) => {
+    await call(tools, 'follow_up', { text: offer });
+    await call(tools, 'ask_user', { question: 'Which forum?' });
+  });
+  assert.equal(waiting.result.status, 'waiting_user');
+  assert.deepEqual(waiting.replies, ['Which forum?']);
+});

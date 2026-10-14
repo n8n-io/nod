@@ -58,6 +58,8 @@ You don't need a schedule for Otto to keep an eye on things.
 
 Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. Tell Otto what's worth interrupting you for, and it follows that.
 
+The first time Otto messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, Otto offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes.
+
 ## Quiet hours
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Preferences → Quiet hours**.
