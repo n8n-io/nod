@@ -7062,7 +7062,7 @@ test(
       });
       assert.equal(await limit(null), null);
       assert.equal(await ledger.limitReached(), false);
-      for (const monthlyUsd of [0, 1e300])
+      for (const monthlyUsd of [0, 1.001, 1e300])
         assert.notEqual(
           (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd } }))
             .statusCode,

@@ -338,7 +338,11 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
           monthlyUsd: z
             .number()
             .min(1)
-            .refine((value) => Number.isSafeInteger(Math.round(value * 100)))
+            .refine(
+              (value) =>
+                Number.isSafeInteger(Math.round(value * 100)) &&
+                Math.round(value * 100) / 100 === value,
+            )
             .nullable(),
         })
         .strict()
