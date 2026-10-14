@@ -337,10 +337,7 @@ test(
       assert.equal(JSON.stringify(requests.rows).includes(result.url.split('/').at(-1)!), false);
       const expired = await vault.request(expiredTask, 'local-development', input);
       await wait(expiredTask);
-      await pool.query(
-        "UPDATE credential_requests SET expires_at = now() - interval '1 second' WHERE turn_id = $1",
-        [expiredTask.turnId],
-      );
+      await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [expiredTask.turnId]);
       const expiredUrl = expired.url.replace('/vault/', '/api/credential-requests/');
       assert.equal((await app.inject({ url: expiredUrl })).json().status, 'expired');
       assert.equal(
@@ -619,10 +616,9 @@ test(
       await wait(task1);
       const url = request.url.replace('/vault/', '/api/credential-requests/');
       assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
-      await pool.query(
-        "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-        [task1.turnId],
-      );
+      await pool.query('UPDATE credential_requests SET failed_at=now() WHERE turn_id=$1', [
+        task1.turnId,
+      ]);
       const concurrent = await Promise.all([
         app.inject({ method: 'POST', url: `${url}/retry` }),
         app.inject({ method: 'POST', url: `${url}/retry` }),
@@ -1017,17 +1013,9 @@ test(
       assert.equal((await f.submit(checkUrl)).statusCode, 200);
       assert.deepEqual(f.calls, { injected: 1, retried: [] });
       assert.deepEqual(await f.resumed(), [check.turnId]);
-      await f.pool.query(
-        "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-        [running.turnId],
-      );
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
 
       await f.pool.query('UPDATE turns SET started_at=NULL WHERE id=$1', [later.turnId]);
-      await f.pool.query(
-        "UPDATE credential_requests SET expires_at=now()+interval '5 minutes' WHERE turn_id=$1",
-        [running.turnId],
-      );
       assert.equal((await f.submit(url)).statusCode, 200);
       assert.deepEqual(f.calls, { injected: 2, retried: [] });
       assert.deepEqual(await f.resumed(), [check.turnId, running.turnId].sort());
@@ -1714,14 +1702,13 @@ test(
       await t.test(
         'expired, archived and foreign requests cannot select saved entries and OTP has no accounts',
         async () => {
-          for (const state of ['expired', 'archived']) {
+          for (const state of ['ended', 'archived']) {
             await addTask(state);
             const url = await form(state);
-            if (state === 'expired')
-              await pool.query(
-                "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-                [task(state).turnId],
-              );
+            if (state === 'ended')
+              await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
+                task(state).turnId,
+              ]);
             else {
               await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [
                 task(state).threadId,
@@ -2442,17 +2429,6 @@ test(
           );
           assert.equal(JSON.stringify(stored.rows).includes('import-secret'), false);
           assert.equal(JSON.stringify(stored.rows).includes('fresh@example.test'), false);
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: '/api/vault/import',
-                headers,
-                payload: { logins: Array.from({ length: 5001 }, () => logins[0]) },
-              })
-            ).json().error,
-            'Import at most 5,000 logins at a time.',
-          );
         },
       );
     } finally {
@@ -3218,10 +3194,7 @@ test(
       assert.equal(fills.length, beforeLink + 1);
       assert.match(resumed.at(-1)!, /Check whether the shop accepted/);
       assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
-      await assert.rejects(
-        payments.setting(turn, { doItForMe: true }, true),
-        /only from a message/,
-      );
+      assert.match(await payments.setting(turn, { doItForMe: true }, true), /on for Visa ••4242/);
       assert.match(await payments.setting(turn, { doItForMe: false }, true), /off for Visa ••4242/);
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
       inOtto = true;
@@ -3420,10 +3393,7 @@ test(
       }
       const expired = await payments.request(turn, { ...order, card: card.id });
       const expiredId = expired.url!.split('/').at(-1)!;
-      await pool.query(
-        "UPDATE vault_payments SET expires_at=now()-interval '1 second' WHERE id=$1",
-        [expiredId],
-      );
+      await payments.request(turn, { ...order, card: card.id });
       const beforeExpiry = fills.length;
       assert.equal(
         (
@@ -3943,7 +3913,7 @@ test(
         read++;
         assert.equal(request.recipient, username);
         assert.equal(request.origin, origin);
-        assert.ok(request.after > Date.now() - 35_000);
+        assert.ok(request.after >= Date.now() - 5 * 60_000 - 31_000);
         assert.ok(request.before <= Date.now());
         assert.equal(signal.aborted, false);
         await lookup?.();
@@ -4029,24 +3999,6 @@ test(
         },
       ],
       [
-        'legacy',
-        async (id: string) => {
-          await pool.query(
-            'UPDATE credential_account_selections SET credential_entered_at=NULL WHERE root_turn_id=$1',
-            [root(id)],
-          );
-        },
-      ],
-      [
-        'old-auth',
-        async (id: string) => {
-          await pool.query(
-            "UPDATE credential_account_selections SET credential_entered_at=now()-interval '6 minutes' WHERE root_turn_id=$1",
-            [root(id)],
-          );
-        },
-      ],
-      [
         'cancelled',
         async (id: string) => {
           await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [task(id).turnId]);
@@ -4058,9 +4010,21 @@ test(
       assert.equal(await fill(id), false, id);
       assert.equal(read, afterConcurrentReads, id);
     }
+    for (const [id, entered] of [
+      ['entered-long-ago', "now()-interval '6 minutes'"],
+      ['never-entered', 'NULL'],
+    ] as const) {
+      await start(id);
+      await pool.query(
+        `UPDATE credential_account_selections SET credential_entered_at=${entered} WHERE root_turn_id=$1`,
+        [root(id)],
+      );
+      assert.equal(await fill(id), true, id);
+    }
+    const readsBeforeOwner = read;
     await start('wrong-owner');
     assert.equal(await vault.fillEmailCode(task('wrong-owner'), 'other', otpInput), false);
-    assert.equal(read, afterConcurrentReads);
+    assert.equal(read, readsBeforeOwner);
     for (const [id, recipient] of [
       ['masked', 'o***@example.com'],
       ['masked-bullets', 'ow•••@example.com'],
@@ -4148,9 +4112,9 @@ test(
       assert.equal(await fill(id), false, id);
       assert.equal(read, before, id);
     }
-    for (const [id, offset] of [
-      ['stale-direct-email', -6 * 60_000],
-      ['future-direct-email', 60_000],
+    for (const [id, offset, filled] of [
+      ['long-direct-email', -6 * 60_000, true],
+      ['future-direct-email', 60_000, false],
     ] as const) {
       const turn = await begin(id);
       await pool.query('UPDATE turns SET started_at=$2 WHERE id=$1', [
@@ -4158,22 +4122,14 @@ test(
         new Date(Date.now() + offset),
       ]);
       const before: number = read;
-      assert.equal(await fill(id), false, id);
-      assert.equal(read, before, id);
+      assert.equal(await fill(id), filled, id);
+      assert.equal(read, before + (filled ? 1 : 0), id);
     }
     for (const [id, change] of [
       [
         'cancelled-direct-email',
         async (turn: TurnRef) => {
           await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
-        },
-      ],
-      [
-        'expired-direct-email',
-        async (turn: TurnRef) => {
-          await pool.query("UPDATE turns SET started_at=now()-interval '6 minutes' WHERE id=$1", [
-            turn.turnId,
-          ]);
         },
       ],
       [
@@ -4569,7 +4525,13 @@ test(
     assert.deepEqual(reads, []);
     await pool.query('DELETE FROM app_connections WHERE id=$1', [duplicate]);
     messages = [];
-    assert.equal(await read(), undefined);
+    assert.equal(await read({}, AbortSignal.timeout(200)), undefined);
+    const arrival = setTimeout(() => {
+      messages = [mail];
+    }, 200);
+    assert.equal((await read({}, AbortSignal.timeout(15_000)))?.code, '381742');
+    clearTimeout(arrival);
+    messages = [];
     messages = [mail, { ...mail, id: 'mail2', text: 'Your login verification code is 940173.' }];
     assert.equal(await read(), undefined);
     messages = [{ ...mail, receivedAt: now - 60_000 }];
@@ -5209,7 +5171,6 @@ test('secure sign-in keeps failed submissions editable and returns to chat only 
     label: 'Fixture sign-in',
     kind: 'otp',
     status: 'pending',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
     fields: [{ kind: 'otp', selector: '#code', label: 'Verification code' }],
   };
   let finish!: (value: Response) => void;

@@ -37,7 +37,6 @@ export interface SubmitMessageResponse {
 export interface VerificationRequest {
   id: string;
   turnId: string;
-  expiresAt: string;
   kind: 'otp' | 'payment';
 }
 export interface Turn {
@@ -172,7 +171,6 @@ export interface CredentialRequest {
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
   status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
-  expiresAt: string;
   savedEntries?: VaultLoginEntry[];
   selectedEntryId?: string;
 }

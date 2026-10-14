@@ -529,7 +529,6 @@ async function initializeApplication(
     retry: retryCredentials,
     inject: computer.injectCredentials,
     page: computer.currentPage,
-    hold: computer.hold,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
     securityCodes: runtimeMode === 'local',

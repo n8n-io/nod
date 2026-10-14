@@ -65,7 +65,6 @@ export async function createVaultAccess(
     UPDATE vault_activity SET action='card' WHERE action='paid';
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
     DROP TABLE IF EXISTS vault_grants, vault_browser, vault_browser_holder;
-    DELETE FROM vault_activity WHERE at<now()-interval '90 days';
   `);
 
   async function root(turn: TurnRef, database: Pool | PoolClient = pool): Promise<Chain> {

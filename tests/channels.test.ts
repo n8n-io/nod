@@ -330,7 +330,7 @@ test(
       for (const [messageId, text] of [
         ['ambiguous-code', 'Code: 481927 or 739126'],
         ['malformed-code', 'Code: +481927'],
-        ['empty-code', 'Código ='],
+        ['leading-code', '739126 ist der Code'],
       ]) {
         assert.equal((await send(messageId, text)).statusCode, 200);
         await channels.drain();

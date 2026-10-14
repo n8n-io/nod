@@ -4,6 +4,7 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
+import { supersededSql } from './turn-chain.ts';
 import { waitingTurnSql } from './vault.ts';
 
 interface VerificationInput {
@@ -58,9 +59,9 @@ export async function createChatVerification(
     refresh: () => void;
   },
 ) {
-  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status,expires_at FROM credential_requests WHERE kind='otp'${
+  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status FROM credential_requests WHERE kind='otp'${
     options.submitPayment
-      ? ` UNION ALL SELECT id::text,owner_id,thread_id,turn_id,'payment',status,expires_at FROM vault_payments`
+      ? ` UNION ALL SELECT id::text,owner_id,thread_id,turn_id,'payment',status FROM vault_payments`
       : ''
   })`;
   await pool.query(`CREATE TABLE IF NOT EXISTS chat_verification_submissions (
@@ -90,11 +91,11 @@ export async function createChatVerification(
 
   async function pending(channel = 'web'): Promise<VerificationRequest[]> {
     const result = await pool.query<VerificationRequest>(
-      `SELECT r.id,u.id AS "turnId",r.expires_at AS "expiresAt",r.kind
+      `SELECT r.id,u.id AS "turnId",r.kind
        FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
        WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2
-         AND r.status='pending' AND r.expires_at>now()
-         AND ${waitingTurnSql('u', 'credentials')} ORDER BY r.expires_at,r.id LIMIT 50`,
+         AND r.status='pending' AND ${waitingTurnSql('u', 'credentials')}
+         ORDER BY u.created_at,r.id LIMIT 50`,
       [options.ownerId, channel],
     );
     return result.rows;
@@ -192,11 +193,10 @@ export async function createChatVerification(
       }>(
         `SELECT r.id,r.turn_id,r.kind FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
          WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2 AND r.thread_id=$5
-           AND r.status='pending' AND r.expires_at>now()
-           AND (r.kind<>'payment' OR u.channel='web')
+           AND r.status='pending' AND (r.kind<>'payment' OR u.channel='web')
            AND ${waitingTurnSql('u', 'credentials')}
            AND ($3::uuid IS NULL OR r.turn_id=$3) AND ($4::text IS NULL OR r.id=$4)
-           ORDER BY r.expires_at,r.id LIMIT 2`,
+           ORDER BY u.created_at,r.id LIMIT 2`,
         [options.ownerId, channel, turnId ?? null, input.verificationRequestId ?? null, thread.id],
       );
       if (!requests.rowCount) {
@@ -205,7 +205,7 @@ export async function createChatVerification(
           await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
             `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
-               AND r.status='pending' AND r.expires_at>now()
+               AND r.status='pending' AND NOT ${supersededSql('u', 'newer.created_at>u.created_at')}
                AND ((r.kind='payment' AND $4::boolean) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
             [
               options.ownerId,

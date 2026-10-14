@@ -3981,7 +3981,6 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
       {
         id: requestId,
         turnId: state.messages[0].turnId!,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
         kind: 'payment',
       },
     ];
@@ -4874,7 +4873,7 @@ test('session failures retry local bootstrap without offering hosted sign-in or 
         }
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+          fields: [], savedEntries: [],
         });
         throw new Error('Unexpected fixture request: ' + path);
       };
@@ -4972,7 +4971,7 @@ test('native Settings and feedback preserve the active credential form', async (
         });
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+          fields: [], savedEntries: [],
         });
         throw new Error('Unexpected fixture request: ' + path);
       };
