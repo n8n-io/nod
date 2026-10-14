@@ -805,8 +805,12 @@ test(
             'outsider/r',
           ];
           assert.match(
-            appActionConfirmation('CONNECTED_CLI', { argv: command }, 'background'),
-            /--repo outsider\/r/,
+            appActionConfirmation(
+              'CONNECTED_CLI',
+              { argv: command, timeoutSeconds: 7200 },
+              'background',
+            ),
+            /--repo outsider\/r[\s\S]*Timeout: 7200 seconds/,
           );
           await trust.check(turn, 'CONNECTED_MCP_CALL', hidden);
           assert.match(JSON.stringify(reviews.at(-1)?.action.arguments), /C-OUTSIDER/);

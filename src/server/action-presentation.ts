@@ -112,6 +112,9 @@ function actionDetails(action: string, args: Record<string, unknown>) {
                   .map((item) => argument(String(item)))
                   .join(' '),
               ],
+              ...(args.timeoutSeconds === undefined
+                ? []
+                : [['timeout', `${String(args.timeoutSeconds)} seconds`] as [string, string]]),
             ]
           : [];
   return [
