@@ -436,7 +436,7 @@ export function createComposioProxy(options: {
         .strict()
         .parse(await rpc('/v1/connect/status', { ticket }, { signal, timeout: 5_000 }));
     },
-    async authorize(toolkit: string, callbackUrl: string, authConfigId?: string) {
+    async authorize(toolkit: string, callbackUrl: string, reconnectAccountId?: string) {
       const callback = new URL(callbackUrl);
       const transactionId = stateSchema.parse(callback.searchParams.get('state'));
       const host =
@@ -485,7 +485,7 @@ export function createComposioProxy(options: {
               : { type: 'https', url: callback.href },
             transactionId,
             challenge,
-            ...(authConfigId ? { authConfigId } : {}),
+            ...(reconnectAccountId ? { reconnectAccountId } : {}),
           }),
         );
       if (result.transactionId !== transactionId || new URL(result.redirectUrl).origin !== origin)

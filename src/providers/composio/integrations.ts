@@ -272,7 +272,7 @@ export function createComposioProvider(options: {
   const identities = new Map<string, AccountIdentity>();
   const pendingIdentities = new Map<string, Promise<AccountIdentity>>();
   const authConfigs = Object.fromEntries(
-    Object.entries(options.authConfigs ?? {})
+    Object.entries(options.proxy ? {} : (options.authConfigs ?? {}))
       .filter(
         (entry): entry is [string, string] =>
           typeof entry[1] === 'string' && entry[1].trim().length > 0,
@@ -1171,7 +1171,7 @@ export function createComposioProvider(options: {
         throw new Error('This connection sign-in configuration is unavailable.');
       if (options.proxy)
         return {
-          ...(await options.proxy.authorize(slug, callbackUrl, original.auth_config.id)),
+          ...(await options.proxy.authorize(slug, callbackUrl, accountId)),
           authConfigId: original.auth_config.id,
         };
       const requestOptions = { signal, maxRetries: 0 };

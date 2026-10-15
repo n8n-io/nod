@@ -13,7 +13,7 @@ Choose **Easy Connect** and sign in with an allowed Google account, or [use your
 
 Google sign-in enables Easy Connect only. It doesn't give Otto access to Gmail or another app. You connect each app separately and choose its permissions. Easy Connect accepts explicitly allowed email addresses or verified Google Workspace accounts from an allowed domain. An individual email can still be blocked. If yours isn't enabled, you can use a personal key; there is no waitlist.
 
-During onboarding, **Easy Connect enabled** means you can connect apps; Gmail still needs its own consent. Its account email appears after Gmail connects. Choose **Change connection setup** to use another method, or manage access later in **Settings → App connections**.
+During onboarding, the Gmail connection appears after Google sign-in succeeds or your personal key is saved. **Easy Connect enabled** means you can connect apps; Gmail still needs its own consent. Its account email appears after Gmail connects. Choose **Change connection setup** to use another method, or manage access later in **Settings → App connections**.
 
 Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
@@ -144,7 +144,7 @@ An app with an eligible custom config also appears in **Apps**, even when Compos
 <details>
 <summary>How Easy Connect picks an auth config</summary>
 
-Easy Connect uses the broker's native toolkit catalog. It does not discover your project's custom configs or expose auth-config administration to an Otto installation. The broker selects the configuration after checking browser and installation ownership.
+Easy Connect uses the broker's native toolkit catalog. It does not discover your project's custom configs or expose auth-config administration to an Otto installation. The broker selects the configuration after checking browser and installation ownership. The app never sends auth-config IDs to the broker. When reconnecting, it sends the connected account ID; the broker verifies that account belongs to the installation and retains its original configuration.
 
 Operators can set the Worker's `AUTH_CONFIGS_JSON` to a toolkit-to-config mapping, such as `{"gmail":"ac_example"}`. Every ID must belong to the broker's Composio project, selected by its server-side `COMPOSIO_API_KEY`. A config from a personal-key project or another hosted project cannot be reused here.
 

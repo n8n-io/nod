@@ -216,6 +216,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     !choice.view.error &&
     !choice.view.notice &&
     !choice.loadError;
+  const showGmail =
+    !!keyStatus &&
+    (!personalSetup ||
+      !!pending ||
+      (choice.ready && !keyNeeded && !choice.dirty && !choice.view.editing));
   const loading = (!configuration.data && !configuration.error) || (!apps.data && !apps.error);
   const unavailable: keyof typeof unavailableReasons | undefined = loading
     ? undefined
@@ -351,18 +356,6 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       </div>
     );
   else if (loading) status = <p className="ob-email-muted">Checking app connections…</p>;
-  else if (keyNeeded)
-    status = (
-      <p className="ob-email-muted">
-        {choice.mode === 'own'
-          ? 'Save your Composio key first.'
-          : 'Enable Easy Connect and confirm the switch first.'}
-      </p>
-    );
-  else if (keyStatus?.mode === 'otto' && !choice.ready)
-    status = (
-      <p className="ob-email-muted">Enable Easy Connect above, then connect Gmail separately.</p>
-    );
   else if (unavailable)
     status = (
       <div className="ob-email-retry">
@@ -433,67 +426,71 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         ) : (
           <ConnectionChoice state={choice} disabled={!!pending} className="ob-email-choice" />
         )}
-        <div className="ob-email-gmail" data-gmail={gmailState}>
-          <div className="ob-email-head">
-            <span className="ob-email-tile">
-              <img src="/logos/gmail.svg" alt="" width={24} height={24} />
-            </span>
-            <div className="ob-email-title">
-              <p className="ob-email-name">Gmail</p>
-              {account && personalSetup ? (
-                <p className="ob-email-muted" data-analytics-private>
-                  {account.accountEmail ?? 'Signed in.'}
-                </p>
+        {showGmail && (
+          <div className="ob-email-gmail" data-gmail={gmailState}>
+            <div className="ob-email-head">
+              <span className="ob-email-tile">
+                <img src="/logos/gmail.svg" alt="" width={24} height={24} />
+              </span>
+              <div className="ob-email-title">
+                <p className="ob-email-name">Gmail</p>
+                {account && personalSetup ? (
+                  <p className="ob-email-muted" data-analytics-private>
+                    {account.accountEmail ?? 'Signed in.'}
+                  </p>
+                ) : (
+                  <p className="ob-email-muted">
+                    Start with one inbox. You can add more apps later.
+                  </p>
+                )}
+              </div>
+              {connected ? (
+                <span className="ob-email-chip">
+                  <Check size={14} strokeWidth={2.5} aria-hidden="true" />
+                  Connected
+                </span>
               ) : (
-                <p className="ob-email-muted">Start with one inbox. You can add more apps later.</p>
+                gmailState !== 'waiting' && (
+                  <Button
+                    variant="outline"
+                    className="ob-gmail-connect"
+                    disabled={!canConnect || gmailState === 'opening'}
+                    onClick={() => void connect()}
+                  >
+                    {gmailState === 'opening' && (
+                      <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                    )}
+                    Connect
+                  </Button>
+                )
               )}
             </div>
-            {connected ? (
-              <span className="ob-email-chip">
-                <Check size={14} strokeWidth={2.5} aria-hidden="true" />
-                Connected
-              </span>
-            ) : (
-              gmailState !== 'waiting' && (
-                <Button
-                  variant="outline"
-                  className="ob-gmail-connect"
-                  disabled={!canConnect || gmailState === 'opening'}
-                  onClick={() => void connect()}
-                >
-                  {gmailState === 'opening' && (
-                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                  )}
-                  Connect
-                </Button>
-              )
+            {!connected && pairingCode && !pairingConfirmed && <PairingCode code={pairingCode} />}
+            {status}
+            {accessRenewed && (
+              <p role="status" className="ob-email-muted">
+                Browser sign-in renewed. Connect Gmail again.
+              </p>
+            )}
+            {pollFailing && (
+              <p role="alert" className="ob-email-error">
+                Can’t check on the sign-in right now. Still trying.
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="ob-email-error">
+                {error}
+              </p>
             )}
           </div>
-          {!connected && pairingCode && !pairingConfirmed && <PairingCode code={pairingCode} />}
-          {status}
-          {accessRenewed && (
-            <p role="status" className="ob-email-muted">
-              Browser sign-in renewed. Connect Gmail again.
-            </p>
-          )}
-          {pollFailing && (
-            <p role="alert" className="ob-email-error">
-              Can’t check on the sign-in right now. Still trying.
-            </p>
-          )}
-          {error && (
-            <p role="alert" className="ob-email-error">
-              {error}
-            </p>
-          )}
-        </div>
+        )}
       </Rise>
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={connected ? undefined : onNext}
+        onSkip={connected && showGmail ? undefined : onNext}
         onNext={onNext}
-        nextDisabled={!connected}
+        nextDisabled={!connected || !showGmail}
       />
     </section>
   );

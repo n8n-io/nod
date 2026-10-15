@@ -5076,20 +5076,30 @@ test('managed integration admission preserves personal-key connections until an 
         document: dom.window.document,
         getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
         IS_REACT_ACT_ENVIRONMENT: true,
-        ...Object.fromEntries(['Node', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
       });
       const { act, createElement } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { ConnectionChoice, useConnectionChoice } = await import('./src/web/components/connection-choice.tsx');
+      const { Apps } = await import('./src/web/pages/apps.tsx');
+      const { Email } = await import('./src/web/pages/onboarding/steps/email.tsx');
       const { usePageData } = await import('./src/web/hooks/use-page-data.ts');
       const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
       const status = { mode: 'own', switchable: true, suffix: 'TEST', keyWritable: true, managed: { state: 'sign_in_required', email: null } };
       let accounts = [{ slug: 'gmail', name: 'Gmail', connectionId: 'synthetic-gmail', status: 'connected', triggersEnabled: false }];
+      let catalog = [];
+      let rejectKey = false;
+      let holdInventory = false;
+      let inventoryFailure = false;
+      let showEmail = false;
+      const inventoryResponses = new Map();
       let stage = 'pending';
       let switched = 0;
       let started = 0;
       let completed = 0;
       let keyWrites = 0;
+      let settingsOpened = 0;
+      let appConsents = 0;
       const retainedPermissionNotice = 'Synthetic provider permissions remain.';
       let choice;
       let observed;
@@ -5102,6 +5112,7 @@ test('managed integration admission preserves personal-key connections until an 
           if (options.method === 'DELETE') {
             assert.equal(status.managed.state, 'enabled');
             switched++;
+            catalog = [];
             status.mode = 'otto';
             status.suffix = null;
             accounts = [];
@@ -5109,6 +5120,7 @@ test('managed integration admission preserves personal-key connections until an 
             assert.equal(status.mode, 'otto');
             assert.ok(['revoked', 'sign_in_required'].includes(status.managed.state));
             assert.equal(JSON.parse(options.body).key, 'synthetic-key-TEST');
+            if (rejectKey) return Response.json({ error: 'Synthetic key verification failure.' }, { status: 400 });
             keyWrites++;
             status.mode = 'own';
             status.suffix = 'TEST';
@@ -5117,9 +5129,17 @@ test('managed integration admission preserves personal-key connections until an 
           } else assert.ok(!options.method || options.method === 'GET');
           return Response.json(status);
         }
-        if (path === '/api/apps') return Response.json(accounts);
-        if (path === '/api/apps/catalog') return Response.json([]);
+        if (path === '/api/apps' || path === '/api/apps/catalog') {
+          if (holdInventory) return new Promise(resolve => inventoryResponses.set(path, resolve));
+          if (inventoryFailure) return Response.json({ error: 'Synthetic inventory failure.' }, { status: 503 });
+          return Response.json(path === '/api/apps' ? accounts : catalog);
+        }
         if (path === '/api/configuration') return Response.json({ integrationsReady: true });
+        if (path === '/api/apps/gmail/connect') {
+          assert.equal(options.method, 'POST');
+          appConsents++;
+          return Response.json({ error: 'Synthetic app consent failure.' }, { status: 503 });
+        }
         if (path === '/api/integrations/access/start') {
           assert.deepEqual(JSON.parse(options.body), { native: true });
           started++;
@@ -5141,7 +5161,11 @@ test('managed integration admission preserves personal-key connections until an 
       }
       function Fixture() {
         choice = useConnectionChoice('settings');
-        return createElement('div', null, createElement(ConnectionChoice, { state: choice }), createElement(Observer));
+        return createElement('div', null,
+          createElement(ConnectionChoice, { state: choice }),
+          createElement(Apps, { onAsk() {}, onManageConnection() { settingsOpened++; } }),
+          showEmail && createElement(Email, { arrived: 'back', onNext() {}, onBack() {} }),
+          createElement(Observer));
       }
       const root = createRoot(document.querySelector('#root'));
       const settle = () => act(async () => new Promise(resolve => setTimeout(resolve, 20)));
@@ -5229,6 +5253,16 @@ test('managed integration admission preserves personal-key connections until an 
           assert.equal(accounts[0].connectionId, 'synthetic-managed-gmail');
           const save = document.querySelector('.connection-key button[type="submit"]');
           assert.ok(document.getElementById(save.getAttribute('aria-describedby')));
+          if (state === 'revoked') {
+            rejectKey = true;
+            await act(async () => save.click());
+            await settle();
+            assert.equal(keyWrites, before);
+            assert.equal(choice.status.mode, 'otto');
+            assert.equal(pageDataCache.getSnapshot('/api/apps').data[0].connectionId, 'synthetic-managed-gmail');
+            assert.ok(document.querySelector('[data-manage-service="gmail"]'));
+            rejectKey = false;
+          }
           await act(async () => save.click());
           await settle();
           assert.equal(keyWrites, before + 1);
@@ -5237,6 +5271,96 @@ test('managed integration admission preserves personal-key connections until an 
           assert.equal(observed.warning, undefined);
           assert.equal(document.querySelector('.connection-choice > [role="status"]')?.textContent, retainedPermissionNotice);
         }
+        showEmail = true;
+        await act(async () => root.render(createElement(Fixture)));
+        await settle();
+        for (const [mode, managedState, switchable, suffix, canConsent] of [
+          ['otto', 'enabled', true, null, true],
+          ['otto', 'revoked', true, null, false],
+          ['otto', 'sign_in_required', true, null, false],
+          ['otto', 'denied', true, null, false],
+          ['otto', 'unavailable', true, null, false],
+          ['own', 'revoked', true, 'TEST', true],
+          ['own', 'unavailable', true, 'TEST', true],
+          ['own', 'enabled', true, null, false],
+          ['otto', null, false, null, true],
+          ['own', null, false, null, true],
+        ]) {
+          status.mode = mode;
+          status.switchable = switchable;
+          status.suffix = suffix;
+          status.managed = managedState ? { state: managedState, email: 'alex@example.test' } : null;
+          accounts = [{ slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false }];
+          await act(async () => {
+            await pageDataCache.refresh('/api/integrations/key', true);
+            await pageDataCache.refresh('/api/apps', true);
+          });
+          assert.equal(!!document.querySelector('.ob-email [data-gmail]'), canConsent);
+          const before = { settingsOpened, appConsents, started, keyWrites, switched };
+          assert.equal(document.querySelector('[data-manage-service="gmail"]'), null);
+          await act(async () => document.querySelector('[data-connect-service="gmail"]').click());
+          await settle();
+          assert.equal(appConsents - before.appConsents, canConsent ? 1 : 0);
+          assert.equal(settingsOpened - before.settingsOpened, canConsent ? 0 : 1);
+          assert.equal(started, before.started);
+          assert.equal(keyWrites, before.keyWrites);
+          assert.equal(switched, before.switched);
+          assert.equal(choice.status.mode, mode);
+          assert.equal(document.querySelector('[data-manage-service="gmail"]'), null);
+        }
+        status.mode = 'own';
+        status.switchable = true;
+        status.suffix = 'TEST';
+        status.managed = { state: 'enabled', email: 'alex@example.test' };
+        accounts = [{ slug: 'gmail', name: 'Gmail', connectionId: 'old-project-gmail', accountEmail: 'old-project@example.test', status: 'connected', triggersEnabled: false }];
+        catalog = [{ slug: 'old_project_tool', name: 'Old project tool', status: 'disconnected', triggersEnabled: false }];
+        await act(async () => {
+          await pageDataCache.refresh('/api/integrations/key', true);
+          await pageDataCache.refresh('/api/apps', true);
+          await pageDataCache.refresh('/api/apps/catalog', true);
+        });
+        showEmail = true;
+        await act(async () => root.render(createElement(Fixture)));
+        await settle();
+        assert.equal(document.querySelector('.ob-email [data-gmail]').dataset.gmail, 'connected');
+        assert.ok(document.querySelector('[data-manage-service="gmail"]'));
+        assert.ok(document.querySelector('[data-connect-service="old_project_tool"]'));
+        await act(async () => document.querySelector('.connection-mode').click());
+        holdInventory = true;
+        await act(async () => document.querySelector('.connection-switch .button').click());
+        await settle();
+        assert.equal(choice.status.mode, 'otto');
+        assert.equal(choice.switching, true);
+        assert.equal(pageDataCache.getSnapshot('/api/apps').data, null);
+        assert.equal(pageDataCache.getSnapshot('/api/apps').loading, true);
+        assert.equal(pageDataCache.getSnapshot('/api/apps/catalog').data, null);
+        assert.equal(document.querySelector('[data-manage-service="gmail"]'), null);
+        assert.equal(document.querySelector('[data-connect-service="old_project_tool"]'), null);
+        assert.notEqual(document.querySelector('.ob-email [data-gmail]').dataset.gmail, 'connected');
+        holdInventory = false;
+        inventoryFailure = true;
+        await act(async () => {
+          for (const resolve of inventoryResponses.values()) resolve(Response.json({ error: 'Synthetic inventory failure.' }, { status: 503 }));
+          inventoryResponses.clear();
+        });
+        await settle();
+        assert.equal(choice.switching, false);
+        assert.equal(choice.status.mode, 'otto');
+        assert.equal(pageDataCache.getSnapshot('/api/apps').data, null);
+        assert.ok(pageDataCache.getSnapshot('/api/apps').error);
+        assert.ok(pageDataCache.getSnapshot('/api/apps/catalog').error);
+        assert.equal(document.querySelector('[data-manage-service="gmail"]'), null);
+        assert.notEqual(document.querySelector('.ob-email [data-gmail]').dataset.gmail, 'connected');
+        inventoryFailure = false;
+        accounts = [{ slug: 'gmail', name: 'Gmail', connectionId: 'new-project-gmail', accountEmail: 'new-project@example.test', status: 'connected', triggersEnabled: false }];
+        await act(async () => {
+          await pageDataCache.refresh('/api/apps', true);
+          await pageDataCache.refresh('/api/apps/catalog', true);
+        });
+        assert.equal(pageDataCache.getSnapshot('/api/apps').data[0].connectionId, 'new-project-gmail');
+        assert.equal(document.querySelector('.ob-email [data-gmail]').dataset.gmail, 'connected');
+        assert.ok(document.querySelector('.ob-email [data-gmail]').textContent.includes('new-project@example.test'));
+        assert.ok(!document.body.textContent.includes('old-project@example.test'));
       } finally {
         await act(async () => root.unmount());
         pageDataCache.clear();
@@ -5323,6 +5447,7 @@ for (const signingIn of [false, true])
         assert.equal(ownKey.disabled, false);
         await act(async () => ownKey.click());
         assert.ok(document.querySelector('.connection-key input[type="password"]'));
+        assert.equal(document.querySelector('[data-gmail]'), null);
         assert.equal(status.mode, 'otto');
         assert.equal(status.managed.state, 'enabled');
         assert.equal(requests.filter(item => item.path === '/api/apps/gmail/connect').length, 1);
@@ -5345,7 +5470,8 @@ for (const signingIn of [false, true])
           await act(async () => pageDataCache.refresh('/api/integrations/key', true));
           assert.equal(document.querySelector('.connection-identity'), null);
           assert.equal(document.querySelector('.ob-email-card').textContent.includes('alex@example.test'), false);
-          assert.equal(document.querySelector('.ob-email-title [data-analytics-private]').textContent.trim(), 'inbox@example.test');
+          assert.equal(document.querySelector('[data-gmail]'), null);
+          assert.equal(document.querySelector('.ob-next').disabled, true);
           const recover = document.querySelector('.connection-managed > .button');
           assert.ok(recover);
           assert.equal(recover.disabled, state === 'unavailable');

@@ -6,7 +6,7 @@
   border-radius: var(--dialog-radius);
   background: var(--surface);
 }
-.ob-email-choice {
+.ob-email-choice:not(:last-child) {
   padding-bottom: 24px;
   border-bottom: 1px solid var(--border);
 }

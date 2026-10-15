@@ -133,7 +133,11 @@ export function useConnectionChoice(
       failure = errorMessage(cause);
       capture('otto_ui_error', { area, action: 'save' });
     }
-    if (next) saved.update(() => next!);
+    if (next) {
+      pageDataCache.update('/api/apps', () => null);
+      pageDataCache.update('/api/apps/catalog', () => null);
+      saved.update(() => next!);
+    }
     await refresh();
     if (!active.current) return;
     flushSync(() => {
@@ -239,6 +243,7 @@ export function useConnectionChoice(
   }
 
   return {
+    area,
     status,
     mode,
     switching,
@@ -275,7 +280,7 @@ export function useConnectionChoice(
 }
 
 export function ConnectionChoice({
-  state: { status, mode, switching, signingIn, loadError, reload, view },
+  state: { area, status, mode, switching, signingIn, loadError, reload, view },
   disabled = false,
   className,
 }: {
@@ -430,7 +435,9 @@ export function ConnectionChoice({
           <>
             <p className="connection-enabled">
               <Check size={16} aria-hidden="true" />
-              Access enabled for this Otto installation.
+              {area === 'onboarding'
+                ? 'Easy Connect is ready.'
+                : 'Access enabled for this Otto installation.'}
             </p>
             {changing && (
               <div className="connection-switch">
@@ -485,15 +492,18 @@ export function ConnectionChoice({
           </>
         ) : (
           <>
-            <p className="connection-muted">
-              {status.managed.state === 'denied'
-                ? 'Easy Connect isn’t enabled for this email. You can use your own Composio key.'
-                : status.managed.state === 'revoked'
-                  ? 'Access for this Otto installation was removed. Sign in again to check your access.'
-                  : status.managed.state === 'unavailable'
-                    ? 'Easy Connect is unavailable right now. Try again or use your own Composio key.'
-                    : 'Use an enabled Gmail or Google Workspace account. You’ll connect each app separately.'}
-            </p>
+            {(area !== 'onboarding' ||
+              !['revoked', 'sign_in_required'].includes(status.managed.state)) && (
+              <p className="connection-muted">
+                {status.managed.state === 'denied'
+                  ? 'Easy Connect isn’t enabled for this email. You can use your own Composio key.'
+                  : status.managed.state === 'revoked' && area !== 'onboarding'
+                    ? 'Access for this Otto installation was removed. Sign in again to check your access.'
+                    : status.managed.state === 'unavailable'
+                      ? 'Easy Connect is unavailable right now. Try again or use your own Composio key.'
+                      : 'Sign in with Google to continue.'}
+              </p>
+            )}
             <Button
               variant="outline"
               disabled={locked || status.managed.state === 'unavailable'}
@@ -510,7 +520,9 @@ export function ConnectionChoice({
           </>
         )}
         <p className="connection-muted">
-          Google sign-in gives you Easy Connect access. It does not give Otto access to Gmail.
+          {area === 'onboarding'
+            ? 'You’ll connect Gmail next.'
+            : 'Google sign-in enables Easy Connect. Each app asks for its own permissions.'}
         </p>
       </div>
     );
@@ -564,7 +576,9 @@ export function ConnectionChoice({
           ))}
         </div>
       )}
-      <p className="connection-muted">{connectionRoutes[mode]}</p>
+      {(area !== 'onboarding' || !status.switchable) && (
+        <p className="connection-muted">{connectionRoutes[mode]}</p>
+      )}
       {panel}
       {view.notice && (
         <p role="status" className="connection-warning">

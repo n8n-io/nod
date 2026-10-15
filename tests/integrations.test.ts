@@ -96,6 +96,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   let failUpload = false;
   let pairingStatus: unknown = { pairingConfirmed: false };
   let expectedToolkit = 'gmail';
+  let expectedReconnectAccountId: string | undefined;
   let expectedUser = '';
   let expectedCallback: Record<string, unknown> = {
     type: 'loopback',
@@ -129,7 +130,19 @@ test('managed integration requests bind SDK calls to a private persisted install
     assert.equal(value.headers.has('authorization'), false);
     assert.equal(value.redirect, 'error');
     const body = bytes.length ? JSON.parse(bytes.toString()) : {};
+    assert.equal('authConfigId' in body, false);
+    assert.equal('auth_configs' in body, false);
+    assert.equal('authConfigs' in body, false);
     calls.push({ path: url.pathname, body, key });
+    if (url.pathname === '/api/v3.1/connected_accounts/ca_fixture_existing') {
+      assert.equal(value.method, 'GET');
+      return Response.json({
+        id: 'ca_fixture_existing',
+        user_id: expectedUser,
+        toolkit: { slug: 'gmail' },
+        auth_config: { id: 'broker-original-gmail', is_disabled: false },
+      });
+    }
     if (url.pathname === '/api/v3.1/toolkits') {
       assert.equal(url.searchParams.get('type'), 'native');
       return Response.json({
@@ -187,6 +200,7 @@ test('managed integration requests bind SDK calls to a private persisted install
     if (url.pathname === '/v1/connect/start') {
       assert.equal(body.toolkit, expectedToolkit);
       assert.equal('authConfigId' in body, false);
+      assert.equal(body.reconnectAccountId, expectedReconnectAccountId);
       assert.deepEqual(body.callback, expectedCallback);
       assert.equal('callbackUrl' in body, false);
       assert.match(String(body.challenge), /^[A-Za-z0-9_-]{43}$/);
@@ -236,7 +250,10 @@ test('managed integration requests bind SDK calls to a private persisted install
   const other = createComposioProxy({ ...options, ownerId: 'another-owner' });
   await other.initialize();
   assert.notEqual(proxy.userId, other.userId);
-  const provider = createComposioProvider({ proxy });
+  const provider = createComposioProvider({
+    proxy,
+    authConfigs: { gmail: 'client-config-must-not-leave' },
+  });
   const state = randomBytes(32).toString('base64url');
   assert.equal(typeof provider.authorize, 'function');
   const beforeAuthorization = calls.length;
@@ -332,6 +349,22 @@ test('managed integration requests bind SDK calls to a private persisted install
     calls.slice(beforeCatalog).map((call) => call.path),
     ['/api/v3.1/toolkits'],
   );
+  expectedReconnectAccountId = 'ca_fixture_existing';
+  const beforeReconnect = calls.length;
+  const reconnectAttempt = await provider.reconnectAccount!(
+    'fixture-owner',
+    'gmail',
+    expectedReconnectAccountId,
+    `http://localhost:4310/api/apps/callback?state=${state}`,
+  );
+  assert.deepEqual(
+    calls.slice(beforeReconnect).map((call) => call.path),
+    ['/api/v3.1/connected_accounts/ca_fixture_existing', '/v1/connect/start'],
+  );
+  assert.equal(reconnectAttempt.accountId, `pending_${state}`);
+  assert.equal(reconnectAttempt.authConfigId, 'broker-original-gmail');
+  assert.ok(reconnectAttempt.verificationSecret);
+  expectedReconnectAccountId = undefined;
   const session = await provider.createSession('fixture-owner', {});
   const attempt = directAttempt;
   assert.equal(attempt.accountId, `pending_${state}`);
