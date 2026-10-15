@@ -272,6 +272,7 @@ test(
 
     let limitReached = false;
     const interruptedText = 'Synthetic interrupted turn.';
+    let beforeRuntimeFailure = async (_context: RuntimeContext) => {};
     let presentInterruption: NonNullable<ThreadDependencies['present']> = async () =>
       interruptedText;
     const dependencies: ThreadDependencies = {
@@ -462,10 +463,12 @@ test(
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
         workspaceListings.set(context.prompt, await readdir(context.workspacePath));
-        if (context.prompt === 'runtime-failure')
+        if (context.prompt === 'runtime-failure') {
+          await beforeRuntimeFailure(context);
           throw Object.assign(new Error('Synthetic runtime failure for private-fixture'), {
             code: 'E_SYNTHETIC',
           });
+        }
         if (context.prompt === 'screenshot-during-stop') {
           await context.publishScreenshot!(new Uint8Array([1, 2, 3]), 'atomic.png');
           return { status: 'succeeded' };
@@ -1734,11 +1737,31 @@ test(
         async (t) => {
           const logged = t.mock.method(console, 'error', () => {});
           try {
-            for (const mode of ['offline', 'invalid', 'stale', 'advanced', 'background', 'long']) {
+            for (const mode of [
+              'offline',
+              'invalid',
+              'stale',
+              'advanced',
+              'background',
+              'queued',
+              'consumed',
+              'resume',
+              'resume-advanced',
+              'long',
+            ]) {
               let presented = 0;
               let advanced: Awaited<ReturnType<typeof thread.submitUserMessage>> | undefined;
               const completeText = mode === 'long' ? interruptedText.repeat(1000) : interruptedText;
               const before = runs.filter((context) => context.prompt === 'runtime-failure').length;
+              beforeRuntimeFailure = async (context) => {
+                if (mode !== 'queued' && mode !== 'consumed') return;
+                advanced = await thread.submitUserMessage('New request before the runtime fails.');
+                if (mode === 'consumed')
+                  assert.deepEqual(
+                    (await context.takeMessages!()).map(({ id }) => id),
+                    [advanced.messageId],
+                  );
+              };
               presentInterruption = async (presentedThread, input) => {
                 presented++;
                 assert.deepEqual(input, { kind: 'interrupted' });
@@ -1774,7 +1797,25 @@ test(
                   );
                 return mode === 'invalid' ? ' ' : completeText;
               };
-              const failed = await thread.submitUserMessage('runtime-failure');
+              let failed: { threadId: string; turnId: string };
+              if (mode.startsWith('resume')) {
+                const parent = await thread.submitUserMessage('Synthetic parent request.');
+                await waitFor(settled(parent.turnId));
+                if (mode === 'resume-advanced') {
+                  advanced = await thread.submitUserMessage(
+                    'New request before an older task resumes.',
+                  );
+                  await waitFor(settled(advanced.turnId));
+                }
+                failed = {
+                  threadId: parent.threadId,
+                  turnId: await thread.enqueueTurn('runtime-failure', {
+                    source: 'resume',
+                    sessionId: parent.threadId,
+                    parentTurnId: parent.turnId,
+                  }),
+                };
+              } else failed = await thread.submitUserMessage('runtime-failure');
               await waitFor(() =>
                 logged.mock.calls.some((call) => String(call.arguments[0]).includes(failed.turnId)),
               );
@@ -1790,12 +1831,15 @@ test(
                     [failed.turnId],
                   )
                 ).rows.map((row) => row.text),
-                mode === 'long' || mode === 'background' ? [completeText] : [],
+                ['long', 'background', 'consumed', 'resume'].includes(mode) ? [completeText] : [],
               );
               if (advanced) {
                 const advancedTurnId = advanced.turnId;
                 await waitFor(settled(advancedTurnId));
-                assert.equal(runs.filter((context) => context.turnId === advancedTurnId).length, 1);
+                assert.equal(
+                  runs.filter((context) => context.turnId === advancedTurnId).length,
+                  mode === 'consumed' ? 0 : 1,
+                );
               }
               assert.equal(
                 runs.filter((context) => context.prompt === 'runtime-failure').length,
@@ -1813,6 +1857,7 @@ test(
             }
           } finally {
             presentInterruption = async () => interruptedText;
+            beforeRuntimeFailure = async () => {};
           }
         },
       );

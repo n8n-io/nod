@@ -657,12 +657,19 @@ async function initializeApplication(
                     })
                   ).value;
                 })(),
-    async (action, args) => {
+    async (action, args, expectedRevision) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
         return;
-      if (action.startsWith('OTTO_'))
-        await personal.validateReview(action.slice('OTTO_'.length), args);
-      else await integrations.prepare(ownerId, action, args);
+      if (action.startsWith('OTTO_')) {
+        if (
+          ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action) &&
+          expectedRevision === undefined
+        )
+          throw Object.assign(new Error('This schedule needs a fresh approval.'), {
+            statusCode: 409,
+          });
+        await personal.validateReview(action.slice('OTTO_'.length), args, expectedRevision);
+      } else await integrations.prepare(ownerId, action, args);
     },
     (reply) => trust.answer(reply),
     communication.describe,
@@ -862,6 +869,7 @@ async function initializeApplication(
             ...provenance,
             allowed: !verdict.confirm,
             admit,
+            expectedRevision: schedule?.revision,
             validate: schedule
               ? async (client) => {
                   const current = (

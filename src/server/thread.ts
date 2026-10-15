@@ -6,6 +6,7 @@ import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
+import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId, runtimeMode } from './config.ts';
 import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
@@ -672,18 +673,25 @@ function describeFailure(error: unknown) {
 
 async function interruptTurn(turnId: string, present: ThreadDependencies['present']) {
   const turn = await transaction(async (client) => {
-    await lockThread(client);
+    const thread = await lockThread(client);
     const turn = (
       await client.query<{
         thread_id: string;
         background: boolean;
         latest_user_message_id: string | null;
       }>(
-        `SELECT u.thread_id,u.background,
-         (SELECT m.id FROM messages m WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
+        `${turnChainSql()}, origin AS (
+          SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
+          ORDER BY u.created_at,u.id LIMIT 1
+        ) SELECT u.thread_id,u.background,
+         (SELECT m.id FROM messages m LEFT JOIN turns author ON author.id=m.turn_id AND author.owner_id=m.owner_id
+          WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
+            AND (m.turn_id IN (SELECT id FROM chain)
+              OR (author.created_at,author.id)<(SELECT created_at,id FROM origin)
+              OR (author.id IS NULL AND m.created_at<(SELECT created_at FROM origin)))
           ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS latest_user_message_id
          FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
-        [turnId, ownerId],
+        [turnId, ownerId, thread.id],
       )
     ).rows[0];
     if (!turn) return;

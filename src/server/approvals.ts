@@ -10,6 +10,7 @@ export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
+  expectedRevision?: number;
 }
 
 export interface ApprovalDescription {
@@ -115,7 +116,11 @@ export async function createApprovals(
     args: Record<string, unknown>,
     context: ApprovalExecutionContext,
   ) => Promise<unknown>,
-  preflight?: (action: string, args: Record<string, unknown>) => Promise<void>,
+  preflight?: (
+    action: string,
+    args: Record<string, unknown>,
+    expectedRevision?: number,
+  ) => Promise<void>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
   describe?: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string>,
 ) {
@@ -129,6 +134,7 @@ export async function createApprovals(
     result jsonb
   );
     ALTER TABLE approvals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS expected_revision integer,
       DROP COLUMN IF EXISTS expires_at, DROP COLUMN IF EXISTS confirmation_reply_id;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
@@ -143,6 +149,9 @@ export async function createApprovals(
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
         sourceMessageId: approval.source_message_id,
+        ...(approval.expected_revision !== null && approval.expected_revision !== undefined
+          ? { expectedRevision: approval.expected_revision }
+          : {}),
       });
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(
@@ -175,6 +184,7 @@ export async function createApprovals(
       sourceMessageId?: string | null;
       admit?: (asks: boolean) => Promise<void>;
       validate?: (client: PoolClient) => Promise<void>;
+      expectedRevision?: number;
     } = {},
   ) {
     const encoded = JSON.stringify(args);
@@ -183,6 +193,7 @@ export async function createApprovals(
     const details = options.details ? JSON.stringify(options.details) : undefined;
     turn = { ...turn };
     const allowed = options.allowed === true;
+    const expectedRevision = options.expectedRevision;
     options.signal?.throwIfAborted();
     await options.admit?.(!allowed);
     const inspect = async (client: PoolClient) => {
@@ -226,7 +237,7 @@ export async function createApprovals(
         if (!author) throw new Error('This action needs a direct request from the user.');
         authorMessageId = author.id;
       }
-      await preflight?.(action, snapshot);
+      await preflight?.(action, snapshot, expectedRevision);
       if (background)
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
           `approvals:${ownerId}:${turn.threadId}`,
@@ -234,12 +245,12 @@ export async function createApprovals(
       const previous = (
         background
           ? await client.query(
-              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
-              [chain.map((item) => item.id), ownerId, action, snapshot],
+              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND expected_revision IS NOT DISTINCT FROM $5::integer AND status<>'expired' ORDER BY id LIMIT 1",
+              [chain.map((item) => item.id), ownerId, action, snapshot, expectedRevision ?? null],
             )
           : await client.query(
-              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
-              [turn.threadId, ownerId, authorMessageId, action, snapshot],
+              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb AND expected_revision IS NOT DISTINCT FROM $6::integer AND status<>'expired' ORDER BY id LIMIT 1",
+              [turn.threadId, ownerId, authorMessageId, action, snapshot, expectedRevision ?? null],
             )
       ).rows[0];
       if (previous) {
@@ -265,8 +276,9 @@ export async function createApprovals(
              JOIN messages m ON m.id=a.confirmation_message_id AND m.owner_id=a.owner_id AND m.thread_id=a.thread_id AND m.role='assistant'
              WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.action=$3 AND a.args=$4::jsonb
                AND a.status='pending' AND u.status IN ('running','waiting') AND u.channel=$5
+               AND a.expected_revision IS NOT DISTINCT FROM $6::integer
              ORDER BY a.id LIMIT 1`,
-            [ownerId, turn.threadId, action, snapshot, current.channel],
+            [ownerId, turn.threadId, action, snapshot, current.channel, expectedRevision ?? null],
           )
         ).rows[0];
         if (pending)
@@ -313,7 +325,7 @@ export async function createApprovals(
         );
       const approval = (
         await client.query(
-          'INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,execution_turn_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',
+          'INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,execution_turn_id,expected_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *',
           [
             id,
             ownerId,
@@ -325,6 +337,7 @@ export async function createApprovals(
             inspected.authorMessageId,
             messageId,
             allowed ? turn.turnId : null,
+            expectedRevision ?? null,
           ],
         )
       ).rows[0];
@@ -407,7 +420,8 @@ export async function createApprovals(
       return undefined;
     }
     if (!active) return undefined;
-    if (approved) await preflight?.(approval.action, approval.args);
+    if (approved)
+      await preflight?.(approval.action, approval.args, approval.expected_revision ?? undefined);
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'
       : 'The user declined the saved action. Do not execute it or ask for it again. Continue only other already-authorized work, or finish quietly.';
@@ -453,7 +467,7 @@ export async function createApprovals(
         )
       ).rows[0];
       if (!selected) return undefined;
-      await preflight?.(selected.action, selected.args);
+      await preflight?.(selected.action, selected.args, selected.expected_revision ?? undefined);
       signal.throwIfAborted();
       await client.query("UPDATE approvals SET status='executing' WHERE id=$1", [selected.id]);
       return selected;

@@ -101,6 +101,7 @@ interface ScheduleJob {
 interface ScheduleProvenance {
   turnId?: string;
   sourceMessageId: string | null;
+  expectedRevision?: number;
 }
 
 interface RunRow {
@@ -536,10 +537,19 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return row;
   }
 
-  async function validateUpdate(id: string, raw: unknown) {
+  function assertRevision(previous: ScheduleRow, expectedRevision?: number) {
+    if (expectedRevision !== undefined && previous.revision !== expectedRevision)
+      throw Object.assign(new Error('The schedule changed. Review it before asking again.'), {
+        statusCode: 409,
+      });
+  }
+
+  async function validateUpdate(id: string, raw: unknown, expectedRevision?: number) {
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    updateValue(await read(id), input);
+    const previous = await read(id);
+    assertRevision(previous, expectedRevision);
+    updateValue(previous, input);
     return input;
   }
 
@@ -670,6 +680,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         )
       ).rows[0];
       if (!previous) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
+      assertRevision(previous, provenance?.expectedRevision);
       const next = updateValue(previous, input);
       const authorized =
         input.prompt === undefined
