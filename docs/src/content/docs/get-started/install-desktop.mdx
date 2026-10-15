@@ -32,7 +32,7 @@ You need macOS 14 or later, on Apple silicon or Intel. The app and its runtime a
 
 2. Open the DMG, drag **Otto** to **Applications** and open it from there.
 
-3. If macOS blocks the first launch, open **System Settings → Privacy & Security** and select **Open Anyway**. Preview builds aren't notarized by Apple yet.
+3. The first time, macOS asks whether to open an app downloaded from the internet. Select **Open**.
 
 4. On **Set up your computer**, choose whether to turn on **Open at login** and **Desktop notifications**, then select **Open Otto**. If macOS asks for your keychain password, approve it. Otto keeps your saved keys in Keychain.
 
@@ -128,12 +128,13 @@ Everything Otto stores stays on your computer. Requests go to the model provider
 
 ## Troubleshooting
 
-| Problem                       | Try this                                                                                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| macOS blocks the first launch | Select **Open Anyway** in **System Settings → Privacy & Security**.                                             |
-| Setup stops with an error     | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon. |
-| Otto asks for a runtime file  | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                        |
-| A scheduled task didn't run   | Check that Otto was open and your computer was awake at that time.                                              |
+| Problem                               | Try this                                                                                                        |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| macOS blocks the first launch         | Install the newest release. On a managed Mac, ask your IT team to allow Otto.                                   |
+| Otto 0.1.12 or earlier doesn't update | Install the newest release once, as above. Your data is kept.                                                   |
+| Setup stops with an error             | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon. |
+| Otto asks for a runtime file          | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                        |
+| A scheduled task didn't run           | Check that Otto was open and your computer was awake at that time.                                              |
 
 :::caution
 Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.

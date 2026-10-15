@@ -284,11 +284,16 @@ export async function withAppleSigning(command, args, { env = process.env, run =
     !env.APPLE_CERTIFICATE_PASSWORD
   )
     fail('Configure the signing certificate and certificate password.');
+  const notaryKey = env.APPLE_API_KEY?.trim();
+  const notaryKeyId = env.APPLE_API_KEY_ID?.trim();
+  const notaryIssuer = env.APPLE_API_ISSUER?.trim();
   if (
     mode === 'developer-id' &&
-    (!env.APPLE_ID?.trim() || !env.APPLE_APP_SPECIFIC_PASSWORD?.trim())
+    (!/^-----BEGIN PRIVATE KEY-----[\s\S]+-----END PRIVATE KEY-----$/.test(notaryKey || '') ||
+      !/^[A-Z0-9]{10,}$/.test(notaryKeyId || '') ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(notaryIssuer || ''))
   )
-    fail('Configure the Apple notarization credentials for Developer ID distribution.');
+    fail('Configure the App Store Connect team API key for Developer ID notarization.');
   if (!command || command === '--cleanup') fail('Pass the release command to sign.');
   const root = await runnerRoot(env);
   const childEnv = signingEnvironment(env);
@@ -419,6 +424,8 @@ export async function withAppleSigning(command, args, { env = process.env, run =
     )
       fail('Self-signed mode requires a self-signed code signing certificate.');
     if (mode === 'developer-id') {
+      const keyPath = join(directory, `AuthKey_${notaryKeyId}.p8`);
+      await writeFile(keyPath, `${notaryKey}\n`, { mode: 0o600, flag: 'wx' });
       await run(
         '/usr/bin/xcrun',
         [
@@ -426,17 +433,18 @@ export async function withAppleSigning(command, args, { env = process.env, run =
           'store-credentials',
           childEnv.OTTO_NOTARY_PROFILE,
           '--validate',
-          '--apple-id',
-          env.APPLE_ID.trim(),
-          '--team-id',
-          team,
-          '--password',
-          env.APPLE_APP_SPECIFIC_PASSWORD,
+          '--key',
+          keyPath,
+          '--key-id',
+          notaryKeyId,
+          '--issuer',
+          notaryIssuer,
           '--keychain',
           keychain,
         ],
         { env: childEnv, signal: controller.signal, register },
       );
+      await rm(keyPath);
     }
     await run(command, args, {
       env: childEnv,

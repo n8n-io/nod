@@ -382,6 +382,7 @@ async function releaseFixture(
   t,
   {
     isPublic = false,
+    developerId = isPublic,
     publish = false,
     plan = false,
     runtimeRepository = 'synthetic/otto',
@@ -444,7 +445,7 @@ async function releaseFixture(
   const certificate = Buffer.from('Synthetic public certificate');
   const signingEnv = {
     OTTO_DESKTOP_TARGET: 'darwin-arm64',
-    OTTO_SIGNING_MODE: isPublic ? 'developer-id' : 'self-signed',
+    OTTO_SIGNING_MODE: developerId ? 'developer-id' : 'self-signed',
     OTTO_SIGNING_IDENTITY: 'Synthetic Otto Signing',
     OTTO_SIGNING_CERTIFICATE_SHA256: digest(certificate),
   };
@@ -473,11 +474,11 @@ async function releaseFixture(
     minimumSystemVersion: '14.0',
     archive: { file: name, bytes: archive.length, sha256: digest(archive) },
     signing: {
-      mode: isPublic ? 'developer-id' : 'self-signed',
+      mode: developerId ? 'developer-id' : 'self-signed',
       certificateSha256: digest(certificate),
-      ...(isPublic ? { teamId: 'SYNTHETIC1' } : {}),
+      ...(developerId ? { teamId: 'SYNTHETIC1' } : {}),
     },
-    ...(isPublic
+    ...(developerId
       ? { notarization: { status: 'Accepted', id: '12345678-1234-1234-1234-123456789abc' } }
       : {}),
     ...(isPublic && publish
@@ -498,7 +499,7 @@ async function releaseFixture(
     source,
     ...(updateSourceUrl ? { updateSourceUrl } : {}),
     signing: release.signing,
-    notarized: isPublic,
+    notarized: developerId,
     runtime: { fingerprint, id: release.id, archive: release.archive },
     disk: { file: diskName, bytes: disk.length, sha256: digest(disk) },
     update: { file: updateName, bytes: update.length, sha256: digest(update) },
@@ -816,6 +817,13 @@ test('a release manifest push publishes only a merged release PR and keeps the t
     ).release_needed,
     'false',
   );
+});
+
+test('a private repository plans and drafts a notarized Developer ID release', async (t) => {
+  const f = await releaseFixture(t, { developerId: true, plan: true });
+  assert.equal(JSON.parse((await f.invoke('plan')).stdout).runtime_public, 'false');
+  await f.invoke('draft');
+  assert.equal((await f.readState()).releases[f.appTag].draft, true);
 });
 
 test('one Otto draft retains its source and verified bytes across retries', async (t) => {
