@@ -1,5 +1,66 @@
 # Desktop changelog
 
+## 0.1.13 - 2026-10-15
+
+Mac builds are now signed with n8n's Developer ID and notarized by Apple, so macOS opens them without **Open Anyway**. Otto 0.1.12 and earlier can't update to this version on its own: download it and replace Otto in Applications once, or run the Terminal installer. Your data is kept.
+
+### Features
+
+- **desktop:** Sign and notarize Mac builds with n8n's Developer ID. [#274](https://github.com/n8n-io/otto/pull/274) (ecfb68e)
+- **tasks:** Add task sessions and chat status. [#272](https://github.com/n8n-io/otto/pull/272) (a8604f1)
+- **analytics:** Measure opt-in tasks, services and friction. [commit](https://github.com/n8n-io/otto/commit/01d40ab7fa272d3c4b505e10b2456cbf138cb372) (01d40ab)
+- **runtime:** Unify execution records and browser handoffs. [#270](https://github.com/n8n-io/otto/pull/270) (48434b1)
+- **runtime:** Run every session in parallel with its own browser, plus a thin delegate tool. [#253](https://github.com/n8n-io/otto/pull/253) (022b996)
+- **desktop:** Install and auto-update Otto on both Macs and Windows. [#240](https://github.com/n8n-io/otto/pull/240) (8e0d6be)
+- **docs:** Add the Otto waitlist page. [commit](https://github.com/n8n-io/otto/commit/ea830d01d89c8f2cb022bb8c8e4b1e77a4a18143) (ea830d0)
+- **trust:** One checker model decides every app action. [#237](https://github.com/n8n-io/otto/pull/237) (2761741)
+
+### Fixes
+
+- Use model judgment for confirmations. [#273](https://github.com/n8n-io/otto/pull/273) (7124657)
+- **web:** Stop the web extension from using the server's GitHub login. [#269](https://github.com/n8n-io/otto/pull/269) (6608682)
+- **sandbox:** Run each connected CLI as its own Linux user. [#267](https://github.com/n8n-io/otto/pull/267) (4627506)
+- Show every memory in full, use the full chat width and tighten digests. [#266](https://github.com/n8n-io/otto/pull/266) (635f1d5)
+- Unstick waiting turns, onboarding Back, the feedback form and file sharing. [#264](https://github.com/n8n-io/otto/pull/264) (3cfcd37)
+- **fonts:** Replace the Baumer fonts with Geist and Geist Mono. [#263](https://github.com/n8n-io/otto/pull/263) (df6d672)
+- **apps:** Recover Composio onboarding connection failures. [#260](https://github.com/n8n-io/otto/pull/260) (42bf314)
+- **evals:** Stop three checks from failing correct runs. [#259](https://github.com/n8n-io/otto/pull/259) (41e9f29)
+- **browser:** Keep four live browsers so a scheduled run fits beside two subagents. [#258](https://github.com/n8n-io/otto/pull/258) (1fc822b)
+- **release:** Return a release to draft when the update service cannot deliver it. [#239](https://github.com/n8n-io/otto/pull/239) (f6579f3)
+- **browser:** Count a back or forward step when the document changed. [#236](https://github.com/n8n-io/otto/pull/236) (5af4833)
+
+<details>
+<summary>Maintenance (16 changes)</summary>
+
+- **harness:** Remove caps that limit Otto and fix the ones that matter. [#271](https://github.com/n8n-io/otto/pull/271) (99810fd)
+- **deps:** Bump posthog-js from 1.435.9 to 1.438.5. [#248](https://github.com/n8n-io/otto/pull/248) (9104e56)
+- **deps:** Bump pdfjs-dist from 6.3.289 to 6.4.299. [#247](https://github.com/n8n-io/otto/pull/247) (a9a0a2e)
+- **deps-dev:** Bump jsdom and @types/jsdom. [#241](https://github.com/n8n-io/otto/pull/241) (df3c191)
+- Prune the machinery built around Pi and fix two session bugs. [#257](https://github.com/n8n-io/otto/pull/257) (e5bb508)
+- Let Pi decide instead of side models and dead paths. [#255](https://github.com/n8n-io/otto/pull/255) (e723082)
+- **trust:** Keep the structural guarantees and drop the heuristics. [#252](https://github.com/n8n-io/otto/pull/252) (f1364f8)
+- **deps:** Bump tldts from 7.4.15 to 7.4.18. [#244](https://github.com/n8n-io/otto/pull/244) (4439295)
+- **deps:** Bump pg-boss from 12.37.0 to 12.37.1. [#246](https://github.com/n8n-io/otto/pull/246) (1303bf8)
+- **deps:** Bump posthog-node from 5.55.0 to 5.55.1. [#242](https://github.com/n8n-io/otto/pull/242) (7160a4f)
+- **deps:** Bump emoji-picker-react from 4.22.2 to 4.22.3. [#250](https://github.com/n8n-io/otto/pull/250) (2fa69ff)
+- **deps:** Bump @radix-ui/react-popover from 1.1.23 to 1.2.0. [#249](https://github.com/n8n-io/otto/pull/249) (18b813e)
+- **deps:** Bump dotenv from 18.0.5 to 18.0.7. [#251](https://github.com/n8n-io/otto/pull/251) (fbc2192)
+- **deps:** Bump @fastify/middie from 9.3.4 to 9.3.5. [#245](https://github.com/n8n-io/otto/pull/245) (8f954ad)
+- **deps:** Bump @radix-ui/react-slot from 1.3.3 to 1.4.0. [#243](https://github.com/n8n-io/otto/pull/243) (0fb7317)
+- **release:** Build desktop releases only from release PR merges. [#235](https://github.com/n8n-io/otto/pull/235) (f365885)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.12...ecfb68e49b9a8b7420a42e195a11919448b35021)
+
+<details>
+<summary>Build details</summary>
+
+Source: `ecfb68e49b9a8b7420a42e195a11919448b35021`
+Previous release: `desktop-v0.1.12`
+
+</details>
+
 ## 0.1.12 - 2026-10-11
 
 ### Features
