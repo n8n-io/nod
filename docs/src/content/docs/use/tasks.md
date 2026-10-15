@@ -30,13 +30,15 @@ Otto starts a saved task session for independent work with a goal and a completi
 | **Next check** | When Otto will look again                                   |
 | **Done when**  | What finished looks like                                    |
 
-The same task card appears in chat and on the Tasks page. It shows planned steps and current activity. Select **Show activity** to inspect tool and helper activity. This view does not show private model reasoning.
+The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and a segmented step bar. Select the preview to open its steps, goal and controls in place. Select it again to close the details. Inside the details, select **Show activity** to inspect tool and helper activity. This view does not show private model reasoning.
+
+![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 
 Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. Otto can send that message to one or more tasks when your intent is clear. If the target is unclear, Otto asks.
 
 An owner update has a revision. **Owner update queued** means the task has not received it at an execution boundary. An outside action that has already started can still finish. Other tasks continue while one task waits for your answer.
 
-Select **Stop** on a card to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. Reset also closes the old thread's open tasks.
+Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. Reset also closes the old thread's open tasks.
 
 Complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
