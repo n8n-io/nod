@@ -720,7 +720,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     let text: string;
     let generated: string | undefined;
     try {
-      if (row.presentation) {
+      if (row.presentation && !row.text.trim()) {
         const input =
           row.presentation.kind === 'command'
             ? {

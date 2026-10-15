@@ -677,11 +677,11 @@ async function interruptTurn(turnId: string, present: ThreadDependencies['presen
       await client.query<{
         thread_id: string;
         background: boolean;
-        latest_message_id: string | null;
+        latest_user_message_id: string | null;
       }>(
         `SELECT u.thread_id,u.background,
-         (SELECT m.id FROM messages m WHERE m.owner_id=$2 AND m.thread_id=u.thread_id
-          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS latest_message_id
+         (SELECT m.id FROM messages m WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS latest_user_message_id
          FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
         [turnId, ownerId],
       )
@@ -699,10 +699,10 @@ async function interruptTurn(turnId: string, present: ThreadDependencies['presen
     const current = await client.query(
       `SELECT id FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3
        AND status='failed' AND error='Interrupted.'
-       AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3
+       AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3 AND role='user'
             ORDER BY created_at DESC,id DESC LIMIT 1) IS NOT DISTINCT FROM $5::uuid
        AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
-      [turnId, ownerId, turn.thread_id, `failure:${turnId}`, turn.latest_message_id],
+      [turnId, ownerId, turn.thread_id, `failure:${turnId}`, turn.latest_user_message_id],
     );
     if (current.rowCount)
       await insertAssistantMessage(

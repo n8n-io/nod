@@ -1734,7 +1734,7 @@ test(
         async (t) => {
           const logged = t.mock.method(console, 'error', () => {});
           try {
-            for (const mode of ['offline', 'invalid', 'stale', 'advanced', 'long']) {
+            for (const mode of ['offline', 'invalid', 'stale', 'advanced', 'background', 'long']) {
               let presented = 0;
               let advanced: Awaited<ReturnType<typeof thread.submitUserMessage>> | undefined;
               const completeText = mode === 'long' ? interruptedText.repeat(1000) : interruptedText;
@@ -1755,6 +1755,17 @@ test(
                     await client.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
                       failed.id,
                     ]);
+                  if (mode === 'background') {
+                    const background = randomUUID();
+                    await client.query(
+                      "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Synthetic background update','succeeded',true)",
+                      [background, ownerId, presentedThread],
+                    );
+                    await client.query(
+                      "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Synthetic independent update')",
+                      [randomUUID(), ownerId, presentedThread, background],
+                    );
+                  }
                 }, db.pool);
                 if (mode === 'offline') throw new Error('Synthetic model failure.');
                 if (mode === 'advanced')
@@ -1779,7 +1790,7 @@ test(
                     [failed.turnId],
                   )
                 ).rows.map((row) => row.text),
-                mode === 'long' ? [completeText] : [],
+                mode === 'long' || mode === 'background' ? [completeText] : [],
               );
               if (advanced) {
                 const advancedTurnId = advanced.turnId;

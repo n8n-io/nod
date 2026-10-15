@@ -1753,6 +1753,113 @@ test(
 );
 
 test(
+  'restart delivers a persisted presentation without calling an unavailable model again',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    for (const kind of ['verification_refused', 'command'] as const)
+      await t.test(kind, async (t) => {
+        const { pool, posts, receive, turnOf, reply, create, transport } = await outboxFixture(
+          t,
+          1,
+        );
+        const fileId = randomUUID();
+        let generations = 0;
+        const configured = {
+          transport: {
+            ...transport,
+            channels: transport.channels.map((channel) => ({
+              ...channel,
+              supportsAttachments: true,
+            })),
+            post: async (input: Parameters<MessagingTransport['post']>[0]) => {
+              assert.equal(input.attachments?.length ?? 0, kind === 'command' ? 1 : 0);
+              return transport.post(input);
+            },
+          },
+          resolveAttachments: async () => [
+            {
+              name: 'fixture.txt',
+              mimeType: 'text/plain',
+              size: 7,
+              read: async () => Buffer.from('fixture'),
+            },
+          ],
+          present: async () => {
+            generations++;
+            if (generations > 1) throw new Error('Synthetic unavailable model after restart');
+            return 'Persisted model response';
+          },
+        };
+        const original = await create(configured);
+        const instances = [original];
+        try {
+          receive('111', 'prepared', 'chat-prepared');
+          await original.drain();
+          const messageId = randomUUID();
+          await reply((await turnOf('prepared')).turn_id, '', messageId, 0);
+          if (kind === 'command')
+            await pool.query('UPDATE messages SET attachments=$2 WHERE id=$1', [
+              messageId,
+              JSON.stringify([{ id: fileId }]),
+            ]);
+          await pool.query(
+            'INSERT INTO channel_outbox(message_id,source_id,presentation) VALUES($1,$2,$3)',
+            [
+              messageId,
+              'channel:telegram:bot:prepared',
+              JSON.stringify(kind === 'command' ? { kind, command: 'memory', data: {} } : { kind }),
+            ],
+          );
+          const client = await pool.connect();
+          const query = client.query;
+          let interrupted = false;
+          t.mock.method(client, 'query', (...args: unknown[]) => {
+            if (
+              !interrupted &&
+              typeof args[0] === 'string' &&
+              args[0].startsWith("UPDATE channel_outbox o SET state='sending'")
+            ) {
+              interrupted = true;
+              throw new Error('Synthetic interruption after presentation commit');
+            }
+            return Reflect.apply(query, client, args);
+          });
+          client.release();
+          await original.drain();
+          assert.equal(interrupted, true);
+          assert.deepEqual(posts, []);
+          assert.equal(generations, 1);
+          assert.deepEqual(
+            (
+              await pool.query(
+                'SELECT o.state,m.text FROM channel_outbox o JOIN messages m ON m.id=o.message_id WHERE m.id=$1',
+                [messageId],
+              )
+            ).rows[0],
+            { state: 'preparing', text: 'Persisted model response' },
+          );
+          await original.close();
+          const recovered = await create(configured);
+          instances.push(recovered);
+          await recovered.drain();
+          await recovered.drain();
+          assert.deepEqual(posts, [
+            { threadId: 'chat-prepared', text: 'Persisted model response' },
+          ]);
+          assert.equal(generations, 1);
+          assert.equal(
+            (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [messageId]))
+              .rows[0].state,
+            'sent',
+          );
+        } finally {
+          await Promise.all(instances.map((instance) => instance.close()));
+        }
+      });
+  },
+);
+
+test(
   'restart reclaims presentation without replaying an interrupted provider send',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
   async (t) => {
