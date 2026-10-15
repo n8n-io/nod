@@ -7808,6 +7808,12 @@ test(
       );
       assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 4.75 });
       assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,session_id,created_at)
+         VALUES($1,'owner','task','Also compare buses',$2,now()-interval '6 minutes')`,
+        [randomUUID(), task],
+      );
+      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.25 });
       const limits = async (payload: object) =>
         (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload })).json();
       assert.deepEqual(await limits({ taskUsd: 20 }), { limit: null, taskUsd: 20 });

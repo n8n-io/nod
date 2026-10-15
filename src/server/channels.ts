@@ -193,7 +193,7 @@ function channelText(text: string, appOrigin?: string) {
       (match, label: string, url: string) => (privateUrl(url) ? label : match),
     )
     .replace(
-      /https?:\/\/[^\s)]+|\/(?:api\/artifacts|vault|credentials|payments|approvals)[^\s)]*/g,
+      /https?:\/\/[^\s)]+|\/(?:api\/artifacts|vault|trust|credentials|payments|approvals)[^\s)]*/g,
       (url) => (privateUrl(url) ? '' : url),
     );
   return { text: safe.trim(), secureAction, artifact };

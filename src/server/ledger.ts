@@ -235,7 +235,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         `SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
          FROM model_usage WHERE owner_id=$1 AND session_id=$2 AND created_at>=COALESCE(
            (SELECT max(t.created_at) FROM turns t JOIN turns c ON c.id=$3 AND c.owner_id=$1
-             WHERE t.owner_id=$1 AND t.session_id=$2 AND t.source='user'
+             WHERE t.owner_id=$1 AND t.session_id=$2 AND t.source IN ('user','task')
                AND (t.created_at,t.id)<=(c.created_at,c.id)),'-infinity')`,
         [ownerId, sessionId, turnId],
       ),

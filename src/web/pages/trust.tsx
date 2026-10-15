@@ -410,8 +410,8 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         aria-labelledby={`${tabsId}-tab-${view}`}
         className="vault-panel"
       >
-        {view === 'activity' &&
-          (activity.data && trust.data ? (
+        <div hidden={view !== 'activity'}>
+          {activity.data && trust.data ? (
             <TrustActivity
               view={trust.data}
               vault={activity.data}
@@ -422,7 +422,8 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
             <Notice>{activity.error || trust.error}</Notice>
           ) : (
             <Loading label="Opening activity…" />
-          ))}
+          )}
+        </div>
         {(view === 'saved' || savedOpened) && (
           <div className="vault-layout" hidden={view !== 'saved'}>
             {!pageMode && (

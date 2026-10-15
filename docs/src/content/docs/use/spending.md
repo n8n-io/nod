@@ -52,9 +52,9 @@ Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In t
 
 ## Task check-ins
 
-A task checks in with you when it has spent $5 since your last message to it. Otto stops before its next step, says what's done and what's left, and asks whether to keep going.
+A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Otto stops before its next step, says what's done and what's left, and asks whether to keep going.
 
-- Say yes, and the task continues with another $5.
+- Say yes, and the task continues until it spends that amount again.
 - Say no, and Otto stops the task.
 
 ![Otto in chat: the first draft is ready and both revisions remain, the run has reached the $5 check-in, and Otto asks whether to continue. The reply is yes, keep going.](../../../assets/screens/trust-check-in.png)
@@ -74,7 +74,7 @@ Or tell Otto, for example "Check in when a task passes $20".
 ![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/trust-task-limit.png)
 
 :::note
-Otto finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Otto ends the turn with **Paused at the $5 check-in. Reply to keep going.**
+Otto finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Otto ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.**
 :::
 
 ## See the cost of one reply

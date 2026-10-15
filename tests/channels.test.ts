@@ -1103,6 +1103,18 @@ test('channel presentation isolates private links from the model and preserves o
   const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
+  const bare: unknown[] = [];
+  assert.equal(
+    await channelReply('Save it in Otto: /trust?add=login', {
+      threadId: 'owned-thread',
+      present: async (_threadId, input) => {
+        bare.push(input);
+        return 'Continua na aplicação Otto.';
+      },
+    }),
+    'Continua na aplicação Otto.',
+  );
+  assert.doesNotMatch(JSON.stringify(bare), /trust\?add/);
   const imageReply = await channelReply(
     'O ficheiro está anexado. [Imagem](http://localhost:4310/api/artifacts/private-file)',
     { threadId: 'owned-thread', present, deliversAttachments: true },
