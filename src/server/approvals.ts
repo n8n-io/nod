@@ -233,7 +233,7 @@ export async function createApprovals(
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
           `approvals:${ownerId}:${turn.threadId}`,
         ]);
-      const previous = (
+      let previous = (
         background
           ? await client.query(
               "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
@@ -244,6 +244,21 @@ export async function createApprovals(
               [turn.threadId, ownerId, authorMessageId, action, snapshot],
             )
       ).rows[0];
+      if (
+        previous?.status === 'pending' &&
+        !(
+          await client.query(
+            "SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2 AND status IN ('running','waiting')",
+            [previous.turn_id, ownerId],
+          )
+        ).rowCount
+      ) {
+        await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
+          previous.id,
+          ownerId,
+        ]);
+        previous = undefined;
+      }
       if (previous) {
         if (previous.status === 'completed')
           return { cached: true as const, result: previous.result };
@@ -349,7 +364,11 @@ export async function createApprovals(
       await database.query(
         `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
        FROM approvals a JOIN turns u ON u.id=a.turn_id
-       WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
+       WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4
+         AND (to_jsonb(u)->>'task_id' IS NULL OR NOT EXISTS (
+           SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND n.id<>u.id
+             AND n.source IN ('user','task') AND n.message_id IS NOT NULL AND n.status IN ('queued','running')))
+       ${lock ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
       )
     ).rows[0];

@@ -805,9 +805,16 @@ test(
             replyToMessageId: task.messageId,
           });
           await finish(worker);
+          assert.equal(await confirm(oldApproval, true), undefined);
           const continued = await running(update.turnId);
           await tasks.inherit(continued);
           assert.equal(await confirm(oldApproval, true), undefined);
+          const freshApproval = await propose(continued, 'GMAIL_SEND_EMAIL', {
+            to: 'hotel@example.test',
+          });
+          assert.notEqual(freshApproval, oldApproval);
+          assert.equal((await stored(oldApproval)).status, 'expired');
+          await db.pool.query("UPDATE approvals SET status='expired' WHERE id=$1", [freshApproval]);
           await trust.check(continued, 'GMAIL_FETCH_EMAILS', {});
           const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
           assert.deepEqual(words, [
