@@ -1456,11 +1456,12 @@ test('a restored durable session closes dangling tool calls before the next prom
 // Sandbox: native tools never touch the host and receive no host environment.
 
 const timeoutShim = `#!/usr/bin/perl
+shift if $ARGV[0] eq '--verbose';
 shift, shift if $ARGV[0] eq '-k';
 my $seconds = shift;
 my $pid = fork;
 if (!$pid) { exec @ARGV; exit 127 }
-$SIG{ALRM} = sub { kill 'KILL', $pid; exit 124 };
+$SIG{ALRM} = sub { print STDERR "timeout\\n"; kill 'KILL', $pid; exit 124 };
 alarm $seconds;
 waitpid $pid, 0;
 exit($? >> 8);
@@ -1733,6 +1734,38 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
   assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
   assert.equal(existsSync(join(directory, 'rewrite-completed')), false);
   await assert.rejects(run('bash', { command: 'sleep 2', timeout: 1 }), /timed out/);
+  assert.match(await run('bash', { command: 'if' }), /syntax error/);
+  if (process.platform === 'linux') {
+    await rm(join(bin, 'timeout'));
+    await rm(join(bin, 'rtk'));
+    assert.match(await run('bash', { command: 'kill -KILL $$' }), /Command exited with code 137/);
+    t.after(async () => {
+      const pid = Number(await readFile(join(directory, 'timeout-pid'), 'utf8').catch(() => '0'));
+      if (pid > 0) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+    });
+    await assert.rejects(
+      run('bash', {
+        command: `trap '' TERM; printf '%s' "$$" > timeout-pid; sleep 30`,
+        timeout: 1,
+      }),
+      /timed out/,
+    );
+    const pid = Number(await readFile(join(directory, 'timeout-pid'), 'utf8'));
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return;
+      }
+      await setTimeout(20);
+    }
+    assert.fail('The command survived its timeout.');
+  }
 });
 
 // Runtime: credential guard in observations, one active turn, stop and shutdown drain.

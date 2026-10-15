@@ -34,15 +34,37 @@ The same compact task preview appears in chat and on the Tasks page. It shows th
 
 ![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 
+## Reply or stop one task
+
 Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. Otto can send that message to one or more tasks when your intent is clear. If the target is unclear, Otto asks.
 
 An owner update has a revision. **Owner update queued** means the task has not received it at an execution boundary. An outside action that has already started can still finish. Other tasks continue while one task waits for your answer.
 
 Open a task preview and select **Stop** to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. Reset also closes the old thread's open tasks.
 
+## Inspect task activity
+
+On the **Tasks** page, open a preview and select **Show activity**. The details show planned steps, tool activity and helper activity. Select **Show in chat** to return to the task's message.
+
+![An expanded task with steps, activity from tools and helpers, and task controls.](../../../assets/screens/task-sessions-activity.png)
+
+## Read task results
+
 Complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
+![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
+
+Select the file to read the document in Otto. Select **Download** to save it. Press **Escape** to close the preview.
+
+![A task result open as a Markdown document with headings, a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
+
 A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
+
+## Use tasks on mobile
+
+Mobile web uses the same compact previews. Open a preview to read the steps, reply or stop one task.
+
+![Compact task previews in mobile web chat.](../../../assets/screens/task-sessions-mobile.png)
 
 ## Telegram without a task page
 
