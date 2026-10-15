@@ -419,7 +419,6 @@ function AuthenticatedApp({
       ) : onboarding ? (
         <Onboarding
           user={session.user!}
-          replay={session.settings!.onboardingCompleted && replayingOnboarding(path)}
           canLogout={account.canLogout}
           onLogout={onLogout}
           onFeedback={openFeedback}

@@ -40,7 +40,6 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
 
 export function Onboarding({
   user,
-  replay = false,
   canLogout,
   onLogout,
   onComplete,
@@ -49,7 +48,6 @@ export function Onboarding({
   onUsageData,
 }: {
   user: AccountUser;
-  replay?: boolean;
   canLogout: boolean;
   onLogout(): void;
   onComplete(): Promise<void>;
@@ -60,7 +58,7 @@ export function Onboarding({
   useBrowserTimeZone();
   const [position, setPosition] = useState(() => {
     const url = new URL(window.location.href);
-    if (replay && url.searchParams.get('replay') === '1') {
+    if (url.searchParams.get('replay') === '1') {
       clearStored();
       url.searchParams.delete('replay');
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);

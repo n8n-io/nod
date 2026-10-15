@@ -10925,6 +10925,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   ];
   let appCatalog: Connection[] = [];
   const appRequests: Array<{ path: string; body: unknown }> = [];
+  const credentialWrites: Array<{ path: string; method: string }> = [];
   let appSignInUrl = 'https://connect.example.test/variant';
   let gmailSignInUrl = 'https://connect.example.test/gmail';
   const pendingAppLinks = new Set<string>();
@@ -11023,8 +11024,19 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     getComputedStyle: dom.window.getComputedStyle,
     FormData: dom.window.FormData,
     BroadcastChannel: Channel,
+    ResizeObserver: class {
+      observe() {}
+      disconnect() {}
+    },
     IS_REACT_ACT_ENVIRONMENT: true,
     fetch: async (path: unknown, init: RequestInit = {}) => {
+      if (
+        typeof path === 'string' &&
+        /^\/api\/(?:models(?:\/|$)|integrations\/(?:key|access)(?:\/|$))/.test(path) &&
+        init.method &&
+        init.method !== 'GET'
+      )
+        credentialWrites.push({ path, method: init.method });
       if (path === '/api/integrations/key')
         return Response.json({
           mode: 'otto',
@@ -11186,6 +11198,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const { Apps } = await import('../src/web/pages/apps.tsx');
   const { Onboarding } = await import('../src/web/pages/onboarding/index.tsx');
+  const { onboardingVersion } = await import('../src/shared/onboarding.ts');
   const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
   const { createRoot } = await import('react-dom/client');
   const root = createRoot(dom.window.document.getElementById('root')!);
@@ -12096,13 +12109,23 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     const requestsBeforeReplay = appRequests.length;
     const openedBeforeReplay = opened.length;
     await act(async () => root.render(null));
+    Reflect.deleteProperty(dom.window, 'ottoDesktop');
     dom.window.sessionStorage.setItem('otto.chat.draft', 'Synthetic retained draft');
+    dom.window.localStorage.setItem('otto.theme', 'dark');
+    dom.window.document.cookie = 'otto_fixture_retained=synthetic; path=/';
+    const savedAbout = { owner: id, step: 'about', version: onboardingVersion };
+    dom.window.sessionStorage.setItem('otto.onboarding.step', JSON.stringify(savedAbout));
+    dom.window.sessionStorage.setItem(
+      'otto.onboarding.about',
+      JSON.stringify({ owner: id, answers: [], turns: [] }),
+    );
+    dom.window.sessionStorage.setItem('otto.onboarding.suggestions', JSON.stringify(false));
+    dom.window.document.cookie = `otto_onboarding_step=${encodeURIComponent(JSON.stringify(savedAbout))}; path=/`;
     dom.window.history.replaceState(null, '', '/onboarding?replay=1');
     const renderReplay = () =>
       root.render(
         createElement(Onboarding, {
           user: { id, name: 'Fixture', email: null, avatarUrl: null },
-          replay: true,
           canLogout: false,
           onLogout() {},
           onFeedback() {},
@@ -12114,9 +12137,24 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(dom.window.document.querySelector<HTMLElement>('.ob')!.dataset.step, 'welcome');
     assert.equal(dom.window.location.search, '');
     assert.equal(dom.window.sessionStorage.getItem('otto.chat.draft'), 'Synthetic retained draft');
+    assert.equal(dom.window.localStorage.getItem('otto.theme'), 'dark');
+    assert.ok(dom.window.document.cookie.includes('otto_fixture_retained=synthetic'));
+    assert.equal(dom.window.sessionStorage.getItem('otto.onboarding.about'), null);
+    assert.equal(dom.window.sessionStorage.getItem('otto.onboarding.suggestions'), null);
+    const restartedStep = { owner: id, step: 'welcome', version: onboardingVersion };
+    assert.deepEqual(
+      JSON.parse(dom.window.sessionStorage.getItem('otto.onboarding.step')!),
+      restartedStep,
+    );
+    assert.ok(
+      dom.window.document.cookie.includes(
+        `otto_onboarding_step=${encodeURIComponent(JSON.stringify(restartedStep))}`,
+      ),
+    );
     assert.deepEqual(appInventory, [gmailAccount]);
     assert.equal(appRequests.length, requestsBeforeReplay);
     assert.equal(opened.length, openedBeforeReplay);
+    assert.deepEqual(credentialWrites, []);
     await act(async () => root.render(null));
     dom.window.sessionStorage.setItem(
       'otto.onboarding.step',
@@ -12128,6 +12166,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(gmail(), 'connected');
     assert.equal(appRequests.length, requestsBeforeReplay);
     assert.equal(opened.length, openedBeforeReplay);
+    assert.deepEqual(credentialWrites, []);
   } finally {
     await act(async () => root.unmount());
     pageDataCache.clear();
