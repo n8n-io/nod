@@ -75,7 +75,7 @@ await run(
 );
 console.log('Windows transport built.');
 configuration.version = process.env.OTTO_DESKTOP_VERSION || configuration.version;
-if (!/^\d+\.\d+\.\d+$/.test(configuration.version))
+if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(configuration.version))
   throw new Error('The Windows release version is invalid.');
 manifest.transport = {
   file: 'bin/docker.exe',

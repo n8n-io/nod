@@ -157,6 +157,7 @@ if (process.env.WORKSPACE_CONTAINER) {
         () => {},
       );
       await assert.rejects(stat(archive), { code: 'ENOENT' });
+      await assert.rejects(stat(join(profile, 'desktop-runtime/guest.tar.gz')), { code: 'ENOENT' });
       await run(
         join(engine, 'windows-runtime/bin/docker.exe'),
         [

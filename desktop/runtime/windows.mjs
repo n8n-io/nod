@@ -242,14 +242,14 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   onComputerStart();
   if (!existing || saved.guest !== manifest.guest.sha256) {
     status({ phase: 'installing', message: 'Installing your private computer…' });
-    const archive = join(assets, manifest.guest.file);
-    const present = await stat(archive).then(
+    const placed = join(assets, manifest.guest.file);
+    const present = await stat(placed).then(
       async (file) =>
         file.size === manifest.guest.bytes &&
-        (await assetHash(archive, signal)) === manifest.guest.sha256,
+        (await assetHash(placed, signal)) === manifest.guest.sha256,
       () => false,
     );
-    if (!present) await rm(archive, { force: true });
+    if (!present) await rm(placed, { force: true });
     const space = await statfs(controlRoot);
     const required =
       manifest.guest.expandedBytes * 2 +
@@ -260,32 +260,28 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       throw new Error(
         'Otto needs more free disk space to prepare its private computer. Free space, then select Try again.',
       );
-    if (!present) {
-      if (!options.resolveDownloadUrl)
-        throw new Error(
-          'Put Otto-Runtime-win32-x64.tar.gz next to Otto-Setup-x64.exe, then run the installer again.',
-        );
-      const message = 'Downloading your private computer…';
-      status({ phase: 'downloading', message, progress: 0 });
-      const partial = `${archive}.${randomBytes(6).toString('hex')}.download`;
-      try {
+    const archive = present ? placed : join(controlRoot, 'guest.tar.gz');
+    const guest = join(controlRoot, 'guest.tar');
+    try {
+      if (!present) {
+        if (!options.resolveDownloadUrl)
+          throw new Error(
+            'Put Otto-Runtime-win32-x64.tar.gz next to Otto-Setup-x64.exe, then run the installer again.',
+          );
+        const message = 'Downloading your private computer…';
+        status({ phase: 'downloading', message, progress: 0 });
+        await rm(archive, { force: true });
         await download(
           { ...manifest.guest, url: await options.resolveDownloadUrl(manifest, signal) },
-          partial,
+          archive,
           {
             signal,
             fetch: options.fetch,
             onProgress: (progress) => status({ phase: 'downloading', message, progress }),
           },
         );
-        await rename(partial, archive);
-      } finally {
-        await rm(partial, { force: true });
+        status({ phase: 'installing', message: 'Installing your private computer…' });
       }
-      status({ phase: 'installing', message: 'Installing your private computer…' });
-    }
-    const guest = join(controlRoot, 'guest.tar');
-    try {
       let expanded = 0;
       const gunzip = createGunzip();
       gunzip.on('data', (bytes) => {
@@ -330,8 +326,9 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       await rename(temporaryState, configPath);
     } finally {
       await rm(guest, { force: true });
+      if (!present) await rm(archive, { force: true });
     }
-    await rm(archive, { force: true });
+    await rm(placed, { force: true });
   }
   status({ phase: 'starting', message: 'Starting your private computer…' });
   const runGuest = (input) =>
