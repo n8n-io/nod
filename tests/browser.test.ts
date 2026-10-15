@@ -5269,12 +5269,13 @@ for (const signingIn of [false, true])
       window.matchMedia = query => ({ matches: query === '(prefers-reduced-motion: reduce)', addEventListener() {}, removeEventListener() {} });
       window.ottoDesktop = { openExternal: async () => {} };
       const requests = [];
+      let accounts = [{ slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false }];
       const status = { mode: 'otto', switchable: true, suffix: null, keyWritable: true, managed: { state: 'enabled', email: 'alex@example.test' } };
       globalThis.fetch = async (path, options = {}) => {
         requests.push({ path, method: options.method ?? 'GET' });
         if (path === '/api/integrations/key') return Response.json(status);
         if (path === '/api/configuration') return Response.json({ integrationsReady: true });
-        if (path === '/api/apps') return Response.json([{ slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false }]);
+        if (path === '/api/apps') return Response.json(accounts);
         if (path === '/api/apps/gmail/connect') return Response.json({ url: 'https://broker.fixture.test/connect?ticket=synthetic-gmail', attempt: 'A'.repeat(43) });
         if (path === '/api/apps/setup-status') {
           const { hashes } = JSON.parse(options.body);
@@ -5299,7 +5300,11 @@ for (const signingIn of [false, true])
         await act(async () => connect.click());
         await settle();
         assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'waiting');
-        assert.equal(document.querySelectorAll('.connection-mode')[1].disabled, true);
+        const changeSetup = document.querySelector('.ob-email-summary button');
+        assert.equal(changeSetup.disabled, true);
+        await act(async () => changeSetup.click());
+        assert.equal(document.querySelectorAll('.connection-mode').length, 0);
+        assert.equal(status.mode, 'otto');
         if (${signingIn}) {
           await act(async () => document.querySelector('.app-connect-actions .button').click());
           await settle();
@@ -5309,6 +5314,9 @@ for (const signingIn of [false, true])
         await act(async () => cancel.click());
         await settle();
         assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'idle');
+        const changeAfterCancel = document.querySelector('.ob-email-summary button');
+        assert.equal(changeAfterCancel.disabled, false);
+        await act(async () => changeAfterCancel.click());
         const ownKey = document.querySelectorAll('.connection-mode')[1];
         assert.equal(ownKey.disabled, false);
         await act(async () => ownKey.click());
@@ -5319,6 +5327,27 @@ for (const signingIn of [false, true])
         assert.equal(requests.filter(item => item.path === '/api/integrations/access/start').length, ${signingIn ? 1 : 0});
         assert.equal(requests.filter(item => item.path === '/api/integrations/access/cancel').length, ${signingIn ? 1 : 0});
         assert.equal(requests.some(item => item.path === '/api/integrations/key' && item.method !== 'GET'), false);
+        const savedMode = document.querySelectorAll('.connection-mode')[0];
+        await act(async () => {
+          savedMode.focus();
+          savedMode.click();
+        });
+        assert.ok(document.activeElement === document.querySelectorAll('.connection-mode')[0], 'Returning to the saved method retains focus on its mode control');
+        accounts = [{ slug: 'gmail', name: 'Gmail', status: 'connected', connectionId: 'synthetic-gmail', accountEmail: 'alex@example.test', triggersEnabled: false }];
+        await act(async () => pageDataCache.refresh('/api/apps', true));
+        assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'connected');
+        assert.equal(document.querySelector('.connection-choice'), null);
+        for (const state of ['revoked', 'sign_in_required', 'denied', 'unavailable']) {
+          status.managed = { state, email: 'alex@example.test' };
+          await act(async () => pageDataCache.refresh('/api/integrations/key', true));
+          const recover = document.querySelector('.connection-managed > .button');
+          assert.ok(recover);
+          assert.equal(recover.disabled, state === 'unavailable');
+          assert.equal(document.querySelectorAll('.connection-mode')[1].disabled, false);
+          assert.equal(accounts[0].connectionId, 'synthetic-gmail');
+          assert.equal(requests.filter(item => item.path === '/api/integrations/access/start').length, ${signingIn ? 1 : 0});
+          assert.equal(requests.some(item => item.path === '/api/integrations/key' && item.method !== 'GET'), false);
+        }
       } finally {
         await act(async () => root.unmount());
         pageDataCache.clear();

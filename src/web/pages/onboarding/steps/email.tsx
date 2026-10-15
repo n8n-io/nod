@@ -5,6 +5,7 @@ import type { AppSetupStatus, Configuration, Connection } from '../../../../shar
 import {
   ConnectionChoice,
   connectionRoutes,
+  connectionStatusText,
   useConnectionChoice,
 } from '../../../components/connection-choice';
 import { Rise } from '../../../components/motion';
@@ -55,7 +56,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const [error, setError] = useState('');
   const [signInRequired, setSignInRequired] = useState(false);
   const [accessRenewed, setAccessRenewed] = useState(false);
-  const choice = useConnectionChoice('onboarding', () => setError(''));
+  const [setupExpanded, setSetupExpanded] = useState(false);
+  const choice = useConnectionChoice('onboarding', () => {
+    setError('');
+    setSetupExpanded(false);
+  });
   const keyStatus = choice.status;
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<string | undefined>(undefined);
@@ -201,6 +206,16 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const account = gmail.find((connection) => connection.status === 'connected');
   const connected = !!account;
   const keyNeeded = !!keyStatus && choice.mode !== keyStatus.mode;
+  const personalSetup = !!keyStatus?.switchable;
+  const compactSetup =
+    personalSetup &&
+    choice.ready &&
+    !keyNeeded &&
+    !choice.dirty &&
+    !choice.view.editing &&
+    !choice.view.error &&
+    !choice.view.notice &&
+    !choice.loadError;
   const loading = (!configuration.data && !configuration.error) || (!apps.data && !apps.error);
   const unavailable: keyof typeof unavailableReasons | undefined = loading
     ? undefined
@@ -291,7 +306,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const gmailState = connected ? 'connected' : (pending ?? 'idle');
   let status;
   if (account)
-    status = (
+    status = personalSetup ? null : (
       <p className="ob-email-done">
         {account.accountEmail ? (
           <>
@@ -386,7 +401,40 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         ]}
       />
       <Rise show={revealed >= 3} className="ob-email-card">
-        <ConnectionChoice state={choice} disabled={!!pending} className="ob-email-choice" />
+        {personalSetup ? (
+          !(compactSetup && connected) && (
+            <div className="ob-email-choice ob-email-setup">
+              {compactSetup && keyStatus && (
+                <div className="ob-email-summary">
+                  <p>
+                    <Check size={16} aria-hidden="true" />
+                    <span data-analytics-private>{connectionStatusText(keyStatus)}</span>
+                  </p>
+                  <button
+                    type="button"
+                    className="connection-link"
+                    disabled={!!pending}
+                    aria-expanded={setupExpanded}
+                    onClick={() => setSetupExpanded((value) => !value)}
+                  >
+                    {setupExpanded ? 'Hide connection setup' : 'Change connection setup'}
+                  </button>
+                </div>
+              )}
+              {(!compactSetup || setupExpanded) && (
+                <ConnectionChoice state={choice} disabled={!!pending} />
+              )}
+              {compactSetup && keyStatus && !setupExpanded && (
+                <details className="ob-email-route">
+                  <summary>How app connections work</summary>
+                  <p>{connectionRoutes[keyStatus.mode]}</p>
+                </details>
+              )}
+            </div>
+          )
+        ) : (
+          <ConnectionChoice state={choice} disabled={!!pending} className="ob-email-choice" />
+        )}
         <div className="ob-email-gmail" data-gmail={gmailState}>
           <div className="ob-email-head">
             <span className="ob-email-tile">
@@ -394,7 +442,13 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
             </span>
             <div className="ob-email-title">
               <p className="ob-email-name">Gmail</p>
-              <p className="ob-email-muted">Start with one inbox. You can add more apps later.</p>
+              {account && personalSetup ? (
+                <p className="ob-email-muted" data-analytics-private>
+                  {account.accountEmail ?? 'Signed in.'}
+                </p>
+              ) : (
+                <p className="ob-email-muted">Start with one inbox. You can add more apps later.</p>
+              )}
             </div>
             {connected ? (
               <span className="ob-email-chip">

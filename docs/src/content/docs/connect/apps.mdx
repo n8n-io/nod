@@ -13,6 +13,8 @@ Choose **Easy Connect** and sign in with an allowed Google account, or [use your
 
 Google sign-in enables Easy Connect only. It doesn't give Otto access to Gmail or another app. You connect each app separately and choose its permissions. Easy Connect accepts explicitly allowed email addresses or verified Google Workspace accounts from an allowed domain. An individual email can still be blocked. If yours isn't enabled, you can use a personal key; there is no waitlist.
 
+During onboarding, a saved connection method appears as a short summary. Choose **Change connection setup** to use another method. Once Gmail connects, continue onboarding; manage access later in **Settings → App connections**.
+
 Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
@@ -57,7 +59,7 @@ Source/server installs using their own Composio project can configure webhooks w
 
 ## Use your own Composio project
 
-Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. Otto checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project without a pairing code.
+Choose **My Composio key** during setup or in **Settings → App connections**, and paste a project key from the steps below. Otto checks the key before saving it, stores it encrypted on your installation and only shows its last four characters. App consent then uses your project.
 
 The desktop app uses OS-protected storage. A local web install uses the macOS Keychain or a private per-profile key file on Linux. Other server configurations need an operator-provided Vault key. If encrypted data already exists but its key is missing, restore the original key; Otto won't replace it. See [Configuration](/deploy/configuration/#vault).
 
