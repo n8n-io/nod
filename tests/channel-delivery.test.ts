@@ -1299,7 +1299,7 @@ async function outboxFixture(t: TestContext, max?: number) {
       },
       ...extra,
     });
-  return { pool, threadId, posts, receive, turnOf, reply, create, transport };
+  return { pool, admin, schema, threadId, posts, receive, turnOf, reply, create, transport };
 }
 
 test(
@@ -1595,6 +1595,158 @@ test(
       assert.deepEqual(posts, []);
     } finally {
       releaseGeneration();
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'interrupted send validation remains preparing and recovers without a provider attempt',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, admin, schema, posts, receive, turnOf, reply, create } = await outboxFixture(
+      t,
+      1,
+    );
+    let startValidation = () => {};
+    let releaseValidation = () => {};
+    const validationStarted = new Promise<void>((resolve) => {
+      startValidation = resolve;
+    });
+    const validationReleased = new Promise<void>((resolve) => {
+      releaseValidation = resolve;
+    });
+    const original = await create();
+    const instances = [original];
+    let draining: Promise<void> | undefined;
+    try {
+      receive('111', 'validation', 'chat-validation');
+      await original.drain();
+      const messageId = randomUUID();
+      await reply((await turnOf('validation')).turn_id, 'Prepared reply', messageId, 0);
+      const client = await pool.connect();
+      const query = client.query;
+      let held = false;
+      t.mock.method(client, 'query', (...args: unknown[]) => {
+        if (
+          held ||
+          typeof args[0] !== 'string' ||
+          !args[0].startsWith('SELECT 1 FROM messages m JOIN channel_outbox o')
+        )
+          return Reflect.apply(query, client, args);
+        held = true;
+        startValidation();
+        const interrupted = validationReleased.then(() => {
+          throw new Error('Synthetic interrupted validation');
+        });
+        const callback = args.at(-1);
+        if (typeof callback === 'function') {
+          void interrupted.catch((cause) => callback(cause));
+          return;
+        }
+        return interrupted;
+      });
+      client.release();
+      const state = async () =>
+        (
+          await admin.query(
+            `SELECT state,reason FROM ${schema}.channel_outbox WHERE message_id=$1`,
+            [messageId],
+          )
+        ).rows[0];
+      draining = original.drain();
+      await validationStarted;
+      assert.deepEqual(await state(), { state: 'preparing', reason: null });
+      assert.deepEqual(posts, []);
+      releaseValidation();
+      await draining;
+      assert.deepEqual(await state(), { state: 'preparing', reason: null });
+      await original.close();
+      const recovered = await create();
+      instances.push(recovered);
+      await recovered.drain();
+      await recovered.drain();
+      assert.deepEqual(await state(), { state: 'sent', reason: null });
+      assert.deepEqual(posts, [{ threadId: 'chat-validation', text: 'Prepared reply' }]);
+    } finally {
+      releaseValidation();
+      await draining;
+      await Promise.all(instances.map((instance) => instance.close()));
+    }
+  },
+);
+
+test(
+  'a send claim commits before a concurrent reset can archive its thread',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, admin, schema, threadId, posts, receive, turnOf, reply, create } =
+      await outboxFixture(t, 1);
+    let startCommit = () => {};
+    let releaseCommit = () => {};
+    const commitStarted = new Promise<void>((resolve) => {
+      startCommit = resolve;
+    });
+    const commitReleased = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const channels = await create();
+    const resetter = await admin.connect();
+    const resetPid = (await resetter.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    let draining: Promise<void> | undefined;
+    let resetting: Promise<unknown> | undefined;
+    try {
+      receive('111', 'commit', 'chat-commit');
+      await channels.drain();
+      const messageId = randomUUID();
+      await reply((await turnOf('commit')).turn_id, 'Prepared reply', messageId, 0);
+      const client = await pool.connect();
+      const query = client.query;
+      let sending = false;
+      t.mock.method(client, 'query', (...args: unknown[]) => {
+        if (
+          typeof args[0] === 'string' &&
+          args[0].startsWith("UPDATE channel_outbox o SET state='sending'")
+        )
+          sending = true;
+        if (args[0] !== 'COMMIT' || !sending) return Reflect.apply(query, client, args);
+        sending = false;
+        startCommit();
+        return commitReleased.then(() => Reflect.apply(query, client, args));
+      });
+      client.release();
+      draining = channels.drain();
+      await commitStarted;
+      assert.deepEqual(posts, []);
+      let resetComplete = false;
+      resetting = resetter
+        .query(`UPDATE ${schema}.threads SET archived_at=now() WHERE id=$1`, [threadId])
+        .then(() => {
+          resetComplete = true;
+        });
+      let waiting = false;
+      for (let attempt = 0; attempt < 200 && !resetComplete; attempt++) {
+        waiting = (
+          await admin.query(
+            'SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted) AS waiting',
+            [resetPid],
+          )
+        ).rows[0].waiting;
+        if (waiting) break;
+        await sleep(10);
+      }
+      assert.equal(resetComplete, false);
+      assert.equal(waiting, true);
+      releaseCommit();
+      await Promise.all([draining, resetting]);
+      assert.equal(resetComplete, true);
+      assert.deepEqual(posts, [{ threadId: 'chat-commit', text: 'Prepared reply' }]);
+      await channels.drain();
+      assert.equal(posts.length, 1);
+    } finally {
+      releaseCommit();
+      await Promise.all([draining, resetting]);
+      resetter.release();
       await channels.close();
     }
   },

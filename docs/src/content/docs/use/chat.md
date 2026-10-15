@@ -45,7 +45,9 @@ To stop Otto, select **Stop** next to the send button.
 
 Stop ends the work that's running, including background runs, and cancels queued messages and open questions. It doesn't cancel your schedules. It can't undo something that already happened, such as an email that was already sent.
 
-Otto never repeats a task on its own. If Otto restarts during a task, it marks the task as interrupted. For work in the main chat, it explains what needs checking when the model is available. Check what happened, then say "continue" if you want it to carry on.
+Otto never repeats a task on its own. If Otto restarts during a task, it marks the task as interrupted. For work in the main chat, it explains what needs checking when the model is available.
+
+If Otto may have sent or changed something, verify the result yourself or ask Otto to inspect it before continuing. Don't make a new attempt while the result is unclear.
 
 ## Choose the model
 

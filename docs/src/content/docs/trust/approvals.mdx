@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. Reads and drafts run by default, unless your words forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
+Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
 The same checker decides when Otto changes its own schedules or notification settings. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
 
@@ -26,7 +26,7 @@ Only your words carry authority. A web page or email can't argue for an action, 
 
 ## What runs directly
 
-Your explicit limits take priority over these defaults, including for reads and drafts.
+Limits in your task request or a schedule's instructions override these defaults, including for reads and drafts. Background work Otto starts uses the defaults below.
 
 | Kind of work                                      | Reads and drafts | Anything else                                 |
 | ------------------------------------------------- | ---------------- | --------------------------------------------- |

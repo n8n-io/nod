@@ -541,13 +541,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     );
   }
 
-  async function currentMessage(row: OutboxRow, claimId: string, state: 'preparing' | 'sending') {
-    const result = await pool.query(
+  async function currentMessage(
+    row: OutboxRow,
+    claimId: string,
+    state: 'preparing' | 'sending',
+    database: Pool | PoolClient = pool,
+  ) {
+    const result = await database.query(
       `SELECT 1 FROM messages m JOIN channel_outbox o ON o.message_id=m.id
        WHERE m.id=$1 AND m.owner_id=$2 AND o.claim_id=$4 AND o.state=$5
        AND m.thread_id IS NOT DISTINCT FROM $3::uuid
        AND (m.thread_id IS NULL OR EXISTS (
-         SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$2 AND th.archived_at IS NULL))`,
+         SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$2 AND th.archived_at IS NULL FOR SHARE))`,
       [row.message_id, ownerId, row.message_thread_id, claimId, state],
     );
     return Boolean(result.rowCount);
@@ -567,8 +572,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     );
     const row = result.rows[0];
     if (!row) return false;
-    const block = (reason: string, state: 'preparing' | 'sending' = 'preparing') =>
-      pool.query(
+    const block = (
+      reason: string,
+      state: 'preparing' | 'sending' = 'preparing',
+      database: Pool | PoolClient = pool,
+    ) =>
+      database.query(
         `UPDATE channel_outbox SET state='blocked',reason=$2,claim_id=NULL,updated_at=now()
          WHERE message_id=$1 AND claim_id=$3 AND state=$4`,
         [row.message_id, reason, claimId, state],
@@ -691,24 +700,32 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       await block('channel_access_changed');
       return true;
     }
-    const sending = await pool.query(
-      `UPDATE channel_outbox o SET state='sending',updated_at=now() FROM messages m
-       WHERE o.message_id=$1 AND o.claim_id=$2 AND o.state='preparing'
-         AND m.id=o.message_id AND m.owner_id=$3
-         AND m.thread_id IS NOT DISTINCT FROM $4::uuid
-         AND (m.thread_id IS NULL OR EXISTS (
-           SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))
-       RETURNING o.message_id`,
-      [row.message_id, claimId, ownerId, row.message_thread_id],
-    );
-    if (!sending.rowCount) {
-      await block('thread_changed');
+    const sending = await transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE channel_outbox o SET state='sending',updated_at=now() FROM messages m
+         WHERE o.message_id=$1 AND o.claim_id=$2 AND o.state='preparing'
+           AND m.id=o.message_id AND m.owner_id=$3
+           AND m.thread_id IS NOT DISTINCT FROM $4::uuid
+           AND (m.thread_id IS NULL OR EXISTS (
+             SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))
+         RETURNING o.message_id`,
+        [row.message_id, claimId, ownerId, row.message_thread_id],
+      );
+      if (!result.rowCount) {
+        await block('thread_changed', 'preparing', client);
+        return false;
+      }
+      if (!(await currentMessage(row, claimId, 'sending', client))) {
+        await block('thread_changed', 'sending', client);
+        return false;
+      }
+      if (closed || replacing || !permitted(row)) {
+        await block('channel_access_changed', 'sending', client);
+        return false;
+      }
       return true;
-    }
-    if (!(await currentMessage(row, claimId, 'sending'))) {
-      await block('thread_changed', 'sending');
-      return true;
-    }
+    }, pool);
+    if (!sending) return true;
     if (closed || replacing || !permitted(row)) {
       await block('channel_access_changed', 'sending');
       return true;
