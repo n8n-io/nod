@@ -8,14 +8,10 @@ import type { TurnRef } from './thread.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 
-const now = z.string().trim().min(1).max(200);
-const waits = z
-  .array(
-    z
-      .object({ who: z.string().trim().min(1).max(80), via: z.string().trim().min(1).max(40) })
-      .strict(),
-  )
-  .max(10);
+const now = z.string().trim().min(1);
+const waits = z.array(
+  z.object({ who: z.string().trim().min(1), via: z.string().trim().min(1) }).strict(),
+);
 const nextCheck = z.iso.datetime({ offset: true });
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const input = z.discriminatedUnion('action', [
@@ -23,8 +19,8 @@ const input = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('start'),
-      title: z.string().trim().min(1).max(120),
-      doneWhen: z.string().trim().min(1).max(300),
+      title: z.string().trim().min(1),
+      doneWhen: z.string().trim().min(1),
       now,
       waitingFor: waits.optional(),
       nextCheck: nextCheck.optional(),
@@ -44,7 +40,7 @@ const input = z.discriminatedUnion('action', [
       action: z.literal('finish'),
       id: z.uuid(),
       status: z.enum(['done', 'cancelled']),
-      result: z.string().trim().min(1).max(500),
+      result: z.string().trim().min(1),
     })
     .strict(),
 ]);
@@ -92,7 +88,7 @@ export function createTasks(options: { pool: Pool; ownerId: string; refresh?: ()
         `SELECT t.id,t.title,t.done_when,t.now_text,t.result,t.state,t.waiting_for,t.next_check,
            t.created_at,t.updated_at,t.closed_at,u.status AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
-             AND n.source='user' AND n.created_at>u.created_at) AS answered,
+             AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
            CASE WHEN u.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
              WHERE m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
              ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS question

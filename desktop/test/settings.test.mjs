@@ -613,9 +613,9 @@ async function runningDesktop(
   request,
   {
     allowStart = false,
+    environment = {},
     platform = 'darwin',
     packaged = false,
-    environment = () => ({}),
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
   } = {},
@@ -638,6 +638,7 @@ async function runningDesktop(
       setName() {},
       setPath: (name, path) => paths.set(name, path),
       getPath: (name) => paths.get(name) || dirname(storage.path),
+      getVersion: () => '0.0.0-test',
       requestSingleInstanceLock: () => false,
       getLoginItemSettings: () => ({ openAtLogin }),
       setLoginItemSettings: (value) => {
@@ -648,7 +649,7 @@ async function runningDesktop(
     process: {
       platform,
       argv: [],
-      env: environment(dirname(storage.path)),
+      env: typeof environment === 'function' ? environment(dirname(storage.path)) : environment,
       resourcesPath: dirname(storage.path),
     },
     ipcMain: ipc,
@@ -697,9 +698,10 @@ async function runningDesktop(
     utilityProcess: {
       fork(_file, _args, options) {
         assert.ok(allowStart, 'The healthy engine must not restart.');
+        assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
-        child.port = options.env.PORT;
         child.environment = options.env;
+        child.port = options.env.PORT;
         child.stdout = { resume() {} };
         child.stderr = new EventEmitter();
         child.kill = () => {
@@ -1076,7 +1078,7 @@ test('an engine crash retires every stale chat window before recovery opens the 
       assert.equal(new URL(url).pathname, '/api/health');
       return Response.json({ ok: true });
     },
-    { allowStart: true },
+    { allowStart: true, environment: { OTTO_FEEDBACK_URL: '' } },
   );
   f.crash();
   assert.equal((await f.prepare()).phase, 'ready');
@@ -1095,6 +1097,10 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(current.isDestroyed(), false);
   assert.equal(current.url, new URL(requests.at(-1)).origin);
   assert.equal(f.children.length, 2);
+  for (const child of f.children) {
+    assert.equal(child.environment.OTTO_FEEDBACK_URL, '');
+    assert.equal(child.environment.OTTO_FEEDBACK_ENABLED, 'false');
+  }
 });
 
 test('a pending recording drain cannot close or detach a newly opened onboarding window', async (t) => {

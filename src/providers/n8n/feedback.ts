@@ -1,18 +1,42 @@
 import type { FeedbackDelivery, FeedbackEnvelope } from '../../ports/feedback.ts';
 import type { FeedbackReceipt } from '../../shared/feedback.ts';
 
+function feedbackUrl(value: unknown) {
+  try {
+    if (
+      typeof value !== 'string' ||
+      !/^https:\/\//i.test(value) ||
+      /[\\\u0000-\u0020\u007f?#]/.test(value) ||
+      /%(?:2f|5c|2e|25)/i.test(value) ||
+      /(?:^|\/)\.{1,2}(?:\/|$)/.test(value) ||
+      /^https:\/\/[^/]*@/i.test(value)
+    )
+      throw new Error();
+    const url = new URL(value);
+    decodeURIComponent(url.pathname);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+      throw new Error();
+    return url;
+  } catch {
+    throw new Error('Feedback URLs must use HTTPS without credentials, queries or fragments.');
+  }
+}
+
 export function createN8nFeedback(options: {
+  enabled?: boolean;
   url?: string;
   token?: string;
+  receiptUrlPrefix?: string;
+  recipient?: string;
   request?: typeof fetch;
 }): FeedbackDelivery {
   const request = options.request ?? fetch;
-  const endpoint = options.url ? new URL(options.url) : undefined;
-  if (
-    endpoint &&
-    (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.hash)
-  )
-    throw new Error('Feedback requires an HTTPS intake endpoint.');
+  const endpoint = options.enabled !== false && options.url ? feedbackUrl(options.url) : undefined;
+  const receiptPrefix =
+    endpoint && options.receiptUrlPrefix ? feedbackUrl(options.receiptUrlPrefix) : undefined;
+  if (receiptPrefix && (receiptPrefix.pathname === '/' || !receiptPrefix.pathname.endsWith('/')))
+    throw new Error('The feedback receipt prefix must name an issue collection ending in /.');
+  const receiptPath = receiptPrefix?.pathname;
   async function send(
     input: FeedbackEnvelope | { action: 'status'; submissionId: string; payloadHash: string },
   ): Promise<FeedbackReceipt> {
@@ -58,14 +82,14 @@ export function createN8nFeedback(options: {
         return unknown;
       let issueUrl: string | undefined;
       if (receipt.issueUrl !== undefined) {
-        const url = new URL(receipt.issueUrl);
+        const url = feedbackUrl(receipt.issueUrl);
         if (
-          url.origin !== 'https://linear.app' ||
-          url.username ||
-          url.password ||
-          !/^\/n8n\/issue\/LAB-\d+(?:\/[^\s]*)?$/.test(url.pathname) ||
-          url.search ||
-          url.hash
+          receiptPrefix
+            ? url.origin !== receiptPrefix.origin ||
+              !url.pathname.startsWith(receiptPath!) ||
+              url.pathname.length <= receiptPath!.length
+            : url.origin !== 'https://linear.app' ||
+              !/^\/n8n\/issue\/LAB-\d+(?:\/[^\s]*)?$/.test(url.pathname)
         )
           return unknown;
         issueUrl = url.href;
@@ -87,6 +111,7 @@ export function createN8nFeedback(options: {
   }
   return {
     configured: !!endpoint,
+    recipient: endpoint ? (options.recipient ?? endpoint.host) : null,
     submit: send,
     status: (submissionId, payloadHash) => send({ action: 'status', submissionId, payloadHash }),
   };

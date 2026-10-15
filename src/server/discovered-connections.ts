@@ -15,6 +15,13 @@ import { transaction } from './transaction.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 import type { TurnRef } from './thread.ts';
 import { isIntegrationFile } from './integration-files.ts';
+import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
+import {
+  captureConnection,
+  serviceFailureReason,
+  withServiceAnalytics,
+  type AnalyticsConnection,
+} from './analytics-connections.ts';
 
 const remoteSpec = String.raw`(?:https|git\+https):\/\/[^\s]+`;
 const cliSourceSchema = z.union([
@@ -53,6 +60,7 @@ const cliSourceSchema = z.union([
     })
     .strict(),
 ]);
+const envName = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}(?:TOKEN|KEY|SECRET|PASSWORD|_ID|_SID)$/);
 const pathSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('http'),
@@ -74,7 +82,10 @@ const pathSchema = z.discriminatedUnion('kind', [
     kind: z.literal('cli'),
     command: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
     auth: z.literal('env').default('env'),
-    envName: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)$/),
+    env: z
+      .array(envName)
+      .min(1)
+      .refine((names) => new Set(names).size === names.length),
     source: cliSourceSchema,
   }),
 ]);
@@ -191,6 +202,8 @@ export async function createDiscoveredConnections(
   pool: Pool,
   options: {
     ownerId: string;
+    analytics?: CaptureAnalytics;
+    analyticsConsent?: () => { enabled: boolean; revision?: string };
     baseUrl: string;
     grantVault: Awaited<ReturnType<typeof createAppGrantVault>>;
     transport: DiscoveredTransport;
@@ -199,8 +212,7 @@ export async function createDiscoveredConnections(
       threadId: string,
       cli: ConnectedCli,
       args: string[],
-      envName: string,
-      token: string,
+      environment: Record<string, string>,
       timeoutSeconds?: number,
       signal?: AbortSignal,
     ) => Promise<{ exitCode: number; output: string }>;
@@ -209,6 +221,26 @@ export async function createDiscoveredConnections(
   },
 ) {
   const owner = options.ownerId;
+  function connection(path: AccessPath): AnalyticsConnection {
+    return {
+      connection_method: path.kind,
+      ...(path.kind === 'cli' ? {} : { endpoint: path.endpoint }),
+      ...(options.analyticsConsent
+        ? { consentRevision: options.analyticsConsent().revision ?? 'disabled' }
+        : {}),
+    };
+  }
+  function track(
+    row: Pick<ProposalRow, 'paths'>,
+    status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
+    failureReason?: Extract<
+      AnalyticsEvent,
+      { event: 'otto_connection_changed' }
+    >['properties']['failure_reason'],
+  ) {
+    for (const path of row.paths)
+      captureConnection(options.analytics, connection(path), status, failureReason);
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS discovered_connections (
       id uuid PRIMARY KEY,owner_id text NOT NULL,service text NOT NULL,name text NOT NULL,
@@ -230,14 +262,16 @@ export async function createDiscoveredConnections(
       ADD COLUMN IF NOT EXISTS link_hash text, DROP COLUMN IF EXISTS thread_id,
       ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
   `);
-  await transaction(async (recovery) => {
-    const interrupted = await recovery.query<{ id: string }>(
+  const interrupted = await transaction(async (recovery) => {
+    const interrupted = await recovery.query<ProposalRow>(
       `UPDATE discovered_connection_proposals SET oauth_status='failed',oauth_state_hash=NULL
-       WHERE owner_id=$1 AND oauth_status='completing' RETURNING id`,
+       WHERE owner_id=$1 AND oauth_status='completing' RETURNING *`,
       [owner],
     );
     for (const row of interrupted.rows) await options.grantVault.remove(row.id, recovery);
+    return interrupted.rows;
   }, pool);
+  for (const row of interrupted) track(row, 'failed', 'unavailable');
   async function account(id: string) {
     const result = await pool.query<AccountRow>(
       'SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2',
@@ -302,6 +336,11 @@ export async function createDiscoveredConnections(
       )
     )
       throw error('A client ID needs an OAuth access path.');
+    if (
+      parsed.paths.length > 1 &&
+      parsed.paths.some((path) => path.kind === 'cli' && path.env.length > 1)
+    )
+      throw error('A CLI with several settings needs its own connection.');
     const setupUrl = parsed.setupUrl
       ? (await options.transport.validateEndpoint(parsed.setupUrl)).replace(/\/$/, '')
       : null;
@@ -448,6 +487,7 @@ export async function createDiscoveredConnections(
       await options.grantVault.put(idToSave, secret, client);
       if (pending.oauth_state_hash) await options.grantVault.remove(pending.id, client);
     }, pool);
+    track(pending, 'connected');
     options.refresh?.();
     const continued = pending.turn_id
       ? await options.resumeConnection?.(pending.turn_id, pending.name).catch(() => false)
@@ -455,15 +495,29 @@ export async function createDiscoveredConnections(
     return { ok: true, continued: Boolean(continued) };
   }
   async function complete(id: string, input: unknown) {
-    const { token, accountName } = z
+    const { token: entered, accountName } = z
       .object({
-        token: z.string().trim().min(8).max(8192),
+        token: z.union([z.string().trim().min(8), z.record(envName, z.string().trim().min(8))]),
         accountName: z.string().trim().min(1).max(200),
       })
       .strict()
       .parse(input);
     const pending = await proposal(id);
     if (pending.paths[0]?.auth === 'oauth') throw error('Use the service sign-in link.');
+    const names = pending.paths.find((path) => path.kind === 'cli')?.env ?? [];
+    if (
+      typeof entered === 'object'
+        ? !names.length || Object.keys(entered).sort().join() !== [...names].sort().join()
+        : names.length > 1
+    )
+      throw error('Enter a value for each setting.');
+    const token =
+      typeof entered === 'string'
+        ? entered
+        : names.length === 1
+          ? entered[names[0]]
+          : JSON.stringify(entered);
+    track(pending, 'started');
     for (const path of pending.paths) {
       try {
         if (path.kind === 'mcp') {
@@ -479,10 +533,16 @@ export async function createDiscoveredConnections(
           if (response.status < 200 || response.status >= 300) throw new Error();
         }
       } catch {
+        track(pending, 'failed', 'verification_failed');
         throw error(`The ${path.kind.toUpperCase()} access path could not be verified.`, 409);
       }
     }
-    return save(pending, accountName, token);
+    try {
+      return await save(pending, accountName, token);
+    } catch (error) {
+      track(pending, 'failed', 'unknown');
+      throw error;
+    }
   }
   function callbackUrl() {
     const callback = new URL('/api/apps/callback', options.baseUrl);
@@ -496,55 +556,70 @@ export async function createDiscoveredConnections(
       })
       .strict()
       .parse(input);
-    return transaction(async (client) => {
-      const pending = await proposal(id, client, true);
-      const path = pending.paths[0];
-      if (path?.kind !== 'mcp' || path.auth !== 'oauth')
-        throw error('This connection uses a token.');
-      if (pending.oauth_status === 'connected') throw error('This app is already connected.', 409);
-      if (pending.oauth_status === 'completing')
-        throw error('Sign-in is finishing. Wait a moment.', 409);
-      if (pending.oauth_state_hash) {
-        const saved = JSON.parse((await options.grantVault.read(pending.id, client)).value);
-        if (typeof saved.url !== 'string')
-          throw error('Continue the sign-in already open in your browser.', 409);
-        return { url: saved.url };
-      }
-      if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
-      const state = randomBytes(32).toString('base64url');
-      let started: Awaited<ReturnType<DiscoveredOAuth['begin']>>;
-      try {
-        started = await options.oauth.begin(
-          path.endpoint,
-          callbackUrl(),
-          state,
-          path.scope,
-          clientId,
-        );
-      } catch {
-        throw error('The service sign-in could not start. Check its access method.', 502);
-      }
-      const updated = await client.query(
-        `UPDATE discovered_connection_proposals
+    let attempt: ProposalRow | undefined;
+    let authorizationFailed = false;
+    try {
+      const result = await transaction(async (client) => {
+        const pending = await proposal(id, client, true);
+        const path = pending.paths[0];
+        if (path?.kind !== 'mcp' || path.auth !== 'oauth')
+          throw error('This connection uses a token.');
+        if (pending.oauth_status === 'connected')
+          throw error('This app is already connected.', 409);
+        if (pending.oauth_status === 'completing')
+          throw error('Sign-in is finishing. Wait a moment.', 409);
+        if (pending.oauth_state_hash) {
+          const saved = JSON.parse((await options.grantVault.read(pending.id, client)).value);
+          if (typeof saved.url !== 'string')
+            throw error('Continue the sign-in already open in your browser.', 409);
+          return { url: saved.url };
+        }
+        if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
+        attempt = pending;
+        const state = randomBytes(32).toString('base64url');
+        let started: Awaited<ReturnType<DiscoveredOAuth['begin']>>;
+        try {
+          started = await options.oauth.begin(
+            path.endpoint,
+            callbackUrl(),
+            state,
+            path.scope,
+            clientId,
+          );
+        } catch {
+          authorizationFailed = true;
+          throw error('The service sign-in could not start. Check its access method.', 502);
+        }
+        const updated = await client.query(
+          `UPDATE discovered_connection_proposals
          SET account_name=$3,oauth_state_hash=$4,oauth_status='pending',link_hash=$5
          WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
-        [
+          [
+            pending.id,
+            owner,
+            pending.name,
+            createHash('sha256').update(state).digest('hex'),
+            createHash('sha256').update(started.url).digest('hex'),
+          ],
+        );
+        if (!updated.rowCount) throw error('This connection request expired.', 409);
+        await options.grantVault.put(
           pending.id,
-          owner,
-          pending.name,
-          createHash('sha256').update(state).digest('hex'),
-          createHash('sha256').update(started.url).digest('hex'),
-        ],
-      );
-      if (!updated.rowCount) throw error('This connection request expired.', 409);
-      await options.grantVault.put(
-        pending.id,
-        JSON.stringify({ state: started.saved, url: started.url }),
-        client,
-        new Date(Date.now() + 15 * 60_000),
-      );
-      return { url: started.url };
-    }, pool);
+          JSON.stringify({ state: started.saved, url: started.url }),
+          client,
+          new Date(Date.now() + 15 * 60_000),
+        );
+        return { url: started.url };
+      }, pool);
+      if (attempt) track(attempt, 'started');
+      return result;
+    } catch (error) {
+      if (attempt) {
+        track(attempt, 'started');
+        track(attempt, 'failed', authorizationFailed ? 'authorization_failed' : 'unknown');
+      }
+      throw error;
+    }
   }
   async function completeOAuth(input: unknown) {
     const parsed = z
@@ -565,15 +640,24 @@ export async function createDiscoveredConnections(
       )
     ).rows[0];
     if (!pending) return undefined;
-    async function failed(outcome: 'cancelled' | 'failed') {
-      await transaction(async (client) => {
+    async function failed(
+      outcome: 'cancelled' | 'failed',
+      reason:
+        | 'authorization_failed'
+        | 'verification_failed'
+        | 'invalid_configuration'
+        | 'unknown' = 'authorization_failed',
+    ) {
+      const changed = await transaction(async (client) => {
         const changed = await client.query(
           `UPDATE discovered_connection_proposals SET oauth_status=$4,oauth_state_hash=NULL
            WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3 AND oauth_status='completing' RETURNING id`,
           [pending.id, owner, hash, outcome],
         );
         if (changed.rowCount) await options.grantVault.remove(pending.id, client);
+        return Boolean(changed.rowCount);
       }, pool);
+      if (changed) track(pending, 'failed', outcome === 'cancelled' ? 'cancelled' : reason);
       return {
         outcome,
         service: pending.service,
@@ -582,7 +666,10 @@ export async function createDiscoveredConnections(
     }
     if (parsed.error || !parsed.code) return failed('cancelled');
     const path = pending.paths[0];
-    if (path?.kind !== 'mcp' || path.auth !== 'oauth') return failed('failed');
+    if (path?.kind !== 'mcp' || path.auth !== 'oauth')
+      return failed('failed', 'invalid_configuration');
+    let failureReason: 'authorization_failed' | 'verification_failed' | 'unknown' =
+      'authorization_failed';
     try {
       const grant = JSON.parse((await options.grantVault.read(pending.id)).value);
       const saved = (grant.state ?? grant) as DiscoveredOAuthState;
@@ -599,8 +686,10 @@ export async function createDiscoveredConnections(
       const connected = await options.oauth.finish(path.endpoint, saved, parsed.code);
       const token = connected.tokens?.access_token;
       if (!token) throw new Error();
+      failureReason = 'verification_failed';
       if (!(await options.transport.listTools(path.endpoint, headers(path, token))).length)
         throw new Error();
+      failureReason = 'unknown';
       const result = await save(
         pending,
         pending.account_name ?? 'Account',
@@ -612,7 +701,7 @@ export async function createDiscoveredConnections(
         returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
       };
     } catch {
-      return failed('failed');
+      return failed('failed', failureReason);
     }
   }
   const refreshes = new Map<
@@ -644,7 +733,7 @@ export async function createDiscoveredConnections(
     const saved = JSON.parse(secret) as DiscoveredOAuthState;
     if (!saved.tokens?.access_token) {
       await signInRequired(row.id, true);
-      throw error('Connect this account again.', 409);
+      throw Object.assign(error('Connect this account again.', 409), { reason: 'authentication' });
     }
     if (!saved.expiresAt || saved.expiresAt > Date.now() + 60_000) return saved.tokens.access_token;
     let current = refreshes.get(row.id);
@@ -701,20 +790,33 @@ export async function createDiscoveredConnections(
       signal?.addEventListener('abort', abort, { once: true });
       refresh.promise.then(
         (value) => finish(() => resolve(value)),
-        () => finish(() => reject(error('Connect this account again.', 409))),
+        (cause: unknown) =>
+          finish(() =>
+            reject(
+              Object.assign(error('Connect this account again.', 409), {
+                reason:
+                  cause instanceof DiscoveredSignInRequired
+                    ? 'authentication'
+                    : serviceFailureReason(cause),
+              }),
+            ),
+          ),
       );
       if (signal?.aborted) abort();
     });
   }
   async function disconnect(connectionId: string, service: string) {
-    await transaction(async (client) => {
-      const result = await client.query(
-        'DELETE FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3',
+    const removed = await transaction(async (client) => {
+      const result = await client.query<AccountRow>(
+        'DELETE FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3 RETURNING *',
         [z.uuid().parse(connectionId), owner, service],
       );
       if (!result.rowCount) throw error('This connected account is unavailable.', 404);
       await options.grantVault.remove(connectionId, client);
+      return result.rows[0]!;
     }, pool);
+    for (const path of removed.paths)
+      captureConnection(options.analytics, connection(path), 'disconnected');
     options.refresh?.();
     return { ok: true };
   }
@@ -731,12 +833,12 @@ export async function createDiscoveredConnections(
       ...(row.reconnect_required ? { connectionId: row.id } : {}),
       paths: row.paths.map((path) => {
         if (path.kind === 'cli') {
-          if (!path.source) throw error('Ask Otto to set up this CLI again.', 409);
+          if (!path.source || !path.env) throw error('Ask Otto to set up this CLI again.', 409);
           return {
             kind: path.kind,
             command: path.command,
             auth: path.auth,
-            envName: path.envName,
+            env: path.env,
             source: path.source,
           };
         }
@@ -832,71 +934,98 @@ export async function createDiscoveredConnections(
     signal?: AbortSignal,
   ) {
     const { row, path } = await selected(args);
-    signal?.throwIfAborted();
-    const token = await tokenFor(row, path, signal);
-    const safeResult = (value: unknown) => redact(value, token);
-    const failed = (message: string, cause: unknown) => {
-      signal?.throwIfAborted();
-      return error(
-        `${message}: ${String(redact(cause instanceof Error ? cause.message : String(cause), token))}`,
-        502,
-      );
+    let token: string | undefined;
+    const secrets: string[] = [];
+    const hide = (value: unknown) =>
+      secrets.reduce((result, secret) => redact(result, secret), value);
+    const succeeded = (value: unknown) => {
+      if (!value || typeof value !== 'object') return true;
+      if (action === 'CONNECTED_HTTP' && 'status' in value)
+        return typeof value.status === 'number' && value.status >= 200 && value.status < 300;
+      if (action === 'CONNECTED_CLI' && 'exitCode' in value) return value.exitCode === 0;
+      return !('isError' in value && value.isError === true);
     };
-    if (action === 'CONNECTED_HTTP') {
-      if (path.kind !== 'http') throw error('Choose an HTTP access path.');
-      const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);
-      const url = target(path, z.string().parse(args.path));
-      try {
-        return safeResult(
-          await options.transport.http(
-            url,
-            headers(path, token),
-            method,
-            method === 'GET' ? undefined : args.body,
-            signal,
-          ),
-        );
-      } catch (cause) {
-        throw failed('The connected API request failed', cause);
-      }
-    }
-    if (action === 'CONNECTED_CLI') {
-      if (path.kind !== 'cli') throw error('Choose a CLI access path.');
-      if (!turn || !options.runCli) throw error('CLI connections are unavailable.', 503);
-      if (!path.source)
-        throw error('Propose this CLI again with its install source and connectionId.', 409);
-      const argv = z.array(z.string().min(1).max(1000)).min(1).max(32).parse(args.argv);
-      try {
-        const result = await options.runCli(
-          turn.threadId,
-          { id: path.id, command: path.command, source: path.source },
-          argv,
-          path.envName,
-          token,
-          z
-            .number()
-            .int()
-            .min(1)
-            .max(120)
-            .parse(args.timeoutSeconds ?? 30),
-          signal,
-        );
-        return safeResult(result);
-      } catch (cause) {
-        throw failed('The connected CLI command failed', cause);
-      }
-    }
-    if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
-      throw error('Choose an MCP access path.');
-    const name = z.string().min(1).max(150).parse(args.tool);
-    const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
     try {
-      return safeResult(
-        await options.transport.callTool(path.endpoint, headers(path, token), name, input, signal),
+      return await withServiceAnalytics(
+        options.analytics,
+        connection(path),
+        async () => {
+          signal?.throwIfAborted();
+          token = await tokenFor(row, path, signal);
+          secrets.push(token);
+          const environment =
+            path.kind !== 'cli' || !path.env
+              ? {}
+              : path.env.length > 1
+                ? z.record(envName, z.string()).parse(JSON.parse(token))
+                : { [path.env[0]]: token };
+          secrets.push(...Object.values(environment));
+          let result: unknown;
+          if (action === 'CONNECTED_HTTP') {
+            if (path.kind !== 'http') throw error('Choose an HTTP access path.');
+            const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);
+            const url = target(path, z.string().parse(args.path));
+            result = await options.transport.http(
+              url,
+              headers(path, token),
+              method,
+              method === 'GET' ? undefined : args.body,
+              signal,
+            );
+          } else if (action === 'CONNECTED_CLI') {
+            if (path.kind !== 'cli') throw error('Choose a CLI access path.');
+            if (!turn || !options.runCli) throw error('CLI connections are unavailable.', 503);
+            if (!path.source || !path.env)
+              throw error('Propose this CLI again with its install source and connectionId.', 409);
+            const argv = z.array(z.string().min(1)).min(1).parse(args.argv);
+            result = await options.runCli(
+              turn.threadId,
+              { id: path.id, command: path.command, source: path.source },
+              argv,
+              environment,
+              z.number().int().min(1).optional().parse(args.timeoutSeconds),
+              signal,
+            );
+          } else {
+            if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
+              throw error('Choose an MCP access path.');
+            const name = z.string().min(1).max(150).parse(args.tool);
+            const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
+            result = await options.transport.callTool(
+              path.endpoint,
+              headers(path, token),
+              name,
+              input,
+              signal,
+            );
+          }
+          return hide(result);
+        },
+        signal,
+        succeeded,
       );
     } catch (cause) {
-      throw failed('The connected MCP request failed', cause);
+      signal?.throwIfAborted();
+      if (!token || cause instanceof DiscoveredConnectionError || cause instanceof z.ZodError)
+        throw cause;
+      const message =
+        path.kind === 'http'
+          ? 'The connected API request failed'
+          : path.kind === 'cli'
+            ? 'The connected CLI command failed'
+            : 'The connected MCP request failed';
+      throw error(
+        `${message}: ${String(hide(cause instanceof Error ? cause.message : String(cause)))}`,
+        502,
+      );
     }
+  }
+  async function analyticsConnections(): Promise<AnalyticsConnection[]> {
+    const rows = await pool.query<AccountRow>(
+      'SELECT paths FROM discovered_connections WHERE owner_id=$1 AND reconnect_required=false',
+      [owner],
+    );
+    return rows.rows.flatMap((row) => row.paths.map(connection));
   }
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
@@ -922,7 +1051,7 @@ export async function createDiscoveredConnections(
                 kind: path.kind,
                 command: path.command,
                 auth: path.auth,
-                envName: path.envName,
+                env: path.env,
                 source: path.source,
               }
             : {
@@ -952,6 +1081,7 @@ export async function createDiscoveredConnections(
     );
   }
   return {
+    analyticsConnections,
     list,
     setupServices,
     propose,

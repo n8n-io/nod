@@ -245,9 +245,6 @@ export function SetupActions({
     setError('');
     setAccessRenewed(false);
     const deadline = Date.now() + 10 * 60_000;
-    let pairingConfirmed = false;
-    let pairingCode: string | undefined;
-    const pollDelay = () => (pairingCode && !pairingConfirmed ? 1000 : 5000);
     const fail = (message: string) => {
       if (!current()) return;
       controller.abort();
@@ -277,7 +274,6 @@ export function SetupActions({
             : value,
         );
         if (app.pairingConfirmed === true) {
-          pairingConfirmed = true;
           setSignIn((value) =>
             current() && value?.url === href && !value.pairingConfirmed
               ? { ...value, pairingConfirmed: true }
@@ -291,7 +287,7 @@ export function SetupActions({
         fail('The sign-in link expired. Ask Otto to connect again.');
         return;
       }
-      timer.current = window.setTimeout(() => void check(), pollDelay());
+      timer.current = window.setTimeout(() => void check(), 5000);
     };
     try {
       const result = await readAppLinks([href], controller.signal, href);
@@ -303,10 +299,8 @@ export function SetupActions({
         return;
       }
       const app = result.apps.get(href);
-      if (!app || (app.pairingCode !== undefined && !/^\d{3}-\d{3}$/.test(app.pairingCode)))
-        throw new Error('The sign-in link is unavailable.');
-      pairingConfirmed = app.pairingConfirmed === true;
-      pairingCode = app.pairingCode;
+      if (!app) throw new Error('The sign-in link is unavailable.');
+      const pairingConfirmed = app.pairingConfirmed === true;
       if (pairingConfirmed) {
         popup?.close();
         opened.current.add(href);
@@ -316,14 +310,13 @@ export function SetupActions({
         name: app.name,
         logoUrl: app.logoUrl,
         url: href,
-        code: app.pairingCode,
         opened: opened.current.has(href),
         reopened: opened.current.has(href),
         pairingConfirmed,
         signInRequired: app.signInRequired === true,
       };
       flushSync(() => setSignIn(pending));
-      timer.current = window.setTimeout(() => void check(), pollDelay());
+      timer.current = window.setTimeout(() => void check(), 5000);
       if (pending.signInRequired) popup?.close();
       else if (!pending.opened) {
         if (external) {

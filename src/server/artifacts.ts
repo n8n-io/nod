@@ -5,6 +5,7 @@ import { basename, extname, join, posix } from 'node:path';
 import { pool } from './db.ts';
 import { dataRoot, ownerId } from './config.ts';
 import type { Artifact } from '../shared/contracts.ts';
+import { fileBytes, fileName } from '../shared/files.ts';
 import type { MessagingAttachment } from '../ports/messaging.ts';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
@@ -38,7 +39,6 @@ const mimeTypes: Record<string, string> = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
-export const maxFileSize = 15 * 1024 * 1024;
 export function artifactView(row: Record<string, any>): Artifact {
   return {
     id: row.id,
@@ -78,15 +78,18 @@ export function createArtifactService(options: {
     throw new Error('Private file storage is unavailable.');
   const location = (id: string) =>
     options.localRoot ? join(options.localRoot, 'artifacts', id) : `object:artifacts/${id}`;
-  async function readRow(row: Record<string, any>) {
+  function checkRow(row: Record<string, any>) {
     z.uuid().parse(row.id);
     if (
       row.storage_path !== location(row.id) ||
       !Number.isInteger(row.size) ||
       row.size < 1 ||
-      row.size > maxFileSize
+      row.size > fileBytes
     )
       throw new Error('An attachment is unavailable.');
+  }
+  async function readRow(row: Record<string, any>) {
+    checkRow(row);
     const object = options.store
       ? await options.store.read(`artifacts/${row.id}`, row.size)
       : { bytes: await readLocal(location(row.id), row.size) };
@@ -112,10 +115,11 @@ export function createArtifactService(options: {
     threadId?: string,
     database: Pick<PoolClient, 'query'> = options.database,
   ): Promise<Artifact> {
-    if (!bytes.length || bytes.length > maxFileSize)
-      throw Object.assign(new Error('Files must be between 1 byte and 15 MB.'), {
-        statusCode: 400,
-      });
+    if (!bytes.length || bytes.length > fileBytes)
+      throw Object.assign(
+        new Error(`Files must be between 1 byte and ${fileBytes / 1024 / 1024} MB.`),
+        { statusCode: 400 },
+      );
     if (
       threadId &&
       !(
@@ -136,10 +140,7 @@ export function createArtifactService(options: {
       await mkdir(join(options.localRoot, 'artifacts'), { recursive: true, mode: 0o700 });
       await writeFile(location(id), bytes, { mode: 0o600, flag: 'wx' });
     }
-    const safeName =
-      basename(name)
-        .replace(/[\r\n\x00-\x1f]/g, '')
-        .slice(0, 160) || 'file';
+    const safeName = fileName(basename(name).replace(/[\r\n\x00-\x1f]/g, '')) || 'file';
     try {
       const result = await database.query(
         'INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
@@ -173,7 +174,7 @@ export function createArtifactService(options: {
     if (!actual.startsWith(base + '/'))
       throw new Error('Only files inside this workspace can be published.');
     return storeArtifact(
-      Buffer.from(await read(threadId, posix.relative(base, actual), maxFileSize, 'publication')),
+      Buffer.from(await read(threadId, posix.relative(base, actual), fileBytes, 'publication')),
       name || posix.basename(actual),
       mimeTypes[extname(actual).toLowerCase()] || 'application/octet-stream',
       threadId,
@@ -185,7 +186,7 @@ export function createArtifactService(options: {
     ids: string[],
   ): Promise<MessagingAttachment[]> {
     z.uuid().parse(threadId);
-    z.array(z.uuid()).min(1).max(10).parse(ids);
+    z.array(z.uuid()).min(1).parse(ids);
     const unique = [...new Set(ids)];
     const rows = (
       await options.database.query(
@@ -194,15 +195,16 @@ export function createArtifactService(options: {
       )
     ).rows;
     if (rows.length !== unique.length) throw new Error('An attachment is unavailable.');
-    const total = rows.reduce((sum, row) => sum + Number(row.size), 0);
-    if (!Number.isSafeInteger(total) || total < 1 || total > maxFileSize)
-      throw new Error('Attachments exceed the delivery limit.');
-    const result: MessagingAttachment[] = [];
-    for (const id of unique) {
+    return unique.map((id) => {
       const row = rows.find((item) => item.id === id)!;
-      result.push({ name: row.name, mimeType: row.mime_type, bytes: await readRow(row) });
-    }
-    return result;
+      checkRow(row);
+      return {
+        name: row.name,
+        mimeType: row.mime_type,
+        size: row.size,
+        read: () => readRow(row),
+      };
+    });
   }
   return { storeArtifact, publishArtifact, readArtifact, readThreadArtifacts };
 }

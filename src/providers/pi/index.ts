@@ -71,6 +71,7 @@ const webAccess = {
   toolActivation: 'eager',
   workflow: 'none',
   githubClone: { enabled: false },
+  githubPrIssue: { enabled: false },
   video: { enabled: false },
   allowBrowserCookies: false,
 };
@@ -155,7 +156,9 @@ export function createPiAgent(options: {
             ),
         };
       }
-      const directory = resolve(options.sessionRoot, threadIdentity(input.threadId));
+      const sessionId = input.sessionId;
+      const ephemeral = input.ephemeral === true;
+      const directory = resolve(options.sessionRoot, threadIdentity(sessionId));
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const connection = access ? await createPiModelRuntime(access) : undefined;
       const runtime = connection
@@ -190,16 +193,16 @@ export function createPiAgent(options: {
             }
           : selectedModel;
       const durable =
-        options.objectStore && !input.background
+        options.objectStore && !ephemeral
           ? await createPiCheckpoint({
               store: options.objectStore,
-              threadId: input.threadId,
+              threadId: sessionId,
               directory,
             })
           : undefined;
       const manager =
         durable?.manager ??
-        (input.background ? SessionManager.inMemory(directory) : openLocalSession(directory));
+        (ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory));
       closeInterruptedCalls(manager);
       const completedEvents: AgentEvent[] = [];
       const checkpoint = async () => {
@@ -365,7 +368,8 @@ export function createPiAgent(options: {
           result?.action !== 'end' &&
           ['stop', 'toolUse'].includes(turn.message.stopReason)
         )
-          for (const text of await input.nextMessages()) await session.steer(text);
+          for (const message of await input.nextMessages())
+            await session.steer(message.text, message.images);
         return result ?? undefined;
       };
       if (durable) {
@@ -483,11 +487,8 @@ export function createPiAgent(options: {
       active.set(session, dispose);
       return {
         resumed,
+        readsImages: model.input.includes('image'),
         async prompt(text, images) {
-          if (images.length && !model.input.includes('image'))
-            throw new Error(
-              'The selected model cannot read images. Choose a model with image support.',
-            );
           try {
             await session.prompt(text, { images, expandPromptTemplates: false });
           } finally {

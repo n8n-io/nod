@@ -23,12 +23,16 @@ const namedKeys = new Set([
   'PageDown',
 ]);
 const buttons = ['left', 'middle', 'right'] as const;
-const clamp = (value: number) => Math.max(-2000, Math.min(2000, Math.round(value)));
+const batchBytes = 64 * 1024;
+const textPiece = 2000;
+const encoder = new TextEncoder();
 
 export function BrowserHandoff({
+  turnId,
   onDone,
   paused = false,
 }: {
+  turnId: string;
   onDone: () => Promise<void>;
   paused?: boolean;
 }) {
@@ -59,9 +63,17 @@ export function BrowserHandoff({
   function flush(): Promise<void> {
     sending.current ??= (async () => {
       while (pending.current.length) {
-        const inputs = pending.current.splice(0, 100);
+        const inputs: BrowserHandoffInput[] = [];
+        let bytes = 0;
+        for (const input of pending.current) {
+          const size = encoder.encode(JSON.stringify(input)).length;
+          if (inputs.length && bytes + size > batchBytes) break;
+          inputs.push(input);
+          bytes += size;
+        }
+        pending.current.splice(0, inputs.length);
         try {
-          await post('/api/browser-handoff', { inputs });
+          await post('/api/browser-handoff', { turnId, inputs });
           setError('');
         } catch (reason) {
           setError(errorMessage(reason));
@@ -91,13 +103,13 @@ export function BrowserHandoff({
     else if (last?.type === 'wheel' && input.type === 'wheel')
       queued[queued.length - 1] = {
         type: 'wheel',
-        deltaX: clamp(last.deltaX + input.deltaX),
-        deltaY: clamp(last.deltaY + input.deltaY),
+        deltaX: last.deltaX + input.deltaX,
+        deltaY: last.deltaY + input.deltaY,
       };
     else if (
       last?.type === 'text' &&
       input.type === 'text' &&
-      last.text.length + input.text.length <= 2000
+      last.text.length + input.text.length <= textPiece
     )
       queued[queued.length - 1] = { type: 'text', text: last.text + input.text };
     else queued.push(input);
@@ -167,15 +179,14 @@ export function BrowserHandoff({
       .getData('text/plain')
       .replace(/\r\n?/g, '\n')
       .replace(/\n+$/, '');
-    for (let start = 0; start < text.length; start += 2000)
-      queue({ type: 'text', text: text.slice(start, start + 2000) });
+    for (const piece of text.match(/[\s\S]{1,2000}/gu) ?? []) queue({ type: 'text', text: piece });
   }
 
   async function navigate(action: 'back' | 'reload') {
     setLoading(action);
     try {
       await flush();
-      await post('/api/browser-handoff/navigate', { action });
+      await post('/api/browser-handoff/navigate', { turnId, action });
       setError('');
     } catch (reason) {
       setError(errorMessage(reason));
@@ -218,7 +229,7 @@ export function BrowserHandoff({
     setShown(false);
     setFrame('');
     void apiStream(
-      `/api/browser-handoff/stream?view=${view.current}-${attempt}`,
+      `/api/browser-handoff/stream?turnId=${encodeURIComponent(turnId)}&view=${view.current}-${attempt}`,
       { signal: controller.signal },
       (body, signal) => {
         activeSignal = signal;
@@ -267,7 +278,7 @@ export function BrowserHandoff({
       controller.abort();
       release();
     };
-  }, [attempt, closed, expanded, unavailable]);
+  }, [turnId, attempt, closed, expanded, unavailable]);
 
   useEffect(() => {
     if (closed || live || failures >= 3) return;
@@ -289,8 +300,8 @@ export function BrowserHandoff({
       const scale = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1;
       queue({
         type: 'wheel',
-        deltaX: clamp(event.deltaX * scale),
-        deltaY: clamp(event.deltaY * scale),
+        deltaX: Math.round(event.deltaX * scale),
+        deltaY: Math.round(event.deltaY * scale),
       });
     };
     element.addEventListener('wheel', wheel, { passive: false });

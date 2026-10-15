@@ -15,23 +15,19 @@ export const browserHandoffInput = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('wheel'),
-      deltaX: z.number().int().min(-2000).max(2000),
-      deltaY: z.number().int().min(-2000).max(2000),
+      deltaX: z.number().int(),
+      deltaY: z.number().int(),
     })
     .strict(),
-  z.object({ type: z.literal('text'), text: z.string().min(1).max(2000) }).strict(),
+  z.object({ type: z.literal('text'), text: z.string().min(1) }).strict(),
   z
     .object({
       type: z.literal('key'),
-      key: z
-        .string()
-        .min(1)
-        .max(40)
-        .regex(/^[A-Za-z0-9+]+$/),
+      key: z.string().regex(/^[A-Za-z0-9+]+$/),
     })
     .strict(),
 ]);
 
-export const browserHandoffInputs = z.array(browserHandoffInput).min(1).max(100);
+export const browserHandoffInputs = z.array(browserHandoffInput).min(1);
 
 export type BrowserHandoffInput = z.infer<typeof browserHandoffInput>;

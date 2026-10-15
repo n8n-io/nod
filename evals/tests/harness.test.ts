@@ -14,6 +14,7 @@ import { createAccountSession } from '../../src/server/account.ts';
 import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, fisherLower, holm, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
+import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { createCapture } from '../src/capture.ts';
@@ -23,7 +24,7 @@ import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
-import { requireBackgroundPrompts, type Run } from '../src/trace.ts';
+import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
@@ -39,6 +40,181 @@ import { daysAgo, inDays, localDate, localTime, nextWeekOn } from '../src/world/
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
+
+const analyticsCase = (name: string) => analyticsCases.find((item) => item.id === name)!;
+const analyticsAttempt = (name: string, output: unknown, attempt = 1) => ({
+  case: name,
+  equivalenceGroup: analyticsCase(name).equivalenceGroup,
+  attempt,
+  durationMs: 0,
+  status: 'scored' as const,
+  score: scoreAnalytics(analyticsCase(name), output),
+});
+
+test('analytics grading matches unordered goals without hiding outcome or continuation errors', () => {
+  for (const name of ['multiple-tasks', 'holdout-same-type-mixed-outcomes']) {
+    const item = analyticsCase(name);
+    assert.equal(
+      scoreAnalytics(item, { ...item.expected, tasks: [...item.expected.tasks].reverse() })
+        .lifecycleCorrect,
+      true,
+    );
+  }
+  const mixed = analyticsCase('holdout-same-type-mixed-outcomes');
+  const wrong = scoreAnalytics(mixed, {
+    ...mixed.expected,
+    tasks: [...mixed.expected.tasks].reverse().map((task) => ({ ...task, outcome: 'completed' })),
+  });
+  assert.equal(wrong.tasks.wrongOutcome, 1);
+  const ambiguous = scoreAnalytics(mixed, {
+    ...mixed.expected,
+    tasks: mixed.expected.tasks.map((task) => ({
+      ...task,
+      task_action: 'send',
+      task_subject: 'unknown',
+      task_activities: ['send:unknown'],
+    })),
+  });
+  assert.equal(ambiguous.ambiguousOutcomeMatching, true);
+  assert.equal(ambiguous.lifecycleCorrect, false);
+  const continuing = analyticsCase('continuation');
+  assert.equal(scoreAnalytics(continuing, continuing.expected).lifecycleCorrect, true);
+  for (const request_message_id of [
+    continuing.input.messages[0].id,
+    '00000000-0000-4000-8000-000000001000',
+  ]) {
+    const score = scoreAnalytics(continuing, {
+      ...continuing.expected,
+      tasks: [{ ...continuing.expected.tasks[0], request_message_id }],
+    });
+    assert.equal(score.valid, false);
+    assert.equal(score.tasks.wrongRequest, 1);
+  }
+  const reopened = scoreAnalytics(continuing, {
+    ...continuing.expected,
+    tasks: [{ ...continuing.expected.tasks[0], task_id: null }],
+  });
+  assert.equal(reopened.tasks.wrongContinuation, 1);
+});
+
+test('analytics grading distinguishes compound activities from independent goals', () => {
+  const compound = analyticsCase('holdout-compound-find-analyze-send');
+  const independent = analyticsCase('holdout-independent-find-analyze-send');
+  const goal = compound.expected.tasks[0];
+  assert.equal(scoreAnalytics(compound, independent.expected).tasks.extra, 2);
+  assert.equal(scoreAnalytics(independent, compound.expected).tasks.missing, 2);
+  assert.equal(
+    scoreAnalytics(compound, {
+      ...compound.expected,
+      tasks: [{ ...goal, task_activities: [...goal.task_activities].reverse() }],
+    }).lifecycleCorrect,
+    true,
+  );
+  const missing = scoreAnalytics(compound, {
+    ...compound.expected,
+    tasks: [{ ...goal, task_activities: ['send:email'] }],
+  });
+  const extra = scoreAnalytics(compound, {
+    ...compound.expected,
+    tasks: [{ ...goal, task_activities: [...goal.task_activities, 'draft:email'] }],
+  });
+  assert.equal(missing.tasks.missingActivities, 2);
+  assert.equal(missing.lifecycleCorrect, false);
+  assert.equal(extra.tasks.extraActivities, 1);
+  assert.equal(extra.lifecycleCorrect, false);
+});
+
+test('analytics grading rejects private labels and separates unknown coverage from label agreement', () => {
+  const item = analyticsCase('holdout-audio-translation');
+  const unknown = {
+    ...item.expected,
+    tasks: [
+      {
+        ...item.expected.tasks[0],
+        task_type: 'unknown',
+        task_subject: 'file',
+        task_activities: ['translate:file'],
+      },
+    ],
+  };
+  const score = scoreAnalytics(item, unknown);
+  assert.equal(score.lifecycleCorrect, true);
+  assert.equal(score.referenceLabels.matched, false);
+  assert.equal(score.unknownLabels, 1);
+  for (const output of [
+    { ...item.expected, private_text: 'Synthetic private text' },
+    { ...item.expected, tasks: [{ ...item.expected.tasks[0], task_type: 'ada_linden' }] },
+    {
+      ...item.expected,
+      tasks: [{ ...item.expected.tasks[0], task_activities: ['translate:ada_linden'] }],
+    },
+  ])
+    assert.equal(scoreAnalytics(item, output).valid, false);
+  const summary = summarizeAnalytics([
+    analyticsAttempt(item.id, unknown),
+    analyticsAttempt(item.id, item.expected, 2),
+  ]);
+  assert.equal(summary.unknownLabelRate, 0.5);
+  assert.equal(summary.referenceLabels.agreementRate, 0.5);
+});
+
+test('analytics grading counts false and missed frustration without accepting assistant evidence', () => {
+  const neutral = analyticsCase('neutral-edit');
+  const repeated = analyticsCase('repeated-request');
+  const rejected = scoreAnalytics(repeated, {
+    ...repeated.expected,
+    frustration: {
+      ...repeated.expected.frustration,
+      message_ids: [repeated.input.messages[1].id, repeated.input.messages[3].id],
+    },
+  });
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.frustration.truePositive, 0);
+  assert.equal(rejected.frustration.falseNegative, 1);
+  const summary = summarizeAnalytics([
+    analyticsAttempt(neutral.id, {
+      ...neutral.expected,
+      frustration: {
+        ...repeated.expected.frustration,
+        signal: 'explicit_complaint',
+        message_ids: [neutral.input.messages[0].id],
+      },
+    }),
+    analyticsAttempt(repeated.id, { ...repeated.expected, frustration: null }),
+    analyticsAttempt(repeated.id, repeated.expected, 2),
+    { case: repeated.id, attempt: 3, durationMs: 0, status: 'model_error' },
+  ]);
+  assert.equal(summary.frustration.precision, 0.5);
+  assert.equal(summary.frustration.recall, 0.5);
+  assert.equal(summary.responseCoverage, 0.75);
+  assert.equal(summary.modelErrors, 1);
+});
+
+test('analytics stability compares repetitions and paraphrases separately from correctness', () => {
+  const item = analyticsCase('holdout-email-summary-in-chat');
+  const paraphrase = analyticsCase('holdout-email-summary-paraphrase');
+  const changed = {
+    ...item.expected,
+    tasks: [{ ...item.expected.tasks[0], task_type: 'research' }],
+  };
+  const attempts = [item.expected, item.expected, changed].map((output, index) =>
+    analyticsAttempt(item.id, output, index + 1),
+  );
+  attempts.push(
+    analyticsAttempt(paraphrase.id, {
+      ...paraphrase.expected,
+      tasks: [{ ...paraphrase.expected.tasks[0], outcome: 'waiting' }],
+    }),
+    analyticsAttempt(item.id, { private_text: 'invalid' }, 4),
+  );
+  const summary = summarizeAnalytics(attempts);
+  assert.equal(summary.labelStability.repetitions.comparisons, 3);
+  assert.equal(summary.labelStability.repetitions.agreementRate, 1 / 3);
+  assert.equal(summary.labelStability.repetitions.groups[0].distinctLabels, 2);
+  assert.equal(summary.labelStability.paraphrases.agreementRate, 2 / 3);
+  assert.equal(summary.lifecycleCorrect, 3);
+  assert.equal(summary.invalid, 1);
+});
 
 const manifest: RunManifest = {
   label: 't',
@@ -536,6 +712,10 @@ test('scenario API calls use authenticated local transport and refuse outside ta
     accounts: {
       async read() {
         return account;
+      },
+      async readConsent(owner) {
+        assert.equal(owner, 'synthetic-owner');
+        return { enabled: account.usageData, revision: '0' };
       },
       async update(owner, input) {
         assert.equal(owner, 'synthetic-owner');
@@ -1384,6 +1564,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
   t.after(() => runtime.dispose());
   await runtime.runTurn({
     threadId: 'capture-fixture',
+    sessionId: 'capture-fixture',
     turnId: 'capture-fixture',
     prompt: 'Inspect the synthetic receipt.',
     history: [],
@@ -1399,7 +1580,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     requestCredential: async () => ({ filled: true }),
     integration: async () => ({ messages: ['Receipt'] }),
     manage: async () => [{ text: 'Private note' }],
-    takeMessages: async () => [{ id: 'steer', text: 'Also check the total.' }],
+    takeMessages: async () => [{ id: 'steer', text: 'Also check the total.', attachments: [] }],
   });
   assert.deepEqual(
     capture.prompts.map((prompt) => [
@@ -1435,6 +1616,295 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     ['model_usage', 'child'],
     ['tool_end', 'delegate', 'succeeded', 'The subagent finished without an answer.'],
   ]);
+});
+
+test('persisted background sessions and child captures count each request and tool once', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-accounting-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, 'background'));
+  await writeFile(
+    join(directory, 'background', 'session.jsonl'),
+    [
+      { role: 'user', content: [{ type: 'text', text: '{"mode":"conversation"}' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Checking the synthetic calendar.' },
+          { type: 'toolCall', id: 'call', name: 'sign_in', arguments: { action: 'background' } },
+        ],
+        usage: { totalTokens: 3, cost: { total: 0.1 } },
+      },
+      { role: 'toolResult', toolCallId: 'call', content: [{ type: 'text', text: 'background' }] },
+      { role: 'assistant', stopReason: 'error', errorMessage: 'Synthetic model failure' },
+      { role: 'user', content: [{ type: 'text', text: 'Continue background' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call', name: 'apps', arguments: { action: 'resumed' } }],
+      },
+      { role: 'toolResult', toolCallId: 'call', content: [{ type: 'text', text: 'resumed' }] },
+    ]
+      .map((message, index) =>
+        JSON.stringify({ type: 'message', timestamp: new Date(index < 4 ? 0 : 4), message }),
+      )
+      .join('\n'),
+  );
+  await mkdir(join(directory, 'chat'));
+  await writeFile(
+    join(directory, 'chat', 'session.jsonl'),
+    [
+      { role: 'user', content: [{ type: 'text', text: 'Chat request' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call', name: 'apps', arguments: { action: 'chat' } }],
+      },
+      { role: 'toolResult', toolCallId: 'call', content: [{ type: 'text', text: 'chat' }] },
+    ]
+      .map((message) => JSON.stringify({ type: 'message', timestamp: new Date(2), message }))
+      .join('\n'),
+  );
+  const ledger: Array<{ cost_usd: number | null; details: Record<string, number> }> = [
+    { cost_usd: 0.1, details: { inputTokens: 1, outputTokens: 2 } },
+    { cost_usd: 0.2, details: { inputTokens: 3, outputTokens: 4 } },
+    { cost_usd: 0.4, details: { inputTokens: 5, outputTokens: 6 } },
+    { cost_usd: 0.8, details: { cacheReadTokens: 7, cacheWriteTokens: 8 } },
+  ];
+  const capture = createCapture();
+  const observations = capture.observations;
+  for (const [index, runId] of ['background', 'child', 'chat'].entries()) {
+    const turnId = runId === 'chat' ? 'chat' : 'background';
+    const execution = {
+      threadId: 'chat',
+      sessionId: turnId,
+      turnId,
+      runId,
+      browserId: runId,
+      ...(runId === 'child' ? { parentRunId: 'background' } : {}),
+    };
+    capture.observe(turnId, {
+      execution,
+      type: 'tool_start',
+      id: 'call',
+      name: runId === 'background' ? 'sign_in' : 'apps',
+      input: { action: runId },
+      startedAt: new Date(index).toISOString(),
+    });
+    capture.observe(turnId, {
+      execution,
+      type: 'tool_end',
+      id: 'call',
+      name: runId === 'background' ? 'sign_in' : 'apps',
+      output: runId,
+      status: 'succeeded',
+      durationMs: 1,
+      finishedAt: new Date(10).toISOString(),
+    });
+  }
+  observations.push({
+    turnId: 'background',
+    event: {
+      type: 'model_usage',
+      id: 'request',
+      provider: 'fixture',
+      model: 'fixture',
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 3,
+      costUsd: 0.1,
+      costSource: 'sdk_estimate',
+      createdAt: new Date(0).toISOString(),
+    },
+  });
+  const stack = {
+    sessionRoot: directory,
+    observations,
+    prompts: [
+      { turnId: 'background', sessionId: 'background', instruction: '{"mode":"conversation"}' },
+      { turnId: 'resumed', sessionId: 'background', instruction: 'Continue background' },
+      { turnId: 'chat', sessionId: 'chat', instruction: 'Chat request' },
+    ],
+    pool: {
+      query: async (sql: string) => ({
+        rows: sql.includes('FROM model_usage')
+          ? ledger
+          : sql.includes('FROM turns')
+            ? [{ id: 'background', background: true, status: 'succeeded', started_at: new Date(0) }]
+            : [],
+      }),
+    },
+    request: async () => Response.json({ notes: [], archive: [] }),
+    exec: async () => ({ exitCode: 0, output: '' }),
+  } as unknown as Stack;
+  const session = createSession({ stack, user: {}, deadline: Date.now() + 1000 });
+  const read = () =>
+    collect({ task: 'Synthetic request', stack, session, world: {}, visits: [], seconds: 1 });
+  const run = await read();
+  assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  assert.deepEqual(
+    run.tools.map((tool) => [tool.turnId, tool.input.action, tool.output]),
+    [
+      ['background', 'background', 'background'],
+      ['background', 'child', 'child'],
+      ['chat', 'chat', 'chat'],
+      ['resumed', 'resumed', 'resumed'],
+    ],
+  );
+  assert.deepEqual(run.modelErrors, ['Synthetic model failure']);
+  assert.deepEqual(run.acknowledgement, { turnsWithTools: 1, acknowledged: 1 });
+  ledger[0].cost_usd = null;
+  assert.deepEqual((await read()).usage, { modelCalls: 4, tokens: 36, costUsd: null });
+});
+
+test('saved model tools expose synthetic secret regressions despite redacted captures', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-model-tools-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const payment = paymentScenario('fixture', 'Fixture');
+  const paymentWorld = payment.world({ now: Date.now });
+  const card = paymentWorld.cards![0];
+  const accountsWorld = twoAccounts.world({ now: Date.now });
+  const paymentCheck = payment
+    .expect(paymentWorld)
+    .find((item) => item.id === 'card-details-stayed-outside-the-model-context');
+  const accountsCheck = twoAccounts
+    .expect(accountsWorld)
+    .find((item) => item.id === 'private-values-absent-from-tools');
+  assert.ok(paymentCheck?.kind === 'check' && accountsCheck?.kind === 'check');
+  const image = {
+    type: 'image',
+    data: `fixture${card.cardNumber}${card.securityCode}`,
+    mimeType: 'image/png',
+  };
+  for (const sessionId of ['chat', 'background']) {
+    await mkdir(join(directory, sessionId));
+    for (const item of [
+      {
+        name: 'browser',
+        input: { action: 'fill', text: card.cardNumber },
+        lead: '',
+        content: [{ type: 'text', text: 'Filled' }],
+        payment: false,
+        accounts: true,
+      },
+      {
+        name: 'browser',
+        input: { action: 'snapshot' },
+        lead: card.securityCode!,
+        content: [{ type: 'text', text: 'Snapshot' }],
+        payment: false,
+        accounts: true,
+      },
+      {
+        name: 'sign_in',
+        input: {},
+        lead: '',
+        content: [{ type: 'text', text: accountsWorld.logins![0].password }],
+        payment: true,
+        accounts: false,
+      },
+      {
+        name: 'browser',
+        input: { action: 'screenshot' },
+        lead: '',
+        content: [image],
+        payment: true,
+        accounts: true,
+      },
+    ]) {
+      const capture = createCapture();
+      const execution = {
+        threadId: 'chat',
+        sessionId,
+        turnId: sessionId,
+        runId: sessionId,
+        browserId: sessionId,
+      };
+      capture.observe(sessionId, {
+        execution,
+        type: 'tool_start',
+        id: 'guard-call',
+        name: item.name,
+        input: item.input,
+        startedAt: new Date(0).toISOString(),
+      });
+      capture.observe(sessionId, {
+        execution,
+        type: 'tool_end',
+        id: 'guard-call',
+        name: item.name,
+        output: { content: item.content },
+        status: 'succeeded',
+        durationMs: 1,
+        finishedAt: new Date(1).toISOString(),
+      });
+      const child = { ...execution, runId: 'child', parentRunId: sessionId, browserId: 'child' };
+      capture.observe(sessionId, {
+        execution: child,
+        type: 'tool_start',
+        id: 'guard-call',
+        name: 'browser',
+        input: { action: 'screenshot' },
+        startedAt: new Date(2).toISOString(),
+      });
+      capture.observe(sessionId, {
+        execution: child,
+        type: 'tool_end',
+        id: 'guard-call',
+        name: 'browser',
+        output: {
+          content: [
+            item.input.action === 'screenshot' ? image : { ...image, data: 'c3ludGhldGlj' },
+          ],
+        },
+        status: 'succeeded',
+        durationMs: 1,
+        finishedAt: new Date(3).toISOString(),
+      });
+      await writeFile(
+        join(directory, sessionId, 'session.jsonl'),
+        [
+          { role: 'user', content: [{ type: 'text', text: 'Synthetic request' }] },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: item.lead },
+              { type: 'toolCall', id: 'model-call', name: item.name, arguments: item.input },
+            ],
+          },
+          { role: 'toolResult', toolCallId: 'model-call', content: item.content },
+        ]
+          .map((message) => JSON.stringify({ type: 'message', timestamp: new Date(0), message }))
+          .join('\n'),
+      );
+      const stack = {
+        sessionRoot: directory,
+        observations: capture.observations,
+        prompts: [{ sessionId, turnId: sessionId, instruction: 'Synthetic request' }],
+        pool: { query: async () => ({ rows: [] }) },
+        request: async () => Response.json({ notes: [], archive: [] }),
+        exec: async () => ({ exitCode: 0, output: '' }),
+      } as unknown as Stack;
+      const run = await collect({
+        task: 'Synthetic request',
+        stack,
+        session: createSession({ stack, user: {}, deadline: Date.now() + 1000 }),
+        world: {},
+        visits: [],
+        seconds: 1,
+      });
+      assert.equal(run.tools.length, 2);
+      assert.equal(run.tools[0].turnId, sessionId);
+      assert.equal((await paymentCheck.check(run)).pass, item.payment);
+      assert.equal((await accountsCheck.check(run)).pass, item.accounts);
+      assert.doesNotMatch(JSON.stringify(run.tools), /fixture424242/);
+      const captured = capture.observations[0].event;
+      if (item.input.action === 'fill') {
+        assert.ok(captured.type === 'tool_start');
+        assert.equal((captured.input as { text: string }).text, '[redacted]');
+      }
+    }
+    await rm(join(directory, sessionId), { recursive: true });
+  }
 });
 
 test('missing executed background captures are measurement errors, not isolation verdicts', () => {

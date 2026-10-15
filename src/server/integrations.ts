@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
-import { setTimeout as wait } from 'node:timers/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -33,12 +33,20 @@ import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { privateEmailResult } from './integration-result.ts';
 import { withoutSecretKeys } from './redaction.ts';
+import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
+import {
+  captureConnection,
+  captureServiceFailure,
+  serviceFailureReason,
+  withServiceAnalytics,
+  type AnalyticsConnection,
+} from './analytics-connections.ts';
 import {
   hasWorkspaceFiles,
   uploadWorkspaceFiles,
   workspaceFileSchemas,
 } from './integration-files.ts';
-import { maxFileSize } from './artifacts.ts';
+import { fileBytes } from '../shared/files.ts';
 import {
   normalizedEmail,
   verificationCode,
@@ -87,7 +95,6 @@ type ConnectionRow = {
   callback_hash: string | null;
   callback_claim_id: string | null;
   callback_verifier: string | null;
-  pairing_code: string | null;
   setup_link_hash: string | null;
   callback_expires: Date | null;
   callback_return_to: ReturnTarget;
@@ -113,6 +120,8 @@ type ConnectionRow = {
 };
 type IntegrationOptions = {
   admission?: WorkAdmission;
+  analytics?: CaptureAnalytics;
+  analyticsConsent?: () => { enabled: boolean; revision?: string };
   ownerId: string;
   wake(
     prompt: string,
@@ -191,6 +200,28 @@ export function eventOverview(toolkit: string, trigger: string, data: Record<str
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
   const configuredOwner = z.string().min(1).max(200).parse(options.ownerId);
   const provider = options.provider;
+  function connectionAnalytics(app: string): AnalyticsConnection {
+    return {
+      app,
+      publicApp: slugSchema.safeParse(app).success,
+      connection_method: 'managed_app',
+      consentRevision: options.analyticsConsent?.().revision ?? 'disabled',
+    };
+  }
+  function track(
+    app: string,
+    status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
+    failureReason?: Extract<
+      AnalyticsEvent,
+      { event: 'otto_connection_changed' }
+    >['properties']['failure_reason'],
+  ) {
+    captureConnection(options.analytics, connectionAnalytics(app), status, failureReason);
+  }
+  function connectionFailure(error: unknown) {
+    if (error instanceof IntegrationAuthConfigurationError) return 'invalid_configuration';
+    return serviceFailureReason(error);
+  }
   const providerId = z
     .string()
     .regex(/^[a-z][a-z0-9-]{0,39}$/)
@@ -262,7 +293,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
     ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
       ADD COLUMN IF NOT EXISTS callback_verifier text,
-      ADD COLUMN IF NOT EXISTS pairing_code text,
+      DROP COLUMN IF EXISTS pairing_code,
       ADD COLUMN IF NOT EXISTS callback_claim_id text,
       ADD COLUMN IF NOT EXISTS configuration_id text,
       ADD COLUMN IF NOT EXISTS setup_link_hash text,
@@ -353,7 +384,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     try {
       return await Promise.race([
         operation(),
-        wait(10_000, undefined, {
+        delay(10_000, undefined, {
           signal: AbortSignal.any([signal, timeout.signal]),
           ref: false,
         }).then(() => {
@@ -810,6 +841,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       }));
   }
 
+  async function analyticsConnections(): Promise<AnalyticsConnection[]> {
+    return (await connectionRows(configuredOwner))
+      .filter(
+        (row) => row.account_id && row.account_active && !row.revoked && configurationMatches(row),
+      )
+      .map((row) => connectionAnalytics(row.slug));
+  }
+
   async function icon(connectionId: string) {
     const fetchIcon = options.icon;
     if (!fetchIcon || !z.uuid().safeParse(connectionId).success) return null;
@@ -877,18 +916,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
     callbackUrl.searchParams.set('state', nonce);
     const configurationId = provider.configurationId;
-    const session = provider.authorize
-      ? undefined
-      : await provider.createSession(configuredOwner, {});
+    track(slug, 'started');
+    let session: IntegrationSession | undefined;
     try {
+      if (!provider.authorize) session = await provider.createSession(configuredOwner, {});
       const attempt = provider.authorize
         ? await provider.authorize(configuredOwner, slug, callbackUrl.href)
         : await session!.authorize(slug, callbackUrl.href);
-      const pairingCode = z
-        .string()
-        .regex(/^\d{3}-\d{3}$/)
-        .optional()
-        .parse(attempt.pairingCode);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
         throw new IntegrationError(
@@ -925,8 +959,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ).rows;
         }
         await client.query(
-          `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash,callback_verifier,configuration_id,replaces_connection_id,pending_account_email,pairing_code)
-           VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash,callback_verifier,configuration_id,replaces_connection_id,pending_account_email)
+           VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
             configuredOwner,
             slug,
@@ -940,7 +974,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             configurationId ?? null,
             replacement?.id ?? null,
             replacement ? normalizedEmail(replacement.account_email!) : null,
-            pairingCode ?? null,
           ],
         );
         if (provider.configurationId !== configurationId)
@@ -958,9 +991,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       for (const previous of discarded) await discardReconnect(previous);
       return {
         url: attempt.url,
-        ...(pairingCode ? { pairingCode } : {}),
         ...(returnTo === 'window' ? { attempt: nonce } : {}),
       };
+    } catch (error) {
+      track(slug, 'failed', connectionFailure(error));
+      throw error;
     } finally {
       if (session) provider.deleteSession(session.id).catch(() => {});
     }
@@ -994,7 +1029,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
          SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL
          AND callback_claim_id IS NOT DISTINCT FROM $4 FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-       callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
+       callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
        WHERE c.id=pending.id RETURNING pending.*`,
       [id, configuredOwner, hash, claimId ?? null],
     );
@@ -1042,7 +1077,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       `WITH previous AS (
          SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=$6,pending_auth_config_id=NULL,
-       callback_hash=$5,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
+       callback_hash=$5,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
        FROM previous WHERE c.id=previous.id RETURNING previous.*`,
       [
         row.id,
@@ -1058,6 +1093,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (!reserved.rowCount)
       throw new IntegrationError('This connected account changed. Try again.', 409);
     await discardReconnect(reserved.rows[0]);
+    track(slug, 'started');
     let attemptedId: string | undefined;
     try {
       const attempt = await selected.reconnectAccount(
@@ -1066,11 +1102,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         row.account_id!,
         callbackUrl.href,
       );
-      const pairingCode = z
-        .string()
-        .regex(/^\d{3}-\d{3}$/)
-        .optional()
-        .parse(attempt.pairingCode);
       attemptedId = z.string().min(1).max(200).parse(attempt.accountId);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
@@ -1080,7 +1111,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
       const saved = await steady(() =>
         pool.query(
-          `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9,pairing_code=$10
+          `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9
            WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND callback_hash=$5 AND NOT revoked`,
           [
             row.id,
@@ -1092,7 +1123,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             z.string().min(1).max(200).parse(attempt.authConfigId),
             createHash('sha256').update(redirect.href).digest('hex'),
             attempt.verificationSecret ?? null,
-            pairingCode ?? null,
           ],
         ),
       );
@@ -1103,12 +1133,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
       return {
         url: attempt.url,
-        ...(pairingCode ? { pairingCode } : {}),
         ...(returnTo === 'window' ? { attempt: nonce } : {}),
       };
     } catch (error) {
       const cleared = await clearReconnect(row.id, hash);
       if (attemptedId && cleared !== attemptedId) await discardReconnect(row, attemptedId);
+      track(slug, 'failed', connectionFailure(error));
       throw error;
     }
   }
@@ -1205,7 +1235,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           throw new IntegrationError('This account is already saved as another connection.', 409);
         await client.query(
           `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-           callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=NULL,setup_link_hash=NULL,replaces_connection_id=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
+           callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,replaces_connection_id=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
            trigger_id=NULL,triggers_enabled=false,watch_attempted=false,watch_attempted_at=NULL,watch_failures=0,watch_retry_at=NULL,
            watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false,
            provider_id=$5,configuration_id=$6,turn_id=$7 WHERE id=$1 AND owner_id=$8`,
@@ -1256,7 +1286,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         }
       } else {
         await client.query(
-          `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,setup_link_hash=NULL,
+          `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,setup_link_hash=NULL,
            callback_expires=NULL,revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3 WHERE id=$1`,
           [row.id, remote.accountName ?? null, remote.accountEmail ?? null, query.accountId],
         );
@@ -1264,6 +1294,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }, pool);
     options.refresh?.();
     const selected = providerForRow(row);
+    track(row.slug, 'connected');
     if (row.account_id) {
       if (previousTrigger) await selected.unsubscribe(previousTrigger).catch(() => {});
       if (row.account_id !== query.accountId)
@@ -1303,7 +1334,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       row = current.rows[0];
       await client.query(
         `UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,
-         callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
+         callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
          watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
          WHERE id=$1 AND owner_id=$2 AND provider_id=$3`,
         [row.id, configuredOwner, row.provider_id],
@@ -1313,6 +1344,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         [row.id, configuredOwner],
       );
     }, pool);
+    if (!row.revoked) track(row.slug, 'disconnected');
     const sdk = [providerForRow(row), ...(options.standbyProviders ?? [])].find(
       (item) =>
         item.id === row.provider_id &&
@@ -1356,23 +1388,25 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       (row) => row.provider_id === providerId && configurationMatches(row),
     );
     if (rows.length && (await skipRemoteRevocation?.())) {
-      await transaction(async (client) => {
-        await client.query(
+      const deleted = await transaction(async (client) => {
+        return client.query<Pick<ConnectionRow, 'slug' | 'revoked'>>(
           `WITH removed AS (
              DELETE FROM app_connections WHERE owner_id=$1 AND provider_id=$2
              AND configuration_id IS NOT DISTINCT FROM $3
-             RETURNING id,account_id,pending_account_id,trigger_id
-           )
+             RETURNING id,slug,revoked,account_id,pending_account_id,trigger_id
+           ), discarded AS (
            UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND provider_id=$2
            AND state IN ('queued','processing') AND EXISTS (
              SELECT 1 FROM removed WHERE removed.id=poll_connection_id
              OR removed.account_id=integration_events.account_id
              OR removed.pending_account_id=integration_events.account_id
              OR removed.trigger_id=integration_events.trigger_id
-           )`,
+           ) RETURNING id
+           ) SELECT slug,revoked FROM removed`,
           [configuredOwner, providerId, provider.configurationId ?? null],
         );
       }, pool);
+      for (const row of deleted.rows) if (!row.revoked) track(row.slug, 'disconnected');
       options.refresh?.();
       return;
     }
@@ -1389,15 +1423,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         if (!row.account_id) continue;
         await revokeAccount(provider, row.account_id).catch(kept);
         if (row.trigger_id) await provider.unsubscribe(row.trigger_id).catch(() => {});
-        await pool.query(
+        const deleted = await pool.query<Pick<ConnectionRow, 'slug' | 'revoked'>>(
           `WITH removed AS (
-             DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND account_id=$3 RETURNING id
-           )
+             DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND account_id=$3
+             RETURNING id,slug,revoked
+           ), discarded AS (
            UPDATE integration_events SET state='discarded' WHERE owner_id=$2
-           AND state IN ('queued','processing') AND poll_connection_id IN (SELECT id FROM removed)`,
+           AND state IN ('queued','processing') AND poll_connection_id IN (SELECT id FROM removed)
+           RETURNING id
+           ) SELECT slug,revoked FROM removed`,
           [row.id, configuredOwner, row.account_id],
         );
-        removed = true;
+        for (const item of deleted.rows) if (!item.revoked) track(item.slug, 'disconnected');
+        removed ||= deleted.rows.length > 0;
       }
     } finally {
       if (removed) {
@@ -1470,15 +1508,31 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         throw new IntegrationError('Discovered connections are unavailable.', 503);
       return options.discovered.execute(action, args, turn, signal);
     }
-    const row = await selectedConnection(ownerId, action, args);
+    assertOwner(ownerId);
+    const connectionId = z.uuid().safeParse(args.connectionId);
+    const observed = connectionId.success
+      ? (await connectionRows(ownerId)).find((row) => row.id === connectionId.data)
+      : undefined;
+    const known = observed ?? (await selectedConnection(ownerId, action, args));
+    const connection = connectionAnalytics(known.slug);
     try {
-      const { connectionId: _connectionId, ...providerArgs } = args;
-      return await withAccountSession(ownerId, [row], signal, async (session) => {
-        const current = await selectedConnection(ownerId, action, args);
-        if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
-        signal?.throwIfAborted();
-        return session.execute(action, providerArgs, row.account_id!, signal);
-      });
+      return await withServiceAnalytics(
+        options.analytics,
+        connection,
+        async () => {
+          const row = await selectedConnection(ownerId, action, args);
+          const { connectionId: _connectionId, ...providerArgs } = args;
+          const result = await withAccountSession(ownerId, [row], signal, async (session) => {
+            const current = await selectedConnection(ownerId, action, args);
+            if (current.account_id !== row.account_id)
+              throw new IntegrationError('The selected account changed.', 409);
+            signal?.throwIfAborted();
+            return session.execute(action, providerArgs, row.account_id!, signal);
+          });
+          return result;
+        },
+        signal,
+      );
     } catch (error) {
       if (error instanceof IntegrationError) throw error;
       throw new IntegrationError(
@@ -1604,7 +1658,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 connectionId: 'Saved account ID.',
                 pathId: 'Saved path ID.',
                 argv: 'CLI arguments without the program name or a token.',
-                timeoutSeconds: 'Optional limit from 1 to 120 seconds.',
+                timeoutSeconds: 'Optional runtime limit in seconds.',
               },
             },
           });
@@ -1643,45 +1697,61 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     assertOwner(ownerId);
     signal?.throwIfAborted();
     if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
-    const connectionId = z.string().uuid().optional().parse(args.connectionId);
-    const slug = await actionToolkit(ownerId, action, connectionId);
-    const row = await selectConnection(ownerId, slug, connectionId);
-    if (hasWorkspaceFiles(args)) {
-      const read = options.readWorkspaceFile;
-      if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
-      let remaining = maxFileSize;
-      args = (await withAccountSession(ownerId, [row], signal, async (session) => {
-        if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
-        return uploadWorkspaceFiles(
-          args,
-          async (input) => {
-            signal?.throwIfAborted();
-            if (!remaining)
-              throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
-            const bytes = await read(turn, input.workspaceFile, remaining);
-            if (!bytes.byteLength || bytes.byteLength > remaining)
-              throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
-            remaining -= bytes.byteLength;
-            signal?.throwIfAborted();
-            return {
-              name: input.name ?? basename(input.workspaceFile),
-              mimeType: input.mimeType,
-              bytes,
-            };
-          },
-          async (file) => {
-            signal?.throwIfAborted();
-            const result = await session.upload!(action, file, signal, row.account_id!);
-            signal?.throwIfAborted();
-            return result;
-          },
-        );
-      })) as Record<string, unknown>;
-      const current = await selectConnection(ownerId, slug, row.id);
-      if (current.account_id !== row.account_id)
-        throw new IntegrationError('The selected account changed.');
+    const started = performance.now();
+    const consent = options.analyticsConsent?.();
+    let connection: AnalyticsConnection | undefined;
+    try {
+      const connectionId = z.string().uuid().optional().parse(args.connectionId);
+      const slug = await actionToolkit(ownerId, action, connectionId);
+      connection = connectionAnalytics(slug);
+      connection.consentRevision = consent?.revision ?? 'disabled';
+      connection.operation_phase = 'preparation';
+      const row = await selectConnection(ownerId, slug, connectionId);
+      if (hasWorkspaceFiles(args)) {
+        const read = options.readWorkspaceFile;
+        if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
+        let remaining = fileBytes;
+        args = (await withAccountSession(ownerId, [row], signal, async (session) => {
+          if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
+          return uploadWorkspaceFiles(
+            args,
+            async (input) => {
+              signal?.throwIfAborted();
+              if (!remaining)
+                throw new IntegrationError(
+                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+                );
+              const bytes = await read(turn, input.workspaceFile, remaining);
+              if (!bytes.byteLength || bytes.byteLength > remaining)
+                throw new IntegrationError(
+                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+                );
+              remaining -= bytes.byteLength;
+              signal?.throwIfAborted();
+              return {
+                name: input.name ?? basename(input.workspaceFile),
+                mimeType: input.mimeType,
+                bytes,
+              };
+            },
+            async (file) => {
+              signal?.throwIfAborted();
+              const result = await session.upload!(action, file, signal, row.account_id!);
+              signal?.throwIfAborted();
+              return result;
+            },
+          );
+        })) as Record<string, unknown>;
+        const current = await selectConnection(ownerId, slug, row.id);
+        if (current.account_id !== row.account_id)
+          throw new IntegrationError('The selected account changed.');
+      }
+      return { ...args, connectionId: row.id };
+    } catch (error) {
+      if (connection?.publicApp)
+        captureServiceFailure(options.analytics, connection, error, started, signal);
+      throw error;
     }
-    return { ...args, connectionId: row.id };
   }
 
   function gmailMailbox(value: string) {
@@ -1709,7 +1779,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         !senderDomain ||
         !Number.isFinite(input.after) ||
         !Number.isFinite(input.before) ||
-        input.after < now - 5 * 60_000 - 30_000 ||
+        input.after < now - 6 * 60_000 ||
         input.after > now ||
         input.before < input.after ||
         input.before > now + 30_000
@@ -1752,14 +1822,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           )
         ).rowCount === 1;
       if (!(await current())) return;
-      const messages = await provider.verificationEmails(
+      let before = input.before;
+      let messages = await provider.verificationEmails(
         row.account_id!,
-        { recipient, senderDomain, after: input.after, before: input.before },
+        { recipient, senderDomain, after: input.after, before },
         signal,
       );
+      while (messages?.length === 0) {
+        await delay(5000, undefined, { signal });
+        before = Date.now();
+        messages = await provider.verificationEmails(
+          row.account_id!,
+          { recipient, senderDomain, after: input.after, before },
+          signal,
+        );
+      }
       signal.throwIfAborted();
       if (!messages || !(await current())) return;
-      const code = verificationCode(messages, { ...input, recipient });
+      const code = verificationCode(messages, { ...input, before, recipient });
       return code
         ? {
             code,
@@ -2059,14 +2139,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             hash: string;
             slug: string;
             completed: boolean;
-            pairing_code: string | null;
             provider_id: string;
             configuration_id: string | null;
           }>(
-            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS pairing_code,NULL AS provider_id,NULL AS configuration_id FROM app_setup_completions
+            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS provider_id,NULL AS configuration_id FROM app_setup_completions
              WHERE owner_id=$1 AND link_hash=ANY($2::text[])
              UNION ALL
-             SELECT setup_link_hash AS hash,slug,false AS completed,pairing_code,provider_id,configuration_id FROM app_connections
+             SELECT setup_link_hash AS hash,slug,false AS completed,provider_id,configuration_id FROM app_connections
              WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now() AND NOT revoked`,
             [configuredOwner, hashes],
           ),
@@ -2099,9 +2178,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               slug: row.slug,
               name: 'name' in row && typeof row.name === 'string' ? row.name : info.name,
               ...(info.logoUrl ? { logoUrl: info.logoUrl } : {}),
-              ...('pairing_code' in row && row.pairing_code
-                ? { pairingCode: row.pairing_code }
-                : {}),
               ...(connectionStatus?.pairingConfirmed && row.hash === pairingHash
                 ? { pairingConfirmed: true }
                 : {}),
@@ -2239,6 +2315,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                   if (!result.success) {
                     outcome = 'cancelled';
                     await clearReconnect(claimed.id, hash, claimId);
+                    track(claimed.slug, 'failed', 'cancelled');
                   } else {
                     const resumed = await completeConnection(result, claimed, (id) => {
                       verifiedAccountId = id;
@@ -2247,6 +2324,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                   }
                 } catch {
                   outcome = 'failed';
+                  track(claimed.slug, 'failed', 'verification_failed');
                   await clearReconnect(claimed.id, hash, claimId);
                   if (verifiedAccountId) await discardReconnect(claimed, verifiedAccountId);
                 }
@@ -2360,6 +2438,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     list,
     catalog,
     connectedApps,
+    analyticsConnections,
     manageConnections: async (
       action: 'list' | 'connect' | 'propose' | 'discover',
       service?: string,

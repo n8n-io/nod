@@ -89,7 +89,7 @@ try {
       if (
         failure.passed === false &&
         typeof failure.check === 'string' &&
-        /^(xauthority-creation|chromium-exited|xvfb-exited|browser-readiness|browser-network-[0-5]|workspace-network-[0-5]|connected-network-[0-5]|workspace-private-[0-7]|connected-private-[0-7]|connected-home-write|workspace-connected-home-denied|connected-cli|connected-cli-planted|workspace-firewall|workspace-x11|workspace-files-dns-privileges|workspace-https|unchanged-firewall-readiness|changed-firewall-readiness|fixture-error)$/.test(
+        /^(xauthority-creation|chromium-exited|xvfb-exited|browser-readiness|browser-network-[0-5]|workspace-network-[0-5]|connected-network-[0-5]|connected-cli-network-[0-5]|workspace-private-[0-7]|connected-private-[0-7]|connected-home-write|workspace-connected-home-denied|connected-cli|connected-cli-planted|connected-cli-isolated|workspace-firewall|workspace-x11|workspace-files-dns-privileges|workspace-https|unchanged-firewall-readiness|changed-firewall-readiness|fixture-error)$/.test(
           failure.check,
         )
       )

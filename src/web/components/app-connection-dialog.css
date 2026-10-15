@@ -82,9 +82,6 @@
   margin: 0;
   line-height: 1.6;
 }
-.app-connect-dialog .pairing-code {
-  margin-top: 24px;
-}
 .app-connect-waiting {
   margin: 24px 0 16px;
   color: var(--muted-foreground);
@@ -93,23 +90,4 @@
 .app-connect-actions {
   display: flex;
   justify-content: center;
-}
-.pairing-code {
-  display: grid;
-  gap: 8px;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  line-height: 1.6;
-  text-align: center;
-}
-.pairing-code-value {
-  padding: 16px 24px;
-  border-radius: var(--card-radius);
-  background: var(--accent-soft);
-  color: var(--foreground);
-  font-family: var(--font-mono);
-  font-size: 32px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 4px;
-  line-height: 1.2;
 }

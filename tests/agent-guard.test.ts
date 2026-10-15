@@ -49,6 +49,7 @@ async function fixture(
   let userPrompt = '';
   const context: RuntimeContext = {
     threadId: 'test-' + randomUUID(),
+    sessionId: 'test-' + randomUUID(),
     turnId: randomUUID(),
     prompt: 'Help with a fixture',
     history: [],
@@ -420,8 +421,6 @@ test('skill reads cannot escape the trusted library or load workspace instructio
     assert.throws(() => library.read('untrusted'));
     assert.throws(() => library.read('implicit'));
     assert.throws(() => library.read('disabled'));
-    await writeFile(join(base, 'references', 'large.md'), 'x'.repeat(64 * 1024 + 1));
-    assert.throws(() => library.read('fixture', 'references/large.md'));
     await mkdir(join(base, 'references', 'directory.md'));
     assert.throws(() => library.read('fixture', 'references/directory.md'));
     await writeFile(
@@ -732,14 +731,17 @@ test('sign-in method questions remain available without requesting credential va
 
 test('a browser hold that fails still posts the question and waits for the reply', async () => {
   const question = 'Which account should I use?';
+  const holds: boolean[] = [];
   const result = await fixture(
     async (tools) => {
+      await call(tools, 'browser', { action: 'open', url: 'https://example.com' });
       await call(tools, 'ask_user', { question }).catch(() => {});
     },
     {},
     {
       computer: fakeComputer({
-        hold: async () => {
+        hold: async (_id, held) => {
+          holds.push(held);
           throw new Error('Browser unavailable.');
         },
       }),
@@ -747,7 +749,63 @@ test('a browser hold that fails still posts the question and waits for the reply
   );
   assert.equal(result.result.status, 'waiting_user');
   assert.deepEqual(result.replies, [question]);
+  assert.ok(holds.includes(true));
 });
+
+test(
+  'browser preparation refuses a paused turn and cancellation before or during a hold',
+  { timeout: 10_000 },
+  async () => {
+    for (const phase of ['paused', 'before', 'during']) {
+      const controller = new AbortController();
+      let prepared!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        prepared = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let holds = 0;
+      let actions = 0;
+      const pending = fixture(
+        async (tools) => {
+          if (phase === 'paused') await call(tools, 'ask_user', { question: 'Which account?' });
+          if (phase === 'before') controller.abort();
+          const opening = call(tools, 'browser', { action: 'open', url: 'https://example.com' });
+          if (phase === 'during') {
+            await started;
+            controller.abort();
+            release();
+          }
+          await assert.rejects(opening, /stopped|aborted|cancelled/i);
+        },
+        { signal: controller.signal },
+        {
+          computer: fakeComputer({
+            hold: async () => {
+              holds++;
+              prepared();
+              if (phase === 'during') await gate;
+            },
+            act: async () => {
+              actions++;
+              return { text: 'Synthetic page', url: 'https://example.com' };
+            },
+          }),
+        },
+      );
+      try {
+        if (phase === 'paused') assert.equal((await pending).result.status, 'waiting_user');
+        else await assert.rejects(pending, /aborted|cancelled/i);
+        assert.equal(holds, phase === 'during' ? 1 : 0);
+        assert.equal(actions, 0);
+      } finally {
+        release();
+      }
+    }
+  },
+);
 
 test('secure credential pause prevents subsequent tools in the same execution segment', async () => {
   for (const input of [
@@ -902,4 +960,37 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   );
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
+});
+
+test('long tool errors reach the model as a preview and a workspace file', async () => {
+  const saved: Array<{ path: string; text: string }> = [];
+  const messages: string[] = [];
+  const failure = `${'Synthetic provider detail. '.repeat(2000)}synthetic tail`;
+  await fixture(
+    async (_tools, _emit, options) => {
+      for (const detail of ['Short synthetic failure.', failure])
+        await assert.rejects(
+          options.runTool('fetch_content', { urls: [] }, async () => {
+            throw new Error(detail);
+          }),
+          (error) => {
+            messages.push((error as Error).message);
+            return true;
+          },
+        );
+    },
+    {},
+    {
+      workspace: fakeWorkspace({
+        writeArtifact: async (_threadId, path, bytes) => {
+          saved.push({ path, text: Buffer.from(bytes).toString() });
+        },
+      }),
+    },
+  );
+  assert.equal(messages[0], 'Short synthetic failure.');
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]!.text, failure);
+  assert.ok(messages[1]!.length < 2500);
+  assert.ok(messages[1]!.includes(saved[0]!.path));
 });

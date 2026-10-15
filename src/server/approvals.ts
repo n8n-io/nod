@@ -22,10 +22,13 @@ export interface ChatConfirmationInput {
   clientMessageId?: string;
   sourceId?: string;
   hasAttachments?: boolean;
-  answer?: { approvalId: string; approved: boolean };
+  answer?: { approvalId: string; approved?: boolean };
 }
 
-export type ChatConfirmationResult = SubmitUserMessageResult | undefined;
+export type ChatConfirmationResult =
+  | SubmitUserMessageResult
+  | { waiting: { id: string; session_id: string; background: boolean } }
+  | undefined;
 
 type TurnRow = {
   id: string;
@@ -88,6 +91,7 @@ export async function turnOrigin(turnId: string) {
     if (!chain || !origin) return undefined;
     return {
       source: origin.source,
+      messageId: origin.source === 'user' ? origin.message_id : null,
       channel: current.channel,
       scheduleInstruction:
         origin.source === 'schedule'
@@ -122,6 +126,7 @@ export async function createApprovals(
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
+    CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='OTTO_memory_save';
     UPDATE approvals SET status='uncertain' WHERE status='executing';
   `);
 
@@ -221,11 +226,11 @@ export async function createApprovals(
       const previous = (
         background
           ? await client.query(
-              'SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb ORDER BY id LIMIT 1',
+              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
               [chain.map((item) => item.id), ownerId, action, snapshot],
             )
           : await client.query(
-              'SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb ORDER BY id LIMIT 1',
+              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
               [turn.threadId, ownerId, authorMessageId, action, snapshot],
             )
       ).rows[0];
@@ -341,11 +346,17 @@ export async function createApprovals(
   }
 
   async function answerChat(input: ChatConfirmationInput) {
-    if (input.hasAttachments || !interpret) return undefined;
+    if (!interpret) return undefined;
     const approval = await confirmationFor(pool, input, false);
     if (!approval) return undefined;
-    const approved = await interpret(input.text).catch(() => undefined);
-    return approved === undefined ? undefined : { approvalId: approval.id as string, approved };
+    const approvalId = approval.id as string;
+    if (input.hasAttachments) return { approvalId };
+    try {
+      const approved = await interpret(input.text);
+      return approved === undefined ? { approvalId } : { approvalId, approved };
+    } catch {
+      return undefined;
+    }
   }
 
   async function acceptChat(
@@ -353,24 +364,29 @@ export async function createApprovals(
     input: ChatConfirmationInput,
   ): Promise<ChatConfirmationResult> {
     const approval = await confirmationFor(client, input, true);
-    if (!approval) return undefined;
-    const answer = input.answer;
-    const approved = answer && answer.approvalId === approval.id ? answer.approved : undefined;
+    if (!approval || !input.answer || approval.status !== 'pending') return undefined;
+    const approved = input.answer.approvalId === approval.id ? input.answer.approved : undefined;
+    const active = ['running', 'waiting'].includes(approval.turn_status);
     if (approved === undefined) {
-      if (approval.status === 'pending') {
-        await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
-          approval.id,
-          ownerId,
-        ]);
-        await client.query(
-          "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='waiting'",
-          [approval.turn_id, ownerId],
-        );
-      }
+      await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
+        approval.id,
+        ownerId,
+      ]);
+      if (active && approval.turn_background && input.replyToMessageId)
+        return {
+          waiting: {
+            id: approval.turn_id as string,
+            session_id: approval.turn_session_id as string,
+            background: true,
+          },
+        };
+      await client.query(
+        "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='waiting'",
+        [approval.turn_id, ownerId],
+      );
       return undefined;
     }
-    if (approval.status !== 'pending' || !['running', 'waiting'].includes(approval.turn_status))
-      return undefined;
+    if (!active) return undefined;
     if (approved) await preflight?.(approval.action, approval.args);
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'

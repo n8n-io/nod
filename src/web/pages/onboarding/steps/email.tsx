@@ -9,7 +9,6 @@ import {
   useConnectionChoice,
 } from '../../../components/connection-choice';
 import { Rise } from '../../../components/motion';
-import { PairingCode } from '../../../components/pairing-code';
 import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
@@ -48,7 +47,6 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const refreshApps = apps.refresh;
   const [reloading, setReloading] = useState(false);
   const [pending, setPending] = useState<'opening' | 'waiting'>();
-  const [pairingCode, setPairingCode] = useState<string>();
   const [pairingConfirmed, setPairingConfirmed] = useState(false);
   const [signInUrl, setSignInUrl] = useState<string>();
   const [stale, setStale] = useState(false);
@@ -68,7 +66,6 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
 
   function clearAttempt() {
     attempt.current = undefined;
-    setPairingCode(undefined);
     setSignInUrl(undefined);
     setStale(false);
     setPollFailing(false);
@@ -166,14 +163,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       return checking;
     };
     const schedule = () => {
-      poll = window.setTimeout(
-        () => {
-          void check().finally(() => {
-            if (current()) schedule();
-          });
-        },
-        pairingCode && !confirmed ? 1000 : 5000,
-      );
+      poll = window.setTimeout(() => {
+        void check().finally(() => {
+          if (current()) schedule();
+        });
+      }, 5000);
     };
     const returned = () => {
       if (document.visibilityState !== 'visible') return;
@@ -258,23 +252,17 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     setAccessRenewed(false);
     let next: 'waiting' | undefined;
     try {
-      const response = await api<{ url: string; attempt?: string; pairingCode?: string }>(
-        '/api/apps/gmail/connect',
-        {
-          method: 'POST',
-          body: JSON.stringify({ returnTo: 'window' }),
-          signal: controller.signal,
-        },
-      );
+      const response = await api<{ url: string; attempt?: string }>('/api/apps/gmail/connect', {
+        method: 'POST',
+        body: JSON.stringify({ returnTo: 'window' }),
+        signal: controller.signal,
+      });
       if (controller.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
       const url = connectionUrl(response.url, window.location.origin);
-      if (response.pairingCode !== undefined && !/^\d{3}-\d{3}$/.test(response.pairingCode))
-        throw new Error('Gmail didn’t connect. Try again?');
       if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
         throw new Error('Gmail didn’t connect. Try again?');
       attempt.current = response.attempt;
       flushSync(() => {
-        setPairingCode(response.pairingCode);
         setSignInUrl(url);
       });
       next = 'waiting';
@@ -465,7 +453,6 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                 )
               )}
             </div>
-            {!connected && pairingCode && !pairingConfirmed && <PairingCode code={pairingCode} />}
             {status}
             {accessRenewed && (
               <p role="status" className="ob-email-muted">
@@ -478,7 +465,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
               </p>
             )}
             {error && (
-              <p role="alert" className="ob-email-error">
+              <p role="alert" className="ob-email-error" data-analytics-private>
                 {error}
               </p>
             )}

@@ -14,32 +14,94 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { PostHog } from 'posthog-node';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import { createAnalytics } from '../src/server/analytics.ts';
+import { gunzipSync } from 'node:zlib';
 
 test('analytics initializes on capture, flushes once, and cannot restart after shutdown', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 1 }));
   const shutdown = t.mock.method(PostHog.prototype, 'shutdown');
   const capture = t.mock.method(PostHog.prototype, 'capture');
   const event = { distinctId: 'fixture-owner', event: 'otto_onboarding_completed', properties: {} };
+  const signal = new AbortController().signal;
   const unused = createPostHogAnalytics();
   await unused.shutdown();
-  unused.capture(event);
+  unused.capture(event, signal);
   assert.equal(shutdown.mock.callCount(), 0);
   assert.equal(capture.mock.callCount(), 0);
   assert.equal(fetch.mock.callCount(), 0);
 
   const active = createPostHogAnalytics();
   t.after(() => active.shutdown());
-  active.capture(event);
-  active.capture(event);
+  active.capture(event, signal);
+  active.capture(event, signal);
   await Promise.all([active.shutdown(), active.shutdown()]);
   assert.equal(capture.mock.callCount(), 2);
   assert.equal(shutdown.mock.callCount(), 1);
   assert.equal(fetch.mock.callCount(), 1);
-  active.capture(event);
+  active.capture(event, signal);
   await active.shutdown();
   assert.equal(capture.mock.callCount(), 2);
   assert.equal(shutdown.mock.callCount(), 1);
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
+  const received: { distinct_id: string; event: string }[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
+    const raw =
+      typeof options.body === 'string'
+        ? options.body
+        : gunzipSync(options.body as Uint8Array).toString();
+    received.push(...JSON.parse(raw).batch);
+    return Response.json({ status: 1 });
+  });
+  const consented = new Set(['hosted:alex', 'hosted:sam']);
+  const analytics = await createAnalytics({
+    provider: createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) }),
+    deployment: 'hosted',
+    environment: 'production',
+    dataRoot: '.',
+  });
+  t.after(() => analytics.shutdown());
+  for (const owner of ['alex', 'sam', 'never']) {
+    if (owner !== 'never') analytics.setUsageData(owner, true);
+    analytics.capture(owner, { event: 'otto_chat_stopped' });
+  }
+  analytics.setUsageData('alex', false);
+  await analytics.shutdown();
+  assert.deepEqual(
+    received.map((event) => event.distinct_id),
+    ['hosted:sam'],
+  );
+
+  received.length = 0;
+  const remote = await createAnalytics({
+    provider: createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) }),
+    deployment: 'hosted',
+    environment: 'production',
+    dataRoot: '.',
+  });
+  remote.setUsageData('alex', true);
+  remote.capture('alex', { event: 'otto_chat_stopped' });
+  consented.delete('hosted:alex');
+  await remote.shutdown();
+  assert.equal(received.length, 0);
+
+  const ownerBound = createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) });
+  const signal = new AbortController().signal;
+  ownerBound.capture(
+    { distinctId: 'hosted:sam', event: 'otto_chat_stopped', properties: {} },
+    signal,
+  );
+  ownerBound.capture(
+    { distinctId: 'hosted:alex', event: 'otto_chat_stopped', properties: {} },
+    signal,
+  );
+  await ownerBound.shutdown();
+  assert.deepEqual(
+    received.map((event) => event.distinct_id),
+    ['hosted:sam'],
+  );
 });
 
 test(

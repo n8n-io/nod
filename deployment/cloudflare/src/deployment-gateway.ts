@@ -72,7 +72,7 @@ export function createGatewayDeployment(options: {
             const accepted = z.record(z.uuid(), z.number().int().safe()).parse(raw);
             for (const [id, expiry] of Object.entries(accepted))
               if (expiry <= current) delete accepted[id];
-            if (accepted[requestId] || Object.keys(accepted).length >= 1024) return false;
+            if (accepted[requestId]) return false;
             accepted[requestId] = expiresAt;
             await storage.put('deployment-replays', accepted);
             return true;

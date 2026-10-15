@@ -6,7 +6,6 @@ import { startIntegrationAccess, type IntegrationAccessAttempt } from '../lib/in
 import { pageDataCache } from '../lib/page-data-cache';
 import { GoogleMark } from './account-avatar';
 import { OttoGlyph } from './motion';
-import { PairingCode } from './pairing-code';
 import { ServiceLogo } from './service-logo';
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Notice } from './ui';
 
@@ -15,7 +14,6 @@ export type AppSignIn = {
   name: string;
   logoUrl?: string;
   url?: string;
-  code?: string;
   opened: boolean;
   reopened?: boolean;
   pairingConfirmed?: boolean;
@@ -119,7 +117,11 @@ export function AppAccessRecovery({
           </Button>
         )}
       </div>
-      {error && <Notice>{error}</Notice>}
+      {error && (
+        <Notice>
+          <span data-analytics-private>{error}</span>
+        </Notice>
+      )}
     </div>
   );
 }
@@ -191,7 +193,6 @@ export function AppConnectionDialog({
               <Notice kind="error">{error}</Notice>
             ) : (
               <>
-                {signIn.code && !signIn.pairingConfirmed && <PairingCode code={signIn.code} />}
                 <p className="app-connect-waiting" role="status">
                   {signIn.pairingConfirmed
                     ? 'Waiting for you to finish signing in.'

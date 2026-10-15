@@ -60,11 +60,22 @@ export function createSessionStore(
   let read: AbortController | undefined;
   let mutation: AbortController | undefined;
   let logoutAccount: string | undefined;
+  const usageRevoked = new Set<string>();
+  const usageLocallyRevoked = new Set<string>();
+  const usageVersions = new Map<string, number>();
   function publish(change: Partial<SessionSnapshot>) {
     snapshot = { ...snapshot, ...change };
     for (const listener of listeners) listener();
   }
   function accept(session: SessionResponse) {
+    if (session.user && session.settings && usageRevoked.has(session.user.id))
+      session = {
+        ...session,
+        settings: { ...session.settings, usageData: false },
+        ...(session.analytics && {
+          analytics: { ...session.analytics, enabled: false, distinctId: null },
+        }),
+      };
     const changed = snapshot.session?.user?.id !== session.user?.id;
     if (changed) {
       mutation?.abort();
@@ -102,13 +113,28 @@ export function createSessionStore(
       epoch: snapshot.epoch + 1,
     });
   }
-  async function refresh({ conceal = false } = {}) {
+  function revokeUsageData(owner = snapshot.session?.user?.id, local = true) {
+    if (!owner) return;
+    usageRevoked.add(owner);
+    if (local) usageLocallyRevoked.add(owner);
+    usageVersions.set(owner, (usageVersions.get(owner) ?? 0) + 1);
+    if (snapshot.session?.user?.id !== owner) return;
+    version++;
+    read?.abort();
+    read = undefined;
+    accept(snapshot.session);
+  }
+  async function refresh({
+    conceal = false,
+    grantUsageData,
+  }: { conceal?: boolean; grantUsageData?: string } = {}) {
     if (snapshot.signingOut) return;
     if (conceal) invalidate();
     read?.abort();
     const controller = new AbortController();
     read = controller;
     const current = ++version;
+    const usageVersion = grantUsageData ? usageVersions.get(grantUsageData) : undefined;
     if (!snapshot.session || conceal) publish({ loading: true, error: '' });
     try {
       const session = await request<SessionResponse>('/api/session', {
@@ -120,6 +146,14 @@ export function createSessionStore(
         invalidate('Your account could not be opened. Try again.');
         return;
       }
+      if (
+        grantUsageData &&
+        session.user?.id === grantUsageData &&
+        session.settings?.usageData &&
+        !usageLocallyRevoked.has(grantUsageData) &&
+        usageVersions.get(grantUsageData) === usageVersion
+      )
+        usageRevoked.delete(grantUsageData);
       accept(session);
     } catch (cause) {
       if (controller.signal.aborted || current !== version) return;
@@ -133,9 +167,11 @@ export function createSessionStore(
     const user = snapshot.session?.user;
     if (!user || snapshot.signingOut) throw new Error('Sign in again to save your changes.');
     if (mutation) throw new Error('Wait for your changes to finish saving.');
+    if (change.usageData === false) revokeUsageData(user.id);
     const controller = new AbortController();
     mutation = controller;
     const epoch = snapshot.epoch;
+    const usageVersion = usageVersions.get(user.id);
     publish({ mutating: true });
     try {
       const session = await request<SessionResponse>('/api/account', {
@@ -151,7 +187,18 @@ export function createSessionStore(
       }
       read?.abort();
       version++;
+      if (
+        change.usageData === true &&
+        session.settings?.usageData &&
+        usageVersions.get(user.id) === usageVersion
+      ) {
+        usageRevoked.delete(user.id);
+        usageLocallyRevoked.delete(user.id);
+      }
       accept(session);
+    } catch (cause) {
+      if (change.usageData === false) void refresh();
+      throw cause;
     } finally {
       if (mutation === controller) {
         mutation = undefined;
@@ -189,6 +236,7 @@ export function createSessionStore(
     },
     getSnapshot: () => snapshot,
     refresh,
+    revokeUsageData,
     update,
     logout,
     invalidate,

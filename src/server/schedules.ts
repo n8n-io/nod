@@ -17,19 +17,19 @@ import type { CaptureAnalytics } from './analytics.ts';
 const queue = 'scheduled-task';
 const timingSchema = z.object({
   kind: z.enum(['once', 'recurring']).default('recurring'),
-  cron: z.string().trim().min(1).max(100).nullable().optional(),
+  cron: z.string().trim().min(1).nullable().optional(),
   runAt: z.iso.datetime({ offset: true }).nullable().optional(),
-  timeZone: z.string().trim().min(1).max(100),
+  timeZone: z.string().trim().min(1),
 });
 const observationFields = {
-  sourceUrl: z.url().refine((value) => new URL(value).protocol === 'https:'),
-  summary: z.string().trim().min(1).max(500),
+  sourceUrl: z.url({ protocol: /^https?$/ }),
+  summary: z.string().trim().min(1),
 };
 const verifiedObservationSchema = z
   .object({
     status: z.literal('verified'),
     ...observationFields,
-    value: z.string().trim().min(1).max(300),
+    value: z.string().trim().min(1),
   })
   .strict();
 const observationSchema = z.discriminatedUnion('status', [
@@ -38,8 +38,8 @@ const observationSchema = z.discriminatedUnion('status', [
 ]);
 const createSchema = timingSchema
   .extend({
-    title: z.string().trim().min(1).max(100),
-    prompt: z.string().trim().min(1).max(6000),
+    title: z.string().trim().min(1),
+    prompt: z.string().trim().min(1),
     baselineObservation: verifiedObservationSchema.optional(),
   })
   .strict();
@@ -127,6 +127,22 @@ function invalid(message: string) {
 function preview(text: string) {
   const value = Array.from(text.replace(/\s+/g, ' ').trim());
   return value.length > 160 ? `${value.slice(0, 159).join('').trimEnd()}…` : value.join('');
+}
+
+function scheduleAnalytics(row: ScheduleRow) {
+  const [minute, hour, day, month, weekday] = row.cron?.trim().split(/\s+/) ?? [];
+  const numeric = (value: string | undefined) => value !== undefined && /^\d+$/.test(value);
+  let cadence: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom' = 'custom';
+  if (row.kind === 'once') cadence = 'once';
+  else if (numeric(minute) && month === '*') {
+    if (hour === '*' && day === '*' && weekday === '*') cadence = 'hourly';
+    else if (numeric(hour)) {
+      if (day === '*' && weekday === '*') cadence = 'daily';
+      else if (day === '*' && numeric(weekday)) cadence = 'weekly';
+      else if (numeric(day) && weekday === '*') cadence = 'monthly';
+    }
+  }
+  return { schedule_kind: row.kind, cadence };
 }
 
 function runValue(row: RunRow): ScheduleRun {
@@ -645,7 +661,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'create' },
+      properties: { operation: 'create', ...scheduleAnalytics(row) },
     });
     return value(row);
   }
@@ -704,14 +720,14 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'update' },
+      properties: { operation: 'update', ...scheduleAnalytics(row) },
     });
     return value(row);
   }
 
   async function remove(id: string) {
     z.uuid().parse(id);
-    await transaction(async (client) => {
+    const row = await transaction(async (client) => {
       const row = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -721,11 +737,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
       await cancelPending(client, row);
       await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
+      return row;
     });
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'delete' },
+      properties: { operation: 'delete', ...scheduleAnalytics(row) },
     });
     return { ok: true };
   }

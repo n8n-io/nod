@@ -17,15 +17,18 @@ def require(condition, check):
         raise BoundaryFailure(check)
 
 
+cli_user = 31234
+
+
 def user_environment(uid, env=None):
-    home = {1000: "/home/node", 1001: "/home/otto-browser", 1002: "/home/otto-connected"}[uid]
+    home = {1000: "/home/node", 1001: "/home/otto-browser", 1002: "/home/otto-connected"}.get(uid, "/var/tmp")
     return {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "LANG": "C.UTF-8", **(env or {})}
 
 
-def as_user(uid, args, timeout=15, env=None):
+def as_user(uid, args, timeout=15, env=None, gid=None):
     def identity():
         os.setgroups([])
-        os.setgid(uid)
+        os.setgid(gid or uid)
         os.setuid(uid)
     return subprocess.run(["/usr/bin/setpriv", "--no-new-privs", *args], capture_output=True, timeout=timeout, preexec_fn=identity, env=user_environment(uid, env))
 
@@ -35,19 +38,23 @@ def connected_cli():
     plant = "import pathlib\np=pathlib.Path('/workspace/boundary-bin');p.mkdir(mode=0o755)\nfor name in ['otto-boundary','python3','sh','env','npm']:\n f=p/name;f.write_text('#!/bin/sh\\necho otto-planted-binary\\n');f.chmod(0o755)"
     require(as_user(1000, ["python3", "-c", plant]).returncode == 0, "connected-cli")
     identity = str(uuid.uuid4())
-    prefix = pathlib.Path("/home/otto-connected/cli", identity)
+    prefix = pathlib.Path("/var/tmp", "otto-cli-" + identity)
     (prefix / "bin").mkdir(parents=True)
     (prefix / "bin" / command).write_text("#!/bin/sh\nenv\n")
     (prefix / ".installed").write_text("")
-    for path in [prefix.parent, prefix, prefix / "bin", prefix / "bin" / command, prefix / ".installed"]:
-        os.chown(path, 1002, 1002)
+    for path in [prefix, prefix / "bin", prefix / "bin" / command, prefix / ".installed"]:
+        os.chown(path, cli_user, 1002)
         os.chmod(path, 0o700)
+    other = pathlib.Path("/var/tmp", "otto-cli-" + str(uuid.uuid4()))
+    other.mkdir(mode=0o700)
+    os.chown(other, cli_user + 1, 1002)
+    require(as_user(cli_user, ["python3", "-c", f"open({str(other / 'planted')!r}, 'w')"], gid=1002).returncode != 0, "connected-cli-isolated")
     def connected():
         os.setgroups([])
         os.setgid(1002)
-        os.setuid(1002)
+        os.setuid(cli_user)
     request = {"args": ["status"], "environment": {"OTTO_BOUNDARY_TOKEN": "synthetic-boundary"}, "cli": {"id": identity, "command": command, "source": {"npm": command}}, "timeoutMs": 10000, "installTimeoutMs": 10000, "maxBytes": 8192}
-    child = subprocess.Popen(["/usr/bin/setpriv", "--no-new-privs", "/usr/bin/python3", "-I", "-u", "/opt/otto/workspace-command.py"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/home/otto-connected", env={"PATH": "/workspace/boundary-bin:/opt/otto-artifacts/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin", "NPM_CONFIG_PREFIX": "/home/node/.local", "PYTHONPATH": "/workspace/boundary-bin", "LANG": "C.UTF-8"}, preexec_fn=connected)
+    child = subprocess.Popen(["/usr/bin/setpriv", "--no-new-privs", "/usr/bin/python3", "-I", "-u", "/opt/otto/workspace-command.py"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/var/tmp", env={"PATH": "/workspace/boundary-bin:/opt/otto-artifacts/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin", "NPM_CONFIG_PREFIX": "/home/node/.local", "PYTHONPATH": "/workspace/boundary-bin", "LANG": "C.UTF-8"}, preexec_fn=connected)
     child.stdin.write((json.dumps(request) + "\n").encode())
     child.stdin.flush()
     output = child.stdout.read()
@@ -105,6 +112,7 @@ def main():
             require(as_user(1001, ["python3", "-c", probe]).returncode == 0, f"browser-network-{index}")
             require(as_user(1000, ["python3", "-c", probe]).returncode != 0, f"workspace-network-{index}")
             require(as_user(1002, ["python3", "-c", probe]).returncode != 0, f"connected-network-{index}")
+            require(as_user(cli_user, ["python3", "-c", probe], gid=1002).returncode != 0, f"connected-cli-network-{index}")
         checks = [
             "from pathlib import Path; Path('/data/boundary-private').read_bytes()",
             "from pathlib import Path; Path('/data/boundary-profile').iterdir().__next__()",

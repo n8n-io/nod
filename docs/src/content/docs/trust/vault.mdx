@@ -19,11 +19,11 @@ Vault keeps your website logins and cards. Otto can sign in with a saved login, 
 
 </Steps>
 
-**Import from a password manager.** Select **New → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Otto imports up to 5,000 website logins at a time and skips archived items. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
+**Import from a password manager.** Select **New → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Otto imports the website logins and skips archived items. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
 
 **Add one during a task.** When a task needs a login you haven't saved, Otto opens a private **Sign in** form. Enter the details and select **Save and continue**. The values never pass through chat or the model.
 
-A private form stays open for ten minutes. It closes sooner once it's used, when Otto starts on a newer message in the same conversation, or when you select **Stop**. A scheduled run or background task has its own session, so chatting with Otto never closes its form.
+A private form stays open while its task waits for you. It closes once it's used, when Otto asks for a newer one, when Otto starts on a newer message in the same conversation, or when you select **Stop**. A scheduled run or background task has its own session, so chatting with Otto never closes its form.
 
 ## How sign-in works
 
@@ -74,7 +74,7 @@ A yes covers that website and account for the rest of the task. A new task is ch
 
 ## Verification codes
 
-When a website emails you a code, Otto can fetch it privately from your connected mailbox. The server checks the sender, recipient, time and account before entering it, and the model never sees it. Otherwise, enter the code in the private form, or reply with it in the chat where Otto asked, including Telegram or WhatsApp. Otto submits it privately and keeps it out of the chat history. Verification emails Otto reads through your apps come back without their content.
+When a website emails you a code, Otto can fetch it privately from your connected mailbox. The server checks the sender, recipient, time and account before entering it, and the model never sees it. It reads only mail that arrived after Otto entered your sign-in details on that site, or after the task started, allowing 30 seconds for clock differences and going back at most five and a half minutes. It waits up to a minute for the email to arrive. Otherwise, enter the code in the private form, or reply with it in the chat where Otto asked, including Telegram or WhatsApp, in any language, such as `482913` or "mi código es 482913". Otto submits it privately and keeps it out of the chat history. While a code is pending, a message with a code-length number anywhere but at its end is refused, so send the code at the end or by itself. Verification emails Otto reads through your apps come back without their content.
 
 ![The private Enter verification code form for example.com, with one code field and a Continue button.](../../../assets/screens/verify-code-page.png)
 
@@ -84,7 +84,7 @@ Private forms never open in a chat app. Finish the step in the same conversation
 
 ## Review and change access
 
-**Vault → Activity** lists every sign-in, code, saved-session use, question, held attempt, reveal and permission change for 90 days, with the task and the reason.
+**Vault → Activity** lists every sign-in, code, saved-session use, question, held attempt, reveal and permission change, with the task and the reason.
 
 **Vault → Saved** lists your logins, cards and saved sessions. Open one to edit, reveal, copy or delete it. Every reveal is recorded.
 

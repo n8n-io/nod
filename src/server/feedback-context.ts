@@ -7,7 +7,7 @@ export async function feedbackContext(options: {
   runtimeMode: 'local' | 'gateway' | 'tenant';
   environment: NodeJS.ProcessEnv;
   cwd?: string;
-}): Promise<Omit<FeedbackContext, 'enabled'>> {
+}): Promise<Omit<FeedbackContext, 'enabled' | 'recipient'>> {
   const execute = promisify(childProcess.execFile);
   const { runtimeMode, environment } = options;
   const development = runtimeMode === 'local' && environment.NODE_ENV !== 'production';

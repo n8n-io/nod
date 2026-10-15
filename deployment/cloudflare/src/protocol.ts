@@ -64,15 +64,12 @@ export function leaseExpiry(value: unknown, now: () => number = Date.now) {
 export function environmentValues(value: unknown): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new RuntimeControlError();
   const entries = Object.entries(value);
-  if (entries.length > 100 || JSON.stringify(value).length > 48 * 1024)
-    throw new RuntimeControlError(413);
   for (const [key, entry] of entries)
     if (
-      !/^[A-Z][A-Z0-9_]{0,79}$/.test(key) ||
+      !/^[A-Z][A-Z0-9_]*$/.test(key) ||
       key === 'OTTO_IMAGE_RELEASE' ||
       typeof entry !== 'string' ||
-      entry.includes('\u0000') ||
-      entry.length > 32 * 1024
+      entry.includes('\u0000')
     )
       throw new RuntimeControlError();
   return Object.fromEntries(entries) as Record<string, string>;

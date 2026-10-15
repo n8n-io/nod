@@ -54,13 +54,18 @@ type Discovery = {
     endpoint?: string;
     command?: string;
     auth: string;
-    envName?: string;
+    env?: string[];
     source?: { npm?: string; pypi?: string; url?: string; sha256?: string };
     testPath?: string;
     scope?: string;
     clientIdRequired?: boolean;
   }>;
 };
+
+function discoverySettings(discovery: Discovery | null | undefined) {
+  const names = discovery?.paths.find((path) => path.kind === 'cli')?.env;
+  return names && names.length > 1 ? names : undefined;
+}
 
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
@@ -487,14 +492,11 @@ export function Apps({
       return checking;
     };
     const schedule = () => {
-      poll = window.setTimeout(
-        () => {
-          void check().finally(() => {
-            if (!controller.signal.aborted) schedule();
-          });
-        },
-        signIn.code && !pairingConfirmed ? 1000 : 5000,
-      );
+      poll = window.setTimeout(() => {
+        void check().finally(() => {
+          if (!controller.signal.aborted) schedule();
+        });
+      }, 5000);
     };
     const visible = () => {
       if (document.visibilityState === 'visible') void check();
@@ -616,6 +618,7 @@ export function Apps({
     if (!discoveryId || savingDiscovery) return;
     const form = event.currentTarget;
     const values = new FormData(form);
+    const names = discoverySettings(discovery);
     setSavingDiscovery(true);
     setDiscoveryError('');
     try {
@@ -623,14 +626,16 @@ export function Apps({
         method: 'POST',
         body: JSON.stringify({
           accountName: values.get('accountName'),
-          token: values.get('token'),
+          token: names
+            ? Object.fromEntries(names.map((name) => [name, values.get(`setting:${name}`)]))
+            : values.get('token'),
         }),
       });
       form.reset();
       window.location.assign('/');
     } catch (cause) {
-      const token = form.elements.namedItem('token');
-      if (token instanceof HTMLInputElement) token.value = '';
+      for (const input of form.querySelectorAll('input[type="password"]'))
+        if (input instanceof HTMLInputElement) input.value = '';
       setDiscoveryError(errorMessage(cause));
       setSavingDiscovery(false);
     }
@@ -710,7 +715,7 @@ export function Apps({
       opened: false,
     });
     try {
-      const result = await api<{ url: string; attempt?: string; pairingCode?: string }>(
+      const result = await api<{ url: string; attempt?: string }>(
         `/api/apps/${encodeURIComponent(connection.slug)}/connect`,
         {
           method: 'POST',
@@ -751,20 +756,13 @@ export function Apps({
         setBusy('');
         return;
       }
-      if (result.pairingCode !== undefined) {
-        if (
-          !/^\d{3}-\d{3}$/.test(result.pairingCode) ||
-          !result.attempt ||
-          !/^[A-Za-z0-9_-]{43}$/.test(result.attempt)
-        )
-          throw new Error('The app sign-in could not be opened. Try again.');
-      }
+      if (result.attempt !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(result.attempt))
+        throw new Error('The app sign-in could not be opened. Try again.');
       const pending = {
         service: connection.slug,
         name: connection.name,
         logoUrl: connection.logoUrl,
         url,
-        code: result.pairingCode,
         attempt: result.attempt,
         opened: false,
       };
@@ -1417,17 +1415,19 @@ export function Apps({
               <Field label="Account name">
                 <Input name="accountName" required maxLength={200} autoComplete="off" />
               </Field>
-              <Field label="Access token">
-                <Input
-                  name="token"
-                  type="password"
-                  required
-                  minLength={8}
-                  maxLength={8192}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </Field>
+              {(discoverySettings(discovery) ?? ['token']).map((name) => (
+                <Field key={name} label={name === 'token' ? 'Access token' : name}>
+                  <Input
+                    name={name === 'token' ? 'token' : `setting:${name}`}
+                    type="password"
+                    required
+                    minLength={8}
+                    maxLength={8192}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field>
+              ))}
               <Button
                 type="submit"
                 disabled={

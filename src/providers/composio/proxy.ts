@@ -472,10 +472,6 @@ export function createComposioProxy(options: {
         .object({
           redirectUrl: z.url(),
           transactionId: stateSchema,
-          pairingCode: z
-            .string()
-            .regex(/^\d{3}-\d{3}$/)
-            .optional(),
         })
         .parse(
           await rpc('/v1/connect/start', {
@@ -493,7 +489,6 @@ export function createComposioProxy(options: {
       return {
         accountId: `${pendingPrefix}${transactionId}`,
         url: result.redirectUrl,
-        pairingCode: result.pairingCode,
         verificationSecret: challenge,
       };
     },

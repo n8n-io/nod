@@ -105,9 +105,9 @@ test(
                   held.entered(options.turnId);
                   await held.wait;
                   const messages = (await options.nextMessages?.()) ?? [];
-                  held.messages.push(...messages);
+                  held.messages.push(...messages.map((message) => message.text));
                   assert.equal(messages.length, 1);
-                  text = messages[0]!;
+                  text = messages[0]!.text;
                 }
                 const plan =
                   phase === 0

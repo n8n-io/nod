@@ -1,8 +1,7 @@
 import { connect } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import type { Readable, Writable } from 'node:stream';
-import { browserRequestBytes } from '../../ports/computer.ts';
-import { browserFrame, browserSocketPath, responseBytes } from './protocol.ts';
+import { browserFrame, browserSocketPath } from './protocol.ts';
 
 export function runBrowserBridge(options: {
   input: Readable;
@@ -13,8 +12,7 @@ export function runBrowserBridge(options: {
     const socket = connect(options.socketPath ?? browserSocketPath);
     options.input.setEncoding('utf8');
     let input = '';
-    let inputSize = 0;
-    let outputSize = 0;
+    let output = false;
     let requestId: string | undefined;
     let cancelled = false;
     let ended = false;
@@ -31,8 +29,6 @@ export function runBrowserBridge(options: {
     };
     const disconnected = () => finish(1);
     const incoming = (chunk: Buffer | string) => {
-      inputSize += Buffer.byteLength(chunk);
-      if (inputSize > browserRequestBytes + 1024) return finish(1);
       input += chunk.toString();
       for (let line = input.indexOf('\n'); line >= 0; line = input.indexOf('\n')) {
         const raw = input.slice(0, line);
@@ -46,7 +42,10 @@ export function runBrowserBridge(options: {
             if (!requestId || cancelled || frame.id !== requestId) return finish(1);
             if (frame.type === 'cancel') cancelled = true;
           }
-          socket.write(JSON.stringify(frame) + '\n');
+          if (!socket.write(JSON.stringify(frame) + '\n')) {
+            options.input.pause();
+            socket.once('drain', () => options.input.resume());
+          }
         } catch {
           return finish(1);
         }
@@ -54,14 +53,13 @@ export function runBrowserBridge(options: {
     };
     socket.on('error', () => finish(1));
     socket.on('data', (chunk: Buffer) => {
-      outputSize += chunk.length;
-      if (outputSize > responseBytes) return finish(1);
+      output = true;
       if (!options.output.write(chunk)) {
         socket.pause();
         options.output.once('drain', () => socket.resume());
       }
     });
-    socket.on('end', () => finish(outputSize ? 0 : 1));
+    socket.on('end', () => finish(output ? 0 : 1));
     options.input.on('data', incoming);
     options.input.on('end', disconnected);
     options.input.on('error', disconnected);

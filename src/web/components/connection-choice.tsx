@@ -586,7 +586,7 @@ export function ConnectionChoice({
         </p>
       )}
       {view.error && (
-        <p id={`${id}-error`} role="alert" className="connection-error">
+        <p id={`${id}-error`} role="alert" className="connection-error" data-analytics-private>
           {view.error}
         </p>
       )}

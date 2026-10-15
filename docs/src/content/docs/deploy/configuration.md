@@ -49,23 +49,27 @@ Keys set here become server-managed connections. They stay in server memory and 
 
 ## Apps and Composio
 
-Desktop and source/server installs offer Google sign-in for Otto's connection or a personal Composio key. Managed access requires an exact email allowed by the proxy operator. The owner can select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project). Setting `COMPOSIO_API_KEY` pins a source/server install to its own project instead, and the app no longer offers the choice. Source/server installs can customize the settings below. The desktop app ignores `COMPOSIO_API_KEY`. Packaged and ordinary source desktop launches also ignore `OTTO_COMPOSIO_PROXY_URL`; [isolated desktop development](/deploy/desktop-app/) can override it.
+Desktop and source/server installs offer Easy Connect with Google sign-in or a personal Composio key. Easy Connect requires an email or verified Google Workspace domain allowed by the proxy operator. Select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project).
 
-| Variable                           | What it does                                                                                                           | Default           |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                | Empty             |
-| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom connection service in place of Otto's when `COMPOSIO_API_KEY` is absent.                                 | Otto's connection |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key then also needs **Triggers → Read and write**. | Empty             |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                    | Automatic         |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                          | Automatic         |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                             | Automatic         |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic         |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic         |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic         |
+Setting `COMPOSIO_API_KEY` pins a source/server install to its own project, and the app no longer offers the choice. The desktop app ignores `COMPOSIO_API_KEY`. Packaged and ordinary source desktop launches also ignore `OTTO_COMPOSIO_PROXY_URL`; [isolated desktop development](/deploy/desktop-app/) can override it.
+
+| Variable                           | What it does                                                                                                                                                | Default           |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                                                     | Empty             |
+| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom connection service in place of Otto's when `COMPOSIO_API_KEY` is absent.                                                                      | Otto's connection |
+| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. In hosted mode only the gateway holds it. The key also needs **Triggers → Read and write**. | Empty             |
+| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                                                         | Automatic         |
+| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                                                               | Automatic         |
+| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                                                                  | Automatic         |
+| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                                                                 | Automatic         |
+| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                                                                   | Automatic         |
+| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                                                         | Automatic         |
 
 For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
 
-Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. Notion and Linear connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
+Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. Explicit auth-config IDs take precedence. Otherwise, Otto discovers eligible custom configurations across supported toolkits. It uses Composio defaults only when no custom configuration exists. Ambiguous or unavailable custom configurations stop the connection instead of falling back.
+
+Easy Connect's operator selects its configurations on the connection service. Otto doesn't send these auth-config settings to that service. Notion and Linear connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
 
 ## Vault
 
@@ -101,13 +105,19 @@ Set up Telegram and WhatsApp in **Channels** instead. The app checks the account
 
 ## Analytics and feedback
 
-| Variable                     | What it does                                                                                                                       | Default                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `OTTO_ANALYTICS_ENABLED`     | `false` turns off usage data and recordings for everyone. `true` turns them on in development too. Each owner still has to opt in. | On with `pnpm start`, off with `pnpm run dev` |
-| `OTTO_ANALYTICS_ENVIRONMENT` | The label on events: `production` or `development`.                                                                                | Follows how you started Otto                  |
-| `OTTO_FEEDBACK_URL`          | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                          |
+| Variable                           | What it does                                                                                                                       | Default                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `OTTO_ANALYTICS_ENABLED`           | `false` turns off usage data and recordings for everyone. `true` turns them on in development too. Each owner still has to opt in. | On with `pnpm start`, off with `pnpm run dev`       |
+| `OTTO_ANALYTICS_ENVIRONMENT`       | The label on events: `production` or `development`.                                                                                | Follows how you started Otto                        |
+| `OTTO_FEEDBACK_ENABLED`            | `false` disables feedback submissions and status checks, regardless of the configured collector.                                   | Enabled                                             |
+| `OTTO_FEEDBACK_URL`                | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                                |
+| `OTTO_FEEDBACK_RECEIPT_URL_PREFIX` | Required with a custom collector. An HTTPS issue collection URL ending in `/`; receipts must belong to that origin and path.       | n8n's Linear `LAB` issues for the default collector |
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
+
+Analytics go to the Otto team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/otto/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false`, then restart Otto. These settings apply to source installs, the desktop process environment and hosted `GATEWAY_ENV` (including tenant runtimes). They do not disable model, app or update traffic.
+
+For an operator-owned collector, set `OTTO_FEEDBACK_URL=https://feedback.example.com/intake` and `OTTO_FEEDBACK_RECEIPT_URL_PREFIX=https://issues.example.com/projects/otto/issues/`. A submitted receipt can then link to `https://issues.example.com/projects/otto/issues/123`, but not another project or origin. Receipt URLs cannot contain credentials, queries, fragments or encoded path separators. The collector uses Otto's existing feedback envelope and receipt contract; setting an endpoint alone does not create a compatible service. `OTTO_FEEDBACK_TOKEN`, when set, supplies the server-only `x-otto-feedback-token` header. It never goes to the browser or sandbox.
 
 ## Computers
 
@@ -128,7 +138,7 @@ A hosted deployment sets these in its `GATEWAY_ENV` secret. A source install lea
 | `OTTO_PUBLIC_URL`                                                | The public HTTPS origin.                                                   | `http://localhost:<PORT>` |
 | `OTTO_MASTER_KEY`                                                | The key Otto derives each user's keys from. Treat it as recovery material. | None                      |
 | `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in.                                                            | None                      |
-| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits, up to 400.                        | `8`                       |
+| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits.                                   | `8`                       |
 | `OTTO_DEVELOPER_IDS`                                             | Comma-separated account IDs that can use the developer browser routes.     | Empty                     |
 | `OTTO_PRIVACY_NOTICE_FILE`                                       | A Markdown privacy notice served at `/privacy`.                            | No notice                 |
 | `OBJECT_STORAGE_PROVIDER`, `OBJECT_STORAGE_ENDPOINT`             | Where files and checkpoints are stored.                                    | None                      |

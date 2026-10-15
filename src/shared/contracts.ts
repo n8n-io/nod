@@ -37,11 +37,11 @@ export interface SubmitMessageResponse {
 export interface VerificationRequest {
   id: string;
   turnId: string;
-  expiresAt: string;
   kind: 'otp' | 'payment';
 }
 export interface Turn {
   id: string;
+  handoffMessageId?: string | null;
   status: TurnStatus;
   source: 'user' | 'schedule' | 'event' | 'resume';
   createdAt: string;
@@ -171,7 +171,6 @@ export interface CredentialRequest {
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
   status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
-  expiresAt: string;
   savedEntries?: VaultLoginEntry[];
   selectedEntryId?: string;
 }
@@ -206,7 +205,6 @@ export interface AppSetupStatus {
     slug: string;
     name: string;
     logoUrl?: string;
-    pairingCode?: string;
     pairingConfirmed?: boolean;
     signInRequired?: boolean;
   }>;

@@ -1,11 +1,9 @@
 import { z } from 'zod';
 import { secretToken } from './redaction.ts';
-import { memoryAreas, type MemorySource, type MemoryView } from '../shared/memory.ts';
+import { memoryAreas, noteChars, type MemorySource, type MemoryView } from '../shared/memory.ts';
 
 export const areas = memoryAreas;
 export const maxBytes = 256 * 1024;
-export const maxEntries = 300;
-export const maxArchive = 40;
 
 export const personalSecret = new RegExp(
   String.raw`\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@|` + secretToken.source,
@@ -27,7 +25,7 @@ export const slug = z
   .regex(new RegExp(`^${slugPattern}$`))
   .max(48);
 export const path = z.string().regex(new RegExp(`^(?:${areas.join('|')})/${slugPattern}$`));
-export const line = (max: number) =>
+export const line = (max = noteChars) =>
   z
     .string()
     .trim()
@@ -39,7 +37,7 @@ const timestamp = z.iso.datetime({ offset: true });
 const entryFields = z.object({
   area,
   slug,
-  text: line(600),
+  text: line(),
   abstract: line(120).optional(),
   origin: z.enum(['stated', 'inferred', 'email']),
   updated: timestamp,
@@ -122,7 +120,8 @@ export const statusOf = (entry: Entry) =>
 export function freeSlug(tree: Tree, target: Area, base: string) {
   const taken = new Set(tree.entries.filter((entry) => entry.area === target).map((e) => e.slug));
   let value = base;
-  for (let n = 2; taken.has(value); n++) value = `${base.slice(0, 44)}-${n}`;
+  for (let n = 2; taken.has(value); n++)
+    value = `${base.slice(0, 47 - String(n).length).replace(/-+$/, '')}-${n}`;
   return value;
 }
 
@@ -144,10 +143,7 @@ export const areaEntries = (tree: Tree, target: Area) =>
 
 export function archive(tree: Tree, entry: Entry, reason: Reason, now: string, by?: string) {
   tree.entries = tree.entries.filter((item) => item !== entry);
-  tree.archive = [
-    ...tree.archive,
-    { ...entry, archived: now, reason, ...(by ? { by } : {}) },
-  ].slice(-maxArchive);
+  tree.archive = [...tree.archive, { ...entry, archived: now, reason, ...(by ? { by } : {}) }];
 }
 
 export function parse(bytes?: Uint8Array): Tree {
@@ -222,8 +218,18 @@ export function render(tree: Tree) {
   let bytes = write(tree.archive);
   for (let drop = 1; bytes.length > maxBytes && drop <= tree.archive.length; drop++)
     bytes = write(tree.archive.slice(drop));
-  if (bytes.length > maxBytes) throw new Error('The memory file is full.');
+  if (bytes.length > maxBytes)
+    throw Object.assign(new Error('Memory is full. Forget a note first.'), { statusCode: 400 });
   return bytes;
+}
+
+export function fits(tree: Tree) {
+  try {
+    render(tree);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function indexLayout(tree: Tree, options: { tentative?: boolean } = {}) {

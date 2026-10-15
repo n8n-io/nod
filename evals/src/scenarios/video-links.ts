@@ -112,8 +112,8 @@ async function playable(run: Run, path: string) {
   const bytes = found && (await run.read(found));
   if (!bytes) return `${path} is missing`;
   const file = describe(bytes);
-  if (!path.endsWith('.mp4') || bytes.length > 15 * 1024 * 1024 || !file.faststart)
-    return `${path} is not a fast-start MP4 within 15 MB`;
+  if (!path.endsWith('.mp4') || bytes.length > 50 * 1024 * 1024 || !file.faststart)
+    return `${path} is not a fast-start MP4 within 50 MB`;
   return file.video?.startsWith('avc') &&
     [66, 77, 88, 100].includes(file.profile ?? 0) &&
     (!file.audio || file.audio === 'mp4a')

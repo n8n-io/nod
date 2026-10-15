@@ -60,10 +60,10 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice, usage }: Ste
             If something breaks or you have an idea, send us feedback. There’s a button for it in
             the app. A screenshot helps a lot, and we read every message.
           </Bubble>,
-          <Bubble>
-            <p>
-              It also helps a lot if you share <strong>anonymous usage data</strong>. Never your
-              messages, files or keys.
+          <Bubble className="ob-open-usage">
+            <p id={`${id}-usage-data`}>
+              Share usage insights with the Otto team at n8n. Your model derives them from chats;
+              messages, files and keys are not sent to PostHog.
             </p>
             <div className="ob-open-toggle">
               <Switch
@@ -71,6 +71,7 @@ export function OpenSource({ arrived, onNext, onBack, busy, notice, usage }: Ste
                 checked={enabled}
                 disabled={!usage || busy}
                 aria-busy={saving !== null}
+                aria-describedby={`${id}-usage-data`}
                 onCheckedChange={(value) => void change(value)}
               />
               <label htmlFor={id}>Share usage data · you can change this in Settings</label>

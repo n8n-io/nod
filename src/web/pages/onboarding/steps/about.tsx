@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode }
 import { ArrowUp, Mic } from 'lucide-react';
 import type { Connection } from '../../../../shared/contracts';
 import {
+  interviewAnswerChars,
   interviewLabels,
   lastQuestion,
   type InterviewResponse,
@@ -234,7 +235,7 @@ export function About({ arrived, onNext }: StepProps) {
               placeholder="Type your answer…"
               aria-label="Your answer"
               autoComplete="off"
-              maxLength={560}
+              maxLength={interviewAnswerChars}
               data-analytics-private
             />
             <div className="composer-tools">

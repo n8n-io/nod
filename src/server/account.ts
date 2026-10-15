@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AccountUser, SessionResponse } from '../shared/account.ts';
+import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/account.ts';
 import type { AuthenticatedSession, AuthenticationProvider } from '../ports/authentication.ts';
 import type { AccountStore } from './account-store.ts';
 import type { Analytics } from './analytics.ts';
@@ -42,6 +42,7 @@ export function createAccountSession(options: {
   localUser?: AccountUser;
   developerIds?: ReadonlySet<string>;
   analytics?: Analytics;
+  usageDataChanged?(session: AuthenticatedSession): Promise<void>;
   prepare?(ownerId: string): Promise<void>;
   start?(ownerId: string, name?: string): Promise<void>;
   warm?(ownerId: string): void;
@@ -55,20 +56,54 @@ export function createAccountSession(options: {
   const origin = new URL(options.origin).origin;
   const mode = options.authentication ? 'google' : 'local';
   const principals = new WeakMap<FastifyRequest, AuthenticatedSession | null>();
-  async function principal(request: FastifyRequest) {
+  const accountVersions = new Map<string, number>();
+  const accountUpdates = new Map<string, Promise<unknown>>();
+  async function readAccount(owner: string) {
+    for (;;) {
+      await accountUpdates.get(owner)?.catch(() => {});
+      const version = accountVersions.get(owner);
+      const account = await options.accounts.read(owner);
+      const consent = await options.accounts.readConsent(owner);
+      if (accountVersions.get(owner) !== version || accountUpdates.has(owner)) continue;
+      options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+      return { ...account, usageData: consent.enabled };
+    }
+  }
+  async function updateAccount(session: AuthenticatedSession, input: AccountUpdate) {
+    const owner = session.user.id;
+    const version = (accountVersions.get(owner) ?? 0) + 1;
+    accountVersions.set(owner, version);
+    if (input.usageData === false) options.analytics?.setUsageData(owner, false);
+    const update = (accountUpdates.get(owner) ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        const account = await options.accounts.update(owner, input);
+        const consent = await options.accounts.readConsent(owner);
+        if (accountVersions.get(owner) === version)
+          options.analytics?.setUsageData(owner, consent.enabled, consent.revision);
+        return { ...account, usageData: consent.enabled };
+      });
+    accountUpdates.set(owner, update);
+    const account = await update.finally(() => {
+      if (accountUpdates.get(owner) === update) accountUpdates.delete(owner);
+    });
+    if (input.usageData !== undefined) await options.usageDataChanged?.(session);
+    return account;
+  }
+  async function principal(request: FastifyRequest, reply: FastifyReply) {
     if (principals.has(request)) return principals.get(request) ?? null;
     const session = options.authentication
-      ? await options.authentication.session(authenticationHeaders(request))
+      ? await options.authentication.session(authenticationHeaders(request), true)
       : options.localUser
         ? { id: 'local', expiresAt: new Date('9999-01-01'), user: options.localUser }
         : null;
+    if (session?.cookies) reply.header('set-cookie', session.cookies);
     principals.set(request, session);
     return session;
   }
-  async function response(request: FastifyRequest): Promise<SessionResponse> {
-    const session = await principal(request);
-    const account = session ? await options.accounts.read(session.user.id) : null;
-    if (session && account) options.analytics?.setUsageData(session.user.id, account.usageData);
+  async function response(request: FastifyRequest, reply: FastifyReply): Promise<SessionResponse> {
+    const session = await principal(request, reply);
+    const account = session ? await readAccount(session.user.id) : null;
     return {
       auth: { mode, googleAvailable: options.authentication?.configured ?? false },
       user: session
@@ -97,7 +132,7 @@ export function createAccountSession(options: {
     };
   }
   async function requirePrincipal(request: FastifyRequest, reply: FastifyReply) {
-    const session = await principal(request);
+    const session = await principal(request, reply);
     const expected = request.headers['x-otto-account'];
     if (!session || (expected !== undefined && expected !== session.user.id)) {
       reply.code(401).send({ error: 'Sign in to continue.' });
@@ -179,7 +214,7 @@ export function createAccountSession(options: {
   function register(app: FastifyInstance) {
     app.get('/api/session', async (request, reply) => {
       reply.header('cache-control', 'no-store');
-      const result = await response(request);
+      const result = await response(request, reply);
       if (result.user) options.warm?.(result.user.id);
       return result;
     });
@@ -265,19 +300,16 @@ export function createAccountSession(options: {
       if (!session) return;
       const input = accountUpdate.parse(request.body);
       let onboardingCompletedNow = false;
-      let usageData: boolean | undefined;
       if (input.onboardingCompleted) {
         if (!(await prepare(request, reply, session))) return;
         if (
           !(await start(request, reply, session, input.name, async () => {
-            const account = await options.accounts.update(session.user.id, input);
+            const account = await updateAccount(session, input);
             onboardingCompletedNow = account.onboardingCompletedNow === true;
-            usageData = account.usageData;
           }))
         )
           return;
-      } else usageData = (await options.accounts.update(session.user.id, input)).usageData;
-      if (usageData !== undefined) options.analytics?.setUsageData(session.user.id, usageData);
+      } else await updateAccount(session, input);
       if (onboardingCompletedNow)
         options.analytics?.capture(session.user.id, { event: 'otto_onboarding_completed' });
       if (input.name !== undefined || input.theme !== undefined)
@@ -286,7 +318,7 @@ export function createAccountSession(options: {
           properties: { section: 'account', operation: 'update' },
         });
       reply.header('cache-control', 'no-store');
-      return response(request);
+      return response(request, reply);
     });
     app.post('/api/account/welcome', async (request, reply) => {
       if (!sameOrigin(request, reply)) return;

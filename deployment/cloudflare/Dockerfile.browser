@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=dependencies /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY src/ports/computer.ts src/ports/thread-identity.ts ./src/ports/
-COPY src/shared/browser-errors.ts src/shared/browser-handoff.ts ./src/shared/
+COPY src/shared/browser-errors.ts src/shared/browser-handoff.ts src/shared/files.ts ./src/shared/
 COPY src/providers/process.ts ./src/providers/
 COPY src/providers/agent-browser ./src/providers/agent-browser/
 COPY src/providers/container-browser/worker.ts src/providers/container-browser/bridge.ts src/providers/container-browser/protocol.ts src/providers/container-browser/config.ts ./src/providers/container-browser/

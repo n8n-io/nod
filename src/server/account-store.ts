@@ -7,6 +7,7 @@ export interface StoredAccount extends AccountSettings {
 }
 
 export interface AccountStore {
+  readConsent(ownerId: string): Promise<{ enabled: boolean; revision: string }>;
   read(ownerId: string): Promise<StoredAccount>;
   update(
     ownerId: string,
@@ -14,16 +15,20 @@ export interface AccountStore {
   ): Promise<StoredAccount & { onboardingCompletedNow?: boolean }>;
 }
 
-export function createAccountStore(database: Pool): AccountStore & { initialize(): Promise<void> } {
+export function createAccountStore(database: Pool): AccountStore & {
+  initialize(): Promise<void>;
+} {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
     const result = await connection.query<StoredAccount>(
-      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,display_name,usage_data)
-       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),$4,COALESCE($5,false))
+      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,display_name,usage_data,usage_data_revision)
+       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),$4,COALESCE($5,false),CASE WHEN $5 THEN 1 ELSE 0 END)
        ON CONFLICT (owner_id) DO UPDATE SET
          theme=COALESCE($2,account_settings.theme),
          onboarding_completed=COALESCE($3,account_settings.onboarding_completed),
          display_name=COALESCE($4,account_settings.display_name),
          usage_data=COALESCE($5,account_settings.usage_data),
+         usage_data_revision=account_settings.usage_data_revision +
+           CASE WHEN $5 IS NOT NULL AND $5 IS DISTINCT FROM account_settings.usage_data THEN 1 ELSE 0 END,
          updated_at=now()
        RETURNING theme,onboarding_completed AS "onboardingCompleted",display_name AS "displayName",usage_data AS "usageData"`,
       [
@@ -45,7 +50,16 @@ export function createAccountStore(database: Pool): AccountStore & { initialize(
         onboarding_completed boolean NOT NULL DEFAULT false,
         updated_at timestamptz NOT NULL DEFAULT now()
       );
-      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false`);
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false;
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0`);
+    },
+    async readConsent(ownerId) {
+      const result = await database.query<{ enabled: boolean; revision: string }>(
+        `SELECT usage_data AS enabled,usage_data_revision::text AS revision
+         FROM account_settings WHERE owner_id=$1`,
+        [ownerId],
+      );
+      return result.rows[0] ?? { enabled: false, revision: '0' };
     },
     async read(ownerId) {
       const result = await database.query<StoredAccount>(

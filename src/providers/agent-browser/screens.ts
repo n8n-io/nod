@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
 import { z } from 'zod';
@@ -48,7 +48,6 @@ export function createScreenStore(root: string) {
     },
     async load(id: string): Promise<StoredScreen | null> {
       try {
-        if ((await stat(metadata(id))).size > browserRequestBytes) return null;
         return storedScreen.parse(JSON.parse(await readFile(metadata(id), 'utf8')));
       } catch {
         return null;
@@ -62,19 +61,16 @@ export function createScreenStore(root: string) {
     },
     async read(id: string): Promise<Buffer | null> {
       try {
-        const info = await stat(path(id));
-        if (!info.size || info.size > 12 * 1024 * 1024) return null;
-        return await readFile(path(id));
+        const image = await readFile(path(id));
+        return image.length ? image : null;
       } catch {
         return null;
       }
     },
     async accept(id: string, temporary: string): Promise<Buffer> {
       await chmod(temporary, 0o600);
-      const info = await stat(temporary);
-      if (!info.size || info.size > 12 * 1024 * 1024)
-        throw new Error('Browser screenshot is too large.');
       const buffer = await readFile(temporary);
+      if (!buffer.length) throw new Error('The browser screenshot is empty.');
       await rename(temporary, path(id));
       return buffer;
     },

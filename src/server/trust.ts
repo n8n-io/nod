@@ -22,16 +22,18 @@ export function createTrust(options: {
 }) {
   const { pool, ownerId } = options;
 
-  async function conversation(threadId: string) {
+  async function conversation(threadId: string, originMessageId: string | null) {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
-        `SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
-         AND text<>'' AND created_at>now()-interval '24 hours'
-         AND text NOT IN (
-           SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
-           WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL)
-         ORDER BY created_at DESC,id DESC LIMIT 5`,
-        [ownerId, threadId],
+        `WITH owner AS (SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
+           AND (created_at>now()-interval '24 hours' OR id=$3)
+           AND text<>'' AND text NOT IN (
+             SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+             WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL))
+         (SELECT * FROM owner WHERE created_at>now()-interval '24 hours' ORDER BY created_at DESC,id DESC LIMIT 5)
+         UNION SELECT * FROM owner WHERE id=$3
+         ORDER BY created_at DESC,id DESC`,
+        [ownerId, threadId, originMessageId],
       )
     ).rows;
     const latest = users[0];
@@ -62,7 +64,7 @@ export function createTrust(options: {
     const instruction = origin.scheduleInstruction?.trim();
     const words =
       origin.source === 'user'
-        ? await conversation(turn.threadId)
+        ? await conversation(turn.threadId, origin.messageId)
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction }
           : undefined;
@@ -97,7 +99,7 @@ export function createTrust(options: {
   }
 
   async function answer(reply: string) {
-    const result = await options.review(answerInstructions, { reply }).catch(() => undefined);
+    const result = await options.review(answerInstructions, { reply });
     const value = result && typeof result === 'object' && (result as { answer?: unknown }).answer;
     return value === 'yes' ? true : value === 'no' ? false : undefined;
   }

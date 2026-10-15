@@ -27,8 +27,7 @@ export function createE2BAllocation(options: {
     !options.templateId.trim() ||
     leaseMs < 300 ||
     idlePauseMs < 50 ||
-    maxActiveMs < 300 ||
-    maxActiveMs > 45 * 60_000
+    maxActiveMs < 300
   )
     throw new Error('The remote computer configuration is invalid.');
   const listeners = new Set<() => void>();

@@ -128,14 +128,14 @@ export async function createPayments(
       origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, card_id text NOT NULL,
       fields jsonb NOT NULL, document text NOT NULL, destinations jsonb NOT NULL,
       keep_notice boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
-      created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
+      created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE vault_payments DROP COLUMN IF EXISTS flagged;
+    ALTER TABLE vault_payments DROP COLUMN IF EXISTS expires_at;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS submit_selector text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS card_version text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS browser_id text;
     CREATE INDEX IF NOT EXISTS vault_payments_owner ON vault_payments(owner_id,created_at DESC);
-    DELETE FROM vault_payments WHERE created_at<now()-interval '90 days';
   `);
   await pool.query(
     "UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND status='pending' AND card_version IS NULL",
@@ -211,7 +211,7 @@ export async function createPayments(
           );
           if (!active.rowCount) throw new PaymentError('This payment task is no longer active.');
           const claimed = await client.query(
-            "UPDATE vault_payments SET status='consumed' WHERE id=$1 AND owner_id=$2 AND status='pending' AND expires_at>now() RETURNING id",
+            "UPDATE vault_payments SET status='consumed' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id",
             [row.id, ownerId],
           );
           if (!claimed.rowCount) throw new PaymentError('This payment request is no longer open.');
@@ -283,7 +283,7 @@ export async function createPayments(
          JOIN threads th ON th.id=p.thread_id AND th.owner_id=p.owner_id
          WHERE p.id=$1 AND p.owner_id=$2 AND th.archived_at IS NULL AND ${currentTurnSql}
          AND ($3::uuid IS NULL OR p.thread_id=$3) AND ($4::uuid IS NULL OR p.turn_id=$4)
-         AND p.status='pending' AND p.expires_at>now()`,
+         AND p.status='pending'`,
         [id, ownerId, scope.threadId ?? null, scope.turnId ?? null],
       )
     ).rows[0];
@@ -332,8 +332,8 @@ export async function createPayments(
       [ownerId, turn.threadId, turn.turnId],
     );
     await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,browser_id,expires_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now()+interval '10 minutes')`,
+      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,browser_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         row.id,
         ownerId,
@@ -424,8 +424,6 @@ export async function createPayments(
       .strict()
       .parse(raw);
     if (!options.local) throw new PaymentError('Hosted Otto does not pay with saved cards.');
-    if (parsed.doItForMe && !(await options.inOtto(turn)))
-      throw new PaymentError('Do it for me can be turned on only from a message in the Otto app.');
     const card = await choose(parsed.card);
     return {
       args: { card: card.id, doItForMe: parsed.doItForMe },

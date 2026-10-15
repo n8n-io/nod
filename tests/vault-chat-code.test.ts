@@ -44,8 +44,7 @@ test(
     await thread.initializeThreads();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
-    owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending',
-    expires_at timestamptz NOT NULL DEFAULT now()+interval '10 minutes'
+    owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending'
   )`);
     const ordinary: string[] = [];
     const injected: Array<{ owner: string; turnId: string; code: string; requestId: string }> = [];
@@ -148,11 +147,11 @@ test(
         owner?: string;
         channel?: string;
         kind?: string;
-        expired?: boolean;
         archived?: boolean;
         status?: string;
         reason?: string;
         superseded?: boolean;
+        supersededLongAgo?: boolean;
       } = {},
     ) {
       const owner = options.owner ?? ownerId;
@@ -173,16 +172,8 @@ test(
         ],
       );
       await db.pool.query(
-        `INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,kind,expires_at)
-      VALUES($1,$2,$3,$4,$5,now()+$6::interval)`,
-        [
-          requestId,
-          threadId,
-          turnId,
-          owner,
-          options.kind ?? 'otp',
-          options.expired ? '-1 minute' : '10 minutes',
-        ],
+        `INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,kind) VALUES($1,$2,$3,$4,$5)`,
+        [requestId, threadId, turnId, owner, options.kind ?? 'otp'],
       );
       await db.pool.query(
         "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Reply with the verification code.',$3,$4)",
@@ -190,12 +181,19 @@ test(
       );
       if (options.archived)
         await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
-      if (options.superseded)
+      if (options.superseded || options.supersededLongAgo) {
+        if (options.supersededLongAgo)
+          await db.pool.query(
+            "UPDATE turns SET created_at=now()-interval '20 minutes' WHERE id=$1",
+            [turnId],
+          );
         await db.pool.query(
-          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,started_at)
-           VALUES($1,$2,$3,'user','Later','running',clock_timestamp())`,
-          [randomUUID(), owner, threadId],
+          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,started_at,created_at)
+           VALUES($1,$2,$3,'user','Later','running',clock_timestamp(),
+             CASE WHEN $4 THEN now()-interval '11 minutes' ELSE clock_timestamp() END)`,
+          [randomUUID(), owner, threadId, Boolean(options.supersededLongAgo)],
         );
+      }
       return { threadId, turnId, requestId, messageId };
     }
     async function reset() {
@@ -300,13 +298,16 @@ test(
             ['Código de verificação: 739 126', '739126'],
             ['739 126', '739126'],
             ['1 2 3 4 5 6 7 8', '12345678'],
+            ['Mi código es 739126', '739126'],
+            ['Der Code lautet 739 126.', '739126'],
+            ['Votre code : 073912', '073912'],
+            ['認証コード 739126', '739126'],
           ]) {
             await reset();
             const request = await seed();
             const before = (await app.inject({ url: '/api/state', headers })).json();
             assert.equal(before.verificationRequests[0].id, request.requestId);
             assert.deepEqual(Object.keys(before.verificationRequests[0]).sort(), [
-              'expiresAt',
               'id',
               'kind',
               'turnId',
@@ -337,7 +338,7 @@ test(
         },
       );
       await t.test(
-        'a security code sent by itself pays in Otto while numbers in other messages stay ordinary',
+        'a security code sent by itself pays in Otto while other numbers are held back',
         async () => {
           await reset();
           const threadId = (await thread.activeThread(db.pool, ownerId)).id;
@@ -366,12 +367,27 @@ test(
               error.statusCode === 409 && /secure payment link/.test(error.message),
           );
           assert.equal((await send('73951')).statusCode, 409);
-          const prose = [
+          for (const text of [
             '2 hinges for 7395',
-            '2 hinges for room 212',
-            '739 or 740',
+            'mi código es 739',
+            'card ending 4242',
             'The year is 2026',
-          ];
+          ])
+            assert.equal((await send(text)).statusCode, 409, text);
+          const earlierTurn = randomUUID();
+          const earlierMessage = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,created_at)
+             VALUES($1,$2,$3,'user','Find hinges','web','completed',now()-interval '1 hour')`,
+            [earlierTurn, ownerId, threadId],
+          );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Found two hinges.',$3,$4)",
+            [earlierMessage, ownerId, threadId, earlierTurn],
+          );
+          const replied = await send("it's 739", { replyToMessageId: earlierMessage });
+          assert.equal(replied.statusCode, 409);
+          const prose = ['2 hinges for the door', 'Pay at 15:30'];
           for (const text of prose) assert.equal((await send(text)).statusCode, 200, text);
           assert.deepEqual(ordinary, prose);
           assert.deepEqual(entered, []);
@@ -494,16 +510,13 @@ test(
           for (const text of [
             'Code: +123456',
             'Code: +351912345678',
-            'Code = abcdef',
-            'Code:',
-            'Código =',
             'Code: 123456 or 654321',
             'O código é 739126 ou 928361',
             'Code: 123456 and please continue',
+            '739126 ist mein Code',
             'Code: 123',
             'Code: 123456789',
             'Code: 2026-09-29',
-            'Code: 12.34',
           ]) {
             const response = await send(text);
             assert.equal(response.statusCode, 409);
@@ -525,15 +538,17 @@ test(
         'unrelated numeric prose stays ordinary and concise codes need a challenge',
         async () => {
           const unrelated = [
-            'The year is 2026',
-            'The code snippet has 123456 lines',
-            'Code snippet has 123456 lines',
             'The code is in the email',
-            'Order 123456 is ready',
+            'The meeting is at 15:30',
+            'I have 2 boxes and 12 hinges',
+            'Code:',
           ];
           await reset();
           await seed();
           for (const text of unrelated) assert.equal((await send(text)).statusCode, 200);
+          assert.deepEqual(ordinary, unrelated);
+          for (const text of ['The code snippet has 123456 lines', 'Order 123456 is ready'])
+            assert.equal((await send(text)).statusCode, 409, text);
           assert.deepEqual(ordinary, unrelated);
           assert.equal(injected.length, 0);
           await reset();
@@ -625,7 +640,6 @@ test(
           for (const options of [
             { owner: 'someone-else' },
             { channel: 'telegram:other' },
-            { expired: true },
             { archived: true },
             { kind: 'password' },
             { status: 'running', reason: undefined },
@@ -657,14 +671,33 @@ test(
           );
         }
         for (const options of [
-          { expired: true },
-          { status: 'cancelled', expired: true },
-          { status: 'failed', expired: true },
+          { superseded: true },
+          { status: 'cancelled', superseded: true },
+          { status: 'failed', superseded: true },
         ]) {
           await reset();
           await seed(options);
+          assert.equal((await send('The code is 791 483')).statusCode, 409);
+          assert.deepEqual(ordinary, [], JSON.stringify(options));
+          assert.equal(injected.length, 0);
+        }
+        for (const options of [
+          { supersededLongAgo: true },
+          { status: 'cancelled', supersededLongAgo: true },
+        ]) {
+          await reset();
+          const stale = await seed(options);
+          assert.equal(
+            (await send('791483', { replyToMessageId: stale.messageId })).statusCode,
+            409,
+          );
+          assert.equal((await send('Call me at 1530')).statusCode, 200);
           assert.equal((await send('The code is 791 483')).statusCode, 200);
-          assert.deepEqual(ordinary, ['The code is 791 483'], JSON.stringify(options));
+          assert.deepEqual(
+            ordinary,
+            ['Call me at 1530', 'The code is 791 483'],
+            JSON.stringify(options),
+          );
           assert.equal(injected.length, 0);
         }
         await reset();

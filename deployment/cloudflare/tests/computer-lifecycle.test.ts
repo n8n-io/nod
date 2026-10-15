@@ -254,6 +254,26 @@ test('a workspace checkpoints once its commands settle and rotates only older ma
   assert.equal(f.running(), true);
 });
 
+test('overlapping workspace commands run together and checkpoint only after the last one', async () => {
+  const f = fixture();
+  const first = randomUUID();
+  const second = randomUUID();
+  await f.launch(first);
+  await f.launch(second);
+  assert.equal(f.lifecycle.active, 2);
+  await f.completed(first);
+  await f.settled();
+  assert.equal(f.state()?.phase, 'dirty');
+  assert.equal(f.events.includes('checkpoint'), false);
+  await f.completed(second);
+  await f.settled();
+  assert.deepEqual(
+    f.events.filter((event) => event === 'checkpoint'),
+    ['checkpoint'],
+  );
+  assert.equal(f.state()?.phase, 'ready');
+});
+
 test('lost isolate or VM cannot replay an uncheckpointed action', async () => {
   for (const loss of ['isolate', 'vm']) {
     const f = fixture();

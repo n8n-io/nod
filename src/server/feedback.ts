@@ -84,7 +84,7 @@ export async function registerFeedback(
   options: {
     pool: Pool;
     ownerId: string;
-    context: Omit<FeedbackContext, 'enabled'>;
+    context: Omit<FeedbackContext, 'enabled' | 'recipient'>;
     delivery: FeedbackDelivery;
     buildReport(): Promise<string>;
   },
@@ -137,7 +137,11 @@ export async function registerFeedback(
   });
   app.get('/api/feedback/context', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return { ...options.context, enabled: options.delivery.configured } satisfies FeedbackContext;
+    return {
+      ...options.context,
+      enabled: options.delivery.configured,
+      recipient: options.delivery.recipient,
+    } satisfies FeedbackContext;
   });
   app.post('/api/feedback/report', async (_request, reply) => {
     sweep();

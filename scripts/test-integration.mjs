@@ -122,6 +122,7 @@ if (process.argv.includes('--run')) {
       'scripts',
       'public',
       'deployment/e2b',
+      'desktop/ui',
       'tsconfig.json',
       'dist/web',
     ].flatMap((path) => [
