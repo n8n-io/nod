@@ -26,7 +26,7 @@ Select this month's total to see a chart and a forecast, such as "On track for $
 2. In the sentence at the top, select **no monthly limit**, or your current limit.
 3. Enter an amount in US dollars, from $1 up, and select **Save**.
 
-To remove the limit, select it, then **Remove**.
+To remove the limit, select it, then **Remove**. You can also tell Otto, for example "Set my monthly limit to $40". See [Ask Otto](#ask-otto).
 
 ## What happens at the limit
 
@@ -69,6 +69,8 @@ Usage on a ChatGPT plan counts at the model's API price here, so plan tasks chec
 2. In the sentence at the top, select the amount after **Tasks check in at**.
 3. Choose **$2**, **$5**, **$20** or **No limit**.
 
+Or tell Otto, for example "Check in when a task passes $20".
+
 ![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/trust-task-limit.png)
 
 :::note
@@ -85,7 +87,9 @@ Send `/usage` for the same summary. It doesn't use the model or cost anything. T
 
 ## Ask Otto
 
-You can ask Otto about its own spending and app actions, for example "How much have you spent this month?" Otto reads the same view. It can't change your limit.
+You can ask Otto about its own spending and app actions, for example "How much have you spent this month?" Otto reads the same view.
+
+You can also tell Otto to change a limit, for example "Raise my monthly limit to $40" or "Stop checking in on tasks". The same check that guards app actions decides: Otto changes a limit when your own words ask for it, and asks you first otherwise. A web page or email can't change your limits.
 
 ## Related resources
 

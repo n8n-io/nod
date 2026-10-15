@@ -103,7 +103,7 @@ import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
 import { createErrorRedactor } from './redaction.ts';
-import { createLedger } from './ledger.ts';
+import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
@@ -647,26 +647,29 @@ async function initializeApplication(
           ? payments.setting(provenance, args, true)
           : action === 'OTTO_payment_approve'
             ? payments.approve(provenance, args)
-            : action.startsWith('OTTO_')
-              ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-              : (async () => {
-                  const result = await integrations.executeApproved(ownerId, action, args, {
-                    threadId: provenance.threadId,
-                    turnId: provenance.turnId,
-                  });
-                  await ledger.action(provenance.turnId, action);
-                  return (
-                    await saveIntegrationFiles(result, async (file) => {
-                      const name = `${randomUUID()}-${basename(file.name)}`;
-                      await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                      return name;
-                    })
-                  ).value;
-                })(),
+            : action === 'OTTO_limits_update'
+              ? ledger.setLimits(args)
+              : action.startsWith('OTTO_')
+                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                : (async () => {
+                    const result = await integrations.executeApproved(ownerId, action, args, {
+                      threadId: provenance.threadId,
+                      turnId: provenance.turnId,
+                    });
+                    await ledger.action(provenance.turnId, action);
+                    return (
+                      await saveIntegrationFiles(result, async (file) => {
+                        const name = `${randomUUID()}-${basename(file.name)}`;
+                        await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                        return name;
+                      })
+                    ).value;
+                  })(),
     async (action, args, expectedRevision) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
         return;
-      if (action.startsWith('OTTO_')) {
+      if (action === 'OTTO_limits_update') limitsInput.parse(args);
+      else if (action.startsWith('OTTO_')) {
         if (
           ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action) &&
           expectedRevision === undefined
@@ -865,6 +868,19 @@ async function initializeApplication(
       },
       speech,
       manage: async (turn, action, args, { admit, ...provenance }) => {
+        if (action === 'limits_update') {
+          const input = limitsInput.parse(args);
+          const verdict = await trust.check(turn, 'OTTO_limits_update', input);
+          return approvals.request(turn, 'OTTO_limits_update', input, {
+            ...provenance,
+            allowed: !verdict.confirm,
+            admit,
+            details: {
+              current: await ledger.limits(),
+              ...(verdict.confirm ? { reason: verdict.reason } : {}),
+            },
+          });
+        }
         if (
           [
             'notification_preferences_update',

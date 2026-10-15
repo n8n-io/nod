@@ -15,6 +15,18 @@ import { transaction } from './transaction.ts';
 export const spendingLimitReached =
   'Paused because this month’s spending limit was reached. Raise the limit in Trust to resume.';
 export const defaultTaskUsd = 5;
+const usd = z
+  .number()
+  .min(1)
+  .refine(
+    (value) =>
+      Number.isSafeInteger(Math.round(value * 100)) && Math.round(value * 100) / 100 === value,
+  )
+  .nullable();
+export const limitsInput = z
+  .object({ monthlyUsd: usd.optional(), taskUsd: usd.optional() })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, 'Choose a limit to change.');
 
 const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UTC')`;
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
@@ -361,42 +373,31 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     app.get('/api/trust/entries', (request) =>
       entries(z.object({ at: z.iso.datetime(), id: z.uuid() }).strict().parse(request.query)),
     );
-    app.put('/api/trust/limit', async (request) => {
-      const usd = z
-        .number()
-        .min(1)
-        .refine(
-          (value) =>
-            Number.isSafeInteger(Math.round(value * 100)) &&
-            Math.round(value * 100) / 100 === value,
-        )
-        .nullable();
-      const body = z
-        .object({ monthlyUsd: usd.optional(), taskUsd: usd.optional() })
-        .strict()
-        .refine((value) => Object.keys(value).length > 0)
-        .parse(request.body);
-      await transaction(async (client) => {
-        await client.query(
-          'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
-          [ownerId],
-        );
-        for (const [key, column] of [
-          ['monthlyUsd', 'monthly_usd'],
-          ['taskUsd', 'task_usd'],
-        ] as const)
-          if (body[key] !== undefined)
-            await client.query(`UPDATE spending_limits SET ${column}=$2 WHERE owner_id=$1`, [
-              ownerId,
-              body[key],
-            ]);
-        await client.query(
-          `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
-          [ownerId],
-        );
-      }, pool);
-      return limits();
-    });
+    app.put('/api/trust/limit', (request) => setLimits(request.body));
+  }
+
+  async function setLimits(input: unknown) {
+    const body = limitsInput.parse(input);
+    await transaction(async (client) => {
+      await client.query(
+        'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
+        [ownerId],
+      );
+      for (const [key, column] of [
+        ['monthlyUsd', 'monthly_usd'],
+        ['taskUsd', 'task_usd'],
+      ] as const)
+        if (body[key] !== undefined)
+          await client.query(`UPDATE spending_limits SET ${column}=$2 WHERE owner_id=$1`, [
+            ownerId,
+            body[key],
+          ]);
+      await client.query(
+        `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
+        [ownerId],
+      );
+    }, pool);
+    return limits();
   }
 
   return {
@@ -406,6 +407,8 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     action,
     limitReached,
     checkIn,
+    limits,
+    setLimits,
     messageCosts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     read,
