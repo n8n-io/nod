@@ -80,6 +80,7 @@ type Row = {
   turn_status: string | null;
   answered: boolean;
   question: string | null;
+  question_message_id: string | null;
 };
 
 function failure(message: string, statusCode = 400) {
@@ -118,10 +119,11 @@ export function createTasks(options: {
            t.created_at,t.updated_at,t.closed_at,COALESCE((SELECT r.status FROM turns r WHERE r.owner_id=t.owner_id AND r.session_id=t.session_id AND r.status='running'),u.status) AS turn_status,
            EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.thread_id=u.thread_id
              AND n.session_id=u.session_id AND n.parent_turn_id=u.id) AS answered,
-           CASE WHEN u.status='waiting' THEN (SELECT left(m.text,600) FROM messages m
-             WHERE m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
-             ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS question
+           q.text AS question,q.id AS question_message_id
          FROM tasks t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
+         LEFT JOIN LATERAL (SELECT m.id,m.text FROM messages m
+           WHERE u.status='waiting' AND m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 1) q ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3 OR t.state='open')
          ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
         [ownerId, filter.id ?? null, filter.closed ?? false],
@@ -143,6 +145,7 @@ export function createTasks(options: {
         result: row.result,
         status: value,
         question: value === 'needs_you' ? row.question : null,
+        questionMessageId: value === 'needs_you' ? row.question_message_id : null,
         waitingFor: open ? row.waiting_for : [],
         nextCheck:
           open && row.next_check && row.next_check.getTime() > Date.now()
@@ -176,8 +179,10 @@ export function createTasks(options: {
        JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
        JOIN messages m ON m.owner_id=t.owner_id AND m.thread_id=u.thread_id
        LEFT JOIN turns mt ON mt.id=m.turn_id AND mt.owner_id=m.owner_id
+       LEFT JOIN messages parent ON parent.id=m.reply_to_message_id AND parent.owner_id=m.owner_id AND parent.thread_id=m.thread_id
+       LEFT JOIN turns pt ON pt.id=parent.turn_id AND pt.owner_id=parent.owner_id
        WHERE t.owner_id=$1 AND u.thread_id=$2 AND m.id=$3
-         AND (t.message_id=m.id OR mt.task_id=t.id OR m.reply_to_message_id=t.message_id) ORDER BY t.updated_at DESC LIMIT 1`,
+         AND (t.message_id=m.id OR mt.task_id=t.id OR m.reply_to_message_id=t.message_id OR pt.task_id=t.id) ORDER BY t.updated_at DESC LIMIT 1`,
         [ownerId, threadId, messageId],
       )
     ).rows[0];
@@ -567,7 +572,7 @@ export function createTasks(options: {
                   (target
                     ? ''
                     : '\n\nReply to continue. Reply /status for details or /stop to stop this task.'),
-                replyToMessageId: task.messageId ?? undefined,
+                replyToMessageId: task.questionMessageId ?? task.messageId ?? undefined,
               }))
             : [{ text: 'No open tasks.' }],
       afterCommit: cancelled ? () => afterStop(cancelled) : undefined,

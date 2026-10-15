@@ -928,7 +928,10 @@ export function Chat({
                         key={task.id}
                         task={task}
                         onReply={() => {
-                          setReplyTo(message);
+                          setReplyTo(
+                            allMessages.find((item) => item.id === task.questionMessageId) ??
+                              message,
+                          );
                           composer.current?.focus();
                         }}
                       />

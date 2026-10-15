@@ -251,6 +251,7 @@ export interface Task {
   result: string;
   status: TaskStatus;
   question: string | null;
+  questionMessageId?: string | null;
   waitingFor: TaskWait[];
   nextCheck: string | null;
   createdAt: string;

@@ -1806,6 +1806,28 @@ test(
           current = await card();
           assert.equal(current.status, 'needs_you');
           assert.equal(current.question, 'Rui quoted 180 EUR for Saturday. Should I book him?');
+          assert.ok(current.questionMessageId);
+          const statusReply = await transaction(
+            (client) => tasks.chatCommand(client, 'status', current.messageId!),
+            db.pool,
+          );
+          assert.equal(statusReply.replies[0].replyToMessageId, current.questionMessageId);
+          const questionStatusId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,$2,$3,'assistant',$4,$5)",
+            [
+              questionStatusId,
+              ownerId,
+              asked.threadId,
+              statusReply.replies[0].text,
+              current.questionMessageId,
+            ],
+          );
+          const target = await transaction(
+            (client) => tasks.resolveReply(client, asked.threadId, questionStatusId),
+            db.pool,
+          );
+          assert.equal(target.task_id, current.id);
           assert.equal(await thread.resumeAfterConnection(asked.turnId, 'synthetic'), true);
           const resumed = (
             await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [

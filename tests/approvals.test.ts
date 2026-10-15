@@ -801,11 +801,31 @@ test(
             ['Read my fixture flight dates.'],
           );
           const oldApproval = await propose(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          const oldStatus = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) SELECT $1,$2,thread_id,'assistant','Saved task question',confirmation_message_id FROM approvals WHERE id=$3",
+            [oldStatus, ownerId, oldApproval],
+          );
+          assert.equal(
+            (
+              await approvals.chat.answer({
+                threadId: turn.threadId,
+                channel: 'web',
+                text: 'Yes',
+                replyToMessageId: oldStatus,
+              })
+            )?.approvalId,
+            oldApproval,
+          );
           const update = await messages.submit('Use the new fixture flight dates.', [], {
             replyToMessageId: task.messageId,
           });
           await finish(worker);
           assert.equal(await confirm(oldApproval, true), undefined);
+          assert.equal(
+            await confirm(oldApproval, true, { replyToMessageId: oldStatus }),
+            undefined,
+          );
           const continued = await running(update.turnId);
           await tasks.inherit(continued);
           assert.equal(await confirm(oldApproval, true), undefined);
@@ -1754,9 +1774,38 @@ test(
           args.notificationRule = 'Substituted after proposal';
           await finish(turn.turnId);
           const clientMessageId = randomUUID();
+          const statusMessageId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,$2,$3,'assistant',$4,$5)",
+            [
+              statusMessageId,
+              ownerId,
+              turn.threadId,
+              'Saved task question',
+              saved.confirmation_message_id,
+            ],
+          );
+          const foreignStatus = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,'foreign-owner',$2,'assistant',$3,$4)",
+            [foreignStatus, turn.threadId, 'Foreign question', saved.confirmation_message_id],
+          );
+          assert.equal(
+            await approvals.chat.answer({ threadId: turn.threadId, channel, text: 'Yes' }),
+            undefined,
+          );
+          assert.equal(
+            await approvals.chat.answer({
+              threadId: turn.threadId,
+              channel,
+              text: 'Yes',
+              replyToMessageId: foreignStatus,
+            }),
+            undefined,
+          );
           const reply = {
             channel,
-            replyToMessageId: saved.confirmation_message_id,
+            replyToMessageId: statusMessageId,
             clientMessageId,
           };
           const accepted = await messages.submit('Yes.', [], reply);
