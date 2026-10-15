@@ -46,6 +46,7 @@ interface ChannelOptions {
     input: {
       clientMessageId: string;
       channel: string;
+      receiptOnly?: boolean;
       persistOrdinary: (client: PoolClient) => Promise<void>;
       persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
     },
@@ -351,13 +352,17 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       return;
     try {
       const sourceId = `channel:${channelId}:${accountId}:${messageId}`;
+      const verificationReply =
+        classifyVerificationReply(text).kind !== 'ordinary' || Boolean(securityCodeIn(text));
+      const recorded = (
+        await pool.query('SELECT state FROM channel_inbox WHERE source_id=$1 AND owner_id=$2', [
+          sourceId,
+          ownerId,
+        ])
+      ).rows[0];
       if (
-        (
-          await pool.query('SELECT 1 FROM channel_inbox WHERE source_id=$1 AND owner_id=$2', [
-            sourceId,
-            ownerId,
-          ])
-        ).rowCount
+        recorded &&
+        (recorded.state === 'discarded' || !verificationReply || !options.acceptVerification)
       )
         return;
       const acceptedMessageId = inboundMessageId(ownerId, sourceId);
@@ -366,7 +371,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       let verificationPersisted = false;
       const persist = async (database: PoolClient, strict = true) => {
         if (closed || replacing || !permitted(identity)) {
-          if (!strict) return;
+          if (!strict) return false;
           throw new Error('Channel configuration changed.');
         }
         await database.query(
@@ -389,6 +394,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         );
         if (strict && (closed || replacing || !permitted(identity)))
           throw new Error('Channel configuration changed.');
+        return true;
       };
       const commandReply = options.commandReply;
       const command = replyCommand.exec(text.trim())?.[1]?.toLowerCase();
@@ -410,15 +416,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         void drain();
         return;
       }
-      if (
-        (classifyVerificationReply(text).kind !== 'ordinary' || securityCodeIn(text)) &&
-        options.acceptVerification
-      ) {
+      if (verificationReply && options.acceptVerification) {
         try {
           verification = await options.acceptVerification(text, {
             clientMessageId: acceptedMessageId,
             channel: conversationChannel(identity),
+            ...(recorded ? { receiptOnly: true } : {}),
             persistOrdinary: async (client) => {
+              if (recorded) return;
               await persist(client);
               ordinaryPersisted = true;
             },
@@ -447,8 +452,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               );
               if (!current.rowCount) return;
               await client.query('SAVEPOINT channel_verification_receipt');
-              await persist(client, false);
+              const persisted = await persist(client, false);
               if (
+                persisted &&
                 response.verificationStatus === 'unavailable' &&
                 !closed &&
                 !replacing &&
@@ -482,12 +488,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               await client.query('RELEASE SAVEPOINT channel_verification_receipt');
             },
           });
-          if (!verification && !ordinaryPersisted)
+          if (!verification && !ordinaryPersisted && !recorded)
             throw new Error('Verification did not persist its receipt.');
         } catch (cause) {
           const conflict =
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
           if (!conflict) throw cause;
+          if (recorded) return;
           await transaction(
             (client) =>
               replyWithoutTurn(
@@ -500,6 +507,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           return;
         }
       }
+      if (recorded) return;
       if (!ordinaryPersisted && !verificationPersisted) await transaction(persist, pool);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);

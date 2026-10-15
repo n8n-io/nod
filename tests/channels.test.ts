@@ -600,7 +600,7 @@ test(
 test(
   'unavailable channel verification persists one private failure notice across duplicates and restart',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
+  async (t) => {
     const schema = `test_channel_failure_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -678,6 +678,8 @@ test(
     }
     const posted: string[] = [];
     const presentations: unknown[] = [];
+    let ordinarySubmissions = 0;
+    let closing: { start: () => void; released: Promise<void> } | undefined;
     let modelDown = false;
     const modelNotice = 'Verifica o estado do acesso antes de tentares novamente.';
     function transport(accountId = 'fixture-account'): MessagingTransport {
@@ -710,7 +712,12 @@ test(
           posted.push(input.text);
           return { id: `fixture-${posted.length}` };
         },
-        close: async () => {},
+        close: () => {
+          const pending = closing;
+          closing = undefined;
+          pending?.start();
+          return pending?.released ?? Promise.resolve();
+        },
       };
     }
     async function open() {
@@ -726,7 +733,23 @@ test(
           if (modelDown) throw new Error('Synthetic unavailable model');
           return modelNotice;
         },
-        submit: async () => assert.fail('Verification must not become an ordinary turn.'),
+        submit: async (text, sourceId, client, channel, messageId) => {
+          assert.equal(text, '2026');
+          ordinarySubmissions++;
+          const turnId = await fixtureTurn(
+            client,
+            threadId,
+            ownerId,
+            channel,
+            sourceId,
+            'succeeded',
+          );
+          await client.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user',$3,$4,$5)",
+            [messageId, ownerId, text, threadId, turnId],
+          );
+          return turnId;
+        },
         subscribe: () => () => {},
         intervalMs: 600000,
       });
@@ -734,12 +757,12 @@ test(
       return { app, channels };
     }
     let fixture = await open();
-    const send = (messageId: string) =>
+    const send = (messageId: string, text?: string) =>
       fixture.app.inject({
         method: 'POST',
         url: '/api/webhooks/telegram',
         headers: { 'content-type': 'application/json' },
-        payload: { messageId },
+        payload: { messageId, ...(text ? { text } : {}) },
       });
     const notices = async () =>
       (
@@ -757,8 +780,16 @@ test(
       assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 1);
       assert.equal((await notices()).length, 0);
       assert.equal(submissions, 1);
+      await pool.query('ALTER TABLE channel_outbox ADD CONSTRAINT fail_notice CHECK(false)');
       outcome.release();
-      assert.equal((await original).statusCode, 200);
+      assert.equal((await original).statusCode, 503);
+      assert.equal(
+        (await pool.query('SELECT status FROM chat_verification_submissions')).rows[0].status,
+        'unavailable',
+      );
+      assert.equal((await notices()).length, 0);
+      await pool.query('ALTER TABLE channel_outbox DROP CONSTRAINT fail_notice');
+      assert.equal((await send('duplicate')).statusCode, 200);
       await fixture.channels.drain();
       assert.deepEqual(posted, [modelNotice]);
       assert.deepEqual(presentations, [{ kind: 'verification_failure', verification: 'otp' }]);
@@ -777,8 +808,19 @@ test(
       await fixture.channels.drain();
       assert.equal(submissions, 1);
       assert.equal(posted.length, 1);
+      assert.equal((await send('ordinary-number', '2026')).statusCode, 200);
+      await fixture.channels.drain();
+      const waitingTurn = await requestCode();
+      assert.equal((await send('ordinary-number', '2026')).statusCode, 200);
+      await fixture.channels.drain();
+      assert.equal(submissions, 1);
+      assert.equal(ordinarySubmissions, 1);
+      assert.equal(
+        (await pool.query('SELECT status FROM credential_requests WHERE turn_id=$1', [waitingTurn]))
+          .rows[0].status,
+        'pending',
+      );
       modelDown = true;
-      await requestCode();
       assert.equal((await send('model-down')).statusCode, 200);
       await fixture.channels.drain();
       const blocked = (await notices()).find((notice) => notice.state === 'blocked');
@@ -795,6 +837,53 @@ test(
       assert.equal(presentations.length, 2);
       assert.equal(posted.length, 1);
       modelDown = false;
+      const replacedTurn = await requestCode();
+      let startClose = () => {};
+      let releaseClose = () => {};
+      const closeStarted = new Promise<void>((resolve) => {
+        startClose = resolve;
+      });
+      const closeReleased = new Promise<void>((resolve) => {
+        releaseClose = resolve;
+      });
+      closing = { start: startClose, released: closeReleased };
+      releases.push(releaseClose);
+      const client = await pool.connect();
+      const query = client.query;
+      let replaceOnSavepoint = true;
+      let replacement: Promise<void> | undefined;
+      t.mock.method(client, 'query', async (...args: unknown[]) => {
+        const result = await Reflect.apply(query, client, args);
+        if (args[0] !== 'SAVEPOINT channel_verification_receipt' || !replaceOnSavepoint)
+          return result;
+        replaceOnSavepoint = false;
+        replacement = fixture.channels.replaceTransport(transport());
+        await closeStarted;
+        queueMicrotask(releaseClose);
+        return result;
+      });
+      client.release();
+      const replaced = await send('same-account-replacement');
+      await replacement;
+      assert.deepEqual(
+        {
+          http: replaced.statusCode,
+          status: (
+            await pool.query(
+              `SELECT v.status FROM chat_verification_submissions v JOIN messages m ON m.id=v.message_id
+               WHERE m.turn_id=$1`,
+              [replacedTurn],
+            )
+          ).rows[0].status,
+          receipts: (
+            await pool.query('SELECT 1 FROM channel_inbox WHERE source_id=$1', [
+              'channel:telegram:fixture-account:same-account-replacement',
+            ])
+          ).rowCount,
+          notices: (await notices()).length,
+        },
+        { http: 200, status: 'unavailable', receipts: 0, notices: 2 },
+      );
       await requestCode();
       const revoked = holdOutcome();
       const revoking = send('revoked').then((response) => response);
@@ -811,14 +900,14 @@ test(
       reset.release();
       assert.equal((await resetting).statusCode, 200);
       await fixture.channels.drain();
-      assert.equal(submissions, 4);
+      assert.equal(submissions, 5);
       assert.equal(inlinePresentations, 0);
       assert.equal((await notices()).length, 2);
-      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 2);
+      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 3);
       assert.equal(
         (await pool.query("SELECT * FROM chat_verification_submissions WHERE status='unavailable'"))
           .rowCount,
-        4,
+        5,
       );
       assert.equal(posted.length, 1);
       assert.doesNotMatch(

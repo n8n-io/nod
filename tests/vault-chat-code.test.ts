@@ -221,9 +221,26 @@ test(
     }
     try {
       await t.test(
-        'verification outcomes and channel receipts commit together without replay',
+        'verification outcomes survive receipt rollback and recover without replay',
         async () => {
-          for (const fail of [false, true]) {
+          await reset();
+          await seed();
+          assert.equal(
+            await verification.accept('654913', {
+              clientMessageId: randomUUID(),
+              receiptOnly: true,
+              persistOrdinary: async () =>
+                assert.fail('A receipt lookup must not route a message.'),
+              persistVerification: async () => assert.fail('No verification receipt exists.'),
+            }),
+            undefined,
+          );
+          assert.deepEqual(injected, []);
+          assert.equal(
+            (await db.pool.query('SELECT * FROM chat_verification_submissions')).rowCount,
+            0,
+          );
+          for (const fail of [true, false]) {
             await reset();
             await seed();
             outcome = 'unavailable';
@@ -239,7 +256,7 @@ test(
             ) => {
               receipts.push(response);
               assert.doesNotMatch(JSON.stringify(response), /654913/);
-              if (receipts.length === 1) {
+              if (receipts.length === 1 && !fail) {
                 assert.equal(
                   (await client.query('SELECT status FROM chat_verification_submissions')).rows[0]
                     .status,
@@ -248,7 +265,7 @@ test(
                 assert.equal(
                   (await admin.query(`SELECT status FROM ${schema}.chat_verification_submissions`))
                     .rows[0].status,
-                  'pending',
+                  'unavailable',
                 );
               }
               await client.query(
@@ -257,20 +274,20 @@ test(
               );
               if (fail && receipts.length === 1) throw new Error('Synthetic receipt failure.');
             };
-            const accept = () =>
-              verification.accept('654913', { clientMessageId, persistVerification });
+            const accept = (receiptOnly = false) =>
+              verification.accept('654913', { clientMessageId, persistVerification, receiptOnly });
             if (fail) await assert.rejects(accept(), /Synthetic receipt failure/);
             else assert.equal((await accept())?.verificationStatus, 'unavailable');
             assert.equal(
               (await db.pool.query('SELECT status FROM chat_verification_submissions')).rows[0]
                 .status,
-              fail ? 'pending' : 'unavailable',
+              'unavailable',
             );
             assert.equal(
               (await db.pool.query('SELECT id FROM messages WHERE id=$1', [receiptId])).rowCount,
               fail ? 0 : 1,
             );
-            assert.equal((await accept())?.verificationStatus, fail ? 'pending' : 'unavailable');
+            assert.equal((await accept(true))?.verificationStatus, 'unavailable');
             assert.equal(receipts.length, 2);
             assert.equal(
               (await db.pool.query('SELECT id FROM messages WHERE id=$1', [receiptId])).rowCount,

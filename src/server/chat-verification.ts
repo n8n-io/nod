@@ -15,6 +15,7 @@ interface VerificationInput {
   replyToMessageId?: string;
   verificationRequestId?: string;
   forceNew?: boolean;
+  receiptOnly?: boolean;
   attachmentIds?: string[];
   persistOrdinary?: (client: PoolClient) => Promise<void>;
   persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
@@ -143,6 +144,10 @@ export async function createChatVerification(
           [input.clientMessageId],
         )
       ).rows[0];
+      if (input.receiptOnly && !previous?.request_id) {
+        await client.query('COMMIT');
+        return;
+      }
       if (previous) {
         if (!previous.request_id) {
           await input.persistOrdinary?.(client);
@@ -310,15 +315,14 @@ export async function createChatVerification(
       messageText: texts[reserved.kind].masked,
       verificationStatus: status,
     };
-    await transaction(async (client) => {
-      await client.query(
-        `WITH changed AS (
-         UPDATE chat_verification_submissions SET status=$2 WHERE message_id=$1 RETURNING message_id
-         ) UPDATE messages SET text=$3 WHERE id IN (SELECT message_id FROM changed)`,
-        [input.clientMessageId, status, response.messageText],
-      );
-      await input.persistVerification?.(client, response);
-    }, pool);
+    await pool.query(
+      `WITH changed AS (
+       UPDATE chat_verification_submissions SET status=$2 WHERE message_id=$1 RETURNING message_id
+       ) UPDATE messages SET text=$3 WHERE id IN (SELECT message_id FROM changed)`,
+      [input.clientMessageId, status, response.messageText],
+    );
+    if (input.persistVerification)
+      await transaction((client) => input.persistVerification!(client, response), pool);
     if (status !== 'submitted' && !input.persistVerification) {
       const message = await options
         .present?.(reserved.threadId, {
