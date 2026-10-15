@@ -63,11 +63,12 @@ Run it as your normal user, without `sudo`. It verifies the download, installs t
 <TabItem label="Windows" icon="seti:windows">
 
 <Badge text="Preview" variant="caution" /> You need Windows 11 x64, WSL 2 with hardware
-virtualization, and at least 20 GB of free disk space.
+virtualization, and at least 20 GB of free disk space. The app and its runtime are about 2.1 GB to
+download.
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder. Keep the runtime file compressed.
+1. Open the [releases page](https://github.com/n8n-io/otto/releases) and find the newest **Otto** release. Download `Otto-Setup-x64.exe`.
 
 2. Run `Otto-Setup-x64.exe`. The preview isn't signed, so Windows can show a publisher warning. The installer adds Otto to the Start menu.
 
@@ -75,7 +76,7 @@ virtualization, and at least 20 GB of free disk space.
 
 4. On **Set up your computer**, choose whether to turn on **Open at login** and **Desktop notifications**, then select **Open Otto**.
 
-5. Wait while Otto prepares its workspace and browser. The first launch takes a few minutes.
+5. Keep your internet connection on while Otto prepares its workspace and browser. The first launch takes a few minutes.
 
 6. Follow the onboarding to connect a model and try a first task. See [Your first conversation](/get-started/first-conversation/).
 
@@ -128,13 +129,14 @@ Everything Otto stores stays on your computer. Requests go to the model provider
 
 ## Troubleshooting
 
-| Problem                               | Try this                                                                                                        |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| macOS blocks the first launch         | Install the newest release. On a managed Mac, ask your IT team to allow Otto.                                   |
-| Otto 0.1.12 or earlier doesn't update | Install the newest release once, as above. Your data is kept.                                                   |
-| Setup stops with an error             | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon. |
-| Otto asks for a runtime file          | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                        |
-| A scheduled task didn't run           | Check that Otto was open and your computer was awake at that time.                                              |
+| Problem                               | Try this                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| macOS blocks the first launch         | Install the newest release. On a managed Mac, ask your IT team to allow Otto.                                       |
+| Otto 0.1.12 or earlier doesn't update | Install the newest release once, as above. Your data is kept.                                                       |
+| Setup stops with an error             | Select **Try again**. If it fails again, send the error with **Send feedback…** from the menu bar or tray icon.     |
+| Otto asks for a runtime file          | Select **Choose runtime file** and pick the `Otto-Runtime-…` file from the same release.                            |
+| Windows can't download the runtime    | Put `Otto-Runtime-win32-x64.tar.gz` from the same release next to `Otto-Setup-x64.exe` and run the installer again. |
+| A scheduled task didn't run           | Check that Otto was open and your computer was awake at that time.                                                  |
 
 :::caution
 Don't delete the profile or the private computer to fix a problem. You'd lose your conversations, workspace and saved keys.

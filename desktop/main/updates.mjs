@@ -103,6 +103,22 @@ export function createUpdateSource({
       : `${base}/releases/assets/${item.id}`;
   const getAsset = (release, name, signal) =>
     json(assetUrl(release, asset(release, name)), request, signal, 'application/octet-stream');
+  const releaseAssetUrl = async (tag, { file, bytes, sha256 }, signal) => {
+    const release = published(
+      await json(
+        sourceUrl ? `${base}/tags/${tag}` : `${base}/releases/tags/${tag}`,
+        request,
+        signal,
+      ),
+      tag,
+    );
+    const archive = asset(release, file);
+    if (archive.size !== bytes)
+      throw new Error('The desktop update runtime archive size does not match.');
+    if (archive.digest !== `sha256:${sha256}`)
+      throw new Error('The desktop update runtime archive digest does not match.');
+    return assetUrl(release, archive);
+  };
   const runtimeDownloadUrl = async (runtime, signal) => {
     if (
       ![runtime?.fingerprint, runtime?.id, runtime?.archive?.sha256].every(
@@ -119,21 +135,11 @@ export function createUpdateSource({
         !/^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag))
     )
       throw new Error('The desktop runtime target is incompatible.');
-    const runtimeTag = runtime.releaseTag || `runtime-${platform}-${runtime.fingerprint}`;
-    const runtimeRelease = published(
-      await json(
-        sourceUrl ? `${base}/tags/${runtimeTag}` : `${base}/releases/tags/${runtimeTag}`,
-        request,
-        signal,
-      ),
-      runtimeTag,
+    return releaseAssetUrl(
+      runtime.releaseTag || `runtime-${platform}-${runtime.fingerprint}`,
+      runtime.archive,
+      signal,
     );
-    const archive = asset(runtimeRelease, runtime.archive.file);
-    if (archive.size !== runtime.archive.bytes)
-      throw new Error('The desktop update runtime archive size does not match.');
-    if (archive.digest !== `sha256:${runtime.archive.sha256}`)
-      throw new Error('The desktop update runtime archive digest does not match.');
-    return assetUrl(runtimeRelease, archive);
   };
   const newest = async (currentVersion, signal) => {
     versionParts(currentVersion);
@@ -162,6 +168,20 @@ export function createUpdateSource({
   };
   if (os === 'win32')
     return {
+      async runtimeDownloadUrl(runtime, signal) {
+        if (
+          !/^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime?.releaseTag) ||
+          !hash.test(runtime.guest?.sha256) ||
+          !Number.isSafeInteger(runtime.guest.bytes) ||
+          runtime.guest.bytes < 1
+        )
+          throw new Error('The desktop runtime metadata is incompatible.');
+        return releaseAssetUrl(
+          runtime.releaseTag,
+          { ...runtime.guest, file: 'Otto-Runtime-win32-x64.tar.gz' },
+          signal,
+        );
+      },
       async latest(currentVersion, signal) {
         const release = await newest(currentVersion, signal);
         if (!release) return undefined;
