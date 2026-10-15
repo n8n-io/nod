@@ -2028,6 +2028,148 @@ test(
       );
 
       await t.test(
+        'schedule outcome receipts fence repeat requests after the mutation advances its revision',
+        async (t) => {
+          for (const source of [undefined, 'event'] as const)
+            for (const uncertain of [false, true])
+              await t.test(
+                `${source ?? 'user'} ${uncertain ? 'uncertain' : 'completed'}`,
+                async (t) => {
+                  let executions = 0;
+                  let preflights = 0;
+                  let failResult = uncertain;
+                  let release = () => {};
+                  const executing = new Promise<void>((resolve) => {
+                    release = resolve;
+                  });
+                  let mutated = () => {};
+                  const mutation = new Promise<void>((resolve) => {
+                    mutated = resolve;
+                  });
+                  const bound = await createApprovals(
+                    async (action, args, context) => {
+                      executions++;
+                      const result = await personal.manage(
+                        action.slice('OTTO_'.length),
+                        args,
+                        context,
+                      );
+                      if (executions === 1) {
+                        mutated();
+                        await executing;
+                      }
+                      if (failResult)
+                        throw new Error('Synthetic result lost after schedule mutation.');
+                      return result;
+                    },
+                    async (action, args, expectedRevision) => {
+                      preflights++;
+                      await personal.validateReview(
+                        action.slice('OTTO_'.length),
+                        args,
+                        expectedRevision,
+                      );
+                    },
+                  );
+                  const created = await personal.manage('schedule_create', {
+                    title: 'Synthetic revision receipt',
+                    prompt: 'Review the synthetic checklist.',
+                    cron: '0 9 * * 1',
+                    timeZone: 'UTC',
+                  });
+                  const origin = await begin('Rename the synthetic schedule.', { source });
+                  const args = {
+                    id: (created as { id: string }).id,
+                    title: 'Synthetic renamed schedule',
+                  };
+                  t.after(async () => {
+                    assert.equal(
+                      (await request('DELETE', `/api/schedules/${args.id}`)).statusCode,
+                      200,
+                    );
+                    await finish(origin.turnId, 'succeeded');
+                  });
+                  const options = { allowed: true, expectedRevision: 0 };
+                  const original = bound.request(origin, 'OTTO_schedule_update', args, options);
+                  const outcome = uncertain
+                    ? assert.rejects(original, { statusCode: 502 })
+                    : original;
+                  await mutation;
+                  try {
+                    assert.equal((await proposal(origin.turnId)).status, 'executing');
+                    await assert.rejects(
+                      bound.request(origin, 'OTTO_schedule_update', args, {
+                        allowed: true,
+                        expectedRevision: 1,
+                      }),
+                      { statusCode: 409 },
+                    );
+                  } finally {
+                    release();
+                    await outcome;
+                  }
+                  const receipt = await proposal(origin.turnId);
+                  assert.equal(receipt.status, uncertain ? 'uncertain' : 'completed');
+                  const saved = await personal.getSchedule(args.id);
+                  assert.equal(saved.revision, 1);
+                  const job = (
+                    await db.pool.query(
+                      `SELECT * FROM ${bossSchema}.job WHERE data->>'scheduleId'=$1 AND state='created'`,
+                      [args.id],
+                    )
+                  ).rows;
+                  assert.equal(job.length, 1);
+                  const before = preflights;
+                  for (const expectedRevision of [0, 1]) {
+                    const repeated = bound.request(origin, 'OTTO_schedule_update', args, {
+                      allowed: true,
+                      expectedRevision,
+                    });
+                    if (uncertain) await assert.rejects(repeated, { statusCode: 409 });
+                    else assert.deepEqual(await repeated, receipt.result);
+                  }
+                  assert.equal(preflights, before);
+                  await assert.rejects(
+                    bound.request(
+                      { ...origin, threadId: randomUUID() },
+                      'OTTO_schedule_update',
+                      args,
+                      {
+                        allowed: true,
+                        expectedRevision: 1,
+                      },
+                    ),
+                    { statusCode: 409 },
+                  );
+                  assert.equal(executions, 1);
+                  assert.deepEqual(await personal.getSchedule(args.id), saved);
+                  assert.deepEqual(
+                    (
+                      await db.pool.query(
+                        `SELECT * FROM ${bossSchema}.job WHERE data->>'scheduleId'=$1 AND state='created'`,
+                        [args.id],
+                      )
+                    ).rows,
+                    job,
+                  );
+                  await finish(origin.turnId, 'succeeded');
+                  const fresh = await begin(
+                    'I checked the result. Rename the synthetic schedule again.',
+                  );
+                  t.after(() => finish(fresh.turnId, 'succeeded'));
+                  failResult = false;
+                  const freshResult = await bound.request(fresh, 'OTTO_schedule_update', args, {
+                    allowed: true,
+                    expectedRevision: saved.revision,
+                  });
+                  assert.equal(freshResult.revision, 2);
+                  assert.equal(executions, 2);
+                },
+              );
+        },
+      );
+
+      await t.test(
         'owner, turn and account preflight fences refuse every change, and upgrade cancels legacy read-only turns',
         async () => {
           const before = calls.length;

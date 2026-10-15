@@ -237,7 +237,6 @@ export async function createApprovals(
         if (!author) throw new Error('This action needs a direct request from the user.');
         authorMessageId = author.id;
       }
-      await preflight?.(action, snapshot, expectedRevision);
       if (background)
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
           `approvals:${ownerId}:${turn.threadId}`,
@@ -245,12 +244,12 @@ export async function createApprovals(
       const previous = (
         background
           ? await client.query(
-              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND expected_revision IS NOT DISTINCT FROM $5::integer AND status<>'expired' ORDER BY id LIMIT 1",
-              [chain.map((item) => item.id), ownerId, action, snapshot, expectedRevision ?? null],
+              "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
+              [chain.map((item) => item.id), ownerId, action, snapshot],
             )
           : await client.query(
-              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb AND expected_revision IS NOT DISTINCT FROM $6::integer AND status<>'expired' ORDER BY id LIMIT 1",
-              [turn.threadId, ownerId, authorMessageId, action, snapshot, expectedRevision ?? null],
+              "SELECT * FROM approvals WHERE thread_id=$1 AND owner_id=$2 AND source_message_id=$3 AND action=$4 AND args=$5::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
+              [turn.threadId, ownerId, authorMessageId, action, snapshot],
             )
       ).rows[0];
       if (previous) {
@@ -258,6 +257,7 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
+      await preflight?.(action, snapshot, expectedRevision);
       if (
         !allowed &&
         (
