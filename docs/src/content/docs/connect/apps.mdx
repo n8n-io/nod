@@ -13,7 +13,7 @@ Choose **Easy Connect** and sign in with an allowed Google account, or [use your
 
 Google sign-in enables Easy Connect only. It doesn't give Otto access to Gmail or another app. You connect each app separately and choose its permissions. Easy Connect accepts explicitly allowed email addresses or verified Google Workspace accounts from an allowed domain. An individual email can still be blocked. If yours isn't enabled, you can use a personal key; there is no waitlist.
 
-During onboarding, a saved connection method appears as a short summary. Choose **Change connection setup** to use another method. Once Gmail connects, continue onboarding; manage access later in **Settings → App connections**.
+During onboarding, **Easy Connect enabled** means you can connect apps; Gmail still needs its own consent. Its account email appears after Gmail connects. Choose **Change connection setup** to use another method, or manage access later in **Settings → App connections**.
 
 Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. With Otto's connection, app requests and results pass through n8n's hosted connection service and Composio. With your own key, they go through your Composio project. Notion and Linear connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
@@ -90,7 +90,7 @@ On a source/server install you can instead set `COMPOSIO_API_KEY` in the server 
 | Session management     | Read and write | Create and delete sessions, and open sign-in links                  |
 | Session tool execution | Write only     | Find app actions, load their details and run them                   |
 | Toolkits               | Read only      | List the apps you can connect                                       |
-| Auth configs           | Read only      | Check and select your Google sign-in setup                          |
+| Auth configs           | Read only      | Find your project's apps and select their sign-in configuration     |
 | Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and fetch sign-in emails |
 
 If you set `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**.
@@ -102,7 +102,7 @@ If a permission is missing, create a new key. A valid key with missing permissio
 :::
 
 :::caution[A saved key can still lack sign-in access]
-The setup check doesn't test every permission needed to connect Gmail. Grant **Auth configs → Read only** and **Session management → Read and write**, along with the other permissions above.
+The setup check doesn't test every permission needed to connect apps. Grant **Auth configs → Read only** and **Session management → Read and write**, along with the other permissions above.
 :::
 
 Keep using a key from the same project. Your connected accounts belong to that project, so a key from another project can't use them.
@@ -111,7 +111,9 @@ Keep using a key from the same project. Your connected accounts belong to that p
 The key grants access to the project's connected accounts outside Otto. Don't share it, and keep a server key in a trusted environment.
 :::
 
-The catalog needs **Toolkits → Read**. An older project key without it keeps its existing connections and the featured apps.
+With your own key, the catalog lists Composio apps with managed sign-in, dynamic OAuth registration, or an eligible custom auth config in your project.
+
+Loading the full catalog needs **Toolkits → Read** and **Auth configs → Read**. Missing catalog access doesn't remove existing connections.
 
 ## Control what each app can access
 
@@ -127,11 +129,26 @@ To narrow an app's scopes, change them in its auth config, then reconnect the ac
 To choose an auth config for your own project, set `COMPOSIO_<APP>_AUTH_CONFIG_ID` in the server environment. See [Configuration](/deploy/configuration/#apps-and-composio) for the supported settings. These settings don't change Otto's connection or the Notion and Linear MCP connections.
 
 <details>
-<summary>How Otto picks a Google auth config</summary>
+<summary>How Otto picks an auth config</summary>
 
-When Otto uses your own Composio project, it reads the project's enabled custom OAuth2 auth configs for Gmail, Calendar, Drive, Sheets or Docs. Without an explicit setting, it uses the one that's also enabled for Tool Router.
+When you use your own Composio key, an explicit `COMPOSIO_<APP>_AUTH_CONFIG_ID` setting takes precedence for supported apps. Otherwise, Otto checks your project's enabled custom configs for the app. It checks across Composio's supported authentication methods, including OAuth and API keys.
 
-If there are several, or none of them is enabled for Tool Router, sign-in stops with a configuration error. If the project has no enabled custom OAuth2 config, Composio's default applies. A setting in `.env` always wins.
+Otto uses the one config that's also enabled for Tool Router. If several qualify, or enabled custom configs exist but none qualifies, connection stops with a configuration error. Select a config through a supported server setting, or update your configs in Composio and try again.
+
+If no enabled custom config exists, Composio's default applies. Otto reads existing configs. It doesn't create OAuth apps or change your configurations.
+
+An app with an eligible custom config also appears in **Apps**, even when Composio doesn't offer managed sign-in for it.
+
+</details>
+
+<details>
+<summary>How Easy Connect picks an auth config</summary>
+
+Easy Connect uses the broker's native toolkit catalog. It does not discover your project's custom configs or expose auth-config administration to an Otto installation. The broker selects the configuration after checking browser and installation ownership.
+
+Operators can set the Worker's `AUTH_CONFIGS_JSON` to a toolkit-to-config mapping, such as `{"gmail":"ac_example"}`. Every ID must belong to the broker's Composio project, selected by its server-side `COMPOSIO_API_KEY`. A config from a personal-key project or another hosted project cannot be reused here.
+
+With an empty mapping, the broker reuses or creates an enabled Composio-managed config for supported native OAuth apps, or a supported dynamic-registration config that needs no operator inputs. It does not automatically select existing custom OAuth configs. To use your own app branding and scopes, prepare the intended custom configs in the broker's project and configure their IDs on the Worker.
 
 </details>
 

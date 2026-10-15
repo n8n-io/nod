@@ -26,6 +26,7 @@ import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/
 import { DiscoveredSignInRequired, type DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
+  IntegrationConnectionError,
   IntegrationInboxCursorExpired,
   type IntegrationFile,
   type IntegrationProvider,
@@ -94,6 +95,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   let uploadName = 'synthetic.bin';
   let failUpload = false;
   let pairingStatus: unknown = { pairingConfirmed: false };
+  let expectedToolkit = 'gmail';
   let expectedUser = '';
   let expectedCallback: Record<string, unknown> = {
     type: 'loopback',
@@ -128,8 +130,23 @@ test('managed integration requests bind SDK calls to a private persisted install
     assert.equal(value.redirect, 'error');
     const body = bytes.length ? JSON.parse(bytes.toString()) : {};
     calls.push({ path: url.pathname, body, key });
-    if (url.pathname === '/api/v3.1/toolkits')
-      return Response.json({ items: [], next_cursor: null });
+    if (url.pathname === '/api/v3.1/toolkits') {
+      assert.equal(url.searchParams.get('type'), 'native');
+      return Response.json({
+        items: [
+          {
+            slug: 'custom_native',
+            name: 'Custom Native',
+            type: 'native',
+            meta: { description: 'Synthetic custom configuration' },
+            auth_schemes: ['OAUTH2'],
+            composio_managed_auth_schemes: [],
+          },
+        ],
+        next_cursor: null,
+      });
+    }
+    assert.equal(url.pathname.endsWith('/auth_configs'), false);
     if (url.pathname === '/api/v3.1/tools/execute/proxy')
       return Response.json({ status: 200, data: { messages: [] }, headers: {} });
     if (url.pathname === '/api/v3.1/tool_router/session') {
@@ -168,7 +185,8 @@ test('managed integration requests bind SDK calls to a private persisted install
       });
     }
     if (url.pathname === '/v1/connect/start') {
-      assert.equal(body.toolkit, 'gmail');
+      assert.equal(body.toolkit, expectedToolkit);
+      assert.equal('authConfigId' in body, false);
       assert.deepEqual(body.callback, expectedCallback);
       assert.equal('callbackUrl' in body, false);
       assert.match(String(body.challenge), /^[A-Za-z0-9_-]{43}$/);
@@ -291,6 +309,29 @@ test('managed integration requests bind SDK calls to a private persisted install
   );
   assert.equal(calls.length, abortedPairing);
   assert.equal(createComposioProvider({ apiKey: 'synthetic' }).connectionStatus, undefined);
+  expectedToolkit = 'custom_native';
+  const beforeCustomAuthorization = calls.length;
+  await provider.authorize!(
+    'fixture-owner',
+    expectedToolkit,
+    `http://localhost:4310/api/apps/callback?state=${state}`,
+  );
+  assert.deepEqual(
+    calls.slice(beforeCustomAuthorization).map((call) => call.path),
+    ['/v1/connect/start'],
+  );
+  expectedToolkit = 'gmail';
+  const beforeCatalog = calls.length;
+  const catalog = await provider.listServices!();
+  assert.ok(catalog.some((service) => service.slug === 'gmail'));
+  assert.equal(
+    catalog.some((service) => service.slug === 'custom_native'),
+    false,
+  );
+  assert.deepEqual(
+    calls.slice(beforeCatalog).map((call) => call.path),
+    ['/api/v3.1/toolkits'],
+  );
   const session = await provider.createSession('fixture-owner', {});
   const attempt = directAttempt;
   assert.equal(attempt.accountId, `pending_${state}`);
@@ -440,7 +481,7 @@ test('managed integration requests bind SDK calls to a private persisted install
         'x-api-key': 'synthetic-disallowed',
       },
     })
-    .get('/api/v3.1/toolkits');
+    .get('/api/v3.1/toolkits?type=native');
   await chmod(root, 0o755);
   const existingRoot = createComposioProxy(options);
   await existingRoot.initialize();
@@ -519,7 +560,7 @@ test('managed integration requests bind SDK calls to a private persisted install
       const restored = createComposioProxy({ ...options, dataRoot });
       await restored.initialize();
       assert.equal(recovering.userId, restored.userId);
-      await recovering.client.getClient().get('/api/v3.1/toolkits');
+      await recovering.client.getClient().get('/api/v3.1/toolkits?type=native');
       assert.equal(calls.length, before + 1);
     },
   );
@@ -4047,6 +4088,14 @@ test(
     const failed = await f.app.inject({ url: '/api/apps/catalog' });
     assert.equal(failed.statusCode, 502);
     assert.doesNotMatch(failed.body, /private-provider-detail/);
+    failure = Object.assign(new IntegrationConnectionError('permission', 'auth_config'), {
+      cause: new Error('synthetic-private-auth-response'),
+    });
+    const missingAuthAccess = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(missingAuthAccess.statusCode, 503);
+    assert.deepEqual(Object.keys(missingAuthAccess.json()), ['error']);
+    assert.match(missingAuthAccess.json().error, /Auth configs read access/);
+    assert.doesNotMatch(missingAuthAccess.body, /synthetic-private-auth-response/);
     failure = new IntegrationCatalogAccessDenied();
     const denied = await f.app.inject({ url: '/api/apps/catalog' });
     assert.equal(denied.statusCode, 403);
@@ -7298,6 +7347,7 @@ test(
       | 'permission'
       | 'ambiguous'
       | 'unavailable'
+      | 'missing-router'
       | 'malformed'
       | 'cursor'
       | 'page-limit'
@@ -7334,9 +7384,18 @@ test(
         if (authFailure === 'malformed')
           return { items: [{ ...customAuth, id: { token: 'synthetic-private-auth-detail' } }] };
         if (authFailure === 'ambiguous')
-          return { items: [customAuth, { ...customAuth, id: 'another-custom-gmail-auth' }] };
+          return {
+            items: [
+              customAuth,
+              { ...customAuth, id: 'another-custom-gmail-auth', auth_scheme: 'API_KEY' },
+            ],
+          };
         if (authFailure === 'unavailable')
           return { items: [{ ...customAuth, is_enabled_for_tool_router: false }] };
+        if (authFailure === 'missing-router') {
+          const { is_enabled_for_tool_router: _, ...unavailable } = customAuth;
+          return { items: [unavailable] };
+        }
         if (authFailure === 'cursor') return { items: [customAuth], next_cursor: 'repeated' };
         if (authFailure === 'page-limit')
           return { items: [customAuth], next_cursor: `page-${authReads.length}` };
@@ -7349,7 +7408,7 @@ test(
             { ...customAuth, id: 'managed-auth', is_composio_managed: true },
             { ...customAuth, id: 'disabled-auth', status: 'DISABLED' },
             { ...customAuth, id: 'another-toolkit-auth', toolkit: { slug: 'googledrive' } },
-            { ...customAuth, id: 'other-scheme-auth', auth_scheme: 'API_KEY' },
+            { ...customAuth, id: 'no-auth', auth_scheme: 'NO_AUTH' },
             { ...customAuth, id: 'not-session-enabled-auth', is_enabled_for_tool_router: false },
           ],
           next_cursor: 'custom-auth-page',
@@ -7385,7 +7444,8 @@ test(
         input: Record<string, unknown>,
         options: { signal: AbortSignal; maxRetries: number },
       ) => {
-        assert.equal(input.expected_config_version, 1);
+        if ('expected_config_version' in input)
+          throw Object.assign(new Error('Unknown field: expected_config_version'), { status: 400 });
         assert.equal(options.signal.aborted, false);
         assert.equal(options.maxRetries, 0);
         patches.push({ id, input });
@@ -7493,7 +7553,6 @@ test(
             slack: 'explicit-slack-auth',
             gmail: 'custom-gmail-auth',
           },
-          expected_config_version: 1,
         },
       },
     ]);
@@ -7536,6 +7595,7 @@ test(
       'permission',
       'ambiguous',
       'unavailable',
+      'missing-router',
       'malformed',
       'cursor',
       'page-limit',
@@ -7548,7 +7608,8 @@ test(
         permission: /Auth configs read/,
         ambiguous: /multiple custom sign-in configurations/,
         unavailable: /custom sign-in configuration is unavailable/,
-      }[kind as 'permission' | 'ambiguous' | 'unavailable'];
+        'missing-router': /custom sign-in configuration is unavailable/,
+      }[kind as 'permission' | 'ambiguous' | 'unavailable' | 'missing-router'];
       assert.equal(rejected.statusCode, expected ? 503 : 502);
       assert.deepEqual(Object.keys(rejected.json()), ['error']);
       if (expected) assert.match(rejected.json().error, expected);
@@ -8506,7 +8567,8 @@ test('Composio uploads file bytes before the app consumes its storage reference'
   assert.equal(presign.mock.callCount(), requests);
 });
 
-test('Composio paginates managed apps and native DCR MCPs with exact slugs for consent and tools', async (t) => {
+test('Composio paginates configured apps, managed apps and native DCR MCPs with exact slugs for consent and tools', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => assert.fail('Unexpected external request.'));
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
     allowTracking: false,
@@ -8545,12 +8607,24 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
     })),
   ];
   const gate = deferred();
+  let catalogMode: 'mixed' | 'managed' | 'empty' = 'mixed';
   const listing = t.mock.method(
     client.getClient().toolkits,
     'list',
-    async (input: { cursor?: string }, options: { signal: AbortSignal }) => {
+    async (input: { cursor?: string; type: string }, options: { signal: AbortSignal }) => {
+      assert.equal(input.type, 'all');
       assert.equal(options.signal.aborted, false);
       await gate.promise;
+      if (catalogMode === 'empty') return { items: [], next_cursor: null };
+      if (catalogMode === 'managed')
+        return {
+          items: [
+            item('managed_notes'),
+            item('granola_mcp', [], undefined, ['DCR_OAUTH']),
+            item('custom_app', []),
+          ],
+          next_cursor: null,
+        };
       if (!input.cursor)
         return {
           items: [
@@ -8562,7 +8636,11 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
               categories,
             ),
             item('private_api', [], undefined, ['API_KEY']),
-            item('custom_oauth', [], undefined, ['OAUTH2']),
+            { ...item('custom_oauth', [], undefined, ['OAUTH2']), type: 'custom' },
+            item('unconfigured_app', [], undefined, ['API_KEY']),
+            item('router_disabled', [], undefined, ['BASIC']),
+            item('router_missing', [], undefined, ['BEARER_TOKEN']),
+            item('no_auth', [], undefined, ['NO_AUTH']),
             item('../invalid'),
             null,
             42,
@@ -8609,12 +8687,86 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
       };
     },
   );
-  const authorize = t.mock.fn(async () => ({
-    id: 'fixture-account',
-    redirectUrl: 'https://connect.composio.dev/link/fixture',
-  }));
+  const config = (id: string, slug: string, scheme: string) => ({
+    id,
+    toolkit: { slug },
+    status: 'ENABLED',
+    auth_scheme: scheme,
+    is_composio_managed: false,
+    is_enabled_for_tool_router: true,
+  });
+  const customOAuth = config('custom-oauth-config', 'custom_oauth', 'OAUTH2');
+  const privateApi = config('private-api-config', 'private_api', 'API_KEY');
+  let configFailure: 'permission' | 'malformed' | undefined;
+  const authReads: Array<{ toolkit_slug?: string; cursor?: string }> = [];
+  t.mock.method(
+    client.getClient().authConfigs,
+    'list',
+    async (input: {
+      toolkit_slug?: string;
+      cursor?: string;
+      is_composio_managed: boolean;
+      show_disabled: boolean;
+      limit: number;
+    }) => {
+      authReads.push(input);
+      assert.equal(input.is_composio_managed, false);
+      assert.equal(input.show_disabled, false);
+      assert.equal(input.limit, 200);
+      if (configFailure === 'permission')
+        throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
+      if (configFailure === 'malformed')
+        return {
+          items: [{ ...privateApi, id: { token: 'synthetic-private-auth-detail' } }],
+          next_cursor: null,
+        };
+      if (input.toolkit_slug)
+        return {
+          items: [customOAuth, privateApi].filter(
+            (entry) => entry.toolkit.slug === input.toolkit_slug,
+          ),
+          next_cursor: null,
+        };
+      if (input.cursor) {
+        assert.equal(input.cursor, 'auth-next');
+        return { items: [privateApi, privateApi], next_cursor: null };
+      }
+      return {
+        items: [
+          customOAuth,
+          config('unsupported-toolkit-config', '_1password', 'API_KEY'),
+          {
+            ...config('disabled-router', 'router_disabled', 'BASIC'),
+            is_enabled_for_tool_router: false,
+          },
+          {
+            ...config('missing-router', 'router_missing', 'BEARER_TOKEN'),
+            is_enabled_for_tool_router: undefined,
+          },
+          config('no-auth-config', 'no_auth', 'NO_AUTH'),
+          { ...config('managed-config', 'unconfigured_app', 'API_KEY'), is_composio_managed: true },
+          { ...config('disabled-config', 'unconfigured_app', 'API_KEY'), status: 'DISABLED' },
+        ],
+        next_cursor: 'auth-next',
+      };
+    },
+  );
+  const sessionConfig = { auth_configs: { custom_app: 'fixture-auth' } as Record<string, string> };
+  const authorize = t.mock.fn(async (slug: string) => {
+    if (slug === 'private_api')
+      assert.equal(sessionConfig.auth_configs.private_api, 'private-api-config');
+    else if (slug === 'custom_oauth')
+      assert.equal(sessionConfig.auth_configs.custom_oauth, 'custom-oauth-config');
+    else assert.equal(slug, 'granola_mcp');
+    return { id: 'fixture-account', redirectUrl: 'https://connect.composio.dev/link/fixture' };
+  });
   const create = t.mock.method(client.sessions, 'create', async () => ({
     sessionId: 'fixture-session',
+    config: sessionConfig,
+    configVersion: 1,
+    update: async (input: { authConfigs: Record<string, string> }) => {
+      sessionConfig.auth_configs = input.authConfigs;
+    },
     authorize,
     search: async () => ({
       success: true,
@@ -8639,11 +8791,20 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
   assert.equal(services.filter((entry) => entry.slug === 'granola_mcp').length, 1);
   assert.ok(services.some((entry) => entry.slug === 'managed_notes'));
   assert.ok(services.some((entry) => entry.slug === 'custom_app'));
+  assert.ok(services.some((entry) => entry.slug === 'custom_oauth'));
+  assert.ok(services.some((entry) => entry.slug === 'private_api'));
+  assert.equal(authReads.length, 2);
   assert.equal(
     services.some((entry) =>
-      ['private_api', 'custom_oauth', '../invalid', 'invalid_name', 'invalid_auth'].includes(
-        entry.slug,
-      ),
+      [
+        'unconfigured_app',
+        'router_disabled',
+        'router_missing',
+        'no_auth',
+        '../invalid',
+        'invalid_name',
+        'invalid_auth',
+      ].includes(entry.slug),
     ),
     false,
   );
@@ -8686,14 +8847,46 @@ test('Composio paginates managed apps and native DCR MCPs with exact slugs for c
   assert.deepEqual(configuration.connectedAccounts, accounts);
   assert.ok(configuration.toolkits.includes('granola_mcp'));
   assert.ok(configuration.toolkits.includes('retired_mcp'));
+  assert.ok(configuration.toolkits.includes('private_api'));
+  assert.ok(configuration.toolkits.includes('custom_oauth'));
   assert.equal(configuration.authConfigs.custom_app, 'fixture-auth');
   await session.authorize('granola_mcp', 'http://localhost:4310/api/apps/callback');
-  await assert.rejects(session.authorize('private_api', 'http://localhost:4310/api/apps/callback'));
-  assert.equal(authorize.mock.callCount(), 1);
+  await session.authorize('private_api', 'http://localhost:4310/api/apps/callback');
+  await session.authorize('custom_oauth', 'http://localhost:4310/api/apps/callback');
+  await assert.rejects(
+    session.authorize('unconfigured_app', 'http://localhost:4310/api/apps/callback'),
+  );
+  await assert.rejects(session.authorize('no_auth', 'http://localhost:4310/api/apps/callback'));
+  assert.equal(authorize.mock.callCount(), 3);
+  assert.deepEqual(
+    authReads.slice(2).map((read) => read.toolkit_slug),
+    ['granola_mcp', 'private_api', 'custom_oauth'],
+  );
   assert.deepEqual(Object.keys((await session.search('Find notes')).tools as object), [
     'GRANOLA_MCP_SEARCH_NOTES',
   ]);
   assert.equal(listing.mock.callCount(), 2);
+  configFailure = 'permission';
+  await assert.rejects(createComposioProvider({ client }).listServices!(), (error: unknown) => {
+    assert.ok(error instanceof IntegrationConnectionError);
+    assert.equal(error.phase, 'auth_config');
+    assert.equal(error.reason, 'permission');
+    assert.doesNotMatch(String(error), /synthetic-private/);
+    return true;
+  });
+  configFailure = 'malformed';
+  await assert.rejects(createComposioProvider({ client }).listServices!(), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.doesNotMatch(String(error), /synthetic-private/);
+    return true;
+  });
+  const before = authReads.length;
+  for (const mode of ['empty', 'managed'] as const) {
+    catalogMode = mode;
+    await createComposioProvider({ client, authConfigs: { custom_app: 'fixture-auth' } })
+      .listServices!();
+    assert.equal(authReads.length, before);
+  }
 });
 
 test('Composio rejects invalid catalog pages and repeated cursors without caching partial results', async (t) => {
@@ -9095,8 +9288,28 @@ test('Composio key changes bind configuration identity to the active SDK and fen
     const key = request.headers.get('x-api-key')!;
     assert.ok(keys.includes(key));
     calls.push({ path: url.pathname, key });
-    if (request.method === 'GET' && url.pathname === '/api/v3.1/toolkits')
+    if (request.method === 'GET' && url.pathname === '/api/v3.1/toolkits') {
+      assert.equal(url.searchParams.get('type'), 'all');
+      return Response.json({
+        items: [
+          {
+            slug: 'custom_native',
+            name: 'Custom Native',
+            type: 'native',
+            meta: {},
+            auth_schemes: ['OAUTH2'],
+            composio_managed_auth_schemes: [],
+          },
+        ],
+        next_cursor: null,
+      });
+    }
+    if (request.method === 'GET' && url.pathname.endsWith('/auth_configs')) {
+      assert.ok([null, 'slack'].includes(url.searchParams.get('toolkit_slug')));
+      assert.equal(url.searchParams.get('is_composio_managed'), 'false');
+      assert.equal(url.searchParams.get('show_disabled'), 'false');
       return Response.json({ items: [], next_cursor: null });
+    }
     if (request.method === 'POST' && url.pathname === '/api/v3.1/tool_router/session') {
       const body = await request.json();
       assert.equal(body.user_id, 'fixture-owner');
@@ -9142,6 +9355,8 @@ test('Composio key changes bind configuration identity to the active SDK and fen
   assert.equal(calls.length, beforeStale);
   assert.equal((await current.authorize('slack', callback)).accountId, 'ca_rotation_fixture');
   assert.equal(calls.at(-1)!.key, keys[1]);
+  assert.equal(calls.at(-2)!.path.endsWith('/auth_configs'), true);
+  assert.equal(calls.at(-2)!.key, keys[1]);
   provider.setApiKey!();
   assert.equal(provider.configured, false);
   assert.equal(provider.configurationId, undefined);
@@ -9154,6 +9369,10 @@ test('Composio key changes bind configuration identity to the active SDK and fen
   assert.equal(provider.configurationId, initialConfiguration);
   await provider.createSession('fixture-owner', {});
   assert.equal(calls.at(-1)!.key, keys[0]);
+  assert.deepEqual(
+    calls.filter((call) => call.path.endsWith('/auth_configs')).map((call) => call.key),
+    [keys[0], keys[1], keys[1], keys[0]],
+  );
   const proxy = createComposioProxy({
     ownerId: 'fixture-owner',
     dataRoot: tmpdir(),
@@ -9281,7 +9500,8 @@ test('Composio connection requests classify HTTP failures without repeating cons
   }
 });
 
-test('Composio Google consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
+test('Composio toolkit consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => assert.fail('Unexpected external request.'));
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
     allowTracking: false,
@@ -9304,7 +9524,10 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
   }
   t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
     const id = `fixture-session-${configurations.size}`;
-    configurations.set(id, config);
+    configurations.set(id, {
+      ...config,
+      auth_configs: { notion: 'retained-notion', ...(config.auth_configs as object) },
+    });
     await pause('create');
     return snapshot(id);
   });
@@ -9315,7 +9538,28 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
     deleted.push(id);
     return { session_id: id, deleted: true };
   });
-  let empty = false;
+  const configs = [
+    { id: 'custom-gmail', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2' },
+    { id: 'custom-slack', toolkit: { slug: 'slack' }, auth_scheme: 'OAUTH2' },
+    { id: 'custom-calendar', toolkit: { slug: 'googlecalendar' }, auth_scheme: 'API_KEY' },
+    { id: 'custom-drive', toolkit: { slug: 'googledrive' }, auth_scheme: 'BASIC' },
+    { id: 'custom-sheets', toolkit: { slug: 'googlesheets' }, auth_scheme: 'BEARER_TOKEN' },
+    { id: 'custom-docs', toolkit: { slug: 'googledocs' }, auth_scheme: 'OAUTH1' },
+  ].map((config) => ({
+    ...config,
+    status: 'ENABLED',
+    is_composio_managed: false,
+    is_enabled_for_tool_router: true,
+  }));
+  let mode:
+    | 'selected'
+    | 'empty'
+    | 'no-auth'
+    | 'ambiguous'
+    | 'unavailable'
+    | 'missing-router'
+    | 'permission' = 'selected';
+  let expectedConfig: string | undefined = 'custom-gmail';
   let paused: 'create' | 'list' | 'patch' | 'link' | undefined;
   let started = deferred();
   let released = deferred();
@@ -9327,29 +9571,32 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
   const list = t.mock.method(
     client.getClient().authConfigs,
     'list',
-    async (input: { toolkit_slug: string }) => {
+    async (input: { toolkit_slug?: string }) => {
+      assert.ok(input.toolkit_slug, 'An empty catalog must not load project-wide auth configs.');
       await pause('list');
-      return {
-        items: empty
-          ? []
-          : [
-              {
-                id: `custom-${input.toolkit_slug}`,
-                toolkit: { slug: input.toolkit_slug },
-                status: 'ENABLED',
-                auth_scheme: 'OAUTH2',
-                is_composio_managed: false,
-                is_enabled_for_tool_router: true,
-              },
-            ],
-        next_cursor: null,
-      };
+      if (mode === 'permission')
+        throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
+      const selected = configs.find((config) => config.toolkit.slug === input.toolkit_slug);
+      assert.ok(selected);
+      let items: Array<Record<string, unknown>> = [selected];
+      if (mode === 'empty') items = [];
+      if (mode === 'no-auth') items = [{ ...selected, auth_scheme: 'NO_AUTH' }];
+      if (mode === 'ambiguous')
+        items.push({ ...selected, id: 'other-custom-config', auth_scheme: 'API_KEY' });
+      if (mode === 'unavailable') items = [{ ...selected, is_enabled_for_tool_router: false }];
+      if (mode === 'missing-router') {
+        const { is_enabled_for_tool_router: _, ...unavailable } = selected;
+        items = [unavailable];
+      }
+      return { items, next_cursor: null };
     },
   );
   const patch = t.mock.method(
     transport,
     'patch',
     async (id: string, input: Record<string, unknown>) => {
+      if ('expected_config_version' in input)
+        throw Object.assign(new Error('Unknown field: expected_config_version'), { status: 400 });
       await pause('patch');
       configurations.set(id, { ...configurations.get(id), auth_configs: input.auth_configs });
       return { ...snapshot(id), config_version: 2 };
@@ -9359,7 +9606,10 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
   const link = t.mock.method(
     transport,
     'link',
-    async (_id: string, _input: unknown, options: { signal: AbortSignal }) => {
+    async (id: string, input: { toolkit: string }, options: { signal: AbortSignal }) => {
+      const selected = configurations.get(id)?.auth_configs as Record<string, string>;
+      assert.equal(selected[input.toolkit], expectedConfig);
+      assert.equal(selected.notion, 'retained-notion');
       assert.equal(options.signal.aborted, false);
       await pause('link');
       return {
@@ -9370,30 +9620,62 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
   );
   const callback = 'http://localhost:4310/api/apps/callback';
   const provider = createComposioProvider({ client });
-  for (const slug of ['gmail', 'googlecalendar', 'googledrive', 'googlesheets', 'googledocs']) {
+  for (const config of configs) {
     const before = list.mock.callCount();
     const session = await provider.createSession('fixture-owner', {});
     assert.equal(list.mock.callCount(), before);
-    await session.authorize(slug, callback);
+    expectedConfig = config.id;
+    await session.authorize(config.toolkit.slug, callback);
     assert.equal(list.mock.callCount(), before + 1);
-    assert.deepEqual(configurations.get(session.id)?.auth_configs, { [slug]: `custom-${slug}` });
+    assert.deepEqual(configurations.get(session.id)?.auth_configs, {
+      notion: 'retained-notion',
+      [config.toolkit.slug]: config.id,
+    });
   }
-  const explicit = createComposioProvider({ client, authConfigs: { gmail: 'explicit-gmail' } });
+  const explicit = createComposioProvider({
+    client,
+    authConfigs: { gmail: 'explicit-gmail', slack: 'explicit-slack' },
+  });
   const session = await explicit.createSession('fixture-owner', {});
+  const beforeExplicit = { list: list.mock.callCount(), patch: patch.mock.callCount() };
+  mode = 'permission';
+  expectedConfig = 'explicit-gmail';
   await session.authorize('gmail', callback);
+  expectedConfig = 'explicit-slack';
   await session.authorize('slack', callback);
-  assert.equal(list.mock.callCount(), 5);
-  assert.equal(patch.mock.callCount(), 5);
-  assert.deepEqual(configurations.get(session.id)?.auth_configs, { gmail: 'explicit-gmail' });
-  empty = true;
-  const fallback = await provider.createSession('fixture-owner', {});
-  await fallback.authorize('gmail', callback);
-  assert.equal(list.mock.callCount(), 6);
-  assert.equal(patch.mock.callCount(), 5);
-  assert.equal(configurations.get(fallback.id)?.auth_configs, undefined);
+  assert.equal(list.mock.callCount(), beforeExplicit.list);
+  assert.equal(patch.mock.callCount(), beforeExplicit.patch);
+  assert.deepEqual(configurations.get(session.id)?.auth_configs, {
+    notion: 'retained-notion',
+    gmail: 'explicit-gmail',
+    slack: 'explicit-slack',
+  });
+  for (const failure of ['ambiguous', 'unavailable', 'missing-router', 'permission'] as const) {
+    mode = failure;
+    const blocked = await provider.createSession('fixture-owner', {});
+    const before = { patch: patch.mock.callCount(), link: link.mock.callCount() };
+    await assert.rejects(blocked.authorize('slack', callback), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.doesNotMatch(String(error), /synthetic-private/);
+      return true;
+    });
+    assert.equal(patch.mock.callCount(), before.patch);
+    assert.equal(link.mock.callCount(), before.link);
+  }
+  expectedConfig = undefined;
+  let fallback: IntegrationSession;
+  for (const absence of ['empty', 'no-auth'] as const) {
+    mode = absence;
+    const before = { list: list.mock.callCount(), patch: patch.mock.callCount() };
+    fallback = await provider.createSession('fixture-owner', {});
+    await fallback!.authorize('gmail', callback);
+    assert.equal(list.mock.callCount(), before.list + 1);
+    assert.equal(patch.mock.callCount(), before.patch);
+    assert.deepEqual(configurations.get(fallback.id)?.auth_configs, { notion: 'retained-notion' });
+  }
   for (const origin of ['https://connect.composio.dev', 'https://app.composio.dev']) {
     redirectUrl = `${origin}/link/fixture`;
-    assert.deepEqual(await fallback.authorize('gmail', callback), {
+    assert.deepEqual(await fallback!.authorize('gmail', callback), {
       accountId: 'fixture-account',
       url: redirectUrl,
     });
@@ -9410,10 +9692,11 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
     '',
   ]) {
     redirectUrl = url;
-    await assert.rejects(fallback.authorize('gmail', callback), /sign-in address is invalid/);
+    await assert.rejects(fallback!.authorize('gmail', callback), /sign-in address is invalid/);
   }
   redirectUrl = 'https://connect.composio.dev/link/fixture';
-  empty = false;
+  mode = 'selected';
+  expectedConfig = 'custom-slack';
   for (const phase of ['list', 'patch', 'link'] as const) {
     paused = phase;
     started = deferred();
@@ -9425,7 +9708,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
       patch: patch.mock.callCount(),
       link: link.mock.callCount(),
     };
-    const pending = session.authorize('gmail', callback);
+    const pending = session.authorize('slack', callback);
     await started.promise;
     changed.setApiKey!();
     released.resolve();
@@ -9433,7 +9716,7 @@ test('Composio Google consent preserves explicit auth, project defaults and prov
     assert.equal(list.mock.callCount(), before.list + 1);
     assert.equal(patch.mock.callCount(), before.patch + (phase === 'list' ? 0 : 1));
     assert.equal(link.mock.callCount(), before.link + (phase === 'link' ? 1 : 0));
-    await assert.rejects(session.authorize('gmail', callback), /connection provider changed/);
+    await assert.rejects(session.authorize('slack', callback), /connection provider changed/);
     assert.equal(list.mock.callCount(), before.list + 1);
   }
   const before = list.mock.callCount();

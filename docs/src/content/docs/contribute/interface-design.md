@@ -54,7 +54,7 @@ Success (`--success`), warning (`--warning`), error (`--error`) and information 
 
 ## Type
 
-The interface uses n8n Baumer Uniwidth, and code uses n8n Baumer Mono. Both are served locally from `public/fonts`. Use regular weight for body text and medium for headings.
+The interface uses Geist, and code uses Geist Mono, the same fonts as the n8n editor. Both use the SIL Open Font License and are served locally from `public/fonts`. Use regular weight for body text and medium for headings.
 
 | Use                         | Size                   | Line height            |
 | --------------------------- | ---------------------- | ---------------------- |

@@ -500,6 +500,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       if (error instanceof IntegrationCatalogAccessDenied)
         throw new IntegrationError(error.message, 403);
+      if (error instanceof IntegrationConnectionError) throw error;
       throw new IntegrationError('The app catalog is unavailable. Try again later.', 502);
     }
     serviceCatalog = new Map(entries.map((entry) => [entry.slug, entry]));
@@ -1479,7 +1480,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         return session.execute(action, providerArgs, row.account_id!, signal);
       });
     } catch (error) {
-      throw new IntegrationError(failure('The app request failed', error), 502);
+      if (error instanceof IntegrationError) throw error;
+      throw new IntegrationError(
+        `${failure('The app request failed', error)} If the action name or arguments may be wrong, look them up with apps SEARCH_TOOLS.`,
+        502,
+      );
     }
   }
 

@@ -430,14 +430,8 @@ test(
 
       const [learned] = (await view()).notes;
       assert.deepEqual(
-        [
-          learned.text,
-          learned.status,
-          learned.inMind,
-          learned.sources[0].text,
-          learned.sources[0].channel,
-        ],
-        [next, 'stated', true, next, 'web'],
+        [learned.text, learned.status, learned.sources[0].text, learned.sources[0].channel],
+        [next, 'stated', next, 'web'],
       );
       const foreign = randomUUID();
       await pool.query(
@@ -457,10 +451,7 @@ test(
       planted.archive.push({ ...cello, archived: cello.updated, reason: 'expired' });
       await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(planted));
       const guess = (await view()).notes.find((note) => note.path === 'about/planted')!;
-      assert.deepEqual(
-        [guess.status, guess.inMind, guess.sources[0].text],
-        ['tentative', false, null],
-      );
+      assert.deepEqual([guess.status, guess.sources[0].text], ['tentative', null]);
 
       const rejected = await page('POST', '/api/memory/notes', {
         area: 'about',
@@ -759,32 +750,32 @@ test('the prompt index is stable JSON data, hides tentative entries and degrades
     origin: 'inferred',
   });
   const base = treeOf(coffee, guess);
-  assert.deepEqual(JSON.parse(indexLayout(base).text), { about: ['coffee: Likes strong coffee.'] });
-  assert.deepEqual(JSON.parse(indexLayout(base, { tentative: true }).text).lessons, [
+  assert.deepEqual(JSON.parse(indexLayout(base)), { about: ['coffee: Likes strong coffee.'] });
+  assert.deepEqual(JSON.parse(indexLayout(base, { tentative: true })).lessons, [
     'guess: Maybe dislikes calls. (tentative)',
   ]);
   const touched = treeOf(
     { ...coffee, updated: '2026-06-01T00:00:00.000Z', sources: [ids[0], ids[1]] },
     guess,
   );
-  assert.equal(indexLayout(touched).text, indexLayout(base).text);
+  assert.equal(indexLayout(touched), indexLayout(base));
   assert.deepEqual(
-    JSON.parse(indexLayout(treeOf(coffee, { ...guess, sources: [ids[0], ids[1]] })).text).lessons,
+    JSON.parse(indexLayout(treeOf(coffee, { ...guess, sources: [ids[0], ids[1]] }))).lessons,
     ['guess: Maybe dislikes calls.'],
   );
+  const rule = 'Never send calendar notes at the end of a reply about something else. '
+    .repeat(7)
+    .trim();
   const facts = Array.from({ length: 40 }, (_, index) =>
     entry({
       slug: `fact-${index}`,
-      text: `Synthetic fact number ${index} about the user.`,
-      updated: `2026-01-${String((index % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
+      text: index ? `Synthetic fact number ${index} about the user.` : rule,
     }),
   );
-  const full = indexLayout(treeOf(...facts), { budget: 600 });
-  assert.ok(full.text.length <= 600);
-  assert.ok(full.hidden > 0);
-  assert.match(JSON.parse(full.text).about.at(-1), /^\+\d+ more$/);
-  assert.equal(indexLayout(treeOf(...facts.toReversed()), { budget: 600 }).text, full.text);
-  assert.equal(indexLayout(emptyTree()).text, '{}');
+  const listed = JSON.parse(indexLayout(treeOf(...facts))).about;
+  assert.equal(listed.length, 40);
+  assert.ok(listed.includes(`fact-0: ${rule}`));
+  assert.equal(indexLayout(emptyTree()), '{}');
 });
 
 test('repair archives expired, stale and duplicate entries, keeps distinct numbers and never deletes', () => {

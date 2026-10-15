@@ -408,7 +408,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                 <div className="ob-email-summary">
                   <p>
                     <Check size={16} aria-hidden="true" />
-                    <span data-analytics-private>{connectionStatusText(keyStatus)}</span>
+                    <span data-analytics-private>
+                      {keyStatus.mode === 'otto'
+                        ? 'Easy Connect enabled'
+                        : connectionStatusText(keyStatus)}
+                    </span>
                   </p>
                   <button
                     type="button"
@@ -423,12 +427,6 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
               )}
               {(!compactSetup || setupExpanded) && (
                 <ConnectionChoice state={choice} disabled={!!pending} />
-              )}
-              {compactSetup && keyStatus && !setupExpanded && (
-                <details className="ob-email-route">
-                  <summary>How app connections work</summary>
-                  <p>{connectionRoutes[keyStatus.mode]}</p>
-                </details>
               )}
             </div>
           )

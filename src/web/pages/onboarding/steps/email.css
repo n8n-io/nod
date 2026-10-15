@@ -35,16 +35,6 @@
 .ob-email-summary > p > span {
   overflow-wrap: anywhere;
 }
-.ob-email-route {
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
-.ob-email-route > summary {
-  cursor: pointer;
-}
-.ob-email-route > p {
-  padding-top: 8px;
-}
 .ob-email-retry {
   display: flex;
   flex-wrap: wrap;

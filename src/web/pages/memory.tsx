@@ -210,7 +210,6 @@ function NoteDetail({
       <p className="memory-status">
         <MemoryMark stage={note.status} />
         {stageLabel[note.status]}
-        {!note.inMind && note.status !== 'tentative' && ' · used when relevant'}
       </p>
       {mode === 'edit' ? (
         <form className="memory-form" onSubmit={save}>

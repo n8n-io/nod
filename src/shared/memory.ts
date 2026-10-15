@@ -17,7 +17,6 @@ export interface MemoryNote {
   area: MemoryArea;
   text: string;
   status: MemoryStatus;
-  inMind: boolean;
   updated: string;
   edited: string | null;
   expires: string | null;

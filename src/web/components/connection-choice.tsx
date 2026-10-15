@@ -412,7 +412,7 @@ export function ConnectionChoice({
   else if (status.managed)
     panel = (
       <div className="connection-managed">
-        {status.managed.email && (
+        {status.managed.state === 'enabled' && status.managed.email && (
           <p className="connection-identity" data-analytics-private>
             <GoogleMark />
             {status.managed.email}

@@ -5297,6 +5297,7 @@ for (const signingIn of [false, true])
         await settle();
         const connect = document.querySelector('.ob-gmail-connect');
         assert.equal(connect.disabled, false);
+        assert.equal(document.querySelector('.ob-email-card').textContent.includes('alex@example.test'), false);
         await act(async () => connect.click());
         await settle();
         assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'waiting');
@@ -5317,6 +5318,7 @@ for (const signingIn of [false, true])
         const changeAfterCancel = document.querySelector('.ob-email-summary button');
         assert.equal(changeAfterCancel.disabled, false);
         await act(async () => changeAfterCancel.click());
+        assert.equal(document.querySelector('.connection-identity').textContent.trim(), 'alex@example.test');
         const ownKey = document.querySelectorAll('.connection-mode')[1];
         assert.equal(ownKey.disabled, false);
         await act(async () => ownKey.click());
@@ -5333,13 +5335,17 @@ for (const signingIn of [false, true])
           savedMode.click();
         });
         assert.ok(document.activeElement === document.querySelectorAll('.connection-mode')[0], 'Returning to the saved method retains focus on its mode control');
-        accounts = [{ slug: 'gmail', name: 'Gmail', status: 'connected', connectionId: 'synthetic-gmail', accountEmail: 'alex@example.test', triggersEnabled: false }];
+        accounts = [{ slug: 'gmail', name: 'Gmail', status: 'connected', connectionId: 'synthetic-gmail', accountEmail: 'inbox@example.test', triggersEnabled: false }];
         await act(async () => pageDataCache.refresh('/api/apps', true));
         assert.equal(document.querySelector('[data-gmail]').dataset.gmail, 'connected');
         assert.equal(document.querySelector('.connection-choice'), null);
+        assert.equal(document.querySelector('.ob-email-title [data-analytics-private]').textContent.trim(), 'inbox@example.test');
         for (const state of ['revoked', 'sign_in_required', 'denied', 'unavailable']) {
           status.managed = { state, email: 'alex@example.test' };
           await act(async () => pageDataCache.refresh('/api/integrations/key', true));
+          assert.equal(document.querySelector('.connection-identity'), null);
+          assert.equal(document.querySelector('.ob-email-card').textContent.includes('alex@example.test'), false);
+          assert.equal(document.querySelector('.ob-email-title [data-analytics-private]').textContent.trim(), 'inbox@example.test');
           const recover = document.querySelector('.connection-managed > .button');
           assert.ok(recover);
           assert.equal(recover.disabled, state === 'unavailable');

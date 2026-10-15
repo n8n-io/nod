@@ -5,6 +5,9 @@
 .chat-page .message-user .message-row {
   justify-content: flex-end;
 }
+.chat-page .message-assistant .message-row {
+  flex-wrap: wrap;
+}
 .chat-page .message-user .message-tools {
   order: -1;
 }
@@ -581,7 +584,6 @@
 .chat-page .message .message-body {
   --message-background: var(--surface-subtle);
   flex: 0 1 auto;
-  max-width: min(82%, 640px);
   padding: 8px 16px;
   border-radius: 24px;
   background: var(--message-background);
@@ -590,6 +592,7 @@
 }
 .chat-page .message-user .message-body {
   --message-background: var(--chat-sent);
+  max-width: min(82%, 640px);
   padding: 8px 16px;
   color: var(--chat-sent-foreground);
 }
