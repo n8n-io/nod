@@ -412,7 +412,7 @@ export async function staple(path) {
       await run('/usr/bin/xcrun', ['stapler', 'staple', path]);
       break;
     } catch (error) {
-      if (attempt === 6) throw error;
+      if (attempt === 20) throw error;
       await delay(30_000);
     }
   }
