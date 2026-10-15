@@ -1,11 +1,17 @@
 import { browserErrorCodes } from '../../shared/browser-errors.ts';
 import { z } from 'zod';
-import { browserUploadBytes } from '../../ports/computer.ts';
 import { browserHandoffInput } from '../../shared/browser-handoff.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 export const browserSocketPath = '/data/control.sock';
 export const responseBytes = 17 * 1024 * 1024;
 export const imageBytes = 12 * 1024 * 1024;
+export const transferBytes = 4 * 1024 * 1024;
+const transferData = z
+  .string()
+  .min(4)
+  .max(Math.ceil(transferBytes / 3) * 4)
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/);
 
 const identity = {
   id: z.uuid(),
@@ -21,7 +27,6 @@ export const browserDownloadInput = z
     name: z
       .string()
       .min(1)
-      .max(200)
       .regex(/^[^/\\\u0000-\u001f\u007f]+$/)
       .optional(),
   })
@@ -65,6 +70,7 @@ const browserAction = z
     key: z.string().optional(),
     load: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
     direction: z.enum(['up', 'down']).optional(),
+    amount: z.number().int().min(1).optional(),
     waitMs: z.number().int().min(0).optional(),
     offset: z.number().int().min(0).optional(),
     timeZone: z.string().max(100).optional(),
@@ -161,12 +167,8 @@ export const browserRequest = z.discriminatedUnion('method', [
           name: z
             .string()
             .min(1)
-            .max(200)
             .regex(/^[^/\\\u0000-\u001f\u007f]+$/),
-          data: z
-            .string()
-            .min(4)
-            .max(Math.ceil(browserUploadBytes / 3) * 4),
+          size: z.number().int().min(1).max(fileBytes),
         })
         .strict(),
     })
@@ -198,7 +200,7 @@ export const browserRequest = z.discriminatedUnion('method', [
       ...identity,
       method: z.literal('hold'),
       threadId: thread,
-      until: z.number().finite().nullable(),
+      held: z.boolean(),
     })
     .strict(),
   z.object({ ...identity, method: z.literal('close'), threadId: thread }).strict(),
@@ -217,7 +219,9 @@ export const browserFrame = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request'), request: browserRequest }).strict(),
   z.object({ type: z.literal('cancel'), id: z.uuid() }).strict(),
   z.object({ type: z.literal('input'), id: z.uuid(), input: browserHandoffInput }).strict(),
+  z.object({ type: z.literal('data'), id: z.uuid(), data: transferData }).strict(),
 ]);
+export const chunkFrame = z.object({ id: z.uuid(), chunk: transferData }).strict();
 export const viewFrame = z
   .object({
     id: z.uuid(),
@@ -227,7 +231,6 @@ export const viewFrame = z
       .regex(/^[A-Za-z0-9+/]*={0,2}$/),
   })
   .strict();
-export const viewBytes = 12 * 1024 * 1024;
 export const browserMetadata = z
   .object({
     status: z.string().max(256),

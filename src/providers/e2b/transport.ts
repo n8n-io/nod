@@ -14,7 +14,6 @@ export function launchE2BCommand(
   const stderr = new PassThrough();
   let handle: E2BCommand | undefined;
   let closed = false;
-  let outputBytes = 0;
   let removeFence = () => {};
   let release = () => {};
   let resolveReady!: (value: E2BCommand) => void;
@@ -59,9 +58,8 @@ export function launchE2BCommand(
   });
   function output(stream: PassThrough, value: string) {
     if (closed) return;
-    outputBytes += Buffer.byteLength(value);
-    if (outputBytes > 32 * 1024 * 1024) return fail();
     stream.write(value);
+    if (stream.writableLength + stream.readableLength > 32 * 1024 * 1024) fail();
   }
   queueMicrotask(() => {
     removeFence = allocation.onFence(fail);

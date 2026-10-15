@@ -109,7 +109,7 @@ export async function runAcceptanceJourney(input: JourneyInput) {
   });
   await stage('held-browser-refuses-pause', async () => {
     const before = providerPauses;
-    await adapters.computer.hold(plan.threadId, Date.now() + 60_000);
+    await adapters.computer.hold(plan.threadId, true);
     let rejected = false;
     try {
       await adapters.pause();
@@ -118,7 +118,7 @@ export async function runAcceptanceJourney(input: JourneyInput) {
     }
     if (!rejected || providerPauses !== before) throw fail();
     await adapters.resume();
-    await adapters.computer.hold(plan.threadId, null);
+    await adapters.computer.hold(plan.threadId, false);
   });
   await stage('descendant-cancellation', async () => {
     const controller = new AbortController();

@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { EditorContent, useEditor } from '@tiptap/react';
 import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } from 'lucide-react';
 import type { Artifact, Message } from '../../shared/contracts';
+import { fileBytes } from '../../shared/files';
 import { api, errorMessage } from '../lib/api';
 import { createComposerExtensions } from '../lib/composer-editor';
 import { EditorFormatting } from './editor-formatting';
@@ -57,6 +58,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const mounted = useRef(true);
   const attachmentValues = useRef<DraftAttachment[]>([]);
   const uploads = useRef(new Set<AbortController>());
+  const uploadQueue = useRef(Promise.resolve());
   const previewUrls = useRef(new Set<string>());
   const previewTrigger = useRef<AttachmentTrigger | null>(null);
   const lastText = useRef(text);
@@ -134,12 +136,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }
   async function upload(files: File[]) {
     if (!files.length) return;
-    if (files.length + attachmentValues.current.length > 20) {
-      setError('Attach up to 20 files per message.');
-      return;
-    }
-    if (files.some((file) => file.size > 15 * 1024 * 1024)) {
-      setError('Each file must be 15 MB or smaller.');
+    if (files.some((file) => file.size > fileBytes)) {
+      setError(`Each file must be ${fileBytes / 1024 / 1024} MB or smaller.`);
       return;
     }
     const items: DraftAttachment[] = files.map((file) => {
@@ -163,8 +161,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     });
     updateAttachments([...attachmentValues.current, ...items]);
     setError('');
-    await Promise.all(
-      files.map(async (file, index) => {
+    const send = async () => {
+      for (const [index, file] of files.entries()) {
         const item = items[index];
         const controller = item.controller!;
         try {
@@ -189,8 +187,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         } finally {
           uploads.current.delete(controller);
         }
-      }),
-    );
+      }
+    };
+    const queued = uploadQueue.current.then(send);
+    uploadQueue.current = queued;
+    await queued;
     if (mounted.current) {
       if (fileInput.current) fileInput.current.value = '';
       restoreFocus();
@@ -378,7 +379,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label="Attach files"
               title="Attach files or paste an image"
               onClick={() => fileInput.current?.click()}
-              disabled={attachments.length >= 20}
             >
               <Paperclip size={16} />
             </Button>

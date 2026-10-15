@@ -23,7 +23,7 @@ You can see everything Otto remembers, where it learned it, and change or forget
 
 Otto learns only from your own messages. It never learns from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
 
-- **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 600 characters can't be saved this way; add a shorter note yourself.
+- **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Otto looks through your recent short messages for lasting facts. It skips messages with attachments.
 
 Otto saves silently. It doesn't post a notice in chat.

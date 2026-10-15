@@ -3,11 +3,11 @@ import {
   archive,
   area,
   areaEntries,
+  fits,
   fold,
   freeSlug,
   line,
   locate,
-  maxEntries,
   path,
   same,
   slug,
@@ -15,18 +15,17 @@ import {
   type Tree,
 } from './memory-tree.ts';
 
-export const maxReflectOps = 6;
-const ordinals = z.array(z.number().int().min(1).max(40)).min(1).max(3);
+const ordinals = z.array(z.number().int().min(1).max(40)).min(1);
 
 const reflectOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('add'),
     area,
     slug,
-    text: line(300),
-    abstract: line(120).optional(),
+    text: line(),
+    abstract: line(120).optional().catch(undefined),
     m: ordinals,
-    quote: line(160),
+    quote: line(),
     sensitive: z.boolean(),
   }),
   z.object({
@@ -34,7 +33,7 @@ const reflectOp = z.discriminatedUnion('op', [
     path,
     reason: z.enum(['obsolete', 'contradicted']),
     m: ordinals,
-    quote: line(160),
+    quote: line(),
   }),
 ]);
 
@@ -47,7 +46,7 @@ export function applyReflect(
   now: string,
 ) {
   let applied = 0;
-  for (const item of raw.slice(0, maxReflectOps)) {
+  for (const item of raw) {
     const parsed = reflectOp.safeParse(item);
     if (!parsed.success) continue;
     const op = parsed.data;
@@ -67,7 +66,6 @@ export function applyReflect(
         match.sources = union(match.sources, sources);
         match.updated = now;
       } else {
-        if (tree.entries.length >= maxEntries) continue;
         tree.entries.push({
           area: op.area,
           slug: freeSlug(tree, op.area, op.slug),
@@ -77,6 +75,10 @@ export function applyReflect(
           updated: now,
           sources,
         });
+        if (!fits(tree)) {
+          tree.entries.pop();
+          continue;
+        }
       }
     }
     applied++;

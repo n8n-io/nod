@@ -2,24 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { browserDownloadBytes, type BrowserDownload } from '../../ports/computer.ts';
+import type { BrowserDownload } from '../../ports/computer.ts';
+import { fileBytes, fileName } from '../../shared/files.ts';
 
 export function downloadName(value: string | undefined, pdf = false): string {
   const name = value ?? (pdf ? 'download.pdf' : 'download');
-  if (
-    !name.trim() ||
-    name.length > 200 ||
-    /[/\\\u0000-\u001f\u007f]/.test(name) ||
-    name === '.' ||
-    name === '..'
-  )
+  if (!name.trim() || /[/\\\u0000-\u001f\u007f]/.test(name) || name === '.' || name === '..')
     throw new Error('A plain download filename is required.');
-  return name;
+  return fileName(name);
 }
 
 export function downloadFile(bytes: Buffer, name?: string, mimeType?: string): BrowserDownload {
-  if (!bytes.length || bytes.length > browserDownloadBytes)
-    throw new Error('Browser downloads must be between one byte and 12 MiB.');
+  if (!bytes.length || bytes.length > fileBytes)
+    throw new Error(
+      `Browser downloads must be between one byte and ${fileBytes / 1024 / 1024} MiB.`,
+    );
   const pdf = bytes.subarray(0, 5).toString('ascii') === '%PDF-';
   const type = pdf
     ? 'application/pdf'
@@ -29,20 +26,12 @@ export function downloadFile(bytes: Buffer, name?: string, mimeType?: string): B
   return { bytes, name: downloadName(name, pdf), mimeType: type };
 }
 
-export function decodeDownload(value: unknown, name?: string): BrowserDownload {
-  if (!value || typeof value !== 'object') throw new Error('The browser file is unavailable.');
-  const result = value as Record<string, unknown>;
-  if (
-    typeof result.data !== 'string' ||
-    result.data.length > Math.ceil(browserDownloadBytes / 3) * 4 ||
-    result.data.length % 4 !== 0 ||
-    !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data) ||
-    typeof result.mimeType !== 'string'
-  )
+export function decodeDownloadChunk(value: unknown): Buffer {
+  if (typeof value !== 'string' || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value))
     throw new Error('The browser file is unavailable.');
-  const bytes = Buffer.from(result.data, 'base64');
-  if (bytes.toString('base64') !== result.data) throw new Error('The browser file is unavailable.');
-  return downloadFile(bytes, name, result.mimeType);
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.toString('base64') !== value) throw new Error('The browser file is unavailable.');
+  return bytes;
 }
 
 export async function completedDownloads(directory: string): Promise<string[]> {
@@ -78,13 +67,8 @@ export async function readDownload(directory: string, file: string, name?: strin
   );
   try {
     const before = await handle.stat();
-    if (
-      !before.isFile() ||
-      before.nlink !== 1 ||
-      before.size < 1 ||
-      before.size > browserDownloadBytes
-    )
-      throw new Error('The browser file is unavailable or exceeds 12 MiB.');
+    if (!before.isFile() || before.nlink !== 1 || before.size < 1 || before.size > fileBytes)
+      throw new Error();
     const bytes = Buffer.alloc(before.size);
     let offset = 0;
     while (offset < bytes.length) {
@@ -105,7 +89,7 @@ export async function readDownload(directory: string, file: string, name?: strin
       throw new Error('The browser download changed while reading.');
     return downloadFile(bytes, name);
   } catch {
-    throw new Error('The browser file is unavailable or exceeds 12 MiB.');
+    throw new Error(`The browser file is unavailable or exceeds ${fileBytes / 1024 / 1024} MiB.`);
   } finally {
     await handle.close();
   }
@@ -138,11 +122,13 @@ export async function createDownloadCapture(directory: string) {
   };
 }
 
-export function fetchDownloadScript(url: string) {
+export const fetchChunkBytes = 4 * 1024 * 1024;
+
+export function fetchDownloadScript(url: string, key: string) {
   return `(async () => {
     try {
       const response = await fetch(${JSON.stringify(url)}, { credentials: 'include' });
-      if (!response.ok || !response.body || Number(response.headers.get('content-length')) > ${browserDownloadBytes}) throw new Error();
+      if (!response.ok || !response.body || Number(response.headers.get('content-length')) > ${fileBytes}) throw new Error();
       const reader = response.body.getReader();
       const chunks = [];
       let size = 0;
@@ -150,15 +136,23 @@ export function fetchDownloadScript(url: string) {
         const part = await reader.read();
         if (part.done) break;
         size += part.value.length;
-        if (size > ${browserDownloadBytes}) { await reader.cancel(); throw new Error(); }
+        if (size > ${fileBytes}) { await reader.cancel(); throw new Error(); }
         chunks.push(part.value);
       }
       const bytes = new Uint8Array(size);
       let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-      let binary = '';
-      for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));
-      return { data: btoa(binary), mimeType: response.headers.get('content-type') || 'application/octet-stream' };
+      window[${JSON.stringify(key)}] = bytes;
+      return { size, mimeType: response.headers.get('content-type') || 'application/octet-stream' };
     } catch { return null; }
+  })()`;
+}
+
+export function fetchChunkScript(key: string, offset: number) {
+  return `(() => {
+    const bytes = window[${JSON.stringify(key)}].subarray(${offset}, ${offset + fetchChunkBytes});
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));
+    return btoa(binary);
   })()`;
 }

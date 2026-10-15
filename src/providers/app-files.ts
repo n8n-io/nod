@@ -1,6 +1,6 @@
 import type { IntegrationFile } from '../ports/integrations.ts';
+import { fileBytes, fileName } from '../shared/files.ts';
 
-export const appFileBytes = 15 * 1024 * 1024;
 const mime = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
 const extensions: Record<string, string[]> = {
   'image/png': ['.png'],
@@ -11,21 +11,20 @@ const extensions: Record<string, string[]> = {
 };
 
 export function appFile(name: unknown, mimeType: unknown, bytes: Uint8Array): IntegrationFile {
-  if (!bytes.byteLength || bytes.byteLength > appFileBytes)
+  if (!bytes.byteLength || bytes.byteLength > fileBytes)
     throw new Error('The file size is unsupported.');
   const type = typeof mimeType === 'string' ? mimeType.split(';')[0]!.trim().toLowerCase() : '';
-  const safeType = type.length <= 200 && mime.test(type) ? type : 'application/octet-stream';
+  const safeType = mime.test(type) ? type : 'application/octet-stream';
   let safeName = (typeof name === 'string' ? name : '')
     .split(/[\\/]/)
     .at(-1)!
     .replace(/[\u0000-\u001f\u007f]/g, '')
-    .trim()
-    .slice(0, 150);
+    .trim();
   if (!safeName || safeName === '.' || safeName === '..') safeName = 'file';
   const known = extensions[safeType];
   if (known && !known.some((extension) => safeName.toLowerCase().endsWith(extension)))
     safeName += known[0];
-  return { name: safeName, mimeType: safeType, bytes };
+  return { name: fileName(safeName), mimeType: safeType, bytes };
 }
 
 export function mcpFiles(result: unknown): unknown {
@@ -47,7 +46,7 @@ export function mcpFiles(result: unknown): unknown {
           : undefined;
       const data = item.type === 'image' || item.type === 'audio' ? item.data : resource?.blob;
       if (typeof data !== 'string') return block;
-      if (data.length > Math.ceil(appFileBytes / 3) * 4 + 4)
+      if (data.length > Math.ceil(fileBytes / 3) * 4 + 4)
         return {
           type: item.type,
           mimeType: (resource ?? item).mimeType,

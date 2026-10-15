@@ -25,10 +25,10 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     read_only: true
-    pids_limit: 1024
+    pids_limit: 4096
     mem_limit: 8g
     cpus: 6
-    shm_size: 256m
+    shm_size: 1g
     volumes:
       - browser-data:/data
     tmpfs:
@@ -59,8 +59,6 @@ services:
     volumes:
       - ${OTTO_DATA_ROOT:-./.local}/workspaces:/workspace
       - workspace-tools:/home/node
-    tmpfs:
-      - /tmp:size=256m
     command: ['sleep', 'infinity']
 volumes:
   postgres-data:

@@ -28,11 +28,7 @@ export function Privacy() {
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const result = (await response.json()) as PrivacyNoticeResponse;
-        if (
-          !result ||
-          (result.content !== null &&
-            (typeof result.content !== 'string' || result.content.length > 32_000))
-        )
+        if (!result || (result.content !== null && typeof result.content !== 'string'))
           throw new Error();
         if (!controller.signal.aborted) setContent(result.content);
       })

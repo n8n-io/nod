@@ -1,12 +1,12 @@
 import { ObjectStoreConflict, type PrivateObjectStore } from '../../ports/object-storage.ts';
 import {
-  maxObjectBytes,
   objectFailure,
   objectKey,
   objectLimit,
   objectVersion,
   readObjectBody,
 } from '../../ports/object-storage-validation.ts';
+import { fileBytes } from '../../shared/files.ts';
 
 export function createHttpObjectStore(
   options: {
@@ -74,7 +74,7 @@ export function createHttpObjectStore(
       }
     },
     async write(key, bytes, { expectedVersion }) {
-      if (bytes.byteLength > maxObjectBytes) throw objectFailure();
+      if (bytes.byteLength > fileBytes) throw objectFailure();
       const response = await send(key, {
         method: 'PUT',
         headers: {

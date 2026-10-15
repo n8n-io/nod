@@ -39,7 +39,8 @@ import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import type { Connection } from '../src/shared/contracts.ts';
-import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { fileBytes } from '../src/shared/files.ts';
+import { fakeComputer, fakeWorkspace, fakeExecution } from './runtime-fixtures.ts';
 
 function fakeProvider(session: IntegrationSession): IntegrationProvider {
   return {
@@ -2032,6 +2033,7 @@ test(
     });
     const result = await runtime.runTurn({
       threadId,
+      sessionId: threadId,
       turnId,
       prompt: 'Connect my personal Gmail too, keeping my work account.',
       history: [],
@@ -3404,10 +3406,10 @@ test(
     ] as const)
       await assert.rejects(f.service.execute(owner, 'GMAIL_SEND_EMAIL', input, current));
     assert.equal(stored.size, uploadCount);
-    files.set('report.pdf', Buffer.alloc(15 * 1024 * 1024));
+    files.set('report.pdf', Buffer.alloc(fileBytes));
     await assert.rejects(
       f.service.execute('local-development', 'GMAIL_SEND_EMAIL', args, turn),
-      /too large|15 MB/,
+      /too large|between 1 byte/,
     );
     assert.equal(delivered.length, 1);
     assert.equal(stored.size, uploadCount);
@@ -3609,6 +3611,7 @@ async function searchFixture(
   });
   const context: RuntimeContext = {
     threadId,
+    sessionId: threadId,
     turnId,
     prompt: 'Get the synthetic Gmail label count without reading or changing messages.',
     history: [],
@@ -4850,7 +4853,7 @@ test(
           },
         },
         oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
-        runCli: async (_thread, cli, _argv, _envName, _token, _timeout, signal) => {
+        runCli: async (_thread, cli, _argv, _environment, _timeout, signal) => {
           cliCalls++;
           cliRuns.push(cli);
           await waitForAbort('cli', signal);
@@ -4860,7 +4863,7 @@ test(
       const cliProposal = (source?: unknown) => ({
         service: 'fixture-app',
         name: 'Fixture app',
-        paths: [{ kind: 'cli', command: 'fixturecli', envName: 'FIXTURE_API_KEY', source }],
+        paths: [{ kind: 'cli', command: 'fixturecli', env: ['FIXTURE_API_KEY'], source }],
       });
       for (const source of [
         undefined,
@@ -4908,7 +4911,7 @@ test(
           kind: 'cli',
           command: 'fixturecli',
           auth: 'env',
-          envName: 'FIXTURE_API_KEY',
+          env: ['FIXTURE_API_KEY'],
           source: { npm: '@fixture/cli@1.2.3' },
         },
       ];
@@ -5170,6 +5173,130 @@ test(
       assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
       assert.notEqual(await account(), replacedAccount);
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'a connected CLI receives each named setting and never shows their values',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_discovered_cli_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    try {
+      const owner = 'fixture-owner';
+      const key = randomBytes(32);
+      const grantVault = await createAppGrantVault(pool, {
+        ownerId: owner,
+        keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      });
+      const environments: Array<Record<string, string>> = [];
+      const discovered = await createDiscoveredConnections(pool, {
+        ownerId: owner,
+        baseUrl: 'http://localhost:4310',
+        grantVault,
+        transport: {} as Parameters<typeof createDiscoveredConnections>[1]['transport'],
+        oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
+        runCli: async (_thread, _cli, _argv, environment) => {
+          environments.push(environment);
+          return {
+            exitCode: 0,
+            output: `signed in as ${Object.values(environment).join(' and ')}`,
+          };
+        },
+      });
+      discovered.registerRoutes(app);
+      const cli = {
+        kind: 'cli',
+        command: 'fixturecli',
+        env: ['FIXTURE_ACCESS_KEY_ID', 'FIXTURE_SECRET_ACCESS_KEY'],
+        source: { npm: '@fixture/cli@1.2.3' },
+      };
+      await assert.rejects(
+        discovered.propose({
+          service: 'fixture-cloud',
+          name: 'Fixture cloud',
+          paths: [cli, { kind: 'http', endpoint: 'https://fixture.example/api', testPath: 'me' }],
+        }),
+        /its own connection/,
+      );
+      await assert.rejects(
+        discovered.propose({
+          service: 'fixture-cloud',
+          name: 'Fixture cloud',
+          paths: [{ ...cli, env: ['LD_PRELOAD'] }],
+        }),
+        { name: 'ZodError' },
+      );
+      const proposal = await discovered.propose({
+        service: 'fixture-cloud',
+        name: 'Fixture cloud',
+        paths: [cli],
+      });
+      const id = new URL(proposal.url, 'http://localhost:4310').searchParams.get('connect');
+      const complete = (token: unknown) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/apps/discovery/${id}/complete`,
+          payload: { token, accountName: 'Fixture account' },
+        });
+      assert.equal((await complete('synthetic-single-token')).statusCode, 400);
+      assert.equal((await complete({ FIXTURE_ACCESS_KEY_ID: 'synthetic-key-id' })).statusCode, 400);
+      const values = {
+        FIXTURE_ACCESS_KEY_ID: 'synthetic-key-id',
+        FIXTURE_SECRET_ACCESS_KEY: 'synthetic-secret-key',
+      };
+      assert.equal((await complete(values)).statusCode, 200);
+      const saved = await pool.query<{ id: string; paths: Array<{ id: string }> }>(
+        'SELECT id,paths FROM discovered_connections WHERE owner_id=$1',
+        [owner],
+      );
+      const result = await discovered.execute(
+        'CONNECTED_CLI',
+        { connectionId: saved.rows[0].id, pathId: saved.rows[0].paths[0].id, argv: ['whoami'] },
+        { threadId: randomUUID(), turnId: randomUUID() },
+        new AbortController().signal,
+      );
+      assert.deepEqual(environments, [values]);
+      assert.equal(JSON.stringify(result).includes('synthetic-'), false);
+      const single = await discovered.propose({
+        service: 'fixture-tool',
+        name: 'Fixture tool',
+        paths: [{ ...cli, env: ['FIXTURE_TOKEN'] }],
+      });
+      const singleId = new URL(single.url, 'http://localhost:4310').searchParams.get('connect');
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/apps/discovery/${singleId}/complete`,
+            payload: { token: { FIXTURE_TOKEN: 'synthetic-tool-token' }, accountName: 'Tool' },
+          })
+        ).statusCode,
+        200,
+      );
+      const tool = await pool.query<{ id: string; paths: Array<{ id: string }> }>(
+        "SELECT id,paths FROM discovered_connections WHERE owner_id=$1 AND service='fixture-tool'",
+        [owner],
+      );
+      await discovered.execute(
+        'CONNECTED_CLI',
+        { connectionId: tool.rows[0].id, pathId: tool.rows[0].paths[0].id, argv: ['whoami'] },
+        { threadId: randomUUID(), turnId: randomUUID() },
+        new AbortController().signal,
+      );
+      assert.deepEqual(environments.at(-1), { FIXTURE_TOKEN: 'synthetic-tool-token' });
     } finally {
       await app.close();
       await pool.end();
@@ -6568,6 +6695,14 @@ test('Composio adapter normalizes sessions without exposing SDK metadata and aut
   await assert.rejects(
     provider.verifyWebhook(body, signed(String(Math.floor(Date.now() / 1000) - 600))),
   );
+  const unconfigured = createComposioProvider({ client });
+  assert.equal(unconfigured.webhooksConfigured, false);
+  await assert.rejects(unconfigured.verifyWebhook(body, signed()));
+  const tenant = createComposioProvider({ client, webhooksVerified: true });
+  assert.equal(tenant.webhooksConfigured, true);
+  const forwarded = await tenant.verifyWebhook(body, { 'webhook-id': 'delivery-fixture' });
+  assert.equal(forwarded.ownerId, 'local-development');
+  assert.equal(forwarded.subscriptionId, 'ti-fixture');
 });
 
 async function hostedDatabase() {
@@ -6773,7 +6908,7 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
@@ -6829,6 +6964,7 @@ test(
               options.onEvent({
                 type: 'provider_usage',
                 usage: {
+                  id: randomUUID(),
                   provider: 'openai',
                   category: 'agent',
                   operation: 'compaction',
@@ -6848,8 +6984,7 @@ test(
       for (const turnId of [chat, scheduled, foreign])
         await (
           await agent.open({
-            threadId: randomUUID(),
-            turnId,
+            ...fakeExecution(randomUUID(), turnId),
             systemPrompt: 'Synthetic prompt',
             tools: [],
             workspace: fakeWorkspace().open({
@@ -6872,7 +7007,7 @@ test(
             id: 'fixture',
             configured: true,
             curate: async (_request, _signal, report) => {
-              report?.({ model: 'fixture-small', costUsd: 0.05 });
+              report?.({ id: randomUUID(), model: 'fixture-small', costUsd: 0.05 });
               return {};
             },
           })
@@ -6946,11 +7081,12 @@ test(
       });
       assert.equal(await limit(null), null);
       assert.equal(await ledger.limitReached(), false);
-      assert.notEqual(
-        (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd: 0 } }))
-          .statusCode,
-        200,
-      );
+      for (const monthlyUsd of [0, 1.001, 1e300])
+        assert.notEqual(
+          (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd } }))
+            .statusCode,
+          200,
+        );
       assert.equal(
         (await pool.query('SELECT count(*)::int AS n FROM spending_limits')).rows[0].n,
         0,
@@ -6967,7 +7103,7 @@ test(
         configured: true,
         curate: async (_request, _signal, report) => {
           modelRequests++;
-          report?.({ model: 'fixture-small', costUsd: 0.05 });
+          report?.({ id: randomUUID(), model: 'fixture-small', costUsd: 0.05 });
           return {};
         },
       });
@@ -6999,6 +7135,98 @@ test(
         "INSERT INTO model_usage(id,owner_id,cost_usd) VALUES('decimal-10','decimal-owner',0.1)",
       );
       assert.equal(await decimalLedger.limitReached(), true);
+      await limit(null);
+      const sessionId = randomUUID();
+      const childRunId = randomUUID();
+      const threadId = randomUUID();
+      const reviewId = randomUUID();
+      const childUsage = usage(chat, 0.2);
+      const rootUsage = usage(chat, 0.1);
+      const reviewed = ledger.curator({
+        id: 'fixture',
+        configured: true,
+        curate: async (_request, _signal, report) => {
+          report?.({ id: reviewId, provider: 'openai', model: 'fixture-review', costUsd: 0.05 });
+          return {};
+        },
+      });
+      const billed = ledger.agent({
+        open: async (input) => ({
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            const event = input.parentRunId ? childUsage : rootUsage;
+            input.onEvent(event);
+            input.onEvent(event);
+            if (input.parentRunId)
+              await reviewed.curate({
+                task: 'review',
+                instructions: 'Synthetic review',
+                input: {},
+              });
+          },
+        }),
+        dispose() {},
+      });
+      for (const runId of [chat, childRunId]) {
+        const execution = {
+          threadId,
+          sessionId,
+          turnId: chat,
+          runId,
+          browserId: runId === chat ? sessionId : runId,
+          ...(runId !== chat ? { parentRunId: chat } : {}),
+        };
+        const session = await billed.open({
+          ...execution,
+          systemPrompt: 'Synthetic prompt',
+          tools: [],
+          workspace: fakeWorkspace().open({
+            threadId,
+            workspacePath: '/fixture',
+            signal: new AbortController().signal,
+          }),
+          runTool: (_name, _params, run) => run(),
+          shouldStop: () => false,
+          onEvent() {},
+        });
+        await session.prompt('Synthetic request', []);
+        await session.dispose();
+      }
+      const usageIds = new Set([
+        rootUsage.type === 'model_usage' ? rootUsage.id : '',
+        childUsage.type === 'model_usage' ? childUsage.id : '',
+        reviewId,
+      ]);
+      const { rows: recorded } = await pool.query(
+        `SELECT id,run_id AS "runId",parent_run_id AS "parentRunId",session_id AS "sessionId",browser_id AS "browserId",details
+         FROM model_usage WHERE owner_id=$1 AND turn_id=$2 AND id=ANY($3::text[])`,
+        ['owner', chat, [...usageIds]],
+      );
+      assert.equal(recorded.length, 3);
+      assert.equal(
+        recorded.filter((item: { runId: string }) => item.runId === childRunId).length,
+        2,
+      );
+      assert.ok(recorded.every((item: { sessionId: string }) => item.sessionId === sessionId));
+      assert.equal(recorded.find((item) => item.runId === chat).browserId, sessionId);
+      assert.ok(
+        recorded
+          .filter((item) => item.runId === childRunId)
+          .every((item) => item.browserId === childRunId),
+      );
+      assert.equal(recorded.find((item: { id: string }) => item.id === reviewId).parentRunId, chat);
+      assert.equal(
+        recorded.find((item: { runId: string }) => item.runId === chat).details.inputTokens,
+        4,
+      );
+      assert.equal(Math.round((await ledger.messageCosts([chat]))[chat].costUsd! * 100) / 100, 0.9);
+      assert.equal(
+        (await pool.query("SELECT count(*)::int AS n FROM model_usage WHERE details ? 'costUsd'"))
+          .rows[0].n,
+        0,
+      );
     } finally {
       await app.close();
       await pool.end();

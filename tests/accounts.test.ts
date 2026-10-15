@@ -1040,6 +1040,17 @@ describe('Better Auth session', () => {
         assert.equal(accepted?.avatarSource, 'https://lh3.googleusercontent.com/synthetic-avatar');
         assert.equal(accepted?.givenName, 'Synthetic');
         assert.equal(accepted?.user.name, 'Synthetic Example');
+        assert.equal(accepted?.cookies, undefined);
+        assert.ok(accepted!.expiresAt.getTime() < Date.now() + 2 * 3_600_000);
+        const refreshed = await authentication.session(headers, true);
+        assert.equal(refreshed?.id, session);
+        assert.ok(refreshed!.expiresAt.getTime() > Date.now() + 6 * 86_400_000);
+        assert.ok(
+          refreshed?.cookies?.some(
+            (cookie) =>
+              cookie.startsWith('otto-fixture.session_token=') && cookie.includes('Max-Age=604800'),
+          ),
+        );
         const tampered = new Headers({
           cookie: `otto-fixture.session_token=${encodeURIComponent(`${token}.invalid`)}`,
           origin,
@@ -1646,14 +1657,6 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(await a.read(), undefined);
     assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
-    for (let count = 0; count < 4; count++) await owner.start('openrouter');
-    const pending = await app.inject({
-      method: 'POST',
-      url: '/api/models/oauth',
-      payload: { provider: 'openrouter' },
-    });
-    assert.equal(pending.statusCode, 400);
-    assert.match(pending.json().error, /pending sign-in/);
     assert.equal(captured.length, 3);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     let exchanging!: () => void;

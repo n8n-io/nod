@@ -1,6 +1,5 @@
-import { boundedBody, ownerIdentity, environmentName, RuntimeControlError } from './protocol.ts';
-
-const objectLimit = 16 * 1024 * 1024;
+import { ownerIdentity, environmentName, RuntimeControlError } from './protocol.ts';
+import { fileBytes } from '../../../src/shared/files.ts';
 
 function objectKey(request: Request) {
   const url = new URL(request.url);
@@ -12,16 +11,8 @@ function objectKey(request: Request) {
   } catch {
     throw new RuntimeControlError();
   }
-  if (key === 'memory/MEMORY.md') return key;
-  const match = /^(artifacts|sessions)\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36}))?(\.jsonl)?$/.exec(key);
-  if (
-    !match ||
-    (match[1] === 'sessions') !== (match[4] === '.jsonl') ||
-    (match[3] !== undefined && match[1] !== 'sessions')
-  )
+  if (key !== 'memory/MEMORY.md' && !/^(?:artifacts|sessions)\/./.test(key))
     throw new RuntimeControlError();
-  ownerIdentity(match[2]);
-  if (match[3] !== undefined) ownerIdentity(match[3]);
   return key;
 }
 
@@ -35,7 +26,7 @@ export async function storageRequest(
   if (request.method === 'GET') {
     const object = await bucket.get(key);
     if (!object) return new Response(null, { status: 404, headers });
-    if (object.size > objectLimit) throw new RuntimeControlError(413);
+    if (object.size > fileBytes) throw new RuntimeControlError(413);
     return new Response(object.body, {
       headers: { ...headers, etag: object.httpEtag, 'content-length': String(object.size) },
     });
@@ -46,7 +37,12 @@ export async function storageRequest(
     if ((!match && absent !== '*') || (match && absent)) throw new RuntimeControlError(428);
     if (match && !/^"[^"\u0000-\u0020]{1,200}"$/.test(match)) throw new RuntimeControlError();
     const conditions = new Headers(match ? { 'if-match': match } : { 'if-none-match': '*' });
-    const object = await bucket.put(key, await boundedBody(request, objectLimit), {
+    const declared = request.headers.get('content-length') ?? '';
+    const length = /^\d{1,16}$/.test(declared) ? Number(declared) : NaN;
+    if (!Number.isSafeInteger(length) || (length && !request.body))
+      throw new RuntimeControlError(411);
+    if (length > fileBytes) throw new RuntimeControlError(413);
+    const object = await bucket.put(key, length ? request.body! : new Uint8Array(), {
       onlyIf: conditions,
       httpMetadata: { contentType: 'application/octet-stream', cacheControl: 'no-store' },
     });

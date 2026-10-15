@@ -53,6 +53,7 @@ const cliSourceSchema = z.union([
     })
     .strict(),
 ]);
+const envName = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}(?:TOKEN|KEY|SECRET|PASSWORD|_ID|_SID)$/);
 const pathSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('http'),
@@ -74,7 +75,10 @@ const pathSchema = z.discriminatedUnion('kind', [
     kind: z.literal('cli'),
     command: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
     auth: z.literal('env').default('env'),
-    envName: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)$/),
+    env: z
+      .array(envName)
+      .min(1)
+      .refine((names) => new Set(names).size === names.length),
     source: cliSourceSchema,
   }),
 ]);
@@ -199,8 +203,7 @@ export async function createDiscoveredConnections(
       threadId: string,
       cli: ConnectedCli,
       args: string[],
-      envName: string,
-      token: string,
+      environment: Record<string, string>,
       timeoutSeconds?: number,
       signal?: AbortSignal,
     ) => Promise<{ exitCode: number; output: string }>;
@@ -302,6 +305,11 @@ export async function createDiscoveredConnections(
       )
     )
       throw error('A client ID needs an OAuth access path.');
+    if (
+      parsed.paths.length > 1 &&
+      parsed.paths.some((path) => path.kind === 'cli' && path.env.length > 1)
+    )
+      throw error('A CLI with several settings needs its own connection.');
     const setupUrl = parsed.setupUrl
       ? (await options.transport.validateEndpoint(parsed.setupUrl)).replace(/\/$/, '')
       : null;
@@ -455,15 +463,28 @@ export async function createDiscoveredConnections(
     return { ok: true, continued: Boolean(continued) };
   }
   async function complete(id: string, input: unknown) {
-    const { token, accountName } = z
+    const { token: entered, accountName } = z
       .object({
-        token: z.string().trim().min(8).max(8192),
+        token: z.union([z.string().trim().min(8), z.record(envName, z.string().trim().min(8))]),
         accountName: z.string().trim().min(1).max(200),
       })
       .strict()
       .parse(input);
     const pending = await proposal(id);
     if (pending.paths[0]?.auth === 'oauth') throw error('Use the service sign-in link.');
+    const names = pending.paths.find((path) => path.kind === 'cli')?.env ?? [];
+    if (
+      typeof entered === 'object'
+        ? !names.length || Object.keys(entered).sort().join() !== [...names].sort().join()
+        : names.length > 1
+    )
+      throw error('Enter a value for each setting.');
+    const token =
+      typeof entered === 'string'
+        ? entered
+        : names.length === 1
+          ? entered[names[0]]
+          : JSON.stringify(entered);
     for (const path of pending.paths) {
       try {
         if (path.kind === 'mcp') {
@@ -731,12 +752,12 @@ export async function createDiscoveredConnections(
       ...(row.reconnect_required ? { connectionId: row.id } : {}),
       paths: row.paths.map((path) => {
         if (path.kind === 'cli') {
-          if (!path.source) throw error('Ask Otto to set up this CLI again.', 409);
+          if (!path.source || !path.env) throw error('Ask Otto to set up this CLI again.', 409);
           return {
             kind: path.kind,
             command: path.command,
             auth: path.auth,
-            envName: path.envName,
+            env: path.env,
             source: path.source,
           };
         }
@@ -834,11 +855,20 @@ export async function createDiscoveredConnections(
     const { row, path } = await selected(args);
     signal?.throwIfAborted();
     const token = await tokenFor(row, path, signal);
-    const safeResult = (value: unknown) => redact(value, token);
+    const environment =
+      path.kind !== 'cli' || !path.env
+        ? {}
+        : path.env.length > 1
+          ? z.record(envName, z.string()).parse(JSON.parse(token))
+          : { [path.env[0]]: token };
+    const secrets = [token, ...Object.values(environment)];
+    const hide = (value: unknown) =>
+      secrets.reduce((result, secret) => redact(result, secret), value);
+    const safeResult = hide;
     const failed = (message: string, cause: unknown) => {
       signal?.throwIfAborted();
       return error(
-        `${message}: ${String(redact(cause instanceof Error ? cause.message : String(cause), token))}`,
+        `${message}: ${String(hide(cause instanceof Error ? cause.message : String(cause)))}`,
         502,
       );
     };
@@ -863,22 +893,16 @@ export async function createDiscoveredConnections(
     if (action === 'CONNECTED_CLI') {
       if (path.kind !== 'cli') throw error('Choose a CLI access path.');
       if (!turn || !options.runCli) throw error('CLI connections are unavailable.', 503);
-      if (!path.source)
+      if (!path.source || !path.env)
         throw error('Propose this CLI again with its install source and connectionId.', 409);
-      const argv = z.array(z.string().min(1).max(1000)).min(1).max(32).parse(args.argv);
+      const argv = z.array(z.string().min(1)).min(1).parse(args.argv);
       try {
         const result = await options.runCli(
           turn.threadId,
           { id: path.id, command: path.command, source: path.source },
           argv,
-          path.envName,
-          token,
-          z
-            .number()
-            .int()
-            .min(1)
-            .max(120)
-            .parse(args.timeoutSeconds ?? 30),
+          environment,
+          z.number().int().min(1).optional().parse(args.timeoutSeconds),
           signal,
         );
         return safeResult(result);
@@ -922,7 +946,7 @@ export async function createDiscoveredConnections(
                 kind: path.kind,
                 command: path.command,
                 auth: path.auth,
-                envName: path.envName,
+                env: path.env,
                 source: path.source,
               }
             : {

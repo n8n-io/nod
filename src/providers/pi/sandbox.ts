@@ -218,7 +218,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     cwd: string,
     options: { onData(data: Buffer): void; signal?: AbortSignal; timeout?: number },
   ) {
-    const seconds = Math.max(1, Math.min(Math.ceil(options.timeout ?? 3540), 3540));
+    const seconds = Math.max(1, Math.ceil(options.timeout ?? 3540));
     const file = `${workspace.path}/.otto/outputs/bash-${randomUUID()}.log`;
     const marker = `\notto-timeout-${randomUUID()}`;
     const script = [
@@ -231,7 +231,6 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
         ? [
             'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
             'otto_rewrite_code=$?',
-            'if [ "$otto_rewrite_code" -eq 2 ]; then printf "%s\\n" "Command denied by workspace RTK policy."; exit 126; fi',
             `if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]${invocationWrapper.test(command) ? ' && [ "$otto_rewrite" = "rtk $otto_command" ]' : ''}; then otto_command=$otto_rewrite; fi`,
           ]
         : []),

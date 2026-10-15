@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { ChevronLeft, Download, Plus } from 'lucide-react';
 import {
   memoryAreas,
+  noteChars,
   type MemoryArchived,
   type MemoryArea,
   type MemoryNote,
@@ -210,14 +211,13 @@ function NoteDetail({
       <p className="memory-status">
         <MemoryMark stage={note.status} />
         {stageLabel[note.status]}
-        {!note.inMind && note.status !== 'tentative' && ' · used when relevant'}
       </p>
       {mode === 'edit' ? (
         <form className="memory-form" onSubmit={save}>
           <textarea
             className="input"
             value={text}
-            maxLength={600}
+            maxLength={noteChars}
             rows={3}
             aria-label="Note"
             autoFocus
@@ -391,7 +391,7 @@ function AddNote({
           <textarea
             className="input"
             value={text}
-            maxLength={600}
+            maxLength={noteChars}
             rows={3}
             placeholder="I prefer an aisle seat"
             aria-label="Note"

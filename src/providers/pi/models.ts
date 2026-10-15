@@ -51,6 +51,16 @@ function codexCredential(value: unknown) {
   return parsed.data;
 }
 
+function entries<T>(value: unknown, schema: z.ZodType<T>) {
+  return z
+    .array(z.unknown())
+    .parse(value)
+    .flatMap((item) => {
+      const parsed = schema.safeParse(item);
+      return parsed.success ? [parsed.data] : [];
+    });
+}
+
 async function modelListRestricted(response: Response) {
   const reader = response.body?.getReader();
   if (!reader) return false;
@@ -336,16 +346,14 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         return local.map(definition);
       const data = await jsonResponse(response);
       if (provider !== 'openrouter') {
-        const list = z
-          .array(
-            z.object({
-              id: z.string().optional(),
-              slug: z.string().optional(),
-              visibility: z.string().optional(),
-            }),
-          )
-          .max(5000)
-          .parse(method === 'subscription' ? data.models : data.data);
+        const list = entries(
+          method === 'subscription' ? data.models : data.data,
+          z.object({
+            id: z.string().optional(),
+            slug: z.string().optional(),
+            visibility: z.string().optional(),
+          }),
+        );
         const ids = new Set(
           list.filter((m) => !m.visibility || m.visibility === 'list').map((m) => m.slug ?? m.id),
         );
@@ -353,31 +361,29 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           .filter((m) => ids.has(m.id) && (!subscription || m.api === 'openai-codex-responses'))
           .map(definition);
       }
-      const list = z
-        .array(
-          z.object({
-            id: z.string().max(200),
-            name: z.string().max(300),
-            context_length: z.number().positive(),
-            supported_parameters: z.array(z.string()),
-            architecture: z.object({
-              input_modalities: z.array(z.string()),
-              output_modalities: z.array(z.string()),
-            }),
-            top_provider: z
-              .object({ max_completion_tokens: z.number().nullable().optional() })
-              .optional(),
-            reasoning: z.object({ supported_efforts: z.array(z.string()).optional() }).optional(),
-            pricing: z.object({
-              prompt: z.coerce.number().finite(),
-              completion: z.coerce.number().finite(),
-              input_cache_read: z.coerce.number().nonnegative().finite().optional(),
-              input_cache_write: z.coerce.number().nonnegative().finite().optional(),
-            }),
+      const list = entries(
+        data.data,
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          context_length: z.number().positive(),
+          supported_parameters: z.array(z.string()),
+          architecture: z.object({
+            input_modalities: z.array(z.string()),
+            output_modalities: z.array(z.string()),
           }),
-        )
-        .max(5000)
-        .parse(data.data);
+          top_provider: z
+            .object({ max_completion_tokens: z.number().nullable().optional() })
+            .optional(),
+          reasoning: z.object({ supported_efforts: z.array(z.string()).optional() }).optional(),
+          pricing: z.object({
+            prompt: z.coerce.number().finite(),
+            completion: z.coerce.number().finite(),
+            input_cache_read: z.coerce.number().nonnegative().finite().optional(),
+            input_cache_write: z.coerce.number().nonnegative().finite().optional(),
+          }),
+        }),
+      );
       return list
         .filter(
           (m) =>

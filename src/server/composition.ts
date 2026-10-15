@@ -218,6 +218,7 @@ export function createDefaultAdapters(
   const integrations = createComposioProvider({
     apiKey: env.COMPOSIO_API_KEY,
     webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
+    webhooksVerified: runtimeMode === 'tenant' && env.OTTO_COMPOSIO_WEBHOOKS === 'gateway',
     webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });
@@ -502,14 +503,14 @@ async function initializeApplication(
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
     runCli: workspace.connectedCliAvailable
-      ? async (threadId, cli, args, envName, token, timeoutSeconds, signal) => {
+      ? async (threadId, cli, args, environment, timeoutSeconds, signal) => {
           const session = workspace.open({
             threadId,
             workspacePath: join(dataRoot, 'workspaces', threadId),
             signal: signal ?? new AbortController().signal,
           });
           if (!session.runConnectedCli) throw new Error('Connected CLI commands are unavailable.');
-          return session.runConnectedCli(cli, args, { [envName]: token }, timeoutSeconds);
+          return session.runConnectedCli(cli, args, environment, timeoutSeconds);
         }
       : undefined,
     resumeConnection: resumeAfterConnection,
@@ -546,7 +547,6 @@ async function initializeApplication(
     retry: retryCredentials,
     inject: computer.injectCredentials,
     page: computer.currentPage,
-    hold: computer.hold,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
     securityCodes: runtimeMode === 'local',

@@ -8,9 +8,9 @@ import sys
 import yt_dlp
 
 
-LIMIT = 15 * 1024 * 1024
+LIMIT = 50 * 1024 * 1024
 BUDGET = int(LIMIT * 0.94)
-SECTION = 'Download a section with --download-sections "*START-END".'
+SECTION = 'Download a section with --download-sections "*START-END", or keep it in the workspace with --full.'
 
 
 class Failure(Exception):
@@ -75,7 +75,7 @@ def ffmpeg(source, target, codec):
     )
 
 
-def normalize(path):
+def normalize(path, full):
     video, audio, duration = probe(path)
     if not video:
         raise Failure("The download has no video stream.")
@@ -90,8 +90,15 @@ def normalize(path):
         and (not audio or audio["codec_name"] == "aac")
     )
     note = None
-    if compatible and os.path.getsize(path) <= BUDGET:
-        ffmpeg(path, temporary, ["-c", "copy"])
+    if full or (compatible and os.path.getsize(path) <= BUDGET):
+        try:
+            ffmpeg(path, temporary, ["-c", "copy"])
+        except subprocess.CalledProcessError:
+            if not full:
+                raise
+            if os.path.exists(temporary):
+                os.remove(temporary)
+            return path, video, duration, None
     else:
         for factor in (1, 0.8, 0.6):
             side = min(short_side(kbps * factor), smallest)
@@ -113,9 +120,9 @@ def normalize(path):
         else:
             os.remove(temporary)
             os.remove(path)
-            raise Failure(f"The video does not fit the 15 MB file limit. {SECTION}")
+            raise Failure(f"The video does not fit the 50 MB limit for sending. {SECTION}")
         if side < smallest:
-            note = f"compressed to {side}p to fit the 15 MB file limit"
+            note = f"compressed to {side}p to fit the 50 MB limit for sending"
     os.replace(temporary, target)
     if path != target:
         os.remove(path)
@@ -146,7 +153,7 @@ def sorts(entries, duration):
     return ["lang", "vcodec:h264", size, "res:1080", "acodec:aac"], ["lang", f"res:{side}"]
 
 
-def save(url, options, sections):
+def save(url, options, sections, full):
     collect = Collect()
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(collect, when="after_move")
@@ -155,14 +162,14 @@ def save(url, options, sections):
         if any(e.get("is_live") or e.get("live_status") == "is_upcoming" for e in entries):
             raise Failure("This is a live stream. Ask for a recording once it has ended.")
         duration = max((entry.get("duration") or 0 for entry in entries), default=0)
-        if not sections and duration > BUDGET * 8 / 1000 / 200:
+        if not full and not sections and duration > BUDGET * 8 / 1000 / 200:
             minutes = round(duration / 60)
-            raise Failure(f"The video is {minutes} minutes long, too long for the 15 MB file limit. {SECTION}")
-        if not sections and not duration and any(e.get("live_status") == "was_live" for e in entries):
+            raise Failure(f"The video is {minutes} minutes long, too long for the 50 MB limit for sending. {SECTION}")
+        if not full and not sections and not duration and any(e.get("live_status") == "was_live" for e in entries):
             raise Failure(f"This is a recorded live broadcast of unknown length. {SECTION}")
         chosen = not options.get("format") and not options.get("format_sort")
         if chosen:
-            sort, fallback = sorts(entries, 0 if sections else duration)
+            sort, fallback = sorts(entries, 0 if sections or full else duration)
             ydl.params["format_sort"] = sort
         try:
             ydl.process_ie_result(info, download=True)
@@ -176,7 +183,7 @@ def save(url, options, sections):
                 ydl.extract_info(url, download=True)
     results = []
     for entry in collect.infos:
-        path, video, seconds, note = normalize(entry["filepath"])
+        path, video, seconds, note = normalize(entry["filepath"], full)
         result = {
             "file": os.path.relpath(path),
             "title": entry["title"],
@@ -193,14 +200,17 @@ def save(url, options, sections):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+    full = "--full" in sys.argv[1:]
+    arguments = [argument for argument in sys.argv[1:] if argument != "--full"]
+    if not arguments or arguments[0] in ("-h", "--help"):
         print(
-            "usage: save-video URL [yt-dlp options]\n"
-            "Saves the video as an H.264/AAC MP4 under 15 MB in the current folder "
-            "and prints one JSON line per file."
+            "usage: save-video [--full] URL [yt-dlp options]\n"
+            "Saves the video as an H.264/AAC MP4 under 50 MB in the current folder "
+            "and prints one JSON line per file. --full keeps the full length and "
+            "quality in the workspace, without the 50 MB limit."
         )
         return 0
-    parsed = yt_dlp.parse_options(sys.argv[1:])
+    parsed = yt_dlp.parse_options(arguments)
     if len(parsed.urls) != 1:
         print("save-video: pass exactly one URL.", file=sys.stderr)
         return 2
@@ -214,7 +224,6 @@ def main():
         "ignoreerrors": False,
         "overwrites": True,
         "noplaylist": True,
-        "playlist_items": parsed.ydl_opts.get("playlist_items") or "1:10",
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 4,
         "retries": 3,
@@ -223,7 +232,7 @@ def main():
         "outtmpl": {"default": "%(title).60B [%(id)s].%(ext)s"},
     }
     try:
-        results = save(parsed.urls[0], options, sections)
+        results = save(parsed.urls[0], options, sections, full)
     except (yt_dlp.utils.DownloadError, Failure, subprocess.CalledProcessError) as error:
         print(f"save-video: {reason(error)}", file=sys.stderr)
         return 1

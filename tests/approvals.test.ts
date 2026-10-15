@@ -277,7 +277,8 @@ test('communication retains complete action facts beyond logging limits while re
     finalAmount: '9123.45',
   };
   const before = structuredClone(args);
-  const supplied: Array<{ purpose: string; data: { args: typeof args } }> = [];
+  const question = `${'Synthetic complete confirmation content. '.repeat(500)}Final action condition.`;
+  const supplied: Array<{ purpose: string; data: { args: typeof args }; text?: string }> = [];
   const communication = createCommunication({
     pool: {
       query: async () => {
@@ -289,10 +290,13 @@ test('communication retains complete action facts beyond logging limits while re
       const call = input as (typeof supplied)[number];
       supplied.push(call);
       if (call.purpose === 'confirmation_review') return { valid: true };
-      return { text: 'Confirm the complete synthetic action.' };
+      return { text: question };
     },
   });
-  await communication.present(null, { kind: 'confirmation', action: 'BULK_SEND', args });
+  assert.equal(
+    await communication.present(null, { kind: 'confirmation', action: 'BULK_SEND', args }),
+    question,
+  );
   assert.deepEqual(
     supplied.map(({ purpose }) => purpose),
     ['confirmation', 'confirmation_review'],
@@ -306,12 +310,27 @@ test('communication retains complete action facts beyond logging limits while re
     assert.match(call.data.args.body, /Final condition: send after 2030-01-01/);
   }
   assert.deepEqual(supplied[1]!.data, supplied[0]!.data);
+  assert.equal(supplied[1]!.text, question);
   assert.equal('languageContext' in supplied[1]!, false);
   assert.doesNotMatch(
     JSON.stringify(supplied),
     /synthetic-body-secret|synthetic-authorization|synthetic-api-key|synthetic-tuple-secret/,
   );
   assert.deepEqual(args, before);
+  const command = {
+    argv: [...Array.from({ length: 30 }, () => 'x'.repeat(1000)), '--repo', 'outsider/r'],
+    timeoutSeconds: 7200,
+  };
+  supplied.length = 0;
+  await communication.present(null, {
+    kind: 'confirmation',
+    action: 'CONNECTED_CLI',
+    args: command,
+  });
+  assert.deepEqual(
+    supplied.map(({ data }) => data.args),
+    [command, command],
+  );
 });
 
 test('communication blocks unsupported confirmations unless their frozen facts pass validation', async () => {
@@ -431,7 +450,6 @@ test('communication rejects malformed responses and cancellation without a fallb
     'text',
     { text: '' },
     { text: '   ' },
-    { text: 'x'.repeat(12001) },
     { text: 'valid', run: true },
   ])
     await assert.rejects(communication.present(null, { kind: 'paired', channel: 'telegram' }));
@@ -711,6 +729,7 @@ test(
             const reply = String(input.reply)
               .replace(/[.!]+$/, '')
               .toLowerCase();
+            if (replyAnswers[reply] === 'fail') throw new Error('Synthetic reader outage.');
             return { answer: replyAnswers[reply] ?? 'other' };
           }
           reviews.push(input as Record<string, any>);
@@ -764,7 +783,7 @@ test(
           const details = { account: { email: 'owner@example.test' } };
           const frozen = structuredClone(args);
           const displayed = structuredClone(details);
-          const question = 'Synthetic generated question with a unique binding.';
+          const question = `${'Synthetic generated confirmation content. '.repeat(500)}Final action condition.`;
           let entered!: () => void;
           let release!: () => void;
           const started = new Promise<void>((resolve) => {
@@ -876,7 +895,7 @@ test(
       );
 
       await t.test('invalid generated questions never become approvals', async () => {
-        for (const question of ['', '   ', 'x'.repeat(12_001)]) {
+        for (const question of ['', '   ']) {
           const turn = await begin('Synthetic invalid generated question');
           describe = async () => question;
           try {
@@ -1202,6 +1221,30 @@ test(
         );
         assert.equal(await trust.inOtto(await begin('Synthetic event', { source: 'event' })), true);
       });
+
+      await t.test(
+        'the trust check always sees the owner message that started the task',
+        async () => {
+          aligned = false;
+          const origin = 'Archive the synthetic invoices from the fixture supplier.';
+          const turn = await begin(origin);
+          await db.pool.query(
+            "UPDATE messages SET created_at=now()-interval '2 days' WHERE id=(SELECT message_id FROM turns WHERE id=$1)",
+            [turn.turnId],
+          );
+          for (let index = 0; index < 6; index++)
+            await finish(
+              (await thread.submitUserMessage(`Synthetic aside ${index}`)).turnId,
+              'succeeded',
+            );
+          await trust.check(turn, 'GMAIL_FETCH_EMAILS', {});
+          const seen = reviews.at(-1)?.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(seen?.length, 6);
+          assert.equal(seen?.[0], origin);
+          assert.equal(seen?.at(-1), 'Synthetic aside 5');
+          await finish(turn.turnId, 'succeeded');
+        },
+      );
 
       await t.test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
@@ -1704,8 +1747,13 @@ test(
             const revised = await messages.submit('Update my preferences to be shorter.', [], {
               ...(explicit ? { replyToMessageId: (await stored(id)).confirmation_message_id } : {}),
             });
-            assert.equal((await row(revised.turnId)).source, 'user');
+            const resumed = await row(revised.turnId);
+            assert.equal(resumed.source, 'user');
             assert.equal((await stored(id)).status, 'expired');
+            assert.equal(await turnStatus(origin.turnId), explicit ? 'waiting' : 'cancelled');
+            assert.equal(resumed.background, explicit);
+            assert.equal(resumed.parent_turn_id, explicit ? origin.turnId : null);
+            if (explicit) assert.equal(resumed.session_id, (await row(origin.turnId)).session_id);
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(
@@ -1743,6 +1791,8 @@ test(
             { replyToMessageId: confirmationMessageId },
           );
           assert.equal((await row(result.turnId)).source, 'user');
+          assert.equal((await row(result.turnId)).parent_turn_id, origin.turnId);
+          assert.equal(await turnStatus(origin.turnId), 'running');
           assert.equal((await stored(id)).status, 'expired');
           assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
@@ -2630,11 +2680,23 @@ test(
           };
           const first = await ask();
           const before = replies.length;
+          assert.deepEqual(await approvals.chat.answer({ ...first.input, hasAttachments: true }), {
+            approvalId: first.id,
+          });
+          assert.equal(replies.length, before);
+          replyAnswers['reader down'] = 'fail';
+          const outage = { ...first.input, text: 'reader down' };
+          const unread = await approvals.chat.answer(outage);
+          assert.equal(unread, undefined);
           assert.equal(
-            await approvals.chat.answer({ ...first.input, hasAttachments: true }),
+            await transaction(
+              (client) => approvals.chat.accept(client, { ...outage, answer: unread }),
+              db.pool,
+            ),
             undefined,
           );
-          assert.equal(replies.length, before);
+          assert.equal((await stored(first.id)).status, 'pending');
+          delete replyAnswers['reader down'];
           const answer = await approvals.chat.answer(first.input);
           assert.deepEqual(answer, { approvalId: first.id, approved: true });
           assert.deepEqual(replies.at(-1), { reply });
@@ -2932,6 +2994,26 @@ test(
             await personal.manage('history_search', { query: 'BoundarySecretKeyword' }),
             { turns: [], messages: [] },
           );
+          const ownThread = await thread.activeThread(db.pool, ownerId);
+          const tied = new Date('2026-01-01T10:00:00.123456Z');
+          const pageIds = Array.from({ length: 17 }, () => randomUUID());
+          for (const id of pageIds)
+            await db.pool.query(
+              'INSERT INTO messages(id,owner_id,role,text,thread_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+              [id, ownerId, 'user', 'PagedHistoryKeyword', ownThread.id, tied],
+            );
+          const first = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+          })) as { messages: Array<{ id: string }> };
+          const second = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+            before: first.messages.at(-1)!.id,
+          })) as { messages: Array<{ id: string }> };
+          assert.deepEqual(
+            [...first.messages, ...second.messages].map((row) => row.id).sort(),
+            [...pageIds].sort(),
+          );
+          await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [pageIds]);
 
           const job = async (id: string) =>
             (

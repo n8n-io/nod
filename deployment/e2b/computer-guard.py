@@ -56,7 +56,7 @@ def network_rules():
             resolvers[address.version].add(str(address))
     if not any(resolvers.values()):
         raise ValueError()
-    lines = ["table inet otto {", "chain workspace_output {", "type filter hook output priority -150; policy accept;", "meta skuid != { 1000, 1002 } return"]
+    lines = ["table inet otto {", "chain workspace_output {", "type filter hook output priority -150; policy accept;", "meta skgid != { 1000, 1002 } return"]
     for family, version in [("ip", 4), ("ip6", 6)]:
         if resolvers[version]:
             destinations = ", ".join(sorted(resolvers[version]))

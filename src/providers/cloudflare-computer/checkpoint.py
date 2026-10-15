@@ -14,7 +14,6 @@ import zlib
 
 LIMITS = {
     "max_bytes": 1024 * 1024 * 1024,
-    "max_file_bytes": 512 * 1024 * 1024,
     "max_entries": 100000,
     "max_path_bytes": 4096,
 }
@@ -303,11 +302,7 @@ class Usage:
 
     def check(self):
         options = self.options
-        if (
-            self.bytes > options.max_bytes
-            or self.entries + 1 > options.max_entries
-            or any(size > options.max_file_bytes for size, _ in self.largest)
-        ):
+        if self.bytes > options.max_bytes or self.entries + 1 > options.max_entries:
             raise TooLarge(self.report())
 
     def report(self):
@@ -317,7 +312,6 @@ class Usage:
             "max_bytes": options.max_bytes,
             "entries": self.entries,
             "max_entries": options.max_entries,
-            "max_file_bytes": options.max_file_bytes,
             "complete": self.complete,
             "largest": [[path, size] for size, path in sorted(self.largest, reverse=True)],
         }
@@ -504,7 +498,7 @@ def extract(root, options):
         else:
             expected = fields.get("otto.sha256", "")
             require(re.fullmatch(r"[0-9a-f]{64}", expected))
-            require(member.size <= options.max_file_bytes and not member.linkname)
+            require(not member.linkname)
             parent = open_directory(root, path[:-1])
             descriptor = None
             try:

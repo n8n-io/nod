@@ -24,6 +24,7 @@ export type ChannelPresentation =
       text: string;
       attachments: 'none' | 'delivered' | 'linked' | 'in_otto';
       secureAction: boolean;
+      files?: string[];
     }
   | { kind: 'verification_refused' }
   | { kind: 'paired'; channel: string }
@@ -91,11 +92,11 @@ interface OutboxRow extends ChannelIdentity {
 }
 const messageSchema = z.object({
   channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
-  accountId: z.string().min(1).max(256),
-  senderId: z.string().min(1).max(256),
-  messageId: z.string().min(1).max(256),
-  threadId: z.string().min(1).max(1024),
-  text: z.string().trim().min(1).max(24000),
+  accountId: z.string().min(1),
+  senderId: z.string().min(1),
+  messageId: z.string().min(1),
+  threadId: z.string().min(1),
+  text: z.string().trim().min(1),
   sentAt: z.date(),
 });
 
@@ -169,7 +170,6 @@ async function presentChannelText(
     .string()
     .trim()
     .min(1)
-    .max(24000)
     .parse(await present(threadId, input));
   if (channelText(text, appOrigin).text !== text)
     throw new Error('Channel presentation contains a private link.');
@@ -471,52 +471,53 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     };
   }
 
-  async function drainInbox() {
-    for (let index = 0; index < 25 && !closed && !replacing; index++) {
-      const pending = (
-        await pool.query<InboxRow>(
-          "SELECT * FROM channel_inbox WHERE state='pending' AND owner_id=$1 ORDER BY created_at LIMIT 1",
-          [ownerId],
-        )
-      ).rows[0];
-      if (!pending) break;
-      const channel = conversationChannel(pending);
-      if (closed || replacing) break;
-      const answer = await options.answer?.(pending.text, channel).catch(() => undefined);
-      const submitted = await transaction(async (client) => {
-        const result = await client.query<InboxRow>(
-          "SELECT * FROM channel_inbox WHERE state='pending' AND source_id=$1 AND owner_id=$2 FOR UPDATE SKIP LOCKED",
-          [pending.source_id, ownerId],
-        );
-        const row = result.rows[0];
-        if (!row) return false;
-        if (!permitted(row)) {
-          await client.query(
-            "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
-            [row.source_id, ownerId],
-          );
-          return false;
-        }
-        const messageId = row.message_id ?? randomUUID();
-        const turnId = await options.submit(
-          row.text,
-          row.source_id,
-          client,
-          channel,
-          messageId,
-          answer,
-        );
+  async function inboxStep() {
+    if (closed || replacing) return false;
+    const pending = (
+      await pool.query<InboxRow>(
+        "SELECT * FROM channel_inbox WHERE state='pending' AND owner_id=$1 ORDER BY created_at LIMIT 1",
+        [ownerId],
+      )
+    ).rows[0];
+    if (!pending) return false;
+    const channel = conversationChannel(pending);
+    if (closed || replacing) return false;
+    const answer = await options.answer?.(pending.text, channel).catch(() => undefined);
+    const submitted = await transaction(async (client) => {
+      const result = await client.query<InboxRow>(
+        "SELECT * FROM channel_inbox WHERE state='pending' AND source_id=$1 AND owner_id=$2 FOR UPDATE SKIP LOCKED",
+        [pending.source_id, ownerId],
+      );
+      const row = result.rows[0];
+      if (!row) return;
+      if (!permitted(row)) {
         await client.query(
-          "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
-          [row.source_id, turnId, messageId, ownerId, channel],
+          "UPDATE channel_inbox SET state='discarded' WHERE source_id=$1 AND owner_id=$2",
+          [row.source_id, ownerId],
         );
-        return true;
-      }, pool);
-      if (submitted) options.refresh?.();
-    }
+        return false;
+      }
+      const messageId = row.message_id ?? randomUUID();
+      const turnId = await options.submit(
+        row.text,
+        row.source_id,
+        client,
+        channel,
+        messageId,
+        answer,
+      );
+      await client.query(
+        "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
+        [row.source_id, turnId, messageId, ownerId, channel],
+      );
+      return true;
+    }, pool);
+    if (submitted === undefined) return false;
+    if (submitted) options.refresh?.();
+    return true;
   }
 
-  async function drainOutbox() {
+  async function enqueueOutbox() {
     await pool.query(
       `INSERT INTO channel_outbox(message_id,source_id)
       SELECT DISTINCT ON (m.id) m.id,i.source_id FROM messages m
@@ -529,176 +530,201 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ON CONFLICT(message_id) DO NOTHING`,
       [ownerId],
     );
-    for (let index = 0; index < 25 && !closed && !replacing; index++) {
-      const result = await pool.query<OutboxRow>(
-        `WITH claimed AS (
-        UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
-          SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
-        ) RETURNING message_id,source_id,presentation
-      ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,c.presentation
-        FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
-        [ownerId],
+  }
+
+  async function currentMessage(row: OutboxRow) {
+    const result = await pool.query(
+      `SELECT 1 FROM messages m WHERE m.id=$1 AND m.owner_id=$2
+       AND m.thread_id IS NOT DISTINCT FROM $3::uuid
+       AND (m.thread_id IS NULL OR EXISTS (
+         SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$2 AND th.archived_at IS NULL))`,
+      [row.message_id, ownerId, row.message_thread_id],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async function outboxStep() {
+    if (closed || replacing) return false;
+    const result = await pool.query<OutboxRow>(
+      `WITH claimed AS (
+      UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
+        SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
+      ) RETURNING message_id,source_id,presentation
+    ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,c.presentation
+      FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
+      [ownerId],
+    );
+    const row = result.rows[0];
+    if (!row) return false;
+    let reason: string | null =
+      row.owner_id !== ownerId
+        ? 'message_owner_changed'
+        : permitted(row)
+          ? null
+          : 'channel_access_changed';
+    const replyWindowMs = channels.find((channel) => channel.id === row.provider)?.replyWindowMs;
+    if (!reason && replyWindowMs !== undefined) {
+      const latest = await pool.query(
+        `SELECT max(received_at) AS at FROM channel_inbox
+        WHERE provider=$1 AND account_id=$2 AND sender_id=$3 AND owner_id=$4`,
+        [row.provider, row.account_id, row.sender_id, ownerId],
       );
-      const row = result.rows[0];
-      if (!row) break;
-      let reason: string | null =
-        row.owner_id !== ownerId
-          ? 'message_owner_changed'
-          : permitted(row)
-            ? null
-            : 'channel_access_changed';
-      const replyWindowMs = channels.find((channel) => channel.id === row.provider)?.replyWindowMs;
-      if (!reason && replyWindowMs !== undefined) {
-        const latest = await pool.query(
-          `SELECT max(received_at) AS at FROM channel_inbox
-          WHERE provider=$1 AND account_id=$2 AND sender_id=$3 AND owner_id=$4`,
-          [row.provider, row.account_id, row.sender_id, ownerId],
-        );
-        if (
-          !latest.rows[0]?.at ||
-          Date.now() - new Date(latest.rows[0].at).getTime() >= replyWindowMs
-        )
-          reason = 'reply_window_closed';
-      }
-      if (reason) {
-        await pool.query(
-          "UPDATE channel_outbox SET state='blocked',reason=$2,updated_at=now() WHERE message_id=$1",
-          [row.message_id, reason],
-        );
-        continue;
-      }
-      let attachments: MessagingAttachment[] | undefined;
-      let privateLinks: { name: string; url: string }[] = [];
-      const canDeliverAttachments = channels.find(
-        (channel) => channel.id === row.provider,
-      )?.supportsAttachments;
-      if (row.attachments?.length) {
-        try {
-          const requested = z
-            .array(z.object({ id: z.uuid() }))
-            .min(1)
-            .max(10)
-            .parse(row.attachments);
-          const unique = [...new Map(requested.map((item) => [item.id, item])).values()];
-          if (!options.resolveAttachments || !row.message_thread_id)
-            throw new Error('Attachment delivery is unavailable.');
-          const resolved = await options.resolveAttachments(
-            row.message_thread_id,
-            unique.map(({ id }) => id),
-          );
-          if (resolved.length !== unique.length)
-            throw new Error('Attachment delivery is unavailable.');
-          if (canDeliverAttachments) attachments = resolved;
-          else if (appOrigin)
-            privateLinks = unique.map(({ id }, index) => ({
-              name: resolved[index].name,
-              url: `${appOrigin}/api/artifacts/${id}`,
-            }));
-        } catch {
-          await pool.query(
-            "UPDATE channel_outbox SET state='blocked',reason='attachment_unavailable',updated_at=now() WHERE message_id=$1",
-            [row.message_id],
-          );
-          continue;
-        }
-      }
-      let text: string;
-      let generated: string | undefined;
+      if (
+        !latest.rows[0]?.at ||
+        Date.now() - new Date(latest.rows[0].at).getTime() >= replyWindowMs
+      )
+        reason = 'reply_window_closed';
+    }
+    if (reason) {
+      await pool.query(
+        "UPDATE channel_outbox SET state='blocked',reason=$2,updated_at=now() WHERE message_id=$1",
+        [row.message_id, reason],
+      );
+      return true;
+    }
+    let attachments: MessagingAttachment[] | undefined;
+    let privateLinks: { name: string; url: string }[] = [];
+    const canDeliverAttachments = channels.find(
+      (channel) => channel.id === row.provider,
+    )?.supportsAttachments;
+    if (row.attachments?.length) {
       try {
-        if (row.presentation) {
-          const input =
-            row.presentation.kind === 'command'
-              ? {
-                  ...row.presentation,
-                  attachments: attachments
-                    ? ('delivered' as const)
-                    : privateLinks.length
-                      ? ('linked' as const)
-                      : row.attachments?.length
-                        ? ('in_otto' as const)
-                        : ('none' as const),
-                }
-              : row.presentation;
-          generated = await presentChannelText(
-            row.message_thread_id,
-            input,
-            options.present,
-            options.appOrigin,
-          );
-        }
-        text = await channelReply(generated ?? row.text, {
-          threadId: row.message_thread_id,
-          hasAttachments: !row.presentation && Boolean(row.attachments?.length),
-          deliversAttachments: Boolean(attachments),
-          privateLinks,
-          appOrigin: options.appOrigin,
-          present: options.present,
-        });
+        const requested = z
+          .array(z.object({ id: z.uuid() }))
+          .min(1)
+          .parse(row.attachments);
+        const unique = [...new Map(requested.map((item) => [item.id, item])).values()];
+        if (!options.resolveAttachments || !row.message_thread_id)
+          throw new Error('Attachment delivery is unavailable.');
+        const resolved = await options.resolveAttachments(
+          row.message_thread_id,
+          unique.map(({ id }) => id),
+        );
+        if (resolved.length !== unique.length)
+          throw new Error('Attachment delivery is unavailable.');
+        if (canDeliverAttachments) attachments = resolved;
+        else if (appOrigin)
+          privateLinks = unique.map(({ id }, index) => ({
+            name: resolved[index].name,
+            url: `${appOrigin}/api/artifacts/${id}`,
+          }));
       } catch (cause) {
-        logFailure('channel_presentation_failed', cause);
-        await pool.query(
-          "UPDATE channel_outbox SET state='blocked',reason='presentation_unavailable',updated_at=now() WHERE message_id=$1",
-          [row.message_id],
-        );
-        continue;
+        logFailure('channel_attachment_unavailable', cause);
+        attachments = undefined;
+        privateLinks = [];
       }
-      if (generated && !closed && !replacing && permitted(row)) {
-        const saved = await pool.query(
-          `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3
-           AND (m.thread_id IS NULL OR EXISTS (
-             SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))`,
-          [row.message_id, generated, ownerId],
+    }
+    let text: string;
+    let generated: string | undefined;
+    try {
+      if (row.presentation) {
+        const input =
+          row.presentation.kind === 'command'
+            ? {
+                ...row.presentation,
+                attachments: attachments
+                  ? ('delivered' as const)
+                  : privateLinks.length
+                    ? ('linked' as const)
+                    : row.attachments?.length
+                      ? ('in_otto' as const)
+                      : ('none' as const),
+              }
+            : row.presentation;
+        generated = await presentChannelText(
+          row.message_thread_id,
+          input,
+          options.present,
+          options.appOrigin,
         );
-        if (!saved.rowCount) {
-          await pool.query(
-            "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
-            [row.message_id],
-          );
-          continue;
-        }
-        options.refresh?.();
       }
-      const current = await pool.query(
-        `SELECT 1 FROM messages m WHERE m.id=$1 AND m.owner_id=$2
-         AND m.thread_id IS NOT DISTINCT FROM $3::uuid
-         AND (m.thread_id IS NULL OR EXISTS (
-           SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$2 AND th.archived_at IS NULL))`,
-        [row.message_id, ownerId, row.message_thread_id],
+      text = await channelReply(generated ?? row.text, {
+        threadId: row.message_thread_id,
+        hasAttachments: !row.presentation && Boolean(row.attachments?.length),
+        deliversAttachments: Boolean(attachments),
+        privateLinks,
+        appOrigin: options.appOrigin,
+        present: options.present,
+      });
+    } catch (cause) {
+      logFailure('channel_presentation_failed', cause);
+      await pool.query(
+        "UPDATE channel_outbox SET state='blocked',reason='presentation_unavailable',updated_at=now() WHERE message_id=$1",
+        [row.message_id],
       );
-      if (!current.rowCount) {
+      return true;
+    }
+    if (generated && !closed && !replacing && permitted(row)) {
+      const saved = await pool.query(
+        `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3
+         AND (m.thread_id IS NULL OR EXISTS (
+           SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))`,
+        [row.message_id, generated, ownerId],
+      );
+      if (!saved.rowCount) {
         await pool.query(
           "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
           [row.message_id],
         );
-        continue;
+        return true;
       }
-      if (closed || replacing || !permitted(row)) {
-        await pool.query(
-          "UPDATE channel_outbox SET state='blocked',reason='channel_access_changed',updated_at=now() WHERE message_id=$1",
-          [row.message_id],
-        );
-        continue;
-      }
-      try {
-        const sent = await transport.post({
-          channelId: row.provider,
-          accountId: row.account_id,
-          threadId: row.thread_id,
-          text,
-          ...(attachments ? { attachments } : {}),
-        });
-        await pool.query(
-          "UPDATE channel_outbox SET state='sent',provider_message_id=$2,updated_at=now() WHERE message_id=$1",
-          [row.message_id, sent.id],
-        );
-      } catch (cause) {
-        logFailure('channel_send_failed', cause);
-        await pool.query(
-          "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',updated_at=now() WHERE message_id=$1",
-          [row.message_id],
-        );
-      }
+      options.refresh?.();
     }
+    if (!(await currentMessage(row))) {
+      await pool.query(
+        "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
+        [row.message_id],
+      );
+      return true;
+    }
+    if (closed || replacing || !permitted(row)) {
+      await pool.query(
+        "UPDATE channel_outbox SET state='blocked',reason='channel_access_changed',updated_at=now() WHERE message_id=$1",
+        [row.message_id],
+      );
+      return true;
+    }
+    try {
+      const sent = await transport.post({
+        channelId: row.provider,
+        accountId: row.account_id,
+        threadId: row.thread_id,
+        text,
+        ...(attachments
+          ? {
+              attachments,
+              attachmentFailure: async (names: string[]) => {
+                const notice = await presentChannelText(
+                  row.message_thread_id,
+                  {
+                    kind: 'delivery',
+                    text: '',
+                    attachments: 'in_otto',
+                    secureAction: false,
+                    files: names.map((name) => channelText(name, options.appOrigin).text),
+                  },
+                  options.present,
+                  options.appOrigin,
+                );
+                if (!(await currentMessage(row)) || closed || replacing || !permitted(row))
+                  return undefined;
+                return notice;
+              },
+            }
+          : {}),
+      });
+      await pool.query(
+        "UPDATE channel_outbox SET state='sent',provider_message_id=$2,updated_at=now() WHERE message_id=$1",
+        [row.message_id, sent.id],
+      );
+    } catch (cause) {
+      logFailure('channel_send_failed', cause);
+      await pool.query(
+        "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',updated_at=now() WHERE message_id=$1",
+        [row.message_id],
+      );
+    }
+    return true;
   }
 
   function drain() {
@@ -723,13 +749,25 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             pollingFailed = true;
             logFailure('channel_poll_failed', cause);
           }
-          for (const step of [drainInbox, drainOutbox])
+          const attempt = async (step: () => Promise<unknown>) => {
             try {
-              await step();
+              return Boolean(await step());
             } catch (cause) {
               processingFailed = true;
               logFailure('channel_drain_failed', cause);
+              return false;
             }
+          };
+          await attempt(enqueueOutbox);
+          let inbox = true;
+          let outbox = true;
+          while ((inbox || outbox) && !closed && !replacing) {
+            if (inbox && (inbox = await attempt(inboxStep))) {
+              await attempt(enqueueOutbox);
+              outbox = true;
+            }
+            if (outbox) outbox = await attempt(outboxStep);
+          }
         }
       } finally {
         lastError = processingFailed

@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AuthenticatedSession, AuthenticationProvider } from '../ports/authentication.ts';
 import type { TenantRuntimeHost } from '../ports/tenant-runtime.ts';
@@ -10,6 +10,7 @@ import { createDeploymentControl, deploymentHeader } from './deployment-control.
 import { deploymentBodyLimit, deploymentPath } from './deployment-auth.ts';
 import type { Analytics } from './analytics.ts';
 import { loopbackHost } from '../shared/loopback.ts';
+import { fileBytes } from '../shared/files.ts';
 
 function privateRuntimeResponse(response: Response, artifact = false) {
   const headers = new Headers();
@@ -223,11 +224,10 @@ export async function createGateway(options: {
     const account =
       profileAccounts.get(session.user.id) ?? (await accountStore.read(session.user.id));
     const body = JSON.stringify({
-      name: session.user.name.trim().slice(0, 200) || null,
-      givenName: session.givenName?.slice(0, 100) || null,
-      email: session.user.email?.slice(0, 320) || null,
-      preferredName:
-        (welcomeProfiles.get(session.user.id) ?? account.displayName)?.slice(0, 100) || null,
+      name: session.user.name.trim() || null,
+      givenName: session.givenName || null,
+      email: session.user.email || null,
+      preferredName: (welcomeProfiles.get(session.user.id) ?? account.displayName) || null,
       usageData: account.usageData,
     });
     if (syncedProfiles.get(session.user.id) === body) return;
@@ -257,10 +257,6 @@ export async function createGateway(options: {
       .header('content-security-policy', "frame-ancestors 'none'");
     const path = canonicalRequestPath(request.url);
     if (!path) return reply.code(400).send({ error: 'This request is not permitted.' });
-    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(request.method))
-      return reply.code(405).send({ error: 'This method is not permitted.' });
-    if (request.headers.host !== origin.host)
-      return reply.code(403).send({ error: 'This host is not permitted.' });
     const serviceRequest =
       (Boolean(deployment) && request.method === 'POST' && path === deploymentPath) ||
       (Boolean(options.internal) &&
@@ -400,24 +396,15 @@ export async function createGateway(options: {
       });
     }
   }
-  app.all('/api/*', async (request, reply) => {
+  async function forward(request: FastifyRequest, reply: FastifyReply) {
     const session = await accounts.requirePrincipal(request, reply);
     if (!session) return;
     const url = new URL(request.url, origin);
-    if (
-      url.pathname.startsWith('/api/auth/') ||
-      url.pathname.startsWith('/api/webhooks/') ||
-      url.pathname.startsWith('/api/internal/') ||
-      url.pathname.startsWith('/api/runtime/') ||
-      url.pathname === '/api/onboarding/start' ||
-      url.pathname === '/api/account/profile'
-    )
+    if (url.pathname === '/api/onboarding/start' || url.pathname === '/api/account/profile')
       return reply.code(404).send({ error: 'Route not found.' });
     if (url.pathname === '/api/events' && url.searchParams.get('account') !== session.user.id)
       return reply.code(401).send({ error: 'Sign in to continue.' });
     const developer = options.developerIds?.has(session.user.id) ?? false;
-    if (!developer && (url.pathname === '/api/browser' || url.pathname.startsWith('/api/browser/')))
-      return reply.code(404).send({ error: 'Route not found.' });
     const headers = new Headers();
     for (const name of ['content-type', 'accept', 'range']) {
       const value = request.headers[name];
@@ -461,7 +448,25 @@ export async function createGateway(options: {
         intervalMs: options.sessionCheckIntervalMs ?? 5_000,
       });
     return sendFetchResponse(reply, result);
-  });
+  }
+  let uploads = Promise.resolve();
+  app.post(
+    '/api/uploads',
+    {
+      bodyLimit: fileBytes + 1024 * 1024,
+      onRequest: async (request, reply) => {
+        if (!(await accounts.requirePrincipal(request, reply))) return reply;
+        const previous = uploads;
+        let release!: () => void;
+        const done = new Promise<void>((resolve) => (release = resolve));
+        uploads = previous.then(() => done);
+        reply.raw.once('close', release);
+        await previous;
+      },
+    },
+    forward,
+  );
+  app.all('/api/*', forward);
   app.addHook('onClose', async () => options.runtimes.close());
   return app;
 }

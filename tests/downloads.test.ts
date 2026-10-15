@@ -19,15 +19,16 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { Composio } from '@composio/core';
 import pg from 'pg';
-import { browserDownloadBytes } from '../src/ports/computer.ts';
+import { IntegrationDownload } from '../src/ports/integrations.ts';
 import { ObjectStoreConflict } from '../src/ports/object-storage.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
 import {
   completedDownloads,
-  decodeDownload,
+  decodeDownloadChunk,
   downloadFile,
   readDownload,
 } from '../src/providers/agent-browser/downloads.ts';
+import { fileBytes } from '../src/shared/files.ts';
 import { mcpFiles } from '../src/providers/app-files.ts';
 import { createComposioFiles } from '../src/providers/composio/downloads.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
@@ -40,6 +41,7 @@ import { startContainerBrowserWorker } from '../src/providers/container-browser/
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { createHttpObjectStore } from '../src/providers/object-storage/http.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
+import { saveIntegrationFiles } from '../src/server/integration-files.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
 
@@ -106,28 +108,28 @@ async function createDownloadBrowser(root: string) {
   };
 }
 
-test('browser file validation bounds encoded bytes and rejects unsafe metadata', async () => {
+test('browser file validation bounds bytes and rejects unsafe metadata', async () => {
   assert.deepEqual(
-    decodeDownload({ data: browserDownloadPdf.toString('base64'), mimeType: 'application/pdf' }),
+    downloadFile(
+      decodeDownloadChunk(browserDownloadPdf.toString('base64')),
+      undefined,
+      'text/plain',
+    ),
     {
       bytes: browserDownloadPdf,
       name: 'download.pdf',
       mimeType: 'application/pdf',
     },
   );
-  assert.throws(() =>
-    decodeDownload({
-      data: 'A'.repeat(Math.ceil(browserDownloadBytes / 3) * 4 + 4),
-      mimeType: 'application/pdf',
-    }),
-  );
-  assert.throws(() => decodeDownload({ data: 'Zh==', mimeType: 'application/pdf' }));
-  assert.throws(() => decodeDownload({ data: 'Zg==trailing', mimeType: 'application/pdf' }));
-  assert.throws(() => downloadFile(Buffer.alloc(browserDownloadBytes + 1)));
+  assert.throws(() => decodeDownloadChunk('Zh=='));
+  assert.throws(() => decodeDownloadChunk('Zg==trailing'));
+  assert.throws(() => downloadFile(Buffer.alloc(fileBytes + 1)));
   assert.throws(() => downloadFile(Buffer.alloc(0)));
   for (const name of ['../private', 'folder/file', 'folder\\file', '.', '..', 'file\nname'])
     assert.throws(() => downloadFile(browserDownloadPdf, name));
   assert.throws(() => downloadFile(Buffer.from('text'), 'file', 'text/html\r\nX-Header: value'));
+  const long = downloadFile(browserDownloadPdf, `${'report '.repeat(60)}.pdf`).name;
+  assert.ok(long.endsWith('.pdf') && Buffer.byteLength(long) <= 218);
 });
 
 test('browser captures refuse symlinks, partial files, multiple links and excessive file size', async () => {
@@ -148,7 +150,7 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
     await writeFile(join(directory, 'later.pdf'), browserDownloadPdf);
     await utimes(join(directory, 'invoice.pdf'), new Date(1_000_000), new Date(1_000_000));
     assert.equal((await completedDownloads(directory))[0], 'later.pdf');
-    await writeFile(join(directory, 'large'), Buffer.alloc(browserDownloadBytes + 1));
+    await writeFile(join(directory, 'large'), Buffer.alloc(fileBytes + 1));
     await assert.rejects(readDownload(directory, 'large'));
     await symlink(directory, join(root, 'alias'));
     await assert.rejects(completedDownloads(join(root, 'alias')));
@@ -467,7 +469,16 @@ test(
     const first = createPostgresObjectStore({ database: f.database, ownerId: 'owner-one' });
     const second = createPostgresObjectStore({ database: f.database, ownerId: 'owner-two' });
     try {
+      await f.database.query(`CREATE TABLE private_objects (
+        owner_id text NOT NULL, object_key text NOT NULL, version text NOT NULL,
+        bytes bytea NOT NULL CHECK(octet_length(bytes)<=16777216),
+        PRIMARY KEY(owner_id,object_key)
+      )`);
       await Promise.all([first.initialize(), second.initialize()]);
+      const large = Buffer.alloc(20 * 1024 * 1024, 7);
+      const artifact = `artifacts/${randomUUID()}`;
+      await first.write(artifact, large, { expectedVersion: null });
+      assert.deepEqual((await first.read(artifact, large.length))?.bytes, large);
       const original = await first.write(key, Buffer.from('original'), { expectedVersion: null });
       assert.equal(await second.read(key, 100), undefined);
       await second.write(key, Buffer.from('foreign'), { expectedVersion: null });
@@ -489,7 +500,7 @@ test(
       await assert.rejects(first.read(key, 2), /unavailable/);
       await assert.rejects(first.read('../other-owner/key', 100), /unavailable/);
       await assert.rejects(
-        first.write(key, Buffer.alloc(16 * 1024 * 1024 + 1), { expectedVersion: saved!.version }),
+        first.write(key, Buffer.alloc(fileBytes + 1), { expectedVersion: saved!.version }),
         /unavailable/,
       );
       await assert.rejects(first.remove(key, { expectedVersion: original }), ObjectStoreConflict);
@@ -577,7 +588,9 @@ test(
       const restored = create('owner-one');
       assert.equal((await restored.readArtifact(saved.id)).toString(), 'synthetic file');
       assert.equal(
-        (await restored.readThreadArtifacts(thread, [saved.id]))[0].bytes.toString(),
+        Buffer.from(
+          await (await restored.readThreadArtifacts(thread, [saved.id]))[0].read(),
+        ).toString(),
         'synthetic file',
       );
       await assert.rejects(create('owner-two').readArtifact(saved.id), /unavailable/);
@@ -612,6 +625,14 @@ const fileObject = (url = 'https://files.example.com/attachment?signature=privat
   s3url: url,
 });
 const publicResolver = async () => [{ address: '93.184.216.34', family: 4 }];
+const settled = async (value: unknown): Promise<unknown> => {
+  if (value instanceof IntegrationDownload) return settled(await value.start());
+  if (Array.isArray(value)) return Promise.all(value.map(settled));
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  return Object.fromEntries(
+    await Promise.all(Object.entries(value).map(async ([key, item]) => [key, await settled(item)])),
+  );
+};
 
 test('Composio file outputs become private bytes wherever they appear and never expose their links', async () => {
   const calls: string[] = [];
@@ -620,7 +641,7 @@ test('Composio file outputs become private bytes wherever they appear and never 
     request: async ({ url, address, maxBytes, metadata, purpose }) => {
       calls.push(url.href);
       assert.equal(address, '93.184.216.34');
-      assert.equal(maxBytes, 15 * 1024 * 1024);
+      assert.equal(maxBytes, fileBytes);
       assert.equal(metadata, false);
       assert.equal(purpose, 'download');
       if (url.pathname === '/attachment')
@@ -632,7 +653,7 @@ test('Composio file outputs become private bytes wherever they appear and never 
       return { status: 200, headers: {}, body: Buffer.from(`synthetic ${url.pathname}`) };
     },
   });
-  const result = await files(
+  const pending = await files(
     {
       data: {
         file: fileObject(),
@@ -655,6 +676,8 @@ test('Composio file outputs become private bytes wherever they appear and never 
     },
     AbortSignal.timeout(1000),
   );
+  assert.equal(calls.length, 0);
+  const result = await settled(pending);
   assert.deepEqual(result, {
     data: {
       file: {
@@ -685,40 +708,76 @@ test('Composio file outputs become private bytes wherever they appear and never 
   const nested = JSON.stringify({
     file: { name: 'nested.png', mimetype: 'image/png', s3url: 'https://files.example.com/nested' },
   });
-  assert.deepEqual(await files({ data: { response: nested } }, AbortSignal.timeout(1000)), {
-    data: {
-      response: {
-        file: {
-          name: 'nested.png',
-          mimeType: 'image/png',
-          bytes: Buffer.from('synthetic /nested'),
+  assert.deepEqual(
+    await settled(await files({ data: { response: nested } }, AbortSignal.timeout(1000))),
+    {
+      data: {
+        response: {
+          file: {
+            name: 'nested.png',
+            mimeType: 'image/png',
+            bytes: Buffer.from('synthetic /nested'),
+          },
         },
       },
     },
-  });
+  );
   assert.equal(calls.length, 5);
-  const many = (await files(
+});
+
+test('every Composio file in a result is saved, one download at a time, above the old size limit', async () => {
+  const large = 20 * 1024 * 1024;
+  let active = 0;
+  let most = 0;
+  const files = createComposioFiles({
+    resolver: publicResolver,
+    request: async ({ url }) => {
+      most = Math.max(most, ++active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return {
+        status: 200,
+        headers: {},
+        body: url.pathname === '/0' ? new Uint8Array(large).fill(1) : Buffer.from(url.pathname),
+      };
+    },
+  });
+  const result = await files(
     {
-      items: Array.from({ length: 11 }, (_, index) => ({
-        name: `${index}.txt`,
-        mimetype: 'text/plain',
+      items: Array.from({ length: 12 }, (_, index) => ({
+        name: `${index}.bin`,
+        mimetype: 'application/octet-stream',
         s3url: `https://files.example.com/${index}`,
       })),
     },
-    AbortSignal.timeout(1000),
-  )) as { items: unknown[] };
-  assert.deepEqual(many.items[10], {
-    name: '10.txt',
-    mimeType: 'text/plain',
-    error: 'Not downloaded: too many files in one result.',
+    AbortSignal.timeout(5000),
+  );
+  const saved: Array<{ name: string; size: number }> = [];
+  const { value } = await saveIntegrationFiles(result, async (file) => {
+    saved.push({ name: file.name, size: file.bytes.byteLength });
+    return `saved/${file.name}`;
   });
-  assert.equal(calls.length, 15);
+  assert.equal(most, 1);
+  assert.equal(saved.length, 12);
+  assert.deepEqual(saved[0], { name: '0.bin', size: large });
+  assert.deepEqual((value as { items: unknown[] }).items[11], {
+    workspaceFile: 'saved/11.bin',
+    name: '11.bin',
+    mimeType: 'application/octet-stream',
+    size: 3,
+  });
 });
 
 test('MCP file blocks over the file limit are refused before decoding', () => {
   assert.deepEqual(
     mcpFiles({
-      content: [{ type: 'image', data: 'A'.repeat(21 * 1024 * 1024), mimeType: 'image/png' }],
+      content: [
+        {
+          type: 'image',
+          data: 'A'.repeat(Math.ceil(fileBytes / 3) * 4 + 8),
+          mimeType: 'image/png',
+        },
+      ],
     }),
     { content: [{ type: 'image', mimeType: 'image/png', error: 'The file is too large.' }] },
   );
@@ -726,9 +785,9 @@ test('MCP file blocks over the file limit are refused before decoding', () => {
 
 test('Composio file links that are private, insecure, rebinding or oversized are not fetched', async () => {
   const failed = async (files: ReturnType<typeof createComposioFiles>, url?: string) => {
-    const result = (await files({ file: fileObject(url) }, AbortSignal.timeout(1000))) as {
-      file: { error?: string };
-    };
+    const result = (await settled(
+      await files({ file: fileObject(url) }, AbortSignal.timeout(1000)),
+    )) as { file: { error?: string } };
     assert.match(result.file.error ?? '', /^The file could not be downloaded/);
     assert.equal(JSON.stringify(result).includes('signature'), false);
   };
@@ -767,7 +826,7 @@ test('Composio file links that are private, insecure, rebinding or oversized are
     }),
   );
   assert.equal(requests, 1);
-  for (const size of [0, 15 * 1024 * 1024 + 1])
+  for (const size of [0, fileBytes + 1])
     await failed(
       createComposioFiles({
         resolver: publicResolver,
@@ -817,10 +876,8 @@ test('Composio actions on the bound account return downloaded files without thei
     },
   });
   const session = await provider.createSession('fixture-owner', { slack: 'owned-account' });
-  const result = await session.execute(
-    'SLACK_DOWNLOAD_SLACK_FILE',
-    { file: 'F0SYNTHETIC' },
-    'owned-account',
+  const result = await settled(
+    await session.execute('SLACK_DOWNLOAD_SLACK_FILE', { file: 'F0SYNTHETIC' }, 'owned-account'),
   );
   assert.deepEqual((result as { data: unknown }).data, {
     file_content: { name: 'Screenshot.png', mimeType: 'image/png', bytes: Buffer.from('fixture') },

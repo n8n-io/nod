@@ -102,9 +102,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
         await click('Try again');
         assert.equal(document.querySelector('textarea').value, draft.prompt);
         assert.equal(button('Create schedule').disabled, true);
-        await input(document.querySelector('textarea'), 'x'.repeat(6001));
         await pick('Choose frequency', 'Every week');
-        assert.equal(button('Create schedule').disabled, true);
         await input(document.querySelector('textarea'), 'Read only overdue invoices in the synthetic EUR account. Keep results in Otto.');
         await pick('Monday', 'Wednesday');
         const selectedZone = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Kathmandu' }).resolvedOptions().timeZone;

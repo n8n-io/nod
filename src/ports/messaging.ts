@@ -11,7 +11,8 @@ export interface MessagingChannel {
 export interface MessagingAttachment {
   name: string;
   mimeType: string;
-  bytes: Uint8Array;
+  size: number;
+  read(): Promise<Uint8Array>;
 }
 
 export interface InboundMessage {
@@ -65,6 +66,7 @@ export interface MessagingTransport {
     threadId: string;
     text: string;
     attachments?: MessagingAttachment[];
+    attachmentFailure?: (names: string[]) => Promise<string | undefined>;
   }): Promise<{ id: string }>;
   close(): Promise<void>;
 }

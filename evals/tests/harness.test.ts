@@ -1540,6 +1540,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
   t.after(() => runtime.dispose());
   await runtime.runTurn({
     threadId: 'capture-fixture',
+    sessionId: 'capture-fixture',
     turnId: 'capture-fixture',
     prompt: 'Inspect the synthetic receipt.',
     history: [],
@@ -1555,7 +1556,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     requestCredential: async () => ({ filled: true }),
     integration: async () => ({ messages: ['Receipt'] }),
     manage: async () => [{ text: 'Private note' }],
-    takeMessages: async () => [{ id: 'steer', text: 'Also check the total.' }],
+    takeMessages: async () => [{ id: 'steer', text: 'Also check the total.', attachments: [] }],
   });
   assert.deepEqual(
     capture.prompts.map((prompt) => [

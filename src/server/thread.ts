@@ -23,6 +23,7 @@ import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
+import type { ExecutionEvent } from '../shared/execution.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -194,19 +195,32 @@ async function sendDrain(client: PoolClient | undefined, threadId: string) {
       ...(client
         ? { db: { executeSql: (sql: string, values: unknown[]) => client.query(sql, values) } }
         : {}),
-      retryLimit: 0,
-      expireInSeconds: 86400,
+      retryLimit: 2,
     },
   );
 }
 
-async function insertEvent(client: PoolClient, turnId: string, type: string, summary: string) {
-  await client.query('INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,$3,$4)', [
-    randomUUID(),
-    turnId,
-    type.slice(0, 80),
-    summary.slice(0, 2000),
-  ]);
+async function insertEvent(
+  client: PoolClient,
+  turnId: string,
+  type: string,
+  summary: string,
+  event?: ExecutionEvent,
+) {
+  await client.query(
+    'INSERT INTO turn_events(id,turn_id,type,summary,run_id,parent_run_id,session_id,browser_id,call_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    [
+      randomUUID(),
+      turnId,
+      type,
+      summary,
+      event?.execution.runId ?? null,
+      event?.execution.parentRunId ?? null,
+      event?.execution.sessionId ?? null,
+      event?.execution.browserId ?? null,
+      event?.callId ?? null,
+    ],
+  );
 }
 
 async function assertReplyTarget(client: PoolClient, threadId: string, messageId?: string) {
@@ -381,19 +395,31 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
-    if (confirmAction) {
-      const confirmed = await confirmAction.accept(client, {
-        ...confirmation,
-        threadId: thread.id,
-        answer,
-      });
-      if (confirmed) return confirmed;
-    }
+    const confirmed = await confirmAction?.accept(client, {
+      ...confirmation,
+      threadId: thread.id,
+      answer,
+    });
+    if (confirmed && 'turnId' in confirmed) return confirmed;
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
+    const question =
+      confirmed?.waiting ??
+      (
+        await client.query(
+          `SELECT u.id,u.session_id,u.background FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND (u.channel=$3 OR $4::uuid IS NOT NULL) AND u.status='waiting' AND u.waiting_reason='question'
+         AND m.role='assistant' AND (($4::uuid IS NOT NULL AND m.id=$4) OR ($4::uuid IS NULL AND u.session_id=$2))
+         AND m.id=(SELECT q.id FROM messages q WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant' ORDER BY q.created_at DESC,q.id DESC LIMIT 1)
+         AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id
+           AND (n.created_at,n.id)>(u.created_at,u.id))
+       ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
+          [ownerId, thread.id, channel, options.replyToMessageId ?? null],
+        )
+      ).rows[0];
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10)`,
       [
         turnId,
         ownerId,
@@ -402,6 +428,9 @@ export async function submitUserMessage(
         messageId,
         options.prompt ?? text,
         channel,
+        question?.session_id ?? thread.id,
+        question?.background ?? false,
+        question?.id ?? null,
       ],
     );
     await client.query(
@@ -598,7 +627,7 @@ export async function initializeThreads() {
     console.error('The thread queue reported an error. Check database availability.'),
   );
   await boss.start();
-  await boss.createQueue(queue, { retryLimit: 0, expireInSeconds: 86400 });
+  await boss.createQueue(queue);
 }
 
 async function finishTurn(
@@ -734,8 +763,7 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
   return transaction(async (client) => {
     const thread = await lockThread(client);
     const { rows } = await client.query(
-      `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt,m.attachments,m.reply_to_message_id
-       FROM turns u LEFT JOIN messages m ON m.id=u.message_id AND m.owner_id=u.owner_id
+      `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt FROM turns u
        WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.session_id=$4 AND (u.status='queued' OR u.id=$3)
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [thread.id, ownerId, turnId, sessionId],
@@ -743,12 +771,7 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
     if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
     const queued = rows.filter((row) => row.status === 'queued');
     const end = queued.findIndex(
-      (row) =>
-        row.source !== 'user' ||
-        row.channel !== channel ||
-        !row.message_id ||
-        row.attachments.length ||
-        row.reply_to_message_id,
+      (row) => row.source !== 'user' || row.channel !== channel || !row.message_id,
     );
     const taken = end < 0 ? queued : queued.slice(0, end);
     if (!taken.length) return [];
@@ -790,21 +813,42 @@ async function drainNext(threadId: string) {
 
 type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 
+async function loadMessage(messageId: string | null) {
+  const message = messageId
+    ? (
+        await pool.query(
+          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
+           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
+           WHERE s.id=$1 AND s.owner_id=$2`,
+          [messageId, ownerId],
+        )
+      ).rows[0]
+    : undefined;
+  const replyTo = message?.id
+    ? {
+        id: message.id as string,
+        role: message.role as string,
+        text: message.text as string,
+        attachments: message.reply_attachments,
+      }
+    : undefined;
+  return {
+    uploads: [
+      ...((message?.attachments ?? []) as StoredAttachment[]),
+      ...((replyTo?.attachments ?? []) as StoredAttachment[]),
+    ],
+    replyTo,
+  };
+}
+
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
   const [source, history, preferences, account, memory, connectedApps] = await Promise.all([
-    sourceMessageId
-      ? pool.query(
-          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
-           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
-           WHERE s.id=$1 AND s.owner_id=$2`,
-          [sourceMessageId, ownerId],
-        )
-      : undefined,
+    loadMessage(sourceMessageId),
     pool.query(
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
-         WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
+         WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
        SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,
@@ -826,24 +870,11 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     dependencies.memoryContext?.().catch(() => ''),
     turn.background ? dependencies.connectedApps?.() : undefined,
   ]);
-  const message = source?.rows[0];
-  const replyTo = message?.id
-    ? {
-        id: message.id as string,
-        role: message.role as string,
-        text: message.text as string,
-        attachments: message.reply_attachments,
-      }
-    : undefined;
   const preference = preferences.rows[0];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
-    uploads: [
-      ...((message?.attachments ?? []) as StoredAttachment[]),
-      ...((replyTo?.attachments ?? []) as StoredAttachment[]),
-    ],
-    replyTo,
+    ...source,
     history: history.rows,
     context: {
       timeZone,
@@ -953,35 +984,39 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
     let sourceMessageId = loaded.sourceMessageId;
-    const ids = loaded.uploads.map((item) => String(item?.id ?? '')).filter(Boolean);
-    const uploads = ids.length
-      ? (
-          await pool.query(
-            'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
-            [ownerId, ids],
-          )
-        ).rows
-      : [];
     const stagedFiles = new Map<string, string>();
-    const attachments: RuntimeContext['attachments'] = [];
-    for (const upload of uploads) {
-      const name = await stage(
-        upload.id,
-        upload.name,
-        await artifacts.readArtifact(upload.id),
-        signal,
-      );
-      stagedFiles.set(upload.id, name);
-      attachments.push({ path: join(workspacePath, name), mimeType: upload.mime_type });
-    }
+    const stageUploads = async (items: StoredAttachment[]) => {
+      const ids = items.map((item) => String(item?.id ?? '')).filter(Boolean);
+      const uploads = ids.length
+        ? (
+            await pool.query(
+              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+              [ownerId, ids],
+            )
+          ).rows
+        : [];
+      const staged: RuntimeContext['attachments'] = [];
+      for (const upload of uploads) {
+        const name = await stage(
+          upload.id,
+          upload.name,
+          await artifacts.readArtifact(upload.id),
+          signal,
+        );
+        stagedFiles.set(upload.id, name);
+        staged.push({ path: join(workspacePath, name), mimeType: upload.mime_type });
+      }
+      return staged;
+    };
+    const attachments = await stageUploads(loaded.uploads);
     const describe = ({ attachments, ...row }: Record<string, any>): any => {
       const files = (Array.isArray(attachments) ? attachments : []) as StoredAttachment[];
       return files.length
         ? {
             ...row,
             attachments: files.map((file) => ({
-              name: String(file?.name ?? '').slice(0, 200),
-              mimeType: String(file?.mimeType ?? '').slice(0, 100),
+              name: String(file?.name ?? ''),
+              mimeType: String(file?.mimeType ?? ''),
               ...(file?.id && stagedFiles.has(file.id)
                 ? { workspaceFile: stagedFiles.get(file.id) }
                 : {}),
@@ -1020,8 +1055,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ),
       };
     };
-    const emit = async (type: string, summary: string) => {
-      await current((client) => insertEvent(client, turnId, type, summary));
+    const emit = async (type: string, summary: string, event?: ExecutionEvent) => {
+      await current((client) => insertEvent(client, turnId, type, summary, event));
       refresh();
     };
     const { reactToMessage, connections, browserConnection } = dependencies;
@@ -1035,8 +1070,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const result = await dependencies.runTurn({
       threadId,
       turnId,
-      browserId: turn.session_id,
-      resumed: turn.source === 'resume',
+      sessionId: turn.session_id,
+      resumed: turn.source === 'resume' || Boolean(turn.parent_turn_id),
       prompt: turn.prompt,
       background: turn.background,
       channel: String(turn.channel).split(':')[0],
@@ -1049,7 +1084,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       attachments,
       emit,
       reply: (text, streamId, replyToMessageId) => post(text, [], streamId, replyToMessageId),
-      waitForUser: (question) => post(question),
+      waitForUser: async (question, browserId) => {
+        await current(async (client) => {
+          await insertAssistantMessage(client, ref, question);
+          await client.query('UPDATE turns SET handoff_browser_id=$2 WHERE id=$1', [
+            turnId,
+            browserId ?? null,
+          ]);
+        });
+        refresh();
+      },
       delta: (text, streamId, done) => {
         if (!signal.aborted && !turn.background && turn.channel === 'web')
           delta({ ownerId, channel: turn.channel, threadId, turnId, text, streamId, done });
@@ -1119,7 +1163,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               sourceMessageId = taken.at(-1)!.id;
               refresh();
             }
-            return taken;
+            const messages = [];
+            for (const message of taken) {
+              const { uploads, replyTo } = await loadMessage(message.id);
+              messages.push({
+                ...message,
+                attachments: await stageUploads(uploads),
+                ...(replyTo ? { replyTo: describe(replyTo) } : {}),
+              });
+            }
+            return messages;
           },
       createAudio: async (text) => {
         const audio = await fenced(() => dependencies.speech.synthesize(text, signal))();
@@ -1128,7 +1181,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       publish: async (path, name) => {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
-        const artifact = await current(() => artifacts.publishArtifact(threadId, path, name, read));
+        const artifact = await current((client) =>
+          artifacts.publishArtifact(threadId, path, name, read, client),
+        );
         await post('', [artifact]);
         return artifact;
       },

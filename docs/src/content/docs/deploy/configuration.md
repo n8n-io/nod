@@ -49,16 +49,16 @@ Keys set here become server-managed connections. They stay in server memory and 
 
 ## Apps and Composio
 
-| Variable                           | What it does                                                                                                           | Default   |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------- |
-| `COMPOSIO_API_KEY`                 | Your Composio project key for Gmail, Calendar, Slack and other apps. You can paste it in onboarding instead.           | Empty     |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key then also needs **Triggers → Read and write**. | Empty     |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                    | Automatic |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                          | Automatic |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                             | Automatic |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic |
+| Variable                           | What it does                                                                                                                                                     | Default   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `COMPOSIO_API_KEY`                 | Your Composio project key for Gmail, Calendar, Slack and other apps. You can paste it in onboarding instead.                                                     | Empty     |
+| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. In hosted mode only the gateway holds it. The key then also needs **Triggers → Read and write**. | Empty     |
+| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                                                              | Automatic |
+| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                                                                    | Automatic |
+| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                                                                       | Automatic |
+| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                                                                      | Automatic |
+| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                                                                        | Automatic |
+| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                                                              | Automatic |
 
 "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. See [Apps](/connect/apps/) for the key permissions.
 
@@ -121,7 +121,7 @@ A hosted deployment sets these in its `GATEWAY_ENV` secret. A source install lea
 | `OTTO_PUBLIC_URL`                                                | The public HTTPS origin.                                                   | `http://localhost:<PORT>` |
 | `OTTO_MASTER_KEY`                                                | The key Otto derives each user's keys from. Treat it as recovery material. | None                      |
 | `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in.                                                            | None                      |
-| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits, up to 400.                        | `8`                       |
+| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits.                                   | `8`                       |
 | `OTTO_DEVELOPER_IDS`                                             | Comma-separated account IDs that can use the developer browser routes.     | Empty                     |
 | `OTTO_PRIVACY_NOTICE_FILE`                                       | A Markdown privacy notice served at `/privacy`.                            | No notice                 |
 | `OBJECT_STORAGE_PROVIDER`, `OBJECT_STORAGE_ENDPOINT`             | Where files and checkpoints are stored.                                    | None                      |

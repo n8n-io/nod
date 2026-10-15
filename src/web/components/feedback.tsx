@@ -960,12 +960,12 @@ function FeedbackDraftDialog({
             <footer className="feedback-footer">
               <div className="feedback-footer-actions">
                 {development && copyButton}
-                {hydrated && hasDraft(draft) && !pendingId && !confirmDiscard && (
+                {hydrated && hasDraft(draft) && !confirmDiscard && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={frozen}
+                    disabled={!!busy || discarding}
                     onClick={() => setConfirmDiscard(true)}
                   >
                     Discard draft

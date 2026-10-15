@@ -55,18 +55,19 @@ export function createAccountSession(options: {
   const origin = new URL(options.origin).origin;
   const mode = options.authentication ? 'google' : 'local';
   const principals = new WeakMap<FastifyRequest, AuthenticatedSession | null>();
-  async function principal(request: FastifyRequest) {
+  async function principal(request: FastifyRequest, reply: FastifyReply) {
     if (principals.has(request)) return principals.get(request) ?? null;
     const session = options.authentication
-      ? await options.authentication.session(authenticationHeaders(request))
+      ? await options.authentication.session(authenticationHeaders(request), true)
       : options.localUser
         ? { id: 'local', expiresAt: new Date('9999-01-01'), user: options.localUser }
         : null;
+    if (session?.cookies) reply.header('set-cookie', session.cookies);
     principals.set(request, session);
     return session;
   }
-  async function response(request: FastifyRequest): Promise<SessionResponse> {
-    const session = await principal(request);
+  async function response(request: FastifyRequest, reply: FastifyReply): Promise<SessionResponse> {
+    const session = await principal(request, reply);
     const account = session ? await options.accounts.read(session.user.id) : null;
     if (session && account) options.analytics?.setUsageData(session.user.id, account.usageData);
     return {
@@ -97,7 +98,7 @@ export function createAccountSession(options: {
     };
   }
   async function requirePrincipal(request: FastifyRequest, reply: FastifyReply) {
-    const session = await principal(request);
+    const session = await principal(request, reply);
     const expected = request.headers['x-otto-account'];
     if (!session || (expected !== undefined && expected !== session.user.id)) {
       reply.code(401).send({ error: 'Sign in to continue.' });
@@ -179,7 +180,7 @@ export function createAccountSession(options: {
   function register(app: FastifyInstance) {
     app.get('/api/session', async (request, reply) => {
       reply.header('cache-control', 'no-store');
-      const result = await response(request);
+      const result = await response(request, reply);
       if (result.user) options.warm?.(result.user.id);
       return result;
     });
@@ -286,7 +287,7 @@ export function createAccountSession(options: {
           properties: { section: 'account', operation: 'update' },
         });
       reply.header('cache-control', 'no-store');
-      return response(request);
+      return response(request, reply);
     });
     app.post('/api/account/welcome', async (request, reply) => {
       if (!sameOrigin(request, reply)) return;

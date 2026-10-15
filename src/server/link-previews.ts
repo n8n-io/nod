@@ -78,9 +78,9 @@ export function createLinkPreviews(
         const expiresAt = now() + 600000;
         const output: LinkPreview = {
           url: finalUrl,
-          title: result.title.slice(0, 200),
-          ...(result.description ? { description: result.description.slice(0, 400) } : {}),
-          ...(result.siteName ? { siteName: result.siteName.slice(0, 100) } : {}),
+          title: result.title,
+          ...(result.description ? { description: result.description } : {}),
+          ...(result.siteName ? { siteName: result.siteName } : {}),
         };
         const imageUrl = result.image && previewableUrl(result.image);
         const imageId = imageUrl ? randomUUID() : undefined;

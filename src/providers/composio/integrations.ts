@@ -2,6 +2,7 @@ import { Composio, type ToolRouterSession } from '@composio/core';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { integrationServices, type IntegrationServiceInfo } from '../../shared/integrations.ts';
+import { fileBytes } from '../../shared/files.ts';
 import { createComposioFiles } from './downloads.ts';
 import { readInboxSnippets, readSentEmails } from './sent-email.ts';
 import { readVerificationEmails } from './verification-email.ts';
@@ -251,6 +252,7 @@ function signInUrl(value: unknown) {
 export function createComposioProvider(options: {
   apiKey?: string;
   webhookSecret?: string;
+  webhooksVerified?: boolean;
   webhookUrl?: string;
   authConfigs?: Partial<Record<IntegrationService, string>>;
   client?: Composio;
@@ -731,7 +733,7 @@ export function createComposioProvider(options: {
         try {
           operation.throwIfAborted();
           const toolkit = actionToolkit(action);
-          if (!file.bytes.byteLength || file.bytes.byteLength > 15 * 1024 * 1024)
+          if (!file.bytes.byteLength || file.bytes.byteLength > fileBytes)
             throw new Error('The file size is unsupported.');
           const result = await required()
             .getClient()
@@ -751,7 +753,7 @@ export function createComposioProvider(options: {
             .parse(result);
           const request =
             options.fileUploadRequest ??
-            ((url, init) => safeRemoteFetch(url, init, undefined, 15 * 1024 * 1024));
+            ((url, init) => safeRemoteFetch(url, init, undefined, fileBytes));
           const response = await request(upload.new_presigned_url, {
             method: 'PUT',
             body: Buffer.from(file.bytes),
@@ -798,7 +800,7 @@ export function createComposioProvider(options: {
     supportedServices: legacyServices().map((service) => service.slug),
     listServices,
     get webhooksConfigured() {
-      return Boolean(client && options.webhookSecret);
+      return Boolean(client && (options.webhookSecret || options.webhooksVerified));
     },
     supportsSubscriptions: ['gmail', 'googlecalendar', 'slack'],
     verificationEmails: (accountId, query, signal) =>
@@ -1233,10 +1235,11 @@ export function createComposioProvider(options: {
       );
     },
     async verifyWebhook(body, headers) {
-      if (!options.webhookSecret) throw new Error('The webhook is not configured.');
+      if (!options.webhookSecret && !options.webhooksVerified)
+        throw new Error('The webhook is not configured.');
       const result = await required().triggers.parse(
         { body, headers },
-        { verifySecret: options.webhookSecret },
+        options.webhooksVerified ? undefined : { verifySecret: options.webhookSecret },
       );
       const event = result.payload;
       const id = String('id' in result.rawPayload ? result.rawPayload.id : headers['webhook-id']);

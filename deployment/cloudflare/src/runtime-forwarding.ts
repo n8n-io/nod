@@ -13,7 +13,7 @@ export function runtimeRoutingGeneration(
 ) {
   try {
     const header = request.headers.get('x-otto-runtime');
-    if (!header || header.length > 16_384) throw new Error();
+    if (!header) throw new Error();
     const parts = header.split('.');
     if (
       parts.length !== 2 ||

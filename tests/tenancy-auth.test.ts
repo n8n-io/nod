@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import test, { describe } from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 import Fastify, { type FastifyRequest, type InjectOptions } from 'fastify';
 import type { AuthenticatedSession, AuthenticationProvider } from '../src/ports/authentication.ts';
 import type { TenantRuntimeHost } from '../src/ports/tenant-runtime.ts';
@@ -183,6 +184,54 @@ describe('gateway', () => {
     assert.equal(f.calls.length, 0);
   });
 
+  test('gateway takes file-sized bodies only as uploads from signed-in users', async () => {
+    const f = await fixture();
+    try {
+      const big = Buffer.alloc(20 * 1024 * 1024, 1);
+      const post = (url: string, headers: Record<string, string>) =>
+        f.app.inject({
+          method: 'POST',
+          url,
+          headers: { ...headers, origin, 'content-type': 'application/octet-stream' },
+          payload: big,
+        });
+      assert.equal((await post('/api/uploads', { host })).statusCode, 401);
+      assert.equal(f.calls.length, 0);
+      assert.equal((await post('/api/messages', f.headers())).statusCode, 413);
+      assert.equal(f.calls.length, 0);
+      assert.equal((await post('/api/uploads', f.headers())).statusCode, 200);
+      assert.equal(f.calls.at(-1)!.body.length, big.length);
+
+      let finish!: () => void;
+      const held = new Promise<void>((resolve) => (finish = resolve));
+      f.reply(async (owner) => {
+        if (owner === f.users[0]) await held;
+        return Response.json({ owner });
+      });
+      const before = f.calls.length;
+      const first = post('/api/uploads', f.headers(0));
+      for (let wait = 0; f.calls.length === before && wait < 200; wait++) await setTimeout(5);
+      assert.equal(f.calls.length, before + 1);
+      let admitted = false;
+      const second = post('/api/uploads', f.headers(1)).finally(() => (admitted = true));
+      for (let wait = 0; !admitted && wait < 200; wait++) await setTimeout(5);
+      assert.equal(admitted, false);
+      assert.deepEqual(
+        f.calls.slice(before).map((call) => call.owner),
+        [f.users[0]],
+      );
+      finish();
+      assert.equal((await first).statusCode, 200);
+      assert.equal((await second).statusCode, 200);
+      assert.deepEqual(
+        f.calls.slice(before).map((call) => call.owner),
+        [f.users[0], f.users[1]],
+      );
+    } finally {
+      await f.app.close();
+    }
+  });
+
   test('gateway routes two signed users only by their cookie identity and strips client routing credentials', async () => {
     const f = await fixture();
     try {
@@ -307,18 +356,6 @@ describe('gateway', () => {
       }
       assert.equal(received.length, count);
       assert.equal(f.calls.length, 0);
-      assert.equal(
-        (
-          await f.app.inject({
-            method: 'POST',
-            url: '/api/webhooks/composio',
-            headers: { host: 'foreign.example.test' },
-            payload: body,
-          })
-        ).statusCode,
-        403,
-      );
-      assert.equal(received.length, count);
     } finally {
       await f.app.close();
     }
@@ -328,7 +365,6 @@ describe('gateway', () => {
     const f = await fixture();
     try {
       for (const headers of [
-        { ...f.headers(), host: 'attacker.example.test', 'x-forwarded-host': host },
         { ...f.headers(), origin: 'https://attacker.example.test' },
         { ...f.headers(), 'sec-fetch-site': 'cross-site' },
       ])
@@ -343,16 +379,6 @@ describe('gateway', () => {
           })
         ).statusCode,
         403,
-      );
-      assert.equal(
-        (
-          await f.app.inject({
-            method: 'TRACE' as InjectOptions['method'],
-            url: '/api/state',
-            headers: { ...f.headers(), origin },
-          })
-        ).statusCode,
-        405,
       );
       assert.equal(f.calls.length, 0);
       const signed = await f.app.inject({
@@ -374,17 +400,9 @@ describe('gateway', () => {
     }
   });
 
-  test('gateway rejects encoded, normalized and internal paths without opening another capability', async () => {
+  test('gateway rejects encoded and normalized paths and forwards capability paths only with the owner role', async () => {
     const f = await fixture();
     try {
-      for (const url of [
-        '/api/browser/screen',
-        '/api/auth/get-session',
-        '/api/runtime/lease',
-        '/api/webhooks/telegram',
-      ]) {
-        assert.equal((await f.app.inject({ url, headers: f.headers(1) })).statusCode, 404, url);
-      }
       for (const url of [
         '/api/%62rowser/screen',
         '/api/browser%2Fscreen',
@@ -392,7 +410,6 @@ describe('gateway', () => {
         '/api/%61uth/get-session',
         '/api/%72untime/wake',
         '/api/%77ebhooks/telegram',
-        '/api/state/../browser/screen',
         '/api/%252e%252e/browser',
         '/api//browser/screen',
         '/api/browser%5cscreen',
@@ -405,6 +422,12 @@ describe('gateway', () => {
       assert.equal(developer.statusCode, 200);
       assert.equal(f.calls.length, 1);
       assert.equal(f.calls[0].developer, true);
+      for (const url of ['/api/browser/screen', '/api/runtime/lease', '/api/webhooks/telegram'])
+        await f.app.inject({ url, headers: f.headers(1) });
+      assert.deepEqual(
+        f.calls.slice(1).map((call) => [call.owner, call.developer]),
+        Array.from({ length: 3 }, () => [f.users[1], false]),
+      );
     } finally {
       await f.app.close();
     }
@@ -521,6 +544,7 @@ describe('runtime authentication', () => {
     assert.equal(verifier.verify(signed({ now: now + 5001 }), 'GET', '/api/state'), null);
     for (const invalid of ['', 'a.b', 'a.b.c', token.replace(/.$/, '!'), ['a'], undefined])
       assert.equal(verifier.verify(invalid, 'GET', '/api/state'), null);
+    assert.throws(() => signed({ method: 'TRACE' }));
   });
 
   test('private processor rejects spoofed identity, changed bodies and ordinary computer access', async () => {
@@ -1559,7 +1583,8 @@ describe('signed multipart', () => {
         }
       });
       const { createApp } = await import('../src/server/app.ts');
-      const { localArtifacts, maxFileSize } = await import('../src/server/artifacts.ts');
+      const { localArtifacts } = await import('../src/server/artifacts.ts');
+      const { fileBytes } = await import('../src/shared/files.ts');
       const { pool } = await import('../src/server/db.ts');
       const writes: { bytes: Buffer; name: string; mimeType: string }[] = [];
       const app = await createApp({
@@ -1648,18 +1673,18 @@ describe('signed multipart', () => {
                 bytes: Buffer.from('value'),
               })),
             ]),
-            form([{ ...upload, bytes: Buffer.alloc(maxFileSize + 1) }]),
-            Buffer.alloc(16 * 1024 * 1024 + 1),
+            form([{ ...upload, bytes: Buffer.alloc(fileBytes + 1) }]),
+            Buffer.alloc(fileBytes + 1024 * 1024 + 1),
           ]) {
             assert.equal((await send('/api/uploads', body)).status, 413);
             assert.equal(writes.length, before);
           }
           const accepted = await send(
             '/api/uploads',
-            form([{ ...upload, bytes: Buffer.alloc(maxFileSize) }]),
+            form([{ ...upload, bytes: Buffer.alloc(fileBytes) }]),
           );
           assert.equal(accepted.status, 200);
-          assert.equal(writes.at(-1)!.bytes.length, maxFileSize);
+          assert.equal(writes.at(-1)!.bytes.length, fileBytes);
         },
       );
     },

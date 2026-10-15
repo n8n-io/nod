@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type RequestListener } from 'node:http';
-import { browserDownloadBytes } from '../src/ports/computer.ts';
+import { fileBytes } from '../src/shared/files.ts';
 
 export const browserDownloadPdf = Buffer.from(
   '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Contents 4 0 R>>endobj\n4 0 obj<</Length 0>>stream\n\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
@@ -64,7 +64,7 @@ export async function createBrowserDownloadFixture() {
       }
       const bytes =
         url.pathname === '/large.pdf'
-          ? Buffer.alloc(browserDownloadBytes + 1, 32)
+          ? Buffer.alloc(fileBytes + 1, 32)
           : url.searchParams.get('version') === 'current'
             ? Buffer.concat([browserDownloadPdf, Buffer.from('% current document\n')])
             : browserDownloadPdf;

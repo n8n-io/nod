@@ -4,10 +4,10 @@ import type { RuntimeAccount } from '../ports/agent.ts';
 
 const accountProfileSchema = z
   .object({
-    name: z.string().trim().max(200).nullable(),
-    givenName: z.string().trim().max(100).nullable(),
-    email: z.string().trim().max(320).nullable(),
-    preferredName: z.string().trim().max(100).nullable(),
+    name: z.string().trim().nullable(),
+    givenName: z.string().trim().nullable(),
+    email: z.string().trim().nullable(),
+    preferredName: z.string().trim().nullable(),
     usageData: z.boolean().default(false),
   })
   .strict();
