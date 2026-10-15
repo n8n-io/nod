@@ -2247,10 +2247,32 @@ test(
       await channels.drain();
       assert.deepEqual(await state(unavailableNotice), { state: 'sent', reason: null });
       assert.deepEqual(texts.slice(beforeNoticeFailure), ['Here is the file.']);
+      const noReceipt = await addReply(turnId, [document], '');
+      const beforeNoReceipt = texts.length;
+      await channels.drain();
+      assert.deepEqual(await state(noReceipt), {
+        state: 'uncertain',
+        reason: 'send_not_confirmed',
+      });
+      assert.equal(texts.length, beforeNoReceipt);
+      const unconfirmedAttempts = sent.length;
+      await channels.drain();
+      assert.equal(sent.length, unconfirmedAttempts);
+      presentationOutcome = 'success';
+      const noticeOnly = await addReply(turnId, [document], '');
+      await channels.drain();
+      assert.deepEqual(await state(noticeOnly), { state: 'sent', reason: null });
+      assert.deepEqual(texts.slice(beforeNoReceipt), [attachmentNotice]);
+      assert.ok(
+        (
+          await pool.query('SELECT provider_message_id FROM channel_outbox WHERE message_id=$1', [
+            noticeOnly,
+          ])
+        ).rows[0].provider_message_id,
+      );
       const failedCount = sent.length;
       await channels.drain();
       assert.equal(sent.length, failedCount);
-      presentationOutcome = 'success';
       failDocument = false;
 
       const anotherThread = randomUUID();
