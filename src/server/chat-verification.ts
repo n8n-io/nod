@@ -4,6 +4,7 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
+import { transaction } from './transaction.ts';
 import { supersededSql } from './turn-chain.ts';
 import { waitingTurnSql } from './vault.ts';
 
@@ -16,6 +17,7 @@ interface VerificationInput {
   forceNew?: boolean;
   attachmentIds?: string[];
   persistOrdinary?: (client: PoolClient) => Promise<void>;
+  persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
 }
 
 type VerificationStatus = 'submitted' | 'invalid' | 'unavailable';
@@ -162,8 +164,7 @@ export async function createChatVerification(
           !timingSafeEqual(Buffer.from(previous.code_fingerprint), Buffer.from(codeFingerprint))
         )
           throw conflict('This message ID is already in use. Send this as a new message.');
-        await client.query('COMMIT');
-        return {
+        const response: SubmitMessageResponse = {
           threadId: previous.thread_id,
           turnId: previous.turn_id,
           messageId: input.clientMessageId,
@@ -173,6 +174,9 @@ export async function createChatVerification(
               ? previous.status
               : 'unavailable',
         };
+        await input.persistVerification?.(client, response);
+        await client.query('COMMIT');
+        return response;
       }
       let turnId: string | undefined;
       if (input.replyToMessageId) {
@@ -299,13 +303,23 @@ export async function createChatVerification(
     } catch {
       status = 'unavailable';
     }
-    await pool.query(
-      `WITH changed AS (
-       UPDATE chat_verification_submissions SET status=$2 WHERE message_id=$1 RETURNING message_id
-       ) UPDATE messages SET text=$3 WHERE id IN (SELECT message_id FROM changed)`,
-      [input.clientMessageId, status, texts[reserved.kind].masked],
-    );
-    if (status !== 'submitted') {
+    const response: SubmitMessageResponse = {
+      threadId: reserved.threadId,
+      turnId: reserved.turnId,
+      messageId: input.clientMessageId,
+      messageText: texts[reserved.kind].masked,
+      verificationStatus: status,
+    };
+    await transaction(async (client) => {
+      await client.query(
+        `WITH changed AS (
+         UPDATE chat_verification_submissions SET status=$2 WHERE message_id=$1 RETURNING message_id
+         ) UPDATE messages SET text=$3 WHERE id IN (SELECT message_id FROM changed)`,
+        [input.clientMessageId, status, response.messageText],
+      );
+      await input.persistVerification?.(client, response);
+    }, pool);
+    if (status !== 'submitted' && !input.persistVerification) {
       const message = await options
         .present?.(reserved.threadId, {
           kind: 'verification_failure',
@@ -321,13 +335,7 @@ export async function createChatVerification(
         );
     }
     options.refresh();
-    return {
-      threadId: reserved.threadId,
-      turnId: reserved.turnId,
-      messageId: input.clientMessageId,
-      messageText: texts[reserved.kind].masked,
-      verificationStatus: status,
-    };
+    return response;
   }
 
   return { pending, accept };

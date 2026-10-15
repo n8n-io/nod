@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Artifact } from '../shared/contracts.ts';
+import type { Artifact, SubmitMessageResponse } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -27,6 +27,7 @@ export type ChannelPresentation =
       files?: string[];
     }
   | { kind: 'verification_refused' }
+  | { kind: 'verification_failure'; verification: 'otp' }
   | { kind: 'paired'; channel: string }
   | {
       kind: 'command';
@@ -46,8 +47,17 @@ interface ChannelOptions {
       clientMessageId: string;
       channel: string;
       persistOrdinary: (client: PoolClient) => Promise<void>;
+      persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
     },
-  ) => Promise<{ turnId?: string | null; messageText?: string } | undefined>;
+  ) => Promise<
+    | {
+        turnId?: string | null;
+        threadId?: string;
+        messageText?: string;
+        verificationStatus?: SubmitMessageResponse['verificationStatus'];
+      }
+    | undefined
+  >;
   submit: (
     text: string,
     sourceId: string,
@@ -353,9 +363,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const acceptedMessageId = inboundMessageId(ownerId, sourceId);
       let verification: Awaited<ReturnType<NonNullable<ChannelOptions['acceptVerification']>>>;
       let ordinaryPersisted = false;
-      const persist = async (database: PoolClient) => {
-        if (closed || replacing || !permitted(identity))
+      let verificationPersisted = false;
+      const persist = async (database: PoolClient, strict = true) => {
+        if (closed || replacing || !permitted(identity)) {
+          if (!strict) return;
           throw new Error('Channel configuration changed.');
+        }
         await database.query(
           `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(source_id) DO NOTHING`,
@@ -374,7 +387,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             conversationChannel(identity),
           ],
         );
-        if (closed || replacing || !permitted(identity))
+        if (strict && (closed || replacing || !permitted(identity)))
           throw new Error('Channel configuration changed.');
       };
       const commandReply = options.commandReply;
@@ -409,6 +422,65 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               await persist(client);
               ordinaryPersisted = true;
             },
+            persistVerification: async (client, response) => {
+              verification = response;
+              verificationPersisted = true;
+              if (
+                closed ||
+                replacing ||
+                !permitted(identity) ||
+                response.messageId !== acceptedMessageId
+              )
+                return;
+              const current = await client.query(
+                `SELECT 1 FROM messages m JOIN turns u ON u.id=m.turn_id JOIN threads th ON th.id=m.thread_id
+                 WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.turn_id=$4
+                   AND u.owner_id=$2 AND u.thread_id=m.thread_id AND u.channel=$5
+                   AND th.owner_id=$2 AND th.archived_at IS NULL FOR SHARE OF th`,
+                [
+                  acceptedMessageId,
+                  ownerId,
+                  response.threadId,
+                  response.turnId,
+                  conversationChannel(identity),
+                ],
+              );
+              if (!current.rowCount) return;
+              await client.query('SAVEPOINT channel_verification_receipt');
+              await persist(client, false);
+              if (
+                response.verificationStatus === 'unavailable' &&
+                !closed &&
+                !replacing &&
+                permitted(identity)
+              ) {
+                const noticeId = inboundMessageId(
+                  ownerId,
+                  `verification-failure:${acceptedMessageId}`,
+                );
+                await client.query(
+                  `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+                   VALUES($1,$2,'assistant','',$3,$4) ON CONFLICT(id) DO NOTHING`,
+                  [noticeId, ownerId, response.threadId, response.turnId],
+                );
+                await client.query(
+                  `INSERT INTO channel_outbox(message_id,source_id,presentation)
+                   SELECT id,$2,$3 FROM messages WHERE id=$1 AND owner_id=$4 AND thread_id=$5 AND turn_id=$6
+                   ON CONFLICT(message_id) DO NOTHING`,
+                  [
+                    noticeId,
+                    sourceId,
+                    JSON.stringify({ kind: 'verification_failure', verification: 'otp' }),
+                    ownerId,
+                    response.threadId,
+                    response.turnId,
+                  ],
+                );
+              }
+              if (closed || replacing || !permitted(identity))
+                await client.query('ROLLBACK TO SAVEPOINT channel_verification_receipt');
+              await client.query('RELEASE SAVEPOINT channel_verification_receipt');
+            },
           });
           if (!verification && !ordinaryPersisted)
             throw new Error('Verification did not persist its receipt.');
@@ -428,7 +500,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           return;
         }
       }
-      if (!ordinaryPersisted) await transaction(persist, pool);
+      if (!ordinaryPersisted && !verificationPersisted) await transaction(persist, pool);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {

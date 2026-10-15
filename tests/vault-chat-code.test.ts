@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pg from 'pg';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import type { SubmitMessageResponse } from '../src/shared/contracts.ts';
 
 test(
   'chat verification intercepts owned codes before message routing and plaintext persistence',
@@ -219,6 +220,67 @@ test(
       presentFailure = async () => 'Synthetic verification result.';
     }
     try {
+      await t.test(
+        'verification outcomes and channel receipts commit together without replay',
+        async () => {
+          for (const fail of [false, true]) {
+            await reset();
+            await seed();
+            outcome = 'unavailable';
+            presentFailure = async () => {
+              throw new Error('Inline presentation must not run.');
+            };
+            const clientMessageId = randomUUID();
+            const receiptId = randomUUID();
+            const receipts: SubmitMessageResponse[] = [];
+            const persistVerification = async (
+              client: pg.PoolClient,
+              response: SubmitMessageResponse,
+            ) => {
+              receipts.push(response);
+              assert.doesNotMatch(JSON.stringify(response), /654913/);
+              if (receipts.length === 1) {
+                assert.equal(
+                  (await client.query('SELECT status FROM chat_verification_submissions')).rows[0]
+                    .status,
+                  'unavailable',
+                );
+                assert.equal(
+                  (await admin.query(`SELECT status FROM ${schema}.chat_verification_submissions`))
+                    .rows[0].status,
+                  'pending',
+                );
+              }
+              await client.query(
+                "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Synthetic receipt',$3,$4) ON CONFLICT DO NOTHING",
+                [receiptId, ownerId, response.threadId, response.turnId],
+              );
+              if (fail && receipts.length === 1) throw new Error('Synthetic receipt failure.');
+            };
+            const accept = () =>
+              verification.accept('654913', { clientMessageId, persistVerification });
+            if (fail) await assert.rejects(accept(), /Synthetic receipt failure/);
+            else assert.equal((await accept())?.verificationStatus, 'unavailable');
+            assert.equal(
+              (await db.pool.query('SELECT status FROM chat_verification_submissions')).rows[0]
+                .status,
+              fail ? 'pending' : 'unavailable',
+            );
+            assert.equal(
+              (await db.pool.query('SELECT id FROM messages WHERE id=$1', [receiptId])).rowCount,
+              fail ? 0 : 1,
+            );
+            assert.equal((await accept())?.verificationStatus, fail ? 'pending' : 'unavailable');
+            assert.equal(receipts.length, 2);
+            assert.equal(
+              (await db.pool.query('SELECT id FROM messages WHERE id=$1', [receiptId])).rowCount,
+              1,
+            );
+            assert.equal(injected.length, 1);
+            assert.deepEqual(failurePresentations, []);
+          }
+        },
+      );
       await t.test(
         'failure presentation sees only the recorded outcome and never retries private entry',
         async () => {

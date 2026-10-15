@@ -598,6 +598,247 @@ test(
 );
 
 test(
+  'unavailable channel verification persists one private failure notice across duplicates and restart',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const schema = `test_channel_failure_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+      max: 1,
+      connectionTimeoutMillis: 1000,
+    });
+    const ownerId = 'fixture-owner';
+    const threadId = await createFixtureTables(pool, ownerId);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 37) };
+    const vault = await createVault(pool, {
+      keyStore,
+      page: async () => ({ url: 'https://1.1.1.1/login', origin: 'https://1.1.1.1' }),
+      inject: async () => assert.fail('The synthetic provider owns code submission.'),
+      resume: async () => {},
+      retry: async () => {},
+    });
+    let held: { start: () => void; released: Promise<void> } | undefined;
+    const releases: Array<() => void> = [];
+    function holdOutcome() {
+      let start = () => {};
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        start = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      held = { start, released };
+      releases.push(release);
+      return { started, release };
+    }
+    let submissions = 0;
+    let inlinePresentations = 0;
+    const verification = await createChatVerification(pool, {
+      ownerId,
+      keyStore,
+      submitCode: async (owner, _turnId, code, requestId) => {
+        assert.equal(owner, ownerId);
+        assert.equal(code, '481927');
+        submissions++;
+        const pending = held;
+        held = undefined;
+        pending?.start();
+        await pending?.released;
+        await pool.query("UPDATE credential_requests SET status='failed' WHERE id=$1", [requestId]);
+        return { status: 'unavailable' };
+      },
+      present: async () => {
+        inlinePresentations++;
+        throw new Error('Inline presentation is unavailable.');
+      },
+      refresh() {},
+    });
+    const channel = `telegram:${createHash('sha256')
+      .update(JSON.stringify(['fixture-account', ownerId]))
+      .digest('hex')
+      .slice(0, 32)}`;
+    async function requestCode() {
+      const turnId = await fixtureTurn(pool, threadId, ownerId, channel, null, 'running');
+      await pool.query('UPDATE turns SET started_at=now() WHERE id=$1', [turnId]);
+      await vault.request({ threadId, turnId }, ownerId, {
+        origin: 'https://1.1.1.1',
+        label: 'Fixture sign-in',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [turnId],
+      );
+      return turnId;
+    }
+    const posted: string[] = [];
+    const presentations: unknown[] = [];
+    let modelDown = false;
+    const modelNotice = 'Verifica o estado do acesso antes de tentares novamente.';
+    function transport(accountId = 'fixture-account'): MessagingTransport {
+      return {
+        channels: [
+          {
+            id: 'telegram',
+            status: 'configured',
+            missing: [],
+            accountId,
+            allowedSenderIds: [ownerId],
+          },
+        ],
+        receive: async (request) => ({
+          status: 200,
+          body: 'accepted',
+          messages: [
+            {
+              channelId: 'telegram',
+              accountId: 'fixture-account',
+              senderId: ownerId,
+              threadId: 'fixture-thread',
+              text: '481927',
+              sentAt: new Date(),
+              ...JSON.parse(Buffer.from(request.body).toString('utf8')),
+            },
+          ],
+        }),
+        post: async (input) => {
+          posted.push(input.text);
+          return { id: `fixture-${posted.length}` };
+        },
+        close: async () => {},
+      };
+    }
+    async function open() {
+      const app = Fastify();
+      const channels = await createChannels(pool, {
+        ownerId,
+        transport: transport(),
+        acceptVerification: (text, input) => verification.accept(text, input),
+        present: async (thread, input) => {
+          assert.equal(thread, threadId);
+          presentations.push(input);
+          await pool.query('SELECT 1');
+          if (modelDown) throw new Error('Synthetic unavailable model');
+          return modelNotice;
+        },
+        submit: async () => assert.fail('Verification must not become an ordinary turn.'),
+        subscribe: () => () => {},
+        intervalMs: 600000,
+      });
+      channels.registerRoutes(app);
+      return { app, channels };
+    }
+    let fixture = await open();
+    const send = (messageId: string) =>
+      fixture.app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        headers: { 'content-type': 'application/json' },
+        payload: { messageId },
+      });
+    const notices = async () =>
+      (
+        await pool.query(
+          `SELECT o.state,o.reason,o.presentation,m.thread_id,m.turn_id FROM channel_outbox o
+           JOIN messages m ON m.id=o.message_id ORDER BY m.created_at,m.id`,
+        )
+      ).rows;
+    try {
+      const firstTurn = await requestCode();
+      const outcome = holdOutcome();
+      const original = send('duplicate').then((response) => response);
+      await outcome.started;
+      assert.equal((await send('duplicate')).statusCode, 200);
+      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 1);
+      assert.equal((await notices()).length, 0);
+      assert.equal(submissions, 1);
+      outcome.release();
+      assert.equal((await original).statusCode, 200);
+      await fixture.channels.drain();
+      assert.deepEqual(posted, [modelNotice]);
+      assert.deepEqual(presentations, [{ kind: 'verification_failure', verification: 'otp' }]);
+      assert.deepEqual(await notices(), [
+        {
+          state: 'sent',
+          reason: null,
+          presentation: { kind: 'verification_failure', verification: 'otp' },
+          thread_id: threadId,
+          turn_id: firstTurn,
+        },
+      ]);
+      await fixture.app.close();
+      fixture = await open();
+      await Promise.all([send('duplicate'), send('duplicate')]);
+      await fixture.channels.drain();
+      assert.equal(submissions, 1);
+      assert.equal(posted.length, 1);
+      modelDown = true;
+      await requestCode();
+      assert.equal((await send('model-down')).statusCode, 200);
+      await fixture.channels.drain();
+      const blocked = (await notices()).find((notice) => notice.state === 'blocked');
+      assert.equal(blocked?.reason, 'presentation_unavailable');
+      assert.deepEqual(blocked?.presentation, {
+        kind: 'verification_failure',
+        verification: 'otp',
+      });
+      await fixture.app.close();
+      fixture = await open();
+      await send('model-down');
+      await fixture.channels.drain();
+      assert.equal(submissions, 2);
+      assert.equal(presentations.length, 2);
+      assert.equal(posted.length, 1);
+      modelDown = false;
+      await requestCode();
+      const revoked = holdOutcome();
+      const revoking = send('revoked').then((response) => response);
+      await revoked.started;
+      await fixture.channels.replaceTransport(transport('new-account'));
+      revoked.release();
+      assert.equal((await revoking).statusCode, 200);
+      await fixture.channels.replaceTransport(transport());
+      await requestCode();
+      const reset = holdOutcome();
+      const resetting = send('reset').then((response) => response);
+      await reset.started;
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+      reset.release();
+      assert.equal((await resetting).statusCode, 200);
+      await fixture.channels.drain();
+      assert.equal(submissions, 4);
+      assert.equal(inlinePresentations, 0);
+      assert.equal((await notices()).length, 2);
+      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 2);
+      assert.equal(
+        (await pool.query("SELECT * FROM chat_verification_submissions WHERE status='unavailable'"))
+          .rowCount,
+        4,
+      );
+      assert.equal(posted.length, 1);
+      assert.doesNotMatch(
+        JSON.stringify(
+          (await pool.query('SELECT text FROM messages UNION ALL SELECT text FROM channel_inbox'))
+            .rows,
+        ),
+        /481927/,
+      );
+    } finally {
+      for (const release of releases) release();
+      await fixture.app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
   'memory and usage commands get a digest from the outbox without a turn and only for the paired sender',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
