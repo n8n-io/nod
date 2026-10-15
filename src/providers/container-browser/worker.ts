@@ -2,13 +2,8 @@ import { chmod, lstat, mkdir, rm, unlink } from 'node:fs/promises';
 import { createServer, connect, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Computer } from '../../ports/computer.ts';
-import {
-  BrowserActionError,
-  browserDownloadBytes,
-  browserRequestBytes,
-  browserUploadBytes,
-} from '../../ports/computer.ts';
+import type { BrowserDownload, Computer } from '../../ports/computer.ts';
+import { BrowserActionError } from '../../ports/computer.ts';
 import { createAgentBrowserComputer } from '../agent-browser/index.ts';
 import { containerBrowserOptions } from './config.ts';
 import {
@@ -18,7 +13,7 @@ import {
   browserSocketPath,
   imageBytes,
   responseBytes,
-  viewBytes,
+  transferBytes,
   viewFrame,
   type BrowserMetadata,
   type BrowserRequest,
@@ -52,7 +47,12 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
   }
 }
 
-async function dispatch(computer: Computer, request: BrowserRequest, signal: AbortSignal) {
+async function dispatch(
+  computer: Computer,
+  request: BrowserRequest,
+  signal: AbortSignal,
+  upload: Promise<Buffer>,
+) {
   signal.throwIfAborted();
   switch (request.method) {
     case 'bindProfile':
@@ -64,34 +64,12 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     case 'download': {
       const file = await computer.download(request.threadId, request.input, signal);
       signal.throwIfAborted();
-      if (
-        !Buffer.isBuffer(file.bytes) ||
-        !file.bytes.length ||
-        file.bytes.length > browserDownloadBytes
-      )
-        throw new Error();
-      if (
-        typeof file.name !== 'string' ||
-        !file.name ||
-        file.name.length > 200 ||
-        /[/\\\u0000-\u001f\u007f]/.test(file.name)
-      )
-        throw new Error();
-      if (
-        typeof file.mimeType !== 'string' ||
-        file.mimeType.length > 100 ||
-        !/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(file.mimeType)
-      )
-        throw new Error();
-      return { data: file.bytes.toString('base64'), name: file.name, mimeType: file.mimeType };
+      if (!Buffer.isBuffer(file.bytes) || !file.bytes.length) throw new Error();
+      return file;
     }
     case 'upload': {
-      const { data, ...input } = request.input;
-      if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw new Error();
-      const bytes = Buffer.from(data, 'base64');
-      if (!bytes.length || bytes.length > browserUploadBytes || bytes.toString('base64') !== data)
-        throw new Error();
-      return computer.upload(request.threadId, { ...input, bytes }, signal);
+      const { size: _size, ...input } = request.input;
+      return computer.upload(request.threadId, { ...input, bytes: await upload }, signal);
     }
     case 'screenshot': {
       const image = await computer.screenshot(request.threadId, signal);
@@ -113,7 +91,7 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return Buffer.from(image).toString('base64');
     }
     case 'hold':
-      return computer.hold(request.threadId, request.until);
+      return computer.hold(request.threadId, request.held);
     case 'close':
       return computer.close(request.threadId);
     case 'discard':
@@ -155,8 +133,6 @@ export async function startContainerBrowserWorker(
     ) =>
       | (Computer & { canCheckpoint?(): boolean })
       | Promise<Computer & { canCheckpoint?(): boolean }>;
-    maxNamespaces?: number;
-    maxPendingPerNamespace?: number;
   } = {},
 ) {
   const path = options.socketPath ?? browserSocketPath;
@@ -170,7 +146,6 @@ export async function startContainerBrowserWorker(
     if (closing) throw new Error();
     let value = namespaces.get(name);
     if (!value) {
-      if (namespaces.size >= (options.maxNamespaces ?? 16)) throw new Error();
       value = {
         computer: Promise.resolve().then(() => createComputer(join(dataRoot, name))),
         pending: new Map(),
@@ -220,9 +195,18 @@ export async function startContainerBrowserWorker(
     socket.setEncoding('utf8');
     connections.add(socket);
     let incoming = '';
-    let received = 0;
     let request: BrowserRequest | undefined;
+    let uploaded: Buffer[] = [];
+    let uploadedBytes = 0;
     const controller = new AbortController();
+    let finishUpload = (_bytes: Buffer) => {};
+    const upload = new Promise<Buffer>((resolve, reject) => {
+      finishUpload = resolve;
+      controller.signal.addEventListener('abort', () => reject(controller.signal.reason), {
+        once: true,
+      });
+    });
+    upload.catch(() => {});
     let terminal = false;
     let viewing: Promise<Computer> | undefined;
     let inputs = Promise.resolve();
@@ -237,20 +221,31 @@ export async function startContainerBrowserWorker(
       if (!terminal && request && !['quiesce', 'view'].includes(request.method))
         void dispose(request.namespace).catch(() => {});
     });
+    const send = async (line: string) => {
+      if (!socket.write(line))
+        await new Promise((resolve) => {
+          socket.once('drain', resolve);
+          socket.once('close', resolve);
+        });
+    };
     const view = async (computer: Computer, threadId: string, id: string) => {
-      let sent = 0;
       for await (const image of computer.view(threadId, controller.signal)) {
-        const line =
-          JSON.stringify(viewFrame.parse({ id, frame: image.toString('base64') })) + '\n';
-        sent += line.length;
-        if (!socket.write(line))
-          await new Promise((resolve) => {
-            socket.once('drain', resolve);
-            socket.once('close', resolve);
-          });
-        if (sent > viewBytes || socket.destroyed) break;
+        await send(JSON.stringify(viewFrame.parse({ id, frame: image.toString('base64') })) + '\n');
+        if (socket.destroyed) break;
       }
       return null;
+    };
+    const download = async (file: BrowserDownload, id: string) => {
+      for (let offset = 0; offset < file.bytes.length; offset += transferBytes) {
+        controller.signal.throwIfAborted();
+        await send(
+          JSON.stringify({
+            id,
+            chunk: file.bytes.subarray(offset, offset + transferBytes).toString('base64'),
+          }) + '\n',
+        );
+      }
+      return { name: file.name, mimeType: file.mimeType, size: file.bytes.length };
     };
     const execute = async (input: BrowserRequest) => {
       let entry: Namespace | undefined;
@@ -270,13 +265,14 @@ export async function startContainerBrowserWorker(
         } else {
           entry = namespace(input.namespace);
           if (entry.pending.has(input.id)) throw new Error();
-          if (entry.pending.size >= (options.maxPendingPerNamespace ?? 32)) throw new Error();
           if (input.method === 'view') viewing = entry.computer;
-          const done = entry.computer.then((computer) =>
-            input.method === 'view'
-              ? view(computer, input.threadId, input.id)
-              : dispatch(computer, input, controller.signal),
-          );
+          const done = entry.computer.then(async (computer) => {
+            if (input.method === 'view') return view(computer, input.threadId, input.id);
+            const result = await dispatch(computer, input, controller.signal, upload);
+            return input.method === 'download'
+              ? download(result as BrowserDownload, input.id)
+              : result;
+          });
           entry.pending.set(input.id, { controller, done });
           registered = true;
           const result = await done;
@@ -289,6 +285,7 @@ export async function startContainerBrowserWorker(
           };
         }
       } catch (error) {
+        if (input.method === 'upload') await upload.catch(() => {});
         response = {
           id: input.id,
           ok: false,
@@ -319,8 +316,7 @@ export async function startContainerBrowserWorker(
       }
     };
     socket.on('data', (chunk: string) => {
-      received += Buffer.byteLength(chunk);
-      if (terminal || received > browserRequestBytes + 1024) return stop();
+      if (terminal) return stop();
       incoming += chunk;
       for (let line = incoming.indexOf('\n'); line >= 0; line = incoming.indexOf('\n')) {
         const raw = incoming.slice(0, line);
@@ -331,6 +327,16 @@ export async function startContainerBrowserWorker(
             if (request) return stop();
             request = frame.request;
             void execute(request);
+          } else if (frame.type === 'data') {
+            if (request?.method !== 'upload' || frame.id !== request.id) return stop();
+            const bytes = Buffer.from(frame.data, 'base64');
+            uploadedBytes += bytes.length;
+            if (uploadedBytes > request.input.size) return stop();
+            uploaded.push(bytes);
+            if (uploadedBytes === request.input.size) {
+              finishUpload(Buffer.concat(uploaded));
+              uploaded = [];
+            }
           } else if (frame.type === 'input') {
             if (request?.method !== 'view' || frame.id !== request.id || !viewing) return stop();
             const { threadId } = request;
@@ -348,7 +354,6 @@ export async function startContainerBrowserWorker(
       }
     });
   });
-  server.maxConnections = 256;
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(path, resolve);

@@ -12,20 +12,27 @@ import type {
   MessagingTransport,
   MessagingWebhookResult,
 } from '../../ports/messaging.ts';
+import { telegramSecret, telegramUserId } from '../../ports/channel-settings.ts';
 
 type Environment = Record<string, string | undefined>;
 
 const logger = new ConsoleLogger('silent');
+const telegramFileBytes = 50 * 1024 * 1024;
+const telegramTextLimit = 3500;
 const telegramMessage = z.object({
   message_id: z.number().int().nonnegative(),
+  reply_to_message: z
+    .object({ message_id: z.number().int().nonnegative() })
+    .passthrough()
+    .optional(),
   date: z.number().int().positive(),
-  text: z.string().trim().min(1).max(24000),
+  text: z.string().trim().min(1),
   from: z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     is_bot: z.literal(false),
-    first_name: z.string().max(256),
-    last_name: z.string().max(256).optional(),
-    username: z.string().max(256).optional(),
+    first_name: z.string(),
+    last_name: z.string().optional(),
+    username: z.string().optional(),
   }),
   chat: z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -61,32 +68,43 @@ const whatsappReaction = z.object({
   }),
 });
 const whatsappMessage = z.object({
-  id: z.string().min(1).max(256),
+  id: z.string().min(1),
   from: z.string().regex(/^\d{7,15}$/),
   timestamp: z.string().regex(/^\d{1,12}$/),
+  context: z.object({ id: z.string().min(1) }).optional(),
   type: z.literal('text'),
-  text: z.object({ body: z.string().trim().min(1).max(24000) }),
+  text: z.object({ body: z.string().trim().min(1) }),
 });
 const whatsappEnvelope = z.object({
   object: z.literal('whatsapp_business_account'),
-  entry: z
-    .array(
-      z.object({
-        changes: z
-          .array(
-            z.object({
-              field: z.string(),
-              value: z.object({
-                metadata: z.object({ phone_number_id: z.string() }).optional(),
-                messages: z.array(z.unknown()).max(100).optional(),
-              }),
-            }),
-          )
-          .max(100),
-      }),
-    )
-    .max(100),
+  entry: z.array(
+    z.object({
+      changes: z.array(
+        z.object({
+          field: z.string(),
+          value: z.object({
+            metadata: z.object({ phone_number_id: z.string() }).optional(),
+            messages: z.array(z.unknown()).optional(),
+          }),
+        }),
+      ),
+    }),
+  ),
 });
+
+function chunks(text: string) {
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > telegramTextLimit) {
+    const slice = rest.slice(0, telegramTextLimit);
+    let cut = slice.lastIndexOf('\n\n');
+    if (cut < telegramTextLimit / 2) cut = slice.lastIndexOf('\n');
+    if (cut < telegramTextLimit / 2) cut = telegramTextLimit;
+    parts.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).trimStart();
+  }
+  return rest ? [...parts, rest] : parts;
+}
 
 function sameSecret(actual: string | undefined, expected: string) {
   if (!actual) return false;
@@ -101,12 +119,9 @@ export function channelConfiguration(env: Environment) {
     'TELEGRAM_WEBHOOK_SECRET_TOKEN',
     ...(env.TELEGRAM_PAIRING_EXPIRES_AT ? [] : ['TELEGRAM_ALLOWED_USER_ID']),
   ].filter((key) => !env[key]);
-  if (env.TELEGRAM_ALLOWED_USER_ID && !/^\d{1,16}$/.test(env.TELEGRAM_ALLOWED_USER_ID))
+  if (env.TELEGRAM_ALLOWED_USER_ID && !telegramUserId.test(env.TELEGRAM_ALLOWED_USER_ID))
     telegramMissing.push('TELEGRAM_ALLOWED_USER_ID');
-  if (
-    env.TELEGRAM_WEBHOOK_SECRET_TOKEN &&
-    !/^[A-Za-z0-9_-]{16,256}$/.test(env.TELEGRAM_WEBHOOK_SECRET_TOKEN)
-  )
+  if (env.TELEGRAM_WEBHOOK_SECRET_TOKEN && !telegramSecret.test(env.TELEGRAM_WEBHOOK_SECRET_TOKEN))
     telegramMissing.push('TELEGRAM_WEBHOOK_SECRET_TOKEN');
   if (env.TELEGRAM_BOT_TOKEN && !/^\d+:[A-Za-z0-9_-]+$/.test(env.TELEGRAM_BOT_TOKEN))
     telegramMissing.push('TELEGRAM_BOT_TOKEN');
@@ -359,7 +374,15 @@ export function createChatSdkTransport(
           return accepted();
         const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
         if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
-        const message = telegram.parseMessage(parsed.data);
+        const { reply_to_message: replied, ...rawMessage } = parsed.data;
+        const message = telegram.parseMessage(rawMessage);
+        const replyId = replied
+          ? telegram.parseMessage({
+              message_id: replied.message_id,
+              chat: parsed.data.chat,
+              date: parsed.data.date,
+            }).id
+          : undefined;
         if (!env.TELEGRAM_ALLOWED_USER_ID) {
           const code = start?.[1];
           if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return accepted();
@@ -389,6 +412,7 @@ export function createChatSdkTransport(
             accountId: env.TELEGRAM_BOT_TOKEN!.split(':')[0],
             senderId: String(parsed.data.from.id),
             messageId: message.id,
+            replyToMessageId: replyId,
             threadId: message.threadId,
             text: message.text,
             sentAt: message.metadata.dateSent,
@@ -427,6 +451,7 @@ export function createChatSdkTransport(
                 accountId,
                 senderId: parsed.data.from,
                 messageId: message.id,
+                replyToMessageId: parsed.data.context?.id,
                 threadId: message.threadId,
                 text: message.text,
                 sentAt: message.metadata.dateSent,
@@ -436,6 +461,7 @@ export function createChatSdkTransport(
       return accepted(messages, reactions);
     },
     async react(input) {
+      input.signal?.throwIfAborted();
       if (
         !channels.some(
           (channel) =>
@@ -457,6 +483,7 @@ export function createChatSdkTransport(
       if (input.channelId === 'telegram' && emoji && !telegramReactions.has(emoji))
         return 'unsupported';
       await bot.initialize();
+      input.signal?.throwIfAborted();
       if (emoji) await adapter.addReaction(input.threadId, input.messageId, emoji);
       else await adapter.removeReaction(input.threadId, input.messageId, '');
       return 'sent';
@@ -474,40 +501,68 @@ export function createChatSdkTransport(
       const attachments = input.attachments ?? [];
       if (attachments.length && input.channelId !== 'telegram')
         throw new Error('This channel does not support attachment delivery.');
-      if (
-        attachments.length > 10 ||
-        attachments.reduce((total, file) => total + file.bytes.byteLength, 0) > 15 * 1024 * 1024 ||
-        attachments.some((file) => !file.bytes.byteLength)
-      )
-        throw new Error('Attachments exceed the delivery limit.');
       await bot.initialize();
       const thread = bot.thread(input.threadId);
-      if (!attachments.length) return { id: (await thread.post({ markdown: input.text })).id };
-      const separateText = input.text.length > 900;
-      if (separateText) await thread.post({ markdown: input.text });
+      const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
       let id = '';
-      for (const [index, file] of attachments.entries()) {
-        const sent = await thread.post({
-          markdown: index === 0 && !separateText ? input.text : '',
-          attachments: [
-            {
-              type:
-                ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
-                file.bytes.byteLength <= 10 * 1024 * 1024
-                  ? 'image'
-                  : file.mimeType === 'video/mp4'
-                    ? 'video'
-                    : 'file',
-              data: Buffer.from(file.bytes),
-              name: file.name,
-              mimeType: file.mimeType,
-              size: file.bytes.byteLength,
-            },
-          ],
-        });
+      const ids: string[] = [];
+      const post = (message: Parameters<typeof thread.reply>[1]) =>
+        input.replyToMessageId
+          ? thread.reply(input.replyToMessageId, message)
+          : thread.post(message);
+      for (const part of input.channelId === 'telegram' ? chunks(input.text) : [input.text]) {
+        const sent = await post({ markdown: part });
         id ||= sent.id;
+        ids.push(sent.id);
       }
-      return { id };
+      for (const file of attachments) {
+        if (unsent.includes(file)) continue;
+        await file
+          .read()
+          .then((bytes) =>
+            post({
+              markdown: '',
+              attachments: [
+                {
+                  type:
+                    ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
+                    file.size <= 10 * 1024 * 1024
+                      ? 'image'
+                      : file.mimeType === 'video/mp4'
+                        ? 'video'
+                        : 'file',
+                  data: Buffer.from(bytes),
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  size: file.size,
+                },
+              ],
+            }),
+          )
+          .then(
+            (sent) => {
+              id ||= sent.id;
+              ids.push(sent.id);
+            },
+            () => {
+              unsent.push(file);
+            },
+          );
+      }
+      if (unsent.length) {
+        const notice = await input
+          .attachmentFailure?.(unsent.map((file) => file.name))
+          .catch(() => undefined);
+        for (const part of chunks(notice ?? '')) {
+          const sent = await post({ markdown: part }).catch(() => undefined);
+          if (sent) {
+            id ||= sent.id;
+            ids.push(sent.id);
+          }
+        }
+      }
+      if (!id) throw new Error('Channel delivery was not confirmed.');
+      return { id, ids };
     },
     async close() {
       if (!closed) {

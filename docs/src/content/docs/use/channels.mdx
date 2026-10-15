@@ -11,6 +11,8 @@ You can chat with Otto from Telegram or WhatsApp. It's the same conversation, me
 
 Otto replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the Otto app.
 
+Otto uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps.
+
 ## Before you start
 
 |                      | Telegram                                  | WhatsApp                                                     |
@@ -18,10 +20,12 @@ Otto replies in the app you wrote from. A message from Telegram gets its answer 
 | You need             | A Telegram bot, made with BotFather       | A Meta app with the WhatsApp Cloud API and a business number |
 | Works on a laptop    | Yes. Otto checks for new messages itself. | Needs a public HTTPS address that reaches Otto               |
 | Who can message Otto | Only the Telegram account you pair        | Only the number you enter                                    |
-| Files from Otto      | Sent as documents                         | Not sent. Open Otto to get them.                             |
+| Files from Otto      | Sent after the reply, up to 50 MB each    | Not sent. Open Otto to get them.                             |
 | When Otto can write  | Any time                                  | Only within 24 hours of your last message                    |
 
 Otto reads the text of your messages. To give Otto a file, attach it in the Otto app.
+
+A long reply arrives as several messages. If a file doesn't arrive, open Otto to get it. When the model can't write a required notice, that channel message stays blocked and isn't retried automatically.
 
 ## Set up a channel
 
@@ -98,13 +102,15 @@ Taking over [Otto's browser](/use/browser/) also needs the Otto app, because cha
 Reactions work both ways, as they do in the [Otto app](/use/chat/#react-to-messages).
 
 - **Otto's reactions.** Otto sometimes reacts to your message with an emoji, such as ❤️ when you thank it or 🎉 for good news. A reaction comes on top of Otto's reply, never instead of it. On Telegram, Otto uses only Telegram's standard reactions.
-- **Your reactions.** React to any Otto message, and Otto takes it as feedback on that message. A reaction never answers a question or approves an action. Your reactions also show in the Otto app.
+- **Your reactions.** React to any Otto message, and Otto takes it as feedback on that message. A reaction never answers a question or approves an action. Your reactions also show in the Otto app, including reactions to later parts of a long reply.
+
+If a reaction send fails, its result can be unclear. Otto keeps the attempt and does not send it again. You can ask Otto to remove it. A failed removal keeps the previous reaction.
 
 A Telegram bot that uses a webhook only passes your reactions on to Otto if Otto registered that webhook with reactions turned on. If Otto doesn't see your Telegram reactions, select **Connect bot** again in the channel settings. A bot that polls for messages, such as in the desktop app, needs nothing.
 
 ## Commands
 
-These commands answer straight away, without using the model or costing anything.
+These commands prepare a report without starting a task. Your selected model writes the short summary in your conversation language, and that model call counts toward usage. The export is generated directly from your saved data.
 
 | Send      | To get                                                       |
 | --------- | ------------------------------------------------------------ |
@@ -112,6 +118,8 @@ These commands answer straight away, without using the model or costing anything
 | `/memory` | A short summary of what Otto remembers, with the full export |
 
 Telegram receives the PDF and the export as documents. On WhatsApp, open Otto to get them.
+
+Telegram also has task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-without-a-task-page).
 
 ## Related resources
 

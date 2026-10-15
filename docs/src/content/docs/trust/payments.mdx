@@ -36,16 +36,15 @@ When Otto has filled in the rest of the checkout, it prepares one payment reques
 | The submit button        | The one control Otto chose                                    |
 | Amount and currency      | As shown on the page                                          |
 
-The request expires after ten minutes. A newer message from you in the same conversation, a changed card or **Stop** also makes it unusable. A scheduled run or background task has its own session, so chatting with Otto never closes its payment request.
+The request stays open while its task waits for you. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with Otto never closes its payment request.
 
-In Otto web or desktop, Otto shows the checkout with the card fields hidden and asks, for example "Pay €7.99 at shop.example.com with Visa ••4242?". Reply with the card's security code by itself, such as `123` or `CVV 123`. Otto web sends it privately, so it never reaches the model or the chat history.
+In Otto web or desktop, Otto shows the checkout with the card fields hidden and asks, for example "Pay €7.99 at shop.example.com with Visa ••4242?". Reply with the card's security code by itself, such as `123` or `CVV 123`. Otto web sends it privately, so it never reaches the model or the chat history. While the payment waits, any other message with a 3- or 4-digit number, such as "card ending 4242", is refused instead of reaching the model.
 
 ### Approve with a yes
 
 Turn on **Do it for me** for a card and a yes is enough. Otto keeps the card's security code, entered in the card form or at your next payment. Each payment still needs your yes.
 
 - Turn it on in the card's form in Vault, or ask Otto. Otto then asks a yes/no question for that exact card. Turning it off takes effect at once.
-- It can be turned on only from a message in the Otto app, not from Telegram or WhatsApp.
 - Turning it off deletes the saved code.
 
 ### From Telegram or WhatsApp

@@ -14,6 +14,7 @@ import type { TrustView } from '../../shared/trust';
 import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
+import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
@@ -50,7 +51,7 @@ function verificationFailure(
   if (ambiguous)
     return 'More than one sign-in needs a code. Reply to the verification request you want to complete.';
   if (status === 'unavailable')
-    return 'That verification request is no longer available. Wait for a new code request.';
+    return 'The result could not be confirmed. Check the sign-in or payment before trying again.';
   return 'The verification code could not be confirmed. Check the sign-in request and try again.';
 }
 function scrollBehavior(): ScrollBehavior {
@@ -74,7 +75,7 @@ function TaskCards({
 }: {
   id: string;
   suggestions: TaskSuggestions;
-  status(task: SuggestedTask): 'idle' | 'working' | 'done';
+  status(task: SuggestedTask): 'idle' | 'working' | 'waiting' | 'done';
   disabled: boolean;
   onStart(task: SuggestedTask): void;
 }) {
@@ -132,6 +133,8 @@ function TaskCards({
                       <LoaderCircle size={16} className="spin" aria-hidden="true" />
                       On it…
                     </span>
+                  ) : state === 'waiting' ? (
+                    <span className="task-state">Waiting for you</span>
                   ) : (
                     <span className="task-state">
                       <span className="task-check" aria-hidden="true">
@@ -309,18 +312,9 @@ export function Chat({
     const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
     if (!turn) return persistedIds.has(sent.id) ? 'done' : 'working';
     if (turn.status === 'succeeded') return 'done';
+    if (turn.status === 'waiting') return 'waiting';
     return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
   }
-  const foregroundTurn = state.turns
-    .filter((turn) => turn.showTyping !== false)
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-  const handoffMessage = foregroundTurn
-    ? foregroundTurn.status === 'waiting'
-      ? visibleMessages.findLast(
-          (message) => message.role === 'assistant' && message.turnId === foregroundTurn.id,
-        )
-      : undefined
-    : visibleMessages.at(-1);
   const unseen = away
     ? persistedMessages.filter(
         (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
@@ -576,6 +570,8 @@ export function Chat({
             : item,
         ),
       );
+      if (verificationStatus === 'unavailable')
+        setError(verificationFailure(verificationStatus, false));
       void refresh().catch(() => {});
       return { sent: true };
     } catch (cause) {
@@ -642,7 +638,11 @@ export function Chat({
     const sentThread = threadId;
     setReturningHandoff(messageId);
     try {
-      const result = await send('Done, I finished in the browser.', []);
+      const result = await send(
+        'Done, I finished in the browser.',
+        [],
+        allMessages.find((message) => message.id === messageId) ?? null,
+      );
       if (!result.sent) throw new Error('Could not hand control back. Try Done again.');
     } finally {
       if (threadRef.current === sentThread) setReturningHandoff(null);
@@ -922,6 +922,22 @@ export function Chat({
                     }
                     onStart={(task) => void send(task.title, [], null)}
                   />
+                ) : state.tasks?.some((task) => task.messageId === message.id) ? (
+                  state.tasks
+                    ?.filter((task) => task.messageId === message.id)
+                    .map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onReply={() => {
+                          setReplyTo(
+                            allMessages.find((item) => item.id === task.questionMessageId) ??
+                              message,
+                          );
+                          composer.current?.focus();
+                        }}
+                      />
+                    ))
                 ) : (
                   <MessageBubble
                     message={message}
@@ -931,10 +947,9 @@ export function Chat({
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                     onHandoffDone={
                       message.id === returningHandoff ||
-                      (message.id === handoffMessage?.id &&
-                        message.role === 'assistant' &&
-                        !working &&
-                        !sending)
+                      (message.role === 'assistant' &&
+                        !sending &&
+                        state.turns.some((turn) => turn.handoffMessageId === message.id))
                         ? () => finishHandoff(message.id)
                         : undefined
                     }
@@ -1032,7 +1047,12 @@ export function Chat({
             replyTo={replyTo}
             clearReply={() => setReplyTo(null)}
             onSend={send}
-            onStop={working ? () => void stop() : undefined}
+            onStop={
+              working ||
+              state.tasks?.some((task) => ['queued', 'working', 'needs_you'].includes(task.status))
+                ? () => void stop()
+                : undefined
+            }
             stopping={stopping}
           />
         </div>

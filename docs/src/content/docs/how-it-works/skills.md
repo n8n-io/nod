@@ -63,7 +63,6 @@ The system prompt tells the model to pick a guide by the task's purpose, the use
 2. Add front matter with `name`, which must match the folder, and `description`, which says when the model must use the guide.
 3. In the body, write the task decisions, the failure cases and the evidence needed to check the result.
 4. For a long procedure that applies only in one case, add `references/<name>.md`. Link it from the guide and state the condition.
-5. Keep each file at or below 64 KiB.
 
 ```md title="src/runtime/skills/example-task/SKILL.md"
 ---
@@ -82,8 +81,7 @@ The library reads only its own folder in the server source tree. Pi's default sk
 
 - Hidden folders and folder symlinks are ignored.
 - Each read must stay inside the selected skill folder after the real path is resolved.
-- Only `SKILL.md` and named Markdown files directly inside `references` can be read.
-- Each file must be a regular file of 64 KiB or less.
+- Only regular Markdown files can be read.
 
 Skill content is trusted server guidance. Reading it doesn't mark the thread as exposed to outside content.
 

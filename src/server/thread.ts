@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
+import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId, runtimeMode } from './config.ts';
 import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
@@ -23,6 +24,7 @@ import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
+import type { ExecutionEvent } from '../shared/execution.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -35,11 +37,12 @@ const running = new Map<string, AbortController>();
 const inflight = new Set<Promise<void>>();
 let stopping = false;
 
-export type TurnSource = 'user' | 'schedule' | 'event' | 'resume';
+export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
 export interface TurnRef {
   threadId: string;
   turnId: string;
   browserId?: string;
+  taskMessageId?: string;
 }
 export interface EnqueueTurnOptions {
   source: Exclude<TurnSource, 'user'>;
@@ -74,6 +77,8 @@ type ConfirmAction = {
 
 export interface ThreadDependencies {
   analytics?: CaptureAnalytics;
+  present?: (threadId: string, input: { kind: 'interrupted' }) => Promise<string>;
+  observeTurn?: (turnId: string, operation: () => Promise<void>) => Promise<void>;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
   writeArtifact?: (
@@ -92,7 +97,9 @@ export interface ThreadDependencies {
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
-  task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
+  task?: (turn: TurnRef, input: unknown, sourceMessageId: string | null) => Promise<unknown>;
+  taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
+  taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
   startTurn?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
@@ -173,8 +180,9 @@ const messageIdInUse = () =>
 export async function withTurnLock<T>(
   turnId: string,
   operation: (client: PoolClient) => Promise<T>,
+  database?: PoolClient,
 ) {
-  return transaction(async (client) => {
+  const execute = async (client: PoolClient) => {
     const { rows } = await client.query(
       `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL FOR NO KEY UPDATE OF u`,
@@ -182,7 +190,8 @@ export async function withTurnLock<T>(
     );
     if (rows[0]?.status !== 'running') throw turnStopped();
     return operation(client);
-  }, pool);
+  };
+  return database ? execute(database) : transaction(execute, pool);
 }
 
 async function sendDrain(client: PoolClient | undefined, threadId: string) {
@@ -193,19 +202,32 @@ async function sendDrain(client: PoolClient | undefined, threadId: string) {
       ...(client
         ? { db: { executeSql: (sql: string, values: unknown[]) => client.query(sql, values) } }
         : {}),
-      retryLimit: 0,
-      expireInSeconds: 86400,
+      retryLimit: 2,
     },
   );
 }
 
-async function insertEvent(client: PoolClient, turnId: string, type: string, summary: string) {
-  await client.query('INSERT INTO turn_events(id,turn_id,type,summary) VALUES($1,$2,$3,$4)', [
-    randomUUID(),
-    turnId,
-    type.slice(0, 80),
-    summary.slice(0, 2000),
-  ]);
+async function insertEvent(
+  client: PoolClient,
+  turnId: string,
+  type: string,
+  summary: string,
+  event?: ExecutionEvent,
+) {
+  await client.query(
+    'INSERT INTO turn_events(id,turn_id,type,summary,run_id,parent_run_id,session_id,browser_id,call_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    [
+      randomUUID(),
+      turnId,
+      type,
+      summary,
+      event?.execution.runId ?? null,
+      event?.execution.parentRunId ?? null,
+      event?.execution.sessionId ?? null,
+      event?.execution.browserId ?? null,
+      event?.callId ?? null,
+    ],
+  );
 }
 
 async function assertReplyTarget(client: PoolClient, threadId: string, messageId?: string) {
@@ -217,19 +239,21 @@ async function assertReplyTarget(client: PoolClient, threadId: string, messageId
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);
 }
 
-async function insertAssistantMessage(
+export async function insertAssistantMessage(
   client: PoolClient,
-  turn: { threadId: string; turnId: string },
+  turn: TurnRef,
   text: string,
   attachments: Artifact[] = [],
   streamId?: string,
   replyToMessageId?: string,
 ) {
+  replyToMessageId ??= turn.taskMessageId;
   await assertReplyTarget(client, turn.threadId, replyToMessageId);
+  const id = randomUUID();
   await client.query(
     'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
     [
-      randomUUID(),
+      id,
       ownerId,
       'assistant',
       text,
@@ -240,6 +264,7 @@ async function insertAssistantMessage(
       replyToMessageId ?? null,
     ],
   );
+  return id;
 }
 
 export async function reply(
@@ -300,10 +325,12 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
   return turnId;
 }
 
-export function createUserMessageService(options: { confirmAction?: ConfirmAction } = {}) {
+export function createUserMessageService(
+  options: { confirmAction?: ConfirmAction; taskReply?: TaskReply } = {},
+) {
   return {
     submit: (text: string, attachments: Artifact[] = [], input: SubmitUserMessageOptions = {}) =>
-      submitUserMessage(text, attachments, input, options.confirmAction),
+      submitUserMessage(text, attachments, input, options.confirmAction, options.taskReply),
     answer: (text: string, input: SubmitUserMessageOptions = {}) =>
       readAnswer(text, false, input, options.confirmAction),
   };
@@ -325,11 +352,21 @@ async function readAnswer(
   });
 }
 
+type TaskReply = (
+  client: PoolClient,
+  threadId: string,
+  messageId: string,
+) => Promise<
+  | { id: string; session_id: string; background: boolean; record(turnId: string): Promise<void> }
+  | undefined
+>;
+
 export async function submitUserMessage(
   text: string,
   attachments: Artifact[] = [],
   options: SubmitUserMessageOptions = {},
   confirmAction?: ConfirmAction,
+  taskReply?: TaskReply,
 ): Promise<SubmitUserMessageResult> {
   validateSource(options.sourceId, options.channel);
   const channel = options.channel ?? 'web';
@@ -380,19 +417,34 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
-    if (confirmAction) {
-      const confirmed = await confirmAction.accept(client, {
-        ...confirmation,
-        threadId: thread.id,
-        answer,
-      });
-      if (confirmed) return confirmed;
-    }
+    const confirmed = await confirmAction?.accept(client, {
+      ...confirmation,
+      threadId: thread.id,
+      answer,
+    });
+    if (confirmed && 'turnId' in confirmed) return confirmed;
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
+    const taskTarget =
+      options.replyToMessageId && (await taskReply?.(client, thread.id, options.replyToMessageId));
+    const question =
+      taskTarget ||
+      confirmed?.waiting ||
+      (
+        await client.query(
+          `SELECT u.id,u.session_id,u.background FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND (u.channel=$3 OR $4::uuid IS NOT NULL) AND u.status='waiting' AND u.waiting_reason='question'
+         AND m.role='assistant' AND (($4::uuid IS NOT NULL AND m.id=$4) OR ($4::uuid IS NULL AND u.session_id=$2))
+         AND m.id=(SELECT q.id FROM messages q WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant' ORDER BY q.created_at DESC,q.id DESC LIMIT 1)
+         AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id
+           AND (n.created_at,n.id)>(u.created_at,u.id))
+       ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
+          [ownerId, thread.id, channel, options.replyToMessageId ?? null],
+        )
+      ).rows[0];
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10)`,
       [
         turnId,
         ownerId,
@@ -401,8 +453,12 @@ export async function submitUserMessage(
         messageId,
         options.prompt ?? text,
         channel,
+        question?.session_id ?? thread.id,
+        question?.background ?? false,
+        question?.id ?? null,
       ],
     );
+    if (taskTarget) await taskTarget.record(turnId);
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,reply_to_message_id) VALUES($1,$2,'user',$3,$4,$5,$6,$7)",
       [
@@ -431,11 +487,24 @@ export async function submitUserMessage(
   return result;
 }
 
-async function cancelTurns(client: PoolClient, threadId: string) {
+export async function cancelTurns(client: PoolClient, threadId: string, sessionId?: string) {
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND status IN ('queued','running','waiting') RETURNING id,session_id",
-    [threadId, ownerId],
+    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND status IN ('queued','running','waiting') RETURNING id,session_id",
+    [threadId, ownerId, sessionId ?? null],
   );
+  const taskIds = (
+    await client.query(
+      `SELECT DISTINCT to_jsonb(u)->>'task_id' AS id FROM turns u
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3)
+         AND to_jsonb(u)->>'task_id' IS NOT NULL`,
+      [threadId, ownerId, sessionId ?? null],
+    )
+  ).rows.map((row) => row.id);
+  if (taskIds.length)
+    await client.query(
+      "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND state='open'",
+      [taskIds, ownerId],
+    );
   return {
     ids: current.rows.map((row) => row.id as string),
     browsers: [
@@ -446,7 +515,7 @@ async function cancelTurns(client: PoolClient, threadId: string) {
   };
 }
 
-function abortTurns(ids: string[]) {
+export function abortTurns(ids: string[]) {
   for (const id of ids) running.get(id)?.abort();
 }
 
@@ -597,11 +666,8 @@ export async function initializeThreads() {
     console.error('The thread queue reported an error. Check database availability.'),
   );
   await boss.start();
-  await boss.createQueue(queue, { retryLimit: 0, expireInSeconds: 86400 });
+  await boss.createQueue(queue);
 }
-
-export const interruptedMessage =
-  'I was interrupted before I finished. Check anything I may have started outside before asking me to redo it, or say continue and I’ll pick up where I left off.';
 
 async function finishTurn(
   client: PoolClient,
@@ -642,27 +708,74 @@ function describeFailure(error: unknown) {
   return [...fields, ...frames].join(' | ');
 }
 
-async function interruptTurn(turnId: string) {
-  return transaction(async (client) => {
-    await lockThread(client);
+async function interruptTurn(turnId: string, present: ThreadDependencies['present']) {
+  const turn = await transaction(async (client) => {
+    const thread = await lockThread(client);
     const turn = (
-      await client.query(
-        "SELECT thread_id,background FROM turns WHERE id=$1 AND owner_id=$2 AND status='running' FOR UPDATE",
-        [turnId, ownerId],
+      await client.query<{
+        thread_id: string;
+        background: boolean;
+        task_id: string | null;
+        latest_user_message_id: string | null;
+      }>(
+        `${turnChainSql()}, origin AS (
+          SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
+          ORDER BY u.created_at,u.id LIMIT 1
+        ) SELECT u.thread_id,u.background,to_jsonb(u)->>'task_id' AS task_id,
+         (SELECT m.id FROM messages m LEFT JOIN turns author ON author.id=m.turn_id AND author.owner_id=m.owner_id
+          WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
+            AND (m.turn_id IN (SELECT id FROM chain)
+              OR (author.created_at,author.id)<(SELECT created_at,id FROM origin)
+              OR (author.id IS NULL AND m.created_at<(SELECT created_at FROM origin)))
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS latest_user_message_id
+         FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
+        [turnId, ownerId, thread.id],
       )
     ).rows[0];
-    if (!turn) return false;
+    if (!turn) return;
     await finishTurn(client, turnId, 'failed', { error: 'Interrupted.' });
-    if (!turn.background)
+    const task = turn.task_id
+      ? (
+          await client.query('SELECT message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
+            turn.task_id,
+            ownerId,
+          ])
+        ).rows[0]
+      : undefined;
+    return { ...turn, taskMessageId: task?.message_id as string | undefined };
+  }, pool);
+  if (!turn) return false;
+  if (turn.background && !turn.taskMessageId) return true;
+  const message = await present?.(turn.thread_id, { kind: 'interrupted' }).catch(() => undefined);
+  if (typeof message !== 'string' || !message.trim()) return true;
+  await transaction(async (client) => {
+    if ((await lockThread(client)).id !== turn.thread_id) return;
+    const current = await client.query(
+      `SELECT u.id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
+       AND status='failed' AND error='Interrupted.'
+       AND (($6::uuid IS NULL AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3 AND role='user'
+            ORDER BY created_at DESC,id DESC LIMIT 1) IS NOT DISTINCT FROM $5::uuid)
+         OR ($6::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))))
+       AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
+      [
+        turnId,
+        ownerId,
+        turn.thread_id,
+        `failure:${turnId}`,
+        turn.latest_user_message_id,
+        turn.task_id,
+      ],
+    );
+    if (current.rowCount)
       await insertAssistantMessage(
         client,
-        { threadId: turn.thread_id, turnId },
-        interruptedMessage,
+        { threadId: turn.thread_id, turnId, taskMessageId: turn.taskMessageId },
+        message.trim(),
         [],
         `failure:${turnId}`,
       );
-    return true;
   }, pool);
+  return true;
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -670,7 +783,7 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
     "SELECT id FROM turns WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
-  for (const turn of interrupted.rows) await interruptTurn(turn.id);
+  for (const turn of interrupted.rows) await interruptTurn(turn.id, dependencies.present);
   await sendDrain(undefined, (await activeThread()).id);
   const start = () =>
     boss.work<{ threadId: string }>(
@@ -722,8 +835,7 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
   return transaction(async (client) => {
     const thread = await lockThread(client);
     const { rows } = await client.query(
-      `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt,m.attachments,m.reply_to_message_id
-       FROM turns u LEFT JOIN messages m ON m.id=u.message_id AND m.owner_id=u.owner_id
+      `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt,to_jsonb(u)->>'task_id' AS task_id,(to_jsonb(u)->>'task_revision')::integer AS task_revision FROM turns u
        WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.session_id=$4 AND (u.status='queued' OR u.id=$3)
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
       [thread.id, ownerId, turnId, sessionId],
@@ -731,12 +843,7 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
     if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
     const queued = rows.filter((row) => row.status === 'queued');
     const end = queued.findIndex(
-      (row) =>
-        row.source !== 'user' ||
-        row.channel !== channel ||
-        !row.message_id ||
-        row.attachments.length ||
-        row.reply_to_message_id,
+      (row) => !['user', 'task'].includes(row.source) || row.channel !== channel || !row.message_id,
     );
     const taken = end < 0 ? queued : queued.slice(0, end);
     if (!taken.length) return [];
@@ -749,6 +856,14 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
       "UPDATE turns SET status='succeeded',finished_at=now() WHERE id=ANY($1::uuid[])",
       [ids],
     );
+    for (const row of taken) {
+      if (row.task_id)
+        await client.query(
+          `UPDATE tasks SET applied_revision=GREATEST(applied_revision,$2),
+           turn_id=CASE WHEN turn_id=ANY($4::uuid[]) THEN $5 ELSE turn_id END WHERE id=$1 AND owner_id=$3`,
+          [row.task_id, row.task_revision, ownerId, ids, turnId],
+        );
+    }
     return taken.map((row) => ({ id: row.message_id as string, text: row.prompt as string }));
   }, pool);
 }
@@ -756,7 +871,8 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
   for (const turn of await claimTurns(threadId)) {
-    const work = executeTurn(turn, dependencies)
+    const execute = () => executeTurn(turn, dependencies);
+    const work = (dependencies.observeTurn ? dependencies.observeTurn(turn.id, execute) : execute())
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
       .then(() => drainNext(threadId))
       .finally(refresh);
@@ -778,21 +894,42 @@ async function drainNext(threadId: string) {
 
 type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 
+async function loadMessage(messageId: string | null) {
+  const message = messageId
+    ? (
+        await pool.query(
+          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
+           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
+           WHERE s.id=$1 AND s.owner_id=$2`,
+          [messageId, ownerId],
+        )
+      ).rows[0]
+    : undefined;
+  const replyTo = message?.id
+    ? {
+        id: message.id as string,
+        role: message.role as string,
+        text: message.text as string,
+        attachments: message.reply_attachments,
+      }
+    : undefined;
+  return {
+    uploads: [
+      ...((message?.attachments ?? []) as StoredAttachment[]),
+      ...((replyTo?.attachments ?? []) as StoredAttachment[]),
+    ],
+    replyTo,
+  };
+}
+
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
   const [source, history, preferences, account, memory, connectedApps] = await Promise.all([
-    sourceMessageId
-      ? pool.query(
-          `SELECT s.attachments,r.id,r.role,r.text,r.attachments AS reply_attachments
-           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
-           WHERE s.id=$1 AND s.owner_id=$2`,
-          [sourceMessageId, ownerId],
-        )
-      : undefined,
+    loadMessage(sourceMessageId),
     pool.query(
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
-         WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
+         WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
        boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen,turn_id AS "turnId" FROM (
        SELECT m.role,m.text,m.created_at,m.id,m.reaction,m.attachments,m.turn_id,
@@ -814,24 +951,11 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     dependencies.memoryContext?.().catch(() => ''),
     turn.background ? dependencies.connectedApps?.() : undefined,
   ]);
-  const message = source?.rows[0];
-  const replyTo = message?.id
-    ? {
-        id: message.id as string,
-        role: message.role as string,
-        text: message.text as string,
-        attachments: message.reply_attachments,
-      }
-    : undefined;
   const preference = preferences.rows[0];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
-    uploads: [
-      ...((message?.attachments ?? []) as StoredAttachment[]),
-      ...((replyTo?.attachments ?? []) as StoredAttachment[]),
-    ],
-    replyTo,
+    ...source,
     history: history.rows,
     context: {
       timeZone,
@@ -856,7 +980,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const startedAt = Date.now();
   const providerChannel = String(turn.channel).split(':')[0];
   const analyticsProperties = {
-    source: turn.source as 'user' | 'schedule' | 'event' | 'resume',
+    source: turn.source as TurnSource,
     channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
       ? providerChannel
       : 'other') as 'web' | 'telegram' | 'whatsapp' | 'other',
@@ -864,6 +988,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   };
   let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
     'failed';
+  let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
@@ -902,8 +1027,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     await dependencies.startTurn?.(ref);
+    const taskContext = await dependencies.taskContext?.(ref);
+    if (taskContext?.messageId) ref.taskMessageId = taskContext.messageId;
+    const tasks = await dependencies.taskLedger?.(threadId);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
+    const workspaceReference = (path: string) =>
+      taskContext ? `/workspace/${threadId}/${path}` : path;
     const stage = async (
       id: string,
       fileName: string,
@@ -925,12 +1055,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const inline = async (action: string, result: unknown, operation = signal) => {
       operation.throwIfAborted();
-      const value = await inlineAppResult(result, (text) =>
-        stage(
-          randomUUID(),
-          `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
-          Buffer.from(text),
-          operation,
+      const value = await inlineAppResult(result, async (text) =>
+        workspaceReference(
+          await stage(
+            randomUUID(),
+            `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
+            Buffer.from(text),
+            operation,
+          ),
         ),
       );
       operation.throwIfAborted();
@@ -941,37 +1073,45 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
     let sourceMessageId = loaded.sourceMessageId;
-    const ids = loaded.uploads.map((item) => String(item?.id ?? '')).filter(Boolean);
-    const uploads = ids.length
-      ? (
-          await pool.query(
-            'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
-            [ownerId, ids],
-          )
-        ).rows
-      : [];
     const stagedFiles = new Map<string, string>();
-    const attachments: RuntimeContext['attachments'] = [];
-    for (const upload of uploads) {
-      const name = await stage(
-        upload.id,
-        upload.name,
-        await artifacts.readArtifact(upload.id),
-        signal,
-      );
-      stagedFiles.set(upload.id, name);
-      attachments.push({ path: join(workspacePath, name), mimeType: upload.mime_type });
-    }
+    const stageUploads = async (items: StoredAttachment[]) => {
+      const ids = items.map((item) => String(item?.id ?? '')).filter(Boolean);
+      const uploads = ids.length
+        ? (
+            await pool.query(
+              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+              [ownerId, ids],
+            )
+          ).rows
+        : [];
+      const staged: RuntimeContext['attachments'] = [];
+      for (const upload of uploads) {
+        const name = await stage(
+          upload.id,
+          upload.name,
+          await artifacts.readArtifact(upload.id),
+          signal,
+        );
+        stagedFiles.set(upload.id, name);
+        staged.push({
+          path: join(workspacePath, name),
+          mimeType: upload.mime_type,
+          workspaceFile: `/workspace/${threadId}/${name}`,
+        });
+      }
+      return staged;
+    };
+    const attachments = await stageUploads(loaded.uploads);
     const describe = ({ attachments, ...row }: Record<string, any>): any => {
       const files = (Array.isArray(attachments) ? attachments : []) as StoredAttachment[];
       return files.length
         ? {
             ...row,
             attachments: files.map((file) => ({
-              name: String(file?.name ?? '').slice(0, 200),
-              mimeType: String(file?.mimeType ?? '').slice(0, 100),
+              name: String(file?.name ?? ''),
+              mimeType: String(file?.mimeType ?? ''),
               ...(file?.id && stagedFiles.has(file.id)
-                ? { workspaceFile: stagedFiles.get(file.id) }
+                ? { workspaceFile: workspaceReference(stagedFiles.get(file.id)!) }
                 : {}),
             })),
           }
@@ -1000,16 +1140,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       const artifact = await attach(file.bytes, file.name, file.mimeType, '', !turn.background);
       return {
         ...artifact,
-        workspaceFile: await stage(
-          artifact.id,
-          artifact.name,
-          file.bytes,
-          turn.background ? signal : undefined,
+        workspaceFile: workspaceReference(
+          await stage(artifact.id, artifact.name, file.bytes, turn.background ? signal : undefined),
         ),
       };
     };
-    const emit = async (type: string, summary: string) => {
-      await current((client) => insertEvent(client, turnId, type, summary));
+    const emit = async (type: string, summary: string, event?: ExecutionEvent) => {
+      await current((client) => insertEvent(client, turnId, type, summary, event));
       refresh();
     };
     const { reactToMessage, connections, browserConnection } = dependencies;
@@ -1023,12 +1160,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const result = await dependencies.runTurn({
       threadId,
       turnId,
-      browserId: turn.session_id,
-      resumed: turn.source === 'resume',
+      sessionId: turn.session_id,
+      resumed: turn.source === 'resume' || Boolean(turn.parent_turn_id),
       prompt: turn.prompt,
       background: turn.background,
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
+      taskContext,
+      tasks,
       currentMessageId: loaded.sourceMessageId ?? undefined,
       replyTo: loaded.replyTo && describe(loaded.replyTo),
       history: loaded.history.map(describe),
@@ -1037,7 +1176,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       attachments,
       emit,
       reply: (text, streamId, replyToMessageId) => post(text, [], streamId, replyToMessageId),
-      waitForUser: (question) => post(question),
+      waitForUser: async (question, browserId) => {
+        await current(async (client) => {
+          await insertAssistantMessage(client, ref, question);
+          await client.query('UPDATE turns SET handoff_browser_id=$2 WHERE id=$1', [
+            turnId,
+            browserId ?? null,
+          ]);
+        });
+        refresh();
+      },
       delta: (text, streamId, done) => {
         if (!signal.aborted && !turn.background && turn.channel === 'web')
           delta({ ownerId, channel: turn.channel, threadId, turnId, text, streamId, done });
@@ -1085,8 +1233,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         });
         operation.throwIfAborted();
         if (result && typeof result === 'object' && appConfirmation in result) return result;
-        const saved = await saveIntegrationFiles(result, (file) =>
-          stage(randomUUID(), file.name, file.bytes, operation),
+        const saved = await saveIntegrationFiles(result, async (file) =>
+          workspaceReference(await stage(randomUUID(), file.name, file.bytes, operation)),
         );
         const value = await inline(action, saved.value, operation);
         return saved.images.length
@@ -1096,19 +1244,29 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       manage: fenced((action, args, admit) =>
         dependencies.manage(ref, action, args, { sourceMessageId, admit }),
       ),
-      task: dependencies.task && fenced((input) => dependencies.task!(ref, input)),
-      takeMessages: turn.background
-        ? undefined
-        : async () => {
-            if (signal.aborted) throw turnStopped();
-            if (await dependencies.spendingLimitReached?.()) return [];
-            const taken = await takeQueuedMessages(turnId, turn.session_id, turn.channel);
-            if (taken.length) {
-              sourceMessageId = taken.at(-1)!.id;
-              refresh();
-            }
-            return taken;
-          },
+      task: dependencies.task && fenced((input) => dependencies.task!(ref, input, sourceMessageId)),
+      takeMessages:
+        turn.background && !taskContext
+          ? undefined
+          : async () => {
+              if (signal.aborted) throw turnStopped();
+              if (await dependencies.spendingLimitReached?.()) return [];
+              const taken = await takeQueuedMessages(turnId, turn.session_id, turn.channel);
+              if (taken.length) {
+                sourceMessageId = taken.at(-1)!.id;
+                refresh();
+              }
+              const messages = [];
+              for (const message of taken) {
+                const { uploads, replyTo } = await loadMessage(message.id);
+                messages.push({
+                  ...message,
+                  attachments: await stageUploads(uploads),
+                  ...(replyTo ? { replyTo: describe(replyTo) } : {}),
+                });
+              }
+              return messages;
+            },
       createAudio: async (text) => {
         const audio = await fenced(() => dependencies.speech.synthesize(text, signal))();
         return attach(audio.bytes, audio.fileName, audio.mimeType, 'Audio generated by AI.');
@@ -1116,13 +1274,31 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       publish: async (path, name) => {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
-        const artifact = await current(() => artifacts.publishArtifact(threadId, path, name, read));
+        const artifact = await current((client) =>
+          artifacts.publishArtifact(
+            threadId,
+            taskContext
+              ? posix.resolve(`/workspace/${threadId}/tasks/${taskContext.id}`, path)
+              : path,
+            name,
+            read,
+            client,
+          ),
+        );
         await post('', [artifact]);
         return artifact;
       },
       readWorkspaceFile:
         dependencies.readArtifact &&
-        fenced((path, maxBytes) => dependencies.readArtifact!(threadId, path, maxBytes)),
+        fenced((path, maxBytes) =>
+          dependencies.readArtifact!(
+            threadId,
+            taskContext
+              ? posix.resolve(`/workspace/${threadId}/tasks/${taskContext.id}`, path)
+              : path,
+            maxBytes,
+          ),
+        ),
       publishScreenshot: (bytes, name) => {
         const fileName =
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
@@ -1132,6 +1308,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     });
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
+    if (taskContext && result.status === 'succeeded' && result.result) await post(result.result);
     await current((client) =>
       result.status === 'succeeded'
         ? finishTurn(client, turnId, 'succeeded')
@@ -1145,6 +1322,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       if (!signal.aborted) throw error;
     });
     outcome = signal.aborted ? 'cancelled' : result.status;
+    if (outcome === 'waiting_credentials') waitingReason = 'credentials';
+    else if (outcome === 'waiting_user') waitingReason = result.waitingFor ?? 'question';
   } catch (error) {
     if (stopping) {
       outcome = 'interrupted';
@@ -1155,7 +1334,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
       );
-    else if (await interruptTurn(turnId))
+    else if (await interruptTurn(turnId, dependencies.present))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     dependencies.analytics?.({
@@ -1164,6 +1343,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ...analyticsProperties,
         outcome,
         duration_ms: Math.max(0, Date.now() - startedAt),
+        queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
+        ...(waitingReason ? { waiting_reason: waitingReason } : {}),
       },
     });
     running.delete(turnId);

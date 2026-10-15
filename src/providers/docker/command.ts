@@ -3,6 +3,7 @@ import {
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { serviceEnvironment } from '../process.ts';
 import type { ConnectedCli } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -22,7 +23,8 @@ def head(path,size):
  with open(path,'rb') as file: return file.read(size)
 try:
  shutil.rmtree(prefix,ignore_errors=True)
- os.makedirs(prefix+'/bin',0o700)
+ os.mkdir(prefix,0o700)
+ os.mkdir(prefix+'/bin',0o700)
  if 'npm' in source: run('npm','install','--global','--prefix',prefix,'--no-audit','--no-fund','--no-update-notifier',source['npm'])
  elif 'pypi' in source: run('pipx','install',source['pypi'],PIPX_HOME=prefix+'/pipx',PIPX_BIN_DIR=prefix+'/bin',PIPX_MAN_DIR=prefix+'/man')
  else:
@@ -64,8 +66,11 @@ except Exception as error:
 
 const cliInstallTimeoutMs = 600_000;
 
-export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil
-line=sys.stdin.buffer.raw.readline(1048577)
+export const connectedUser = (cli: ConnectedCli) =>
+  20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
+
+export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
+line=sys.stdin.buffer.raw.readline()
 home=None
 def sealed(path):
  path=os.path.realpath(path)
@@ -77,21 +82,21 @@ def sealed(path):
   part=os.path.dirname(part)
 try:
  r=json.loads(line)
- if len(line)>1048576 or not isinstance(r['args'],list) or not all(isinstance(v,str) for v in r['args']): raise ValueError()
+ if not isinstance(r['args'],list) or not all(isinstance(v,str) for v in r['args']): raise ValueError()
  env=r.get('environment',{})
- if not isinstance(env,dict) or len(env)>1 or not all(isinstance(k,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)',k) and isinstance(v,str) and 8<=len(v)<=8192 for k,v in env.items()): raise ValueError()
+ if not isinstance(env,dict) or not all(isinstance(k,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}(?:TOKEN|KEY|SECRET|PASSWORD|_ID|_SID)',k) and isinstance(v,str) and v for k,v in env.items()): raise ValueError()
  limit=int(r['maxBytes'])
  timeout=float(r['timeoutMs'])/1000
- if not 1<=limit<=16777216 or not 0<timeout<=3600: raise ValueError()
+ if limit<1 or not 0<timeout: raise ValueError()
  cli=r.get('cli')
  if cli is None:
   if not r['args'] or env: raise ValueError()
   steps=[(r['args'],os.environ.copy(),timeout)]
  else:
   install=float(r['installTimeoutMs'])/1000
-  if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install<=3600: raise ValueError()
-  os.makedirs('cli',0o700,exist_ok=True)
-  prefix=sealed('cli')+'/'+cli['id']
+  if not re.fullmatch(r'[0-9a-f-]{36}',cli['id']) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}',cli['command']) or not env or not 0<install: raise ValueError()
+  prefix=sealed('.')+'/otto-cli-'+cli['id']
+  os.close(os.open(prefix+'.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600))
   home=tempfile.mkdtemp(prefix='otto-cli-')
   system='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   base={'HOME':home,'XDG_CONFIG_HOME':home+'/.config','LANG':'C.UTF-8'}
@@ -156,7 +161,9 @@ def group_running():
 for index,(args,child_env,seconds) in enumerate(steps):
  last=index==len(steps)-1
  try:
-  if last and cli is not None: sealed(args[0])
+  if cli is not None:
+   if any(os.lstat(path).st_uid==os.getuid() for path in glob.glob(os.path.dirname(prefix)+'/otto-cli-*') if not path.startswith(prefix)): raise ValueError()
+   if last: sealed(args[0])
  except (OSError,ValueError):
   output('stderr',b'The connected CLI install is not sealed. Propose it again.\\n')
   finish({'type':'exit','code':126,'reason':None})
@@ -241,9 +248,9 @@ export async function runWorkspaceCommand(options: {
           'exec',
           '-i',
           '--user',
-          options.cli ? 'otto-connected' : 'node',
+          options.cli ? `${connectedUser(options.cli)}:1002` : 'node',
           '--workdir',
-          options.cli ? '/home/otto-connected' : `/workspace/${id}`,
+          options.cli ? '/var/tmp' : `/workspace/${id}`,
           options.container,
           '/usr/bin/python3',
           '-I',
@@ -273,8 +280,8 @@ export function runSupervisedCommand(options: {
   const transportGraceMs = options.transportGraceMs ?? 0;
   if (!Number.isInteger(transportGraceMs) || transportGraceMs < 0 || transportGraceMs > 300_000)
     throw new Error('The workspace transport grace period is invalid.');
-  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 30_000, 3_600_000));
-  const maxBytes = Math.max(1, Math.min(options.maxBytes ?? 16 * 1024 * 1024, 16 * 1024 * 1024));
+  const timeoutMs = Math.max(1, options.timeoutMs ?? 30_000);
+  const maxBytes = Math.max(1, options.maxBytes ?? 16 * 1024 * 1024);
   const request =
     JSON.stringify({
       args: options.args,
@@ -308,7 +315,10 @@ export function runSupervisedCommand(options: {
     let drain: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(
       () => cancel(),
-      transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
+      Math.min(
+        transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
+        2 ** 31 - 1,
+      ),
     );
     const cleanup = () => {
       clearTimeout(timer);

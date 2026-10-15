@@ -23,7 +23,6 @@ export function createContainerBrowserComputer(options: {
   container?: string;
   spawn?: BrowserBridgeLauncher;
   timeoutMs?: number;
-  openTimeoutMs?: number;
   drainTimeoutMs?: number;
 }): Computer {
   const container = options.container ?? 'otto-browser';
@@ -33,7 +32,6 @@ export function createContainerBrowserComputer(options: {
   return createBridgeComputer({
     namespace: browserNamespace(options.dataRoot),
     timeoutMs: options.timeoutMs,
-    openTimeoutMs: options.openTimeoutMs,
     drainTimeoutMs: options.drainTimeoutMs,
     launch: () =>
       launch(

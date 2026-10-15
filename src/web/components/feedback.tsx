@@ -884,6 +884,11 @@ function FeedbackDraftDialog({
                 </div>
               </div>
             )}
+            {context?.enabled && context.recipient && (
+              <p className="feedback-send-notice">
+                Sends your feedback and selected attachments to {context.recipient}.
+              </p>
+            )}
             {(contextError || (context && !context.enabled)) && (
               <div className="feedback-send-notice" role={contextError ? 'alert' : 'status'}>
                 <span>{contextError || 'Sending isn’t enabled in this build.'}</span>
@@ -960,12 +965,12 @@ function FeedbackDraftDialog({
             <footer className="feedback-footer">
               <div className="feedback-footer-actions">
                 {development && copyButton}
-                {hydrated && hasDraft(draft) && !pendingId && !confirmDiscard && (
+                {hydrated && hasDraft(draft) && !confirmDiscard && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={frozen}
+                    disabled={!!busy || discarding}
                     onClick={() => setConfirmDiscard(true)}
                   >
                     Discard draft

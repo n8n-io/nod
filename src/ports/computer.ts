@@ -51,6 +51,7 @@ export interface BrowserAction {
   key?: string;
   load?: 'load' | 'domcontentloaded' | 'networkidle';
   direction?: 'up' | 'down';
+  amount?: number;
   waitMs?: number;
   offset?: number;
   timeZone?: string;
@@ -60,9 +61,7 @@ export interface BrowserObservation {
   text: string;
   url: string;
 }
-export const browserDownloadBytes = 12 * 1024 * 1024;
-export const browserUploadBytes = 12 * 1024 * 1024;
-export const browserRequestBytes = Math.ceil(browserUploadBytes / 3) * 4 + 8192;
+export const browserRequestBytes = 16 * 1024 * 1024;
 export interface BrowserDownloadInput {
   selector?: string;
   url?: string;
@@ -149,7 +148,7 @@ export interface Computer {
   ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
   checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string): Promise<BrowserPage>;
-  hold(threadId: string, until: number | null): Promise<void>;
+  hold(threadId: string, held: boolean): Promise<void>;
   close(threadId: string): Promise<void>;
   discard(threadId: string): Promise<void>;
   dispose(): Promise<void>;

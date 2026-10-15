@@ -22,11 +22,24 @@ import { firstInstruction, steeredInstruction, systemContext, systemPrompt } fro
 import { currentUserTime } from './time-context.ts';
 import { ottoTools } from './tools.ts';
 import type { Turn } from './turn.ts';
+import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
+import type { Task } from '../shared/contracts.ts';
+import { taskSummary } from '../shared/task-status.ts';
 
-const holdMs = 30 * 60_000;
-const imageBytes = 5 * 1024 * 1024;
-const ownBrowserTools = new Set(['sign_in', 'pay', 'browser_session']);
+const imageBytes = (5 * 1024 * 1024 * 3) / 4;
+const inlineChars = 40_000;
+const imageBudget = 16 * 1024 * 1024;
+const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const parentTools = new Set([
+  'sign_in',
+  'pay',
+  'browser_session',
+  'ask_user',
+  'send_message',
+  'manage_apps',
+  'task',
+]);
 const parallelTools = new Set([
   'delegate',
   'share_file',
@@ -34,6 +47,8 @@ const parallelTools = new Set([
   'skills',
   'apps',
   'manage_personal_context',
+  'task',
+  'react_to_message',
 ]);
 const orderedTools = new Set(['apps', 'manage_personal_context']);
 const admissions = new AsyncLocalStorage<{
@@ -99,7 +114,15 @@ export function createAgentRuntime(dependencies: {
     const lifecycle = new AbortController();
     const context = { ...input, signal: AbortSignal.any([input.signal, lifecycle.signal]) };
     const { signal, threadId } = context;
-    const browserId = context.browserId ?? context.threadId;
+    const sessionId = threadIdentity(context.sessionId);
+    const browserId = sessionId;
+    const execution: ExecutionScope = {
+      threadId,
+      sessionId,
+      turnId: context.turnId,
+      runId: context.turnId,
+      browserId,
+    };
     let finished!: () => void;
     const done = new Promise<void>((resolve) => {
       finished = resolve;
@@ -113,6 +136,7 @@ export function createAgentRuntime(dependencies: {
     let stopped = false;
     let modelFailed = false;
     let modelIncomplete = false;
+    let completed = false;
     let lastReply = '';
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
@@ -142,6 +166,8 @@ export function createAgentRuntime(dependencies: {
     activeTurns.set(context.turnId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
 
+    let taskResult = '';
+    let reportedTaskResult = '';
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -159,10 +185,11 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
       if (text && reason !== 'credentials') question = text;
-      if (browsed) await computer.hold(browserId, Date.now() + holdMs).catch(() => {});
+      if (browsed) await computer.hold(browserId, true).catch(() => {});
       stopped = true;
       if (post && text) {
-        if (context.waitForUser) await context.waitForUser(text);
+        if (context.waitForUser)
+          await context.waitForUser(text, /\]\(\/browser\)/.test(text) ? browserId : undefined);
         else await deliverReply(text);
       }
       abortSession();
@@ -209,6 +236,16 @@ export function createAgentRuntime(dependencies: {
       streamSubmitted = false;
     };
 
+    const spill = async (text: string) => {
+      if (text.length <= inlineChars) return text;
+      const name = `${randomUUID()}-error.txt`;
+      try {
+        await dependencies.workspace.writeArtifact(threadId, name, Buffer.from(text), signal);
+        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${context.taskContext ? `/workspace/${threadId}/${name}` : name}. Read it there.`;
+      } catch {
+        return text.slice(0, inlineChars);
+      }
+    };
     const assertActive = () => {
       signal.throwIfAborted();
       if (stopped || status !== 'succeeded') throw new Error('This execution segment has stopped.');
@@ -217,7 +254,7 @@ export function createAgentRuntime(dependencies: {
       name: string,
       params: unknown,
       execute: () => Promise<unknown>,
-      { nested = false } = {},
+      { nested = false, execution: source = execution } = {},
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
@@ -230,6 +267,7 @@ export function createAgentRuntime(dependencies: {
           error?: string;
         }) =>
           observe({
+            execution: source,
             type: 'tool_end',
             id,
             name,
@@ -238,6 +276,7 @@ export function createAgentRuntime(dependencies: {
             durationMs: performance.now() - started,
           });
         observe({
+          execution: source,
           type: 'tool_start',
           id,
           name,
@@ -251,11 +290,12 @@ export function createAgentRuntime(dependencies: {
           assertActive();
           await pendingReplies;
           assertActive();
-          await context.emit('tool_start', label);
+          await context.emit('tool_start', label, { execution: source, callId: id });
           assertActive();
           const output = await execute();
           signal.throwIfAborted();
-          if (!stopped) await context.emit('tool_complete', label);
+          if (!stopped)
+            await context.emit('tool_complete', label, { execution: source, callId: id });
           result = isToolResult(output) ? output : textResult(output);
           if (
             !nested &&
@@ -265,12 +305,17 @@ export function createAgentRuntime(dependencies: {
             result = delimit(name, result);
           end({ status: 'succeeded', output });
         } catch (error) {
-          if (!stopped) await context.emit('tool_failed', label).catch(() => {});
+          if (!stopped)
+            await context
+              .emit('tool_failed', label, { execution: source, callId: id })
+              .catch(() => {});
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'
-            : (dependencies.redactError ?? String)(
-                browserFailure ?? (error instanceof Error ? error.message : String(error)),
+            : await spill(
+                (dependencies.redactError ?? String)(
+                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
+                ),
               );
           end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
@@ -295,7 +340,17 @@ export function createAgentRuntime(dependencies: {
     try {
       signal.throwIfAborted();
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
-      const workspace = dependencies.workspace.open(context);
+      const rootWorkspace = dependencies.workspace.open(context);
+      let workspace = rootWorkspace;
+      if (context.taskContext) {
+        const path = `${rootWorkspace.path}/tasks/${context.taskContext.id}`;
+        const created = await rootWorkspace.exec(
+          `mkdir -p '${path}/drafts' '${path}/outputs' '${rootWorkspace.path}/shared'`,
+          { signal },
+        );
+        if (created.exitCode) throw new Error('The task folder could not be created.');
+        workspace = { ...rootWorkspace, path };
+      }
       const browser: Computer = {
         ...computer,
         act: (id, action, actionSignal) =>
@@ -330,25 +385,67 @@ export function createAgentRuntime(dependencies: {
           parameters,
           parallel: parallelTools.has(name),
           execute: async (params) => {
+            assertActive();
             if (browserTools.has(name) || handsOverBrowser(name, params)) await take();
+            assertActive();
             const admitted = orderedTools.has(name) ? admission() : undefined;
             const run = () =>
-              guard(name, params, async () => {
-                if (!Value.Check(parameters, params))
-                  throw new Error('The tool arguments do not match its schema.');
-                if (handsOverBrowser(name, params))
-                  await computer.currentPage(turn.browserId).catch(() => {
-                    throw new Error('Open the page in your browser before handing it to the user.');
-                  });
-                return execute(params);
-              });
+              guard(
+                name,
+                params,
+                async () => {
+                  if (!Value.Check(parameters, params)) {
+                    const error = Value.Errors(parameters, params).First();
+                    throw new Error(
+                      `Invalid ${name} arguments${error ? ` at ${error.path || '/'}: ${error.message}` : ''}.`,
+                    );
+                  }
+                  if (handsOverBrowser(name, params))
+                    await computer.currentPage(turn.execution.browserId).catch(() => {
+                      throw new Error(
+                        'Open the page in your browser before handing it to the user.',
+                      );
+                    });
+                  return execute(params);
+                },
+                { execution: turn.execution },
+              );
             return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
           },
         }));
-      const system = systemPrompt(workspace, dependencies.skills);
+      const system = systemPrompt(
+        workspace,
+        dependencies.skills,
+        context.taskContext,
+        context.background,
+      );
+      const task = context.task;
       const shared = {
         context: {
           ...context,
+          task: task
+            ? async (input: unknown) => {
+                const result = await task(input);
+                const action = (input as { action?: string }).action;
+                if (
+                  context.channel === 'telegram' &&
+                  (action === 'update' || action === 'finish') &&
+                  result &&
+                  typeof result === 'object' &&
+                  'id' in result &&
+                  'status' in result
+                ) {
+                  const updated = result as Task;
+                  await deliverReply(
+                    taskSummary(updated),
+                    undefined,
+                    updated.messageId ?? undefined,
+                  );
+                  if (action === 'finish') reportedTaskResult = updated.result.trim();
+                }
+                return result;
+              }
+            : undefined,
           integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
             context.integration(action, args, callSignal, admissions.getStore()?.admit),
           manage: (action: string, args: Record<string, unknown>) =>
@@ -360,66 +457,75 @@ export function createAgentRuntime(dependencies: {
         pause,
         confirm,
       };
-      let running = 0;
-      const queued: Array<() => void> = [];
       const delegate = async (title: string, instruction: string) => {
-        if (running < 2) running += 1;
-        else
-          await new Promise<void>((resolve, reject) => {
-            const start = () => {
-              signal.removeEventListener('abort', stop);
-              resolve();
-            };
-            const stop = () => {
-              queued.splice(queued.indexOf(start), 1);
-              reject(signal.reason);
-            };
-            queued.push(start);
-            signal.addEventListener('abort', stop, { once: true });
-          });
-        try {
-          return await subagent(title, instruction);
-        } finally {
-          const next = queued.shift();
-          if (next) next();
-          else running -= 1;
-        }
-      };
-      const subagent = async (title: string, instruction: string) => {
-        signal.throwIfAborted();
-        const childBrowser = `${context.turnId}-${randomUUID().slice(0, 8)}`;
+        assertActive();
+        const runId = randomUUID();
+        const childBrowser = runId;
+        const source: ExecutionScope = {
+          ...execution,
+          runId,
+          parentRunId: execution.runId,
+          browserId: childBrowser,
+        };
+        const childPath = `${workspace.path}/.otto/runs/${runId}`;
+        if ((await workspace.exec(`mkdir -p -- '${childPath}'`, { signal })).exitCode)
+          throw new Error('The subagent workspace could not be opened.');
+        assertActive();
         let browsed = false;
         let answer = '';
-        const child = await agent.open({
-          threadId,
-          turnId: context.turnId,
-          systemPrompt: system,
-          systemContext: systemContext(context),
-          tools: bind({ ...shared, browserId: childBrowser }, async () => {
-            browsed = true;
-          }).filter((tool) => !ownBrowserTools.has(tool.name)),
-          workspace,
-          timeZone: context.timeZone,
-          background: true,
-          runTool: guard,
-          shouldStop: () => stopped,
-          onEvent: (event) => {
-            if (event.type === 'final') answer = event.text;
-          },
-        });
-        children.add(child);
+        let failed = false;
+        let incomplete = false;
+        let completed = false;
+        await context.emit('agent_start', title, { execution: source });
+        let child: AgentSession | undefined;
         try {
-          signal.throwIfAborted();
+          child = await agent.open({
+            ...source,
+            ephemeral: true,
+            systemPrompt: system,
+            systemContext: systemContext(context),
+            tools: bind({ ...shared, execution: source }, async () => {
+              browsed = true;
+            }).filter((tool) => !parentTools.has(tool.name)),
+            workspace: { ...workspace, path: childPath },
+            timeZone: context.timeZone,
+            runTool: (name, params, run, options) =>
+              guard(name, params, run, { ...options, execution: source }),
+            shouldStop: () => stopped,
+            onEvent: (event) => {
+              if (event.type === 'final') answer = event.text;
+              if (event.type === 'error') failed = true;
+              if (event.type === 'message_end' && event.status === 'incomplete') incomplete = true;
+              if (
+                event.type === 'final' ||
+                (event.type === 'message_end' && event.status === 'succeeded')
+              )
+                failed = incomplete = false;
+            },
+          });
+          children.add(child);
+          assertActive();
           await child.prompt(
-            `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nDo this part completely with your tools. Your final answer goes back to the agent that delegated it, not to the owner, so include every result it needs.`,
+            `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nYour working directory is ${childPath}. Write new files there. The shared workspace is ${workspace.path}. Give complete file paths in your answer. Return any question or browser blocker to the parent agent. Do not hand your browser to the owner. Your final answer goes back to the parent agent, so include every result it needs.`,
             [],
           );
+          if (failed) throw new Error('The subagent model request failed.');
+          if (incomplete) throw new Error('The subagent response was incomplete.');
+          assertActive();
+          completed = true;
         } finally {
-          children.delete(child);
+          if (child) children.delete(child);
           await Promise.resolve()
-            .then(() => child.dispose())
+            .then(() => child?.dispose())
             .catch(() => {});
           if (browsed) await computer.discard(childBrowser).catch(() => {});
+          await context
+            .emit(
+              completed ? 'agent_complete' : stopped ? 'agent_cancelled' : 'agent_failed',
+              title,
+              { execution: source },
+            )
+            .catch(() => {});
         }
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
@@ -433,29 +539,82 @@ export function createAgentRuntime(dependencies: {
         return 'Queued. It goes out as its own message right after your reply; do not repeat it.';
       };
       const tools = bind(
-        { ...shared, browserId, delegate, ...(context.background ? {} : { followUp }) },
+        {
+          ...shared,
+          execution,
+          delegate,
+          ...(!context.background || context.taskContext ? { followUp } : {}),
+        },
         async () => {
+          if (!browsed) await computer.hold(browserId, false).catch(() => {});
           browsed = true;
         },
       );
       const instruct = (instruction: string) =>
         `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
+      const root = resolve(context.workspacePath);
+      const inline = async (
+        attachments: RuntimeContext['attachments'],
+        budget = { left: imageBudget },
+      ) => {
+        const images: AgentImage[] = [];
+        const omitted = new Set<string>();
+        for (const attachment of attachments) {
+          if (!imageTypes.has(attachment.mimeType)) continue;
+          const path = resolve(attachment.path);
+          if (!path.startsWith(root + sep)) continue;
+          const limit = Math.min(imageBytes, budget.left);
+          try {
+            const bytes =
+              session?.readsImages !== false && limit > 0
+                ? Buffer.from(
+                    await dependencies.workspace.readArtifact(
+                      threadId,
+                      relative(root, path),
+                      limit,
+                      'attachment',
+                    ),
+                  )
+                : undefined;
+            signal.throwIfAborted();
+            if (!bytes || bytes.length > limit) omitted.add(attachment.path);
+            else {
+              budget.left -= bytes.length;
+              images.push({
+                type: 'image',
+                data: bytes.toString('base64'),
+                mimeType: attachment.mimeType,
+              });
+            }
+          } catch {
+            signal.throwIfAborted();
+            omitted.add(attachment.path);
+          }
+        }
+        return { images, omitted };
+      };
+      await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
-        threadId,
-        turnId: context.turnId,
+        ...execution,
         systemPrompt: system,
         systemContext: systemContext(context),
         tools,
         workspace,
         timeZone: context.timeZone,
-        background: Boolean(context.background),
         runTool: guard,
         shouldStop: () => stopped,
         nextMessages:
           takeMessages &&
-          (async () =>
-            (await takeMessages()).map((message) => instruct(steeredInstruction(message)))),
+          (async () => {
+            const budget = { left: imageBudget };
+            const messages = [];
+            for (const message of await takeMessages()) {
+              const { images, omitted } = await inline(message.attachments, budget);
+              messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
+            }
+            return messages;
+          }),
         onEvent: (event) => {
           if (event.type === 'message_start') {
             completeStream();
@@ -469,7 +628,10 @@ export function createAgentRuntime(dependencies: {
             );
           }
           if (event.type === 'error') modelFailed = true;
-          if (event.type === 'final') modelFailed = modelIncomplete = false;
+          if (event.type === 'final') {
+            modelFailed = modelIncomplete = false;
+            if (context.taskContext) taskResult = event.text;
+          }
           if (stopped || context.background) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();
@@ -482,36 +644,8 @@ export function createAgentRuntime(dependencies: {
       session = await opening;
       signal.throwIfAborted();
       const resumed = session.resumed;
-      const images: AgentImage[] = [];
-      const omittedImages = new Set<string>();
-      const root = resolve(context.workspacePath);
-      for (const attachment of context.attachments) {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(attachment.mimeType)) continue;
-        const path = resolve(attachment.path);
-        if (!path.startsWith(root + sep)) continue;
-        try {
-          const bytes = Buffer.from(
-            await dependencies.workspace.readArtifact(
-              threadId,
-              relative(root, path),
-              imageBytes,
-              'attachment',
-            ),
-          );
-          signal.throwIfAborted();
-          if (bytes.length > imageBytes) omittedImages.add(attachment.path);
-          else
-            images.push({
-              type: 'image',
-              data: bytes.toString('base64'),
-              mimeType: attachment.mimeType,
-            });
-        } catch {
-          signal.throwIfAborted();
-          omittedImages.add(attachment.path);
-        }
-      }
-      await session!.prompt(instruct(firstInstruction(context, resumed, omittedImages)), images);
+      const { images, omitted } = await inline(context.attachments);
+      await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
       await pendingReplies;
       signal.throwIfAborted();
       if (modelFailed)
@@ -519,13 +653,31 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
-      if (status === 'succeeded')
+      let result =
+        context.taskContext &&
+        taskResult &&
+        taskResult.trim() !== lastReply &&
+        taskResult.trim() !== reportedTaskResult
+          ? taskResult
+          : undefined;
+      if (status === 'succeeded' && followUps.length) {
+        if (result) {
+          await deliverReply(result);
+          result = undefined;
+        }
         for (const text of followUps) {
           await wait(1200, undefined, { signal });
           await deliverReply(text);
         }
+      }
       waitingForUser = status !== 'succeeded';
-      return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
+      completed = true;
+      return {
+        status,
+        ...(result ? { result } : {}),
+        ...(waitingFor ? { waitingFor } : {}),
+        ...(question ? { question } : {}),
+      };
     } finally {
       stopped = true;
       completeStream();
@@ -539,7 +691,14 @@ export function createAgentRuntime(dependencies: {
       } finally {
         await Promise.allSettled([...activeToolCalls]);
         activeTurns.delete(context.turnId);
-        if (browserId !== threadId && !waitingForUser && (browsed || context.resumed))
+        await context
+          .emit(
+            waitingForUser ? 'agent_waiting' : !completed ? 'agent_failed' : 'agent_complete',
+            'Main agent',
+            { execution },
+          )
+          .catch(() => {});
+        if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
           await computer.discard(browserId).catch(() => {});
         finished();
       }

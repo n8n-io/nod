@@ -43,7 +43,8 @@ export function hostedEnvironment(
     invalid.add('LLM_PROVIDER');
   if (
     values.OTTO_MAX_USERS &&
-    (!/^[1-9][0-9]*$/.test(values.OTTO_MAX_USERS) || Number(values.OTTO_MAX_USERS) > 400)
+    (!/^[1-9][0-9]*$/.test(values.OTTO_MAX_USERS) ||
+      !Number.isSafeInteger(Number(values.OTTO_MAX_USERS)))
   )
     invalid.add('OTTO_MAX_USERS');
   try {

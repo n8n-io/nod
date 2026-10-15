@@ -89,7 +89,7 @@ export interface Stack {
   bossSchema: string;
   sessionRoot: string;
   observations: Array<{ turnId: string; event: Observation }>;
-  prompts: Array<{ turnId: string; instruction: string }>;
+  prompts: Array<{ turnId: string; sessionId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
   event(summary: string): Promise<string>;

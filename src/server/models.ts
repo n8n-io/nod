@@ -477,11 +477,6 @@ export function createModelService(options: {
           (attempt.controller.signal.aborted || ['waiting', 'completing'].includes(attempt.status)))
       )
         await cancel(state);
-    if (
-      [...attempts.values()].filter((attempt) => ['waiting', 'completing'].includes(attempt.status))
-        .length >= 5
-    )
-      throw new ConnectionError('Complete a pending sign-in before starting another.');
     if (closed) throw new ConnectionError('Model connections have stopped.');
     const controller = new AbortController();
     pendingControllers.add(controller);

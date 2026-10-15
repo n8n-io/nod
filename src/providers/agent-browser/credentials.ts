@@ -10,8 +10,7 @@ export function credentialFields(input: CredentialInput): CredentialField[] {
   const kind = input.kind ?? 'password';
   const value =
     kind === 'identifier' ? input.username : kind === 'otp' ? input.code : input.password;
-  if (!value || value.length > (kind === 'otp' ? 100 : 8192) || (input.username?.length ?? 0) > 320)
-    throw new Error('A valid credential value is required.');
+  if (!value) throw new Error('A valid credential value is required.');
   const target = (kind === 'identifier' ? input.usernameSelector : input.passwordSelector) ?? '';
   const characters = Array.from(value);
   if (

@@ -30,7 +30,7 @@ type Row = {
 
 export type VaultAccessVerdict =
   | { ok: true; reason: VaultActivityReason }
-  | { ok: false; question: string; args: Record<string, unknown> };
+  | { ok: false; details: Record<string, unknown>; args: Record<string, unknown> };
 
 const cursor = z.object({ at: z.iso.datetime(), id: z.uuid() });
 
@@ -65,7 +65,6 @@ export async function createVaultAccess(
     UPDATE vault_activity SET action='card' WHERE action='paid';
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
     DROP TABLE IF EXISTS vault_grants, vault_browser, vault_browser_holder;
-    DELETE FROM vault_activity WHERE at<now()-interval '90 days';
   `);
 
   async function root(turn: TurnRef, database: Pool | PoolClient = pool): Promise<Chain> {
@@ -194,16 +193,15 @@ export async function createVaultAccess(
     if (!verdict.confirm)
       return { ok: true, reason: work.source === 'schedule' ? 'schedule' : 'asked' };
     await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
-    const site = host(origin);
     return {
       ok: false,
       args,
-      question:
-        target.kind === 'session'
-          ? `Use your saved session on ${site}?`
-          : target.account
-            ? `Sign in to ${site} as ${target.account}?`
-            : `Sign in to ${site}?`,
+      details: {
+        kind: target.kind,
+        origin,
+        ...(target.account ? { account: target.account } : {}),
+        reason: verdict.reason,
+      },
     };
   }
 

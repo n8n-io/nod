@@ -5,6 +5,9 @@
 .chat-page .message-user .message-row {
   justify-content: flex-end;
 }
+.chat-page .message-assistant .message-row {
+  flex-wrap: wrap;
+}
 .chat-page .message-user .message-tools {
   order: -1;
 }
@@ -596,11 +599,11 @@
   max-width: min(82%, 640px);
 }
 .chat-page .message-bubble.has-reaction {
-  margin-bottom: 10px;
+  margin-bottom: 16px;
 }
 .chat-page .reaction-pin {
   position: absolute;
-  bottom: -0.5em;
+  bottom: -0.65em;
   padding: 0;
   border: 0;
   background: none;
@@ -651,10 +654,10 @@
   animation: reaction-pin-in 340ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .chat-page .message-user .reaction-pin {
-  left: 10px;
+  left: 12px;
 }
 .chat-page .message-assistant .reaction-pin {
-  right: 10px;
+  right: 12px;
   cursor: pointer;
   transition:
     translate 160ms cubic-bezier(0.34, 1.56, 0.64, 1),

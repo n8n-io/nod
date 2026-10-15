@@ -49,16 +49,16 @@ Keys set here become server-managed connections. They stay in server memory and 
 
 ## Apps and Composio
 
-| Variable                           | What it does                                                                                                           | Default   |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------- |
-| `COMPOSIO_API_KEY`                 | Your Composio project key for Gmail, Calendar, Slack and other apps. You can paste it in onboarding instead.           | Empty     |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key then also needs **Triggers → Read and write**. | Empty     |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                    | Automatic |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                          | Automatic |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                             | Automatic |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                            | Automatic |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic |
+| Variable                           | What it does                                                                                                                                                     | Default   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `COMPOSIO_API_KEY`                 | Your Composio project key for Gmail, Calendar, Slack and other apps. You can paste it in onboarding instead.                                                     | Empty     |
+| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. In hosted mode only the gateway holds it. The key then also needs **Triggers → Read and write**. | Empty     |
+| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                                                              | Automatic |
+| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                                                                    | Automatic |
+| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                                                                       | Automatic |
+| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                                                                      | Automatic |
+| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                                                                        | Automatic |
+| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                                                              | Automatic |
 
 "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. See [Apps](/connect/apps/) for the key permissions.
 
@@ -94,13 +94,19 @@ Set up Telegram and WhatsApp in **Channels** instead. The app checks the account
 
 ## Analytics and feedback
 
-| Variable                     | What it does                                                                                                                       | Default                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `OTTO_ANALYTICS_ENABLED`     | `false` turns off usage data and recordings for everyone. `true` turns them on in development too. Each owner still has to opt in. | On with `pnpm start`, off with `pnpm run dev` |
-| `OTTO_ANALYTICS_ENVIRONMENT` | The label on events: `production` or `development`.                                                                                | Follows how you started Otto                  |
-| `OTTO_FEEDBACK_URL`          | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                          |
+| Variable                           | What it does                                                                                                                       | Default                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `OTTO_ANALYTICS_ENABLED`           | `false` turns off usage data and recordings for everyone. `true` turns them on in development too. Each owner still has to opt in. | On with `pnpm start`, off with `pnpm run dev`       |
+| `OTTO_ANALYTICS_ENVIRONMENT`       | The label on events: `production` or `development`.                                                                                | Follows how you started Otto                        |
+| `OTTO_FEEDBACK_ENABLED`            | `false` disables feedback submissions and status checks, regardless of the configured collector.                                   | Enabled                                             |
+| `OTTO_FEEDBACK_URL`                | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                                |
+| `OTTO_FEEDBACK_RECEIPT_URL_PREFIX` | Required with a custom collector. An HTTPS issue collection URL ending in `/`; receipts must belong to that origin and path.       | n8n's Linear `LAB` issues for the default collector |
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
+
+Analytics go to the Otto team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/otto/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false`, then restart Otto. These settings apply to source installs, the desktop process environment and hosted `GATEWAY_ENV` (including tenant runtimes). They do not disable model, app or update traffic.
+
+For an operator-owned collector, set `OTTO_FEEDBACK_URL=https://feedback.example.com/intake` and `OTTO_FEEDBACK_RECEIPT_URL_PREFIX=https://issues.example.com/projects/otto/issues/`. A submitted receipt can then link to `https://issues.example.com/projects/otto/issues/123`, but not another project or origin. Receipt URLs cannot contain credentials, queries, fragments or encoded path separators. The collector uses Otto's existing feedback envelope and receipt contract; setting an endpoint alone does not create a compatible service. `OTTO_FEEDBACK_TOKEN`, when set, supplies the server-only `x-otto-feedback-token` header. It never goes to the browser or sandbox.
 
 ## Computers
 
@@ -121,7 +127,7 @@ A hosted deployment sets these in its `GATEWAY_ENV` secret. A source install lea
 | `OTTO_PUBLIC_URL`                                                | The public HTTPS origin.                                                   | `http://localhost:<PORT>` |
 | `OTTO_MASTER_KEY`                                                | The key Otto derives each user's keys from. Treat it as recovery material. | None                      |
 | `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in.                                                            | None                      |
-| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits, up to 400.                        | `8`                       |
+| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits.                                   | `8`                       |
 | `OTTO_DEVELOPER_IDS`                                             | Comma-separated account IDs that can use the developer browser routes.     | Empty                     |
 | `OTTO_PRIVACY_NOTICE_FILE`                                       | A Markdown privacy notice served at `/privacy`.                            | No notice                 |
 | `OBJECT_STORAGE_PROVIDER`, `OBJECT_STORAGE_ENDPOINT`             | Where files and checkpoints are stored.                                    | None                      |

@@ -6,6 +6,7 @@ export interface AuthenticatedSession {
   user: AccountUser;
   avatarSource?: string;
   givenName?: string;
+  cookies?: string[];
 }
 
 export interface AuthenticationAvatar {
@@ -16,7 +17,7 @@ export interface AuthenticationAvatar {
 export interface AuthenticationProvider {
   readonly configured: boolean;
   initialize(): Promise<void>;
-  session(headers: Headers): Promise<AuthenticatedSession | null>;
+  session(headers: Headers, refresh?: boolean): Promise<AuthenticatedSession | null>;
   signIn(headers: Headers): Promise<Response>;
   signOut(headers: Headers): Promise<Response>;
   callback(request: Request): Promise<Response>;

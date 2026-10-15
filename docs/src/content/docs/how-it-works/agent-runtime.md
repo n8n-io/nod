@@ -11,28 +11,40 @@ The short version: `src/runtime` runs each turn in a Pi session. Every tool call
 
 ## Pi sessions
 
-Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) can run any number of turns per thread at once, each in its own Pi session:
+Pi is the agent harness Otto runs on. It keeps the transcript, calls the model and runs tools. Otto's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/otto/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
-- Background turns each get a new in-memory session.
+- Background sessions save their transcript too. A reply or secure form continues that session.
+- Subagents use temporary in-memory Pi sessions and run in parallel.
 
-Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets only the messages that background turns sent since the previous conversation turn started.
+Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets new background messages since its previous turn started.
+
+## Execution records and cost
+
+Each Pi execution has one scope: thread ID, session ID, turn ID, run ID, parent run ID, and browser ID.
+The main run uses the turn ID. Each subagent gets a new run ID and uses it as its browser ID.
+Tools and model usage keep this scope. `turn_events` records execution and tool activity without saving raw tool arguments or results.
+
+`model_usage` is the only cost ledger. Each model request reports one usage ID, including subagent, compaction, review, and memory requests.
+Repeated reports with the same ID create no extra charge record. Parent runs never add child costs again.
+All totals come from these ledger rows. Missing prices stay unknown.
 
 ## Keeping the context small
 
-| Mechanism          | Rule                                                                                                                                                                                      |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller.                                                                                       |
-| Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps. The saved session keeps every screenshot. |
-| Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                 |
+| Mechanism          | Rule                                                                                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller.                                                                                                                        |
+| Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps.                                                                            |
+| Attached images    | PNG, JPEG and WebP images of up to 3.75 MiB each, and 16 MiB together per message, reach the model with the message. Others, and every image for a model that can't read images, stay workspace files marked as not shown. |
+| Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                                                  |
 
 ## Hosted transcript checkpoints
 
-In hosted mode, the conversation transcript lives in private object storage. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
+In hosted mode, each session transcript lives in private object storage. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
 
 - **When:** before each tool, at turn boundaries and before completion.
 - **How:** each checkpoint uploads only new entries as an immutable part. A small manifest lists the parts and is written with compare-and-swap, so a stale writer can't overwrite a newer session.
-- **Size:** every 64 parts, the session is rewritten as chunks of at most 8 MiB, up to 64 MiB in total.
+- **Size:** every 64 parts, or when the next part would pass 64 MiB, the session is rewritten as chunks of at most 8 MiB with only the newest four screenshots. 64 MiB is the most a session can hold.
 - **Rebase:** a restored session over 8 MiB is rebased to what the model sees: the latest compaction, later messages and only the newest screenshots.
 
 In both modes, when a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."
@@ -41,29 +53,29 @@ In both modes, when a loaded session ends with tool calls that have no result, e
 
 Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/tools.ts).
 
-| Tool                                                                | What it does                                                                                                                        |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                         |
-| `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/).                                                         |
-| `send_message`                                                      | Sends a message now. The only delivery in background turns.                                                                         |
-| `follow_up`                                                         | In a chat turn, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job. |
-| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                     |
-| `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.           |
-| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.                                               |
-| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                         |
-| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                                                           |
-| `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                                                                  |
-| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                    |
-| `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                       |
-| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                             |
-| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                     |
-| `task`                                                              | Keeps a progress card on the Tasks page. It schedules and grants nothing.                                                           |
-| `share_file`                                                        | Sends a workspace file to you.                                                                                                      |
-| `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                         |
-| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                 |
-| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                     |
+| Tool                                                                | What it does                                                                                                                                 |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                  |
+| `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/).                                                                  |
+| `send_message`                                                      | Sends a message now. The only delivery in background turns.                                                                                  |
+| `follow_up`                                                         | In a chat or saved task, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job. |
+| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                              |
+| `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                    |
+| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.                                                        |
+| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                  |
+| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                                                                    |
+| `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                                                                           |
+| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                             |
+| `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                |
+| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
+| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                              |
+| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops a task. It grants no permission.                                 |
+| `share_file`                                                        | Sends a workspace file to you.                                                                                                               |
+| `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
+| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
+| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                              |
 
-The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
+The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
 
 ## The turn guard
 

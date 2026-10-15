@@ -1,4 +1,5 @@
 import type { ProviderUsageEvent } from './provider-usage.ts';
+import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
 import type { CredentialKind, WorkspaceSession } from './computer.ts';
 import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
@@ -18,7 +19,7 @@ export interface ModelUsageObservation {
   costSource: 'sdk_estimate' | 'unavailable';
   createdAt: string;
 }
-export type RuntimeObservation =
+export type RuntimeObservation = (
   | { type: 'tool_start'; id: string; name: string; input: unknown; startedAt: string }
   | {
       type: 'tool_end';
@@ -29,7 +30,8 @@ export type RuntimeObservation =
       error?: string;
       finishedAt: string;
       durationMs: number;
-    };
+    }
+) & { execution?: ExecutionScope };
 
 export type BrowserConnectionRequest =
   | {
@@ -56,7 +58,7 @@ export interface RuntimeAccount {
 export interface RuntimeContext {
   threadId: string;
   turnId: string;
-  browserId?: string;
+  sessionId: string;
   resumed?: boolean;
   prompt: string;
   background?: boolean;
@@ -80,10 +82,19 @@ export interface RuntimeContext {
     turnId?: string | null;
   }>;
   memory?: string;
+  taskContext?: {
+    id: string;
+    title: string;
+    brief: string;
+    doneWhen: string;
+    revision: number;
+    messageId?: string | null;
+  };
+  tasks?: import('../shared/contracts.ts').Task[];
   workspacePath: string;
   signal: AbortSignal;
-  attachments: Array<{ path: string; mimeType: string }>;
-  emit(type: string, summary: string): Promise<void>;
+  attachments: Array<{ path: string; mimeType: string; workspaceFile?: string }>;
+  emit(type: string, summary: string, event?: ExecutionEvent): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(
     messageId: string,
@@ -98,7 +109,7 @@ export interface RuntimeContext {
     connectionId?: string,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
-  waitForUser?(question: string): Promise<void>;
+  waitForUser?(question: string, browserId?: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
   readWorkspaceFile?(path: string, maxBytes: number): Promise<Uint8Array>;
@@ -137,12 +148,20 @@ export interface RuntimeContext {
     admit?: (asks: boolean) => Promise<void>,
   ): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
-  takeMessages?(): Promise<Array<{ id: string; text: string }>>;
+  takeMessages?(): Promise<
+    Array<{
+      id: string;
+      text: string;
+      replyTo?: RuntimeContext['replyTo'];
+      attachments: RuntimeContext['attachments'];
+    }>
+  >;
 }
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
   waitingFor?: 'question' | 'approval' | 'credentials';
   question?: string;
+  result?: string;
 }
 export interface AgentImage {
   type: 'image';
@@ -176,15 +195,13 @@ export type AgentEvent =
   | { type: 'final'; text: string }
   | ModelUsageObservation
   | { type: 'error' };
-export interface AgentSessionOptions {
-  threadId: string;
-  turnId: string;
+export interface AgentSessionOptions extends ExecutionScope {
+  ephemeral?: boolean;
   systemPrompt: string;
   systemContext?: string;
   tools: AgentTool[];
   workspace: WorkspaceSession;
   timeZone?: string;
-  background?: boolean;
   runTool(
     name: string,
     params: unknown,
@@ -193,10 +210,11 @@ export interface AgentSessionOptions {
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;
-  nextMessages?(): Promise<string[]>;
+  nextMessages?(): Promise<Array<{ text: string; images: AgentImage[] }>>;
 }
 export interface AgentSession {
   resumed: boolean;
+  readsImages?: boolean;
   prompt(text: string, images: AgentImage[]): Promise<void>;
   abort(): void | Promise<void>;
   dispose(): void | Promise<void>;

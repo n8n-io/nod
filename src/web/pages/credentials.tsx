@@ -120,7 +120,6 @@ function CredentialForm({ id }: { id: string }) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [retried, setRetried] = useState(false);
-  const [now, setNow] = useState(Date.now());
   const [enterNew, setEnterNew] = useState(false);
   const [loginName, setLoginName] = useState<string>();
   useEffect(() => {
@@ -157,7 +156,6 @@ function CredentialForm({ id }: { id: string }) {
     const controller = new AbortController();
     if (window.location.search || window.location.hash)
       window.history.replaceState(null, '', window.location.pathname);
-    const timer = window.setInterval(() => setNow(Date.now()), 15000);
     void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(activeId)}`, {
       signal: controller.signal,
       cache: 'no-store',
@@ -175,14 +173,10 @@ function CredentialForm({ id }: { id: string }) {
       controller.abort();
       action.current?.abort();
       action.current = null;
-      window.clearInterval(timer);
     };
   }, [activeId]);
   const uncertain = request?.status === 'uncertain';
-  const expired =
-    uncertain ||
-    request?.status === 'expired' ||
-    (request && new Date(request.expiresAt).getTime() < now);
+  const expired = uncertain || request?.status === 'expired';
   const filled = request?.status === 'filled';
   const fields = request?.fields ?? [];
   const username =

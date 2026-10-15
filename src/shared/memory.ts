@@ -1,4 +1,5 @@
 export const memoryAreas = ['about', 'preferences', 'people', 'routines', 'lessons'] as const;
+export const noteChars = 4000;
 
 export type MemoryArea = (typeof memoryAreas)[number];
 export type MemoryStatus = 'stated' | 'observed' | 'tentative';
@@ -17,7 +18,6 @@ export interface MemoryNote {
   area: MemoryArea;
   text: string;
   status: MemoryStatus;
-  inMind: boolean;
   updated: string;
   edited: string | null;
   expires: string | null;

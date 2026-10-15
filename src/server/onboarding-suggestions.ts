@@ -10,6 +10,7 @@ import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
 import { verificationMail } from './integration-result.ts';
 import { lockThread } from './thread.ts';
+import { unsafe } from './memory-tree.ts';
 
 type Source = SuggestedTask['source'];
 type PreparedSuggestions = { intro: string; tasks: Array<Omit<SuggestedTask, 'id'>> };
@@ -24,15 +25,18 @@ const reply = z.object({
     .length(3),
 });
 
-function fit(text: string, max: number, more = '') {
-  const value = text
+const plain = (text: string) =>
+  text
     .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+function fit(text: string, max: number) {
+  const value = plain(text);
   if (value.length <= max) return value;
   const cut = value.slice(0, max + 1);
   const space = cut.lastIndexOf(' ');
-  return `${(space > max / 2 ? cut.slice(0, space) : value.slice(0, max)).replace(/[\s,;:-]+$/, '')}${more}`;
+  return (space > max / 2 ? cut.slice(0, space) : value.slice(0, max)).replace(/[\s,;:-]+$/, '');
 }
 
 function decoded(text: string) {
@@ -45,21 +49,18 @@ function decoded(text: string) {
 }
 
 function readableInbox(items: InboxSnippet[]) {
-  return items.slice(0, 15).flatMap((item) => {
+  return items.flatMap((item) => {
     const subject = decoded(item.subject);
     const snippet = decoded(item.snippet);
-    const text = `${subject}\n${snippet}`;
-    if (verificationMail(text)) return [];
-    const clean = (value: string, max: number) =>
-      fit(value.replace(/\b\d{6,}\b/g, '[number]'), max);
-    return [{ subject: clean(subject, 120), snippet: clean(snippet, 160) }];
+    if (verificationMail(`${subject}\n${snippet}`) || unsafe(subject, snippet)) return [];
+    return [{ subject: plain(subject), snippet: plain(snippet) }];
   });
 }
 
 function checkedSuggestions(raw: unknown, sources: readonly Source[]) {
   const parsed = reply.safeParse(raw);
   if (!parsed.success) return;
-  const intro = fit(parsed.data.intro, 200, '…');
+  const intro = plain(parsed.data.intro);
   const tasks = parsed.data.tasks.map((task) => ({
     title: fit(task.title, 60).replace(/[.!]+$/, ''),
     source: task.source,

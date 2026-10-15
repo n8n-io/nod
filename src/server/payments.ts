@@ -17,6 +17,14 @@ import { credentialOrigin } from './vault.ts';
 
 export class PaymentError extends Error {}
 
+type PaymentProposal = {
+  details: Record<string, unknown>;
+  image: Uint8Array;
+} & (
+  | { paymentId: string; question?: never; url?: never }
+  | { paymentId?: never; question: string; url?: string }
+);
+
 type Row = {
   id: string;
   thread_id: string;
@@ -95,6 +103,7 @@ export async function createPayments(
     uses: Awaited<ReturnType<typeof createVaultUses>>;
     local: boolean;
     inOtto(turn: TurnRef): Promise<boolean>;
+    present(turn: TurnRef, input: { kind: string; [key: string]: unknown }): Promise<string>;
     page(threadId: string): Promise<BrowserPage>;
     destinations(
       threadId: string,
@@ -128,14 +137,14 @@ export async function createPayments(
       origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, card_id text NOT NULL,
       fields jsonb NOT NULL, document text NOT NULL, destinations jsonb NOT NULL,
       keep_notice boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
-      created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
+      created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE vault_payments DROP COLUMN IF EXISTS flagged;
+    ALTER TABLE vault_payments DROP COLUMN IF EXISTS expires_at;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS submit_selector text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS card_version text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS browser_id text;
     CREATE INDEX IF NOT EXISTS vault_payments_owner ON vault_payments(owner_id,created_at DESC);
-    DELETE FROM vault_payments WHERE created_at<now()-interval '90 days';
   `);
   await pool.query(
     "UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND status='pending' AND card_version IS NULL",
@@ -211,7 +220,7 @@ export async function createPayments(
           );
           if (!active.rowCount) throw new PaymentError('This payment task is no longer active.');
           const claimed = await client.query(
-            "UPDATE vault_payments SET status='consumed' WHERE id=$1 AND owner_id=$2 AND status='pending' AND expires_at>now() RETURNING id",
+            "UPDATE vault_payments SET status='consumed' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id",
             [row.id, ownerId],
           );
           if (!claimed.rowCount) throw new PaymentError('This payment request is no longer open.');
@@ -283,16 +292,13 @@ export async function createPayments(
          JOIN threads th ON th.id=p.thread_id AND th.owner_id=p.owner_id
          WHERE p.id=$1 AND p.owner_id=$2 AND th.archived_at IS NULL AND ${currentTurnSql}
          AND ($3::uuid IS NULL OR p.thread_id=$3) AND ($4::uuid IS NULL OR p.turn_id=$4)
-         AND p.status='pending' AND p.expires_at>now()`,
+         AND p.status='pending'`,
         [id, ownerId, scope.threadId ?? null, scope.turnId ?? null],
       )
     ).rows[0];
   }
 
-  async function request(
-    turn: TurnRef,
-    raw: unknown,
-  ): Promise<{ question: string; image: Uint8Array; paymentId?: string; url?: string }> {
+  async function request(turn: TurnRef, raw: unknown): Promise<PaymentProposal> {
     const parsed = input.parse(raw);
     if (!options.local)
       throw new PaymentError(
@@ -326,65 +332,78 @@ export async function createPayments(
       submit_selector: parsed.submitSelector ?? null,
       keep_notice: card.choice === true && !card.doItForMe,
     };
-    await pool.query(
-      `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
-       AND status='pending'`,
-      [ownerId, turn.threadId, turn.turnId],
-    );
-    await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,browser_id,expires_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now()+interval '10 minutes')`,
-      [
-        row.id,
-        ownerId,
-        row.thread_id,
-        row.turn_id,
-        origin,
-        minor,
-        currency,
-        card.id,
-        JSON.stringify(row.fields),
-        document,
-        JSON.stringify(destinations),
-        row.keep_notice,
-        row.submit_selector,
-        row.card_version,
-        row.browser_id,
-      ],
-    );
-    await record(turn, {
-      action: 'asked',
+    const details = {
+      kind: 'payment',
       origin,
-      reason: 'payment',
-      itemKind: 'card',
-      itemId: card.id,
-      payment: payment(row),
-    });
-    const elsewhere = [...new Set(Object.values(destinations))]
-      .filter((item) => item !== origin)
-      .map(site);
-    const question = [
-      `Pay ${money(row)} at ${site(origin)} with ${cardName(card)}?`,
-      elsewhere.length ? `Card details go to ${elsewhere.join(' and ')}.` : '',
-    ];
-    if (!inOtto)
-      return {
-        image,
-        question: question.filter(Boolean).join(' '),
-        url: `/payments/${row.id}`,
-      };
-    if (card.doItForMe)
-      return { paymentId: row.id, question: question.filter(Boolean).join(' '), image };
-    return {
-      image,
-      question: [
-        ...question,
-        'Reply with its security code.',
-        row.keep_notice ? 'Otto will keep it, so next time a yes is enough.' : '',
-      ]
-        .filter(Boolean)
-        .join(' '),
+      amount: (minor / 10 ** places).toFixed(places),
+      amountMinor: minor,
+      currency,
+      card: { brand: card.brand, last4: card.last4 },
+      destinations: [...new Set(Object.values(destinations))],
+      keepCode: row.keep_notice,
+      requires: !inOtto ? 'desktop_private_form' : card.doItForMe ? 'approval' : 'security_code',
     };
+    let result: PaymentProposal;
+    if (inOtto && card.doItForMe) result = { paymentId: row.id, details, image };
+    else {
+      const question = await options.present({ ...turn }, structuredClone(details));
+      if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
+        throw new PaymentError('The payment model did not produce a valid question.');
+      result = {
+        details,
+        image,
+        question,
+        ...(!inOtto ? { url: `/payments/${row.id}` } : {}),
+      };
+    }
+    await uses.transaction(async (client) => {
+      const active = await client.query(
+        `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+         WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3 AND th.archived_at IS NULL
+           AND ${currentTurnSql} FOR NO KEY UPDATE OF u`,
+        [row.turn_id, ownerId, row.thread_id],
+      );
+      if (!active.rowCount) throw new PaymentError('This payment task is no longer active.');
+      await client.query(
+        `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
+       AND status='pending'`,
+        [ownerId, turn.threadId, turn.turnId],
+      );
+      await client.query(
+        `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,browser_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          row.id,
+          ownerId,
+          row.thread_id,
+          row.turn_id,
+          origin,
+          minor,
+          currency,
+          card.id,
+          JSON.stringify(row.fields),
+          document,
+          JSON.stringify(destinations),
+          row.keep_notice,
+          row.submit_selector,
+          row.card_version,
+          row.browser_id,
+        ],
+      );
+      await record(
+        turn,
+        {
+          action: 'asked',
+          origin,
+          reason: 'payment',
+          itemKind: 'card',
+          itemId: card.id,
+          payment: payment(row),
+        },
+        client,
+      );
+    });
+    return result;
   }
 
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
@@ -424,14 +443,15 @@ export async function createPayments(
       .strict()
       .parse(raw);
     if (!options.local) throw new PaymentError('Hosted Otto does not pay with saved cards.');
-    if (parsed.doItForMe && !(await options.inOtto(turn)))
-      throw new PaymentError('Do it for me can be turned on only from a message in the Otto app.');
     const card = await choose(parsed.card);
     return {
       args: { card: card.id, doItForMe: parsed.doItForMe },
-      question: parsed.doItForMe
-        ? `Let Otto keep the security code for ${cardName(card)}, so a yes in Otto is enough for future payments?`
-        : `Turn off Do it for me for ${cardName(card)} and delete its saved security code?`,
+      details: {
+        kind: 'payment_setting',
+        card: { brand: card.brand, last4: card.last4 },
+        doItForMe: parsed.doItForMe,
+        keepCode: parsed.doItForMe,
+      },
     };
   }
 

@@ -1,7 +1,11 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import { ChannelSetupFailure, type ChannelSetupVerifier } from '../../ports/channel-settings.ts';
+import {
+  ChannelSetupFailure,
+  telegramSecret,
+  type ChannelSetupVerifier,
+} from '../../ports/channel-settings.ts';
 
 const webhookUrl = z.url().max(2048).optional();
 const telegramInput = z
@@ -189,7 +193,7 @@ export function createChatSdkSetupVerifier(
         const webhookEndpoint = endpoint(value.webhookUrl, provider);
         const secret = z
           .string()
-          .regex(/^[A-Za-z0-9_-]{32,256}$/)
+          .regex(telegramSecret)
           .parse(environment.TELEGRAM_WEBHOOK_SECRET_TOKEN);
         if (!webhookEndpoint) throw new ChannelSetupFailure('invalid_input');
         const registered = await json(`https://api.telegram.org/bot${value.botToken}/setWebhook`, {

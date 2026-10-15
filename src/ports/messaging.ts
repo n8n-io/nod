@@ -11,7 +11,8 @@ export interface MessagingChannel {
 export interface MessagingAttachment {
   name: string;
   mimeType: string;
-  bytes: Uint8Array;
+  size: number;
+  read(): Promise<Uint8Array>;
 }
 
 export interface InboundMessage {
@@ -21,6 +22,7 @@ export interface InboundMessage {
   messageId: string;
   threadId: string;
   text: string;
+  replyToMessageId?: string;
   sentAt: Date;
 }
 
@@ -75,13 +77,16 @@ export interface MessagingTransport {
     threadId: string;
     text: string;
     attachments?: MessagingAttachment[];
-  }): Promise<{ id: string }>;
+    replyToMessageId?: string;
+    attachmentFailure?: (names: string[]) => Promise<string | undefined>;
+  }): Promise<{ id: string; ids?: string[] }>;
   react?(input: {
     channelId: string;
     accountId: string;
     threadId: string;
     messageId: string;
     reaction: string | null;
+    signal?: AbortSignal;
   }): Promise<'sent' | 'unsupported'>;
   close(): Promise<void>;
 }

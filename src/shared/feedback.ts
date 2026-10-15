@@ -65,6 +65,7 @@ export function feedbackAttachmentMimeType(file: {
 
 export interface FeedbackContext {
   enabled: boolean;
+  recipient: string | null;
   appVersion: string | null;
   appRelease: string | null;
   development: boolean;

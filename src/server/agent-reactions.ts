@@ -16,7 +16,11 @@ export function createAgentReactionService(dependencies: {
   pool: Pool;
   ownerId: string;
   refresh(): void;
-  deliver?(messageId: string, reaction: string | null): Promise<'sent' | 'unsupported' | 'absent'>;
+  deliver?(
+    messageId: string,
+    reaction: string | null,
+    signal?: AbortSignal,
+  ): Promise<'sent' | 'unsupported' | 'absent'>;
 }) {
   async function react(input: AgentReactionInput): Promise<AgentReactionResult> {
     input.signal?.throwIfAborted();
@@ -87,23 +91,32 @@ export function createAgentReactionService(dependencies: {
     if (result.status === 'updated' && dependencies.deliver) {
       const shown = input.reaction === null ? null : reactionEmoji(input.reaction);
       const delivered = await dependencies
-        .deliver(input.messageId, shown)
-        .catch(() => 'unsupported' as const);
-      if (delivered === 'unsupported' && shown !== null) {
+        .deliver(input.messageId, shown, input.signal)
+        .catch(() => 'failed' as const);
+      if (delivered === 'failed' && shown !== null) {
+        result = { status: 'skipped', reason: 'delivery_failed' };
+      } else if (delivered === 'unsupported' && shown !== null) {
         await dependencies.pool.query(
           'UPDATE messages SET assistant_reaction=NULL,assistant_reacted_at=NULL WHERE id=$1 AND owner_id=$3 AND assistant_reaction=$2',
           [input.messageId, shown, dependencies.ownerId],
         );
         result = { status: 'skipped', reason: 'unsupported' };
-      } else if (delivered === 'unsupported' && removed) {
+      } else if ((delivered === 'unsupported' || delivered === 'failed') && removed) {
         await dependencies.pool.query(
           'UPDATE messages SET assistant_reaction=$2 WHERE id=$1 AND owner_id=$3 AND assistant_reaction IS NULL',
           [input.messageId, removed, dependencies.ownerId],
         );
-        result = { status: 'skipped', reason: 'unsupported' };
+        result = {
+          status: 'skipped',
+          reason: delivered === 'failed' ? 'delivery_failed' : 'unsupported',
+        };
       }
     }
-    if (result.status === 'updated') dependencies.refresh();
+    if (
+      result.status === 'updated' ||
+      (result.status === 'skipped' && result.reason === 'delivery_failed')
+    )
+      dependencies.refresh();
     return result;
   }
   return { react };

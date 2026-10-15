@@ -3,6 +3,7 @@ import { ArrowUp, Mic } from 'lucide-react';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
 import {
+  interviewAnswerChars,
   interviewLabels,
   lastQuestion,
   type InterviewResponse,
@@ -235,7 +236,7 @@ export function About({ arrived, onNext }: StepProps) {
               placeholder="Type your answer…"
               aria-label="Your answer"
               autoComplete="off"
-              maxLength={560}
+              maxLength={interviewAnswerChars}
               data-analytics-private
             />
             <div className="composer-tools">
@@ -265,7 +266,7 @@ export function About({ arrived, onNext }: StepProps) {
           </p>
         </Rise>
       )}
-      {wrapped && (
+      {wrapped ? (
         <Footer
           show={shown}
           onBack={restart}
@@ -273,6 +274,8 @@ export function About({ arrived, onNext }: StepProps) {
           onNext={() => void save()}
           busy={saving}
         />
+      ) : (
+        arrived === 'back' && !answers.length && <Footer onNext={onNext} />
       )}
       {error && (
         <p className="ob-about-error" role="alert">

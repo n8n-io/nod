@@ -1,13 +1,13 @@
 ---
 title: Threads and turns
-description: How every message, schedule fire and event becomes a turn in a session, how sessions run in parallel, and how subagents split a turn.
+description: How messages, saved tasks, schedules and events run as turns in parallel sessions.
 sidebar:
   order: 2
 ---
 
 This page explains how Otto turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, and every schedule fire and app event is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, each saved task has one, and every schedule fire and app event starts another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -19,12 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/otto/blob/m
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Session                |
-| ---------- | ------------------------------------------------------------------------------------------ | ---------------------- |
-| `user`     | A message from you                                                                         | The chat               |
-| `schedule` | A schedule firing                                                                          | A new session          |
-| `event`    | A connected-app event, a check of an app without events, or a reaction to an Otto message  | A new session          |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked |
+| `source`   | Created by                                                                                 | Session                                      |
+| ---------- | ------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| `user`     | A message from you                                                                         | The chat, or the session selected by a reply |
+| `task`     | Chat dispatch or an addressed owner update                                                 | The saved task session                       |
+| `schedule` | A schedule firing                                                                          | A new session                                |
+| `event`    | A connected-app event, a check of an app without events, or a reaction to an Otto message  | A new session                                |
+| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                       |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -39,7 +40,7 @@ flowchart TD
   each -- yes --> wait[Leave it queued]:::muted
 ```
 
-The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns without waiting for them. When a turn finishes, it queues the next drain.
+The worker fetches up to 20 drain jobs at once and drains each thread in the batch once, so extra drain jobs don't delay later turns. It starts turns from independent sessions without waiting for them. When a turn finishes, it queues the next drain.
 
 ## Turn status
 
@@ -64,13 +65,13 @@ stateDiagram-v2
 
 ## Messages you send while Otto works
 
-The composer never blocks. After each Pi step, a running chat turn takes the oldest queued plain messages from its own channel and session and steers them into Pi, all at once, before the next model request. Those messages move to the running turn, and their own turns close.
+The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace. Images reach the model with the message when the model reads images and they fit the [image limits](/how-it-works/agent-runtime/); others stay workspace files marked as not shown. A reply carries the message it answers. Those messages move to the running turn, and their own turns close.
 
-A message with attachments, a reply target or another channel stops the take. It and every message after it stay queued and run as their own turns. Background turns never take queued messages.
+A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Task turns also take addressed updates from their own channel and session. Event and schedule turns do not take queued messages. Each task update has a revision. The server records the revision when it delivers the input at a model boundary. A queued revision does not mean the model has applied it. Task completion refuses an unread update.
 
 ## Waiting and resuming
 
-A question, an approval or a credential request ends the turn as `waiting`. Your next message is the next turn in the same Pi session.
+A question, an approval, or a credential request ends the turn as `waiting`. A reply to any task message continues its saved session. This includes a question, a file or a completed result. A reply to another waiting question continues the session that asked. Unrelated messages continue the chat. A reply to a background question returns to that background session.
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
 
@@ -78,68 +79,67 @@ A secure form closes when a newer turn starts in its session, and a payment requ
 
 ## Sessions
 
-```mermaid
-sequenceDiagram
-  participant C as Chat session
-  participant T as Other sessions
-  participant W as Shared workspace
-  C->>W: One turn at a time, saved Pi session
-  T->>W: In parallel, one turn at a time each
-  T-->>C: Messages sent with send_message
-  Note over C: Next chat turn sees them
-```
+| Session                | Key                                                             | Reports to the conversation                                                |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Main chat              | The thread ID.                                                  | Streams its replies.                                                       |
+| Task started from chat | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.          |
+| Schedule or event      | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply. |
 
-|             | Chat                       | Schedule and event sessions                                                                                        |
-| ----------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Key         | The thread ID              | The session's first turn                                                                                           |
-| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                                                          |
-| Pi session  | The thread's saved session | A new in-memory session per turn                                                                                   |
-| Context     | The full conversation      | Turns from any session that finished before the trigger, plus the session's own messages                           |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message`, `share_file`, `share_screenshot` and `create_audio` calls. |
-| Browser     | The thread's browser       | Its own browser, deleted when the session ends                                                                     |
+Every session saves its Pi history and opens its own browser on first use. Each runs one turn at a time; different sessions run in parallel.
 
-When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
+When a background turn starts, it loads its own messages and recent conversation messages available before that turn, with other sessions' work included only after it finished. The saved Pi history remains separate. A new main chat turn receives reports sent by other sessions. All sessions share the workspace, so files one writes are available for the others to read.
+
+## Saved tasks
+
+The main chat uses `task start` for work with an independent goal. One transaction saves the task, posts its first message and queues its first turn. Short requests stay in the main chat. A successful turn alone does not close the task; the task checks its completion condition and calls `task finish`.
+
+Explicit replies select a task before the coordinator runs. The coordinator uses `task reply` to forward the exact owner message when an ordinary follow-up selects an existing task. Owner updates keep their source message and revision. Questions, approvals and secure forms use the same wait and resume path as other sessions.
+
+See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context, channel reply links and task controls.
 
 ## Subagents
 
-`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Otto's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The model then puts the answers together, such as comparing three shops.
+`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Otto's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The parent then uses the answers, such as to compare three shops. Helpers do not create saved tasks or control the task ledger.
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
-- **Needs you.** A subagent's question or confirmation pauses the whole turn, as the chat's would.
-- **Limits.** Two run at once and further calls wait for a slot. A subagent can't delegate, sign in, pay or open saved browser sessions; the turn does those in its own browser.
+- **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.
+- **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay, or open saved browser sessions. A paused turn cannot start another subagent.
 - **Browsers.** A subagent's browser is deleted when it finishes.
+- **Files.** Each subagent starts in `.otto/runs/<run ID>` inside the shared workspace. It returns complete file paths to its parent.
+- **Outcomes.** Model failures and incomplete responses return as errors. They do not count as successful empty answers.
 
 ## Every session has its own browser
 
 A session opens its browser on its first browser call, so a session that never browses never starts one. Sessions never share a browser.
 
-- The chat's browser is the one Otto hands to you, and the browser page shows it.
+- A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
-- The browser container keeps at most four browsers live at once, enough for the chat, two subagents and a scheduled run. At that limit, a new browser replaces the least recently used one that has been idle for five minutes, which closes and keeps its profile until it's used again.
-- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. One waiting for you stays open for 30 minutes.
-- When no browser can close, a new one waits up to two minutes for a free slot, then the browser call fails as busy. **Stop** cancels the wait at once.
+- The browser container keeps four browsers live at once. At that limit, a new browser replaces the least recently used one that has been idle for five minutes. A browser waiting for you is never replaced during its 30-minute hold. The replaced browser closes and keeps its profile until it's used again.
+- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. Browsers don't close just because they're idle.
+- When no browser can close yet, a new one waits for a free slot until its session stops. **Stop** cancels the wait at once.
 
 ## Stop and failures
 
-**Stop** aborts running turns and cancels queued and waiting turns in every session. It can't undo an external action that already started. Ordinary turns have no time limit.
+The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. A task's **Stop** control affects only that session and its helpers. Stop can't undo an external action that already started. Ordinary turns have no time limit.
 
-Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
+Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a restart during execution, ends the turn `failed`. When the model is available, Otto prepares an interruption notice for the main chat or the affected task's message. A restart keeps saved task sessions and waiting questions.
 
 When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model.
 
 ## Reset
 
-Reset is a development tool. In a local development build, **Clear messages** archives the thread and cancels its turns. The next turn starts a new Pi session, workspace and browser.
+Reset is a development tool. In a local development build, **Clear messages** archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.
 
-| Archived                               | Deleted                                                    | Kept                                                                 |
-| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions and memory |
+| Archived                                             | Deleted                                                    | Kept                                                          |
+| ---------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
+| The thread with its messages, turns and task history | The old browser's throwaway profile, downloads and screens | Accounts, Vault, schedules, saved browser sessions and memory |
 
 The web client sends its `threadId` with each message, so a late message from before the reset is refused.
 
 ## Related resources
 
 - [Architecture](/how-it-works/architecture/)
+- [Task sessions](/how-it-works/task-sessions/)
 - [The agent runtime](/how-it-works/agent-runtime/)
 - [Sandbox and browser isolation](/how-it-works/sandbox-and-browser/)
 - [One use, one result](/trust/outcomes/)

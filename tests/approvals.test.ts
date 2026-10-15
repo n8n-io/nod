@@ -20,20 +20,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
-import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
-import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
+import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 import type { Preferences } from '../src/server/preferences.ts';
-test('the confirmation question omits internal identifiers', () => {
-  const question = actionConfirmation(
-    'OTTO_schedule_update',
-    { id: 'hidden-schedule-id', enabled: false, options: { token: 'hidden-token' } },
-    'Weekly review',
-  );
-  assert.match(question, /Weekly review/);
-  for (const hidden of ['hidden-schedule-id', 'hidden-token', '/approvals/'])
-    assert.equal(question.includes(hidden), false, hidden);
-});
-
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
   const app = Fastify();
@@ -152,6 +140,336 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
 });
 
 test(
+  'communication uses only owned language evidence and redacted action data without changing execution inputs',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_communication_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    await pool.query(`CREATE TABLE messages (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL,
+      role text NOT NULL, text text NOT NULL, suggestions jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    ); CREATE TABLE chat_verification_submissions(message_id uuid PRIMARY KEY)`);
+    const threadId = randomUUID();
+    const owner = 'communication-owner';
+    const add = async (
+      role: string,
+      text: string,
+      input: {
+        owner?: string;
+        thread?: string;
+        days?: number;
+        suggestion?: boolean;
+        receipt?: boolean;
+      } = {},
+    ) => {
+      const id = randomUUID();
+      await pool.query(
+        'INSERT INTO messages(id,owner_id,thread_id,role,text,created_at,suggestions) VALUES($1,$2,$3,$4,$5,now()-make_interval(days=>$6),$7)',
+        [
+          id,
+          input.owner ?? owner,
+          input.thread ?? threadId,
+          role,
+          text,
+          input.days ?? 0,
+          input.suggestion ? { tasks: [{ title: 'Suggested task in English' }] } : null,
+        ],
+      );
+      if (input.receipt)
+        await pool.query('INSERT INTO chat_verification_submissions VALUES($1)', [id]);
+    };
+    await add('user', 'Responde em português de Portugal.', { days: 3 });
+    await add(
+      'user',
+      'Continua, por favor. https://otto.example/payments/private-payment /api/artifacts/private-artifact',
+      { days: 2 },
+    );
+    await add('user', 'ok', { days: 1 });
+    await add('assistant', 'Assistant instruction /credentials/private-token', {
+      suggestion: true,
+    });
+    await add('user', 'Foreign owner instruction', { owner: 'someone-else' });
+    await add('user', 'Other thread instruction', { thread: randomUUID() });
+    await add('user', 'Security code received securely.', { receipt: true });
+    await add('user', 'Suggested task in English');
+    for (let index = 0; index < 6; index++) await add('user', 'ok');
+    const captured: object[] = [];
+    const { createCommunication } = await import('../src/server/communication.ts');
+    const communication = createCommunication({
+      pool,
+      ownerId: owner,
+      preferences: async () => ['Prefiro português de Portugal.'],
+      review: async (_instructions, input) => {
+        captured.push(input);
+        if ((input as { purpose: string }).purpose === 'confirmation_review')
+          return { valid: true };
+        return { text: 'Confirma a ação apresentada.' };
+      },
+    });
+    const proposal = {
+      turn: { threadId, turnId: randomUUID() },
+      action: 'GMAIL_SEND_EMAIL',
+      args: {
+        recipient_email: 'receiver@example.test',
+        body: 'Synthetic body',
+        token: 'synthetic-private-token',
+      },
+      details: { account: { email: 'owner@example.test' }, password: 'synthetic-private-password' },
+    };
+    const before = structuredClone(proposal);
+    assert.equal(await communication.describe(proposal), 'Confirma a ação apresentada.');
+    assert.deepEqual(proposal, before);
+    const supplied = captured[0] as {
+      purpose: string;
+      languageContext: { userMessages: Array<{ text: string }>; rememberedPreferences: string[] };
+      data: { action: string; args: Record<string, unknown> };
+    };
+    assert.equal(supplied.purpose, 'confirmation');
+    assert.deepEqual(
+      supplied.languageContext.userMessages.map(({ text }) => text),
+      ['Responde em português de Portugal.', 'Continua, por favor.', 'ok', ...Array(6).fill('ok')],
+    );
+    assert.equal(supplied.data.action, proposal.action);
+    assert.equal(supplied.data.args.recipient_email, proposal.args.recipient_email);
+    assert.doesNotMatch(
+      JSON.stringify(supplied),
+      /synthetic-private|private-payment|private-artifact|private-token|Foreign owner|Other thread|Security code|Suggested task|Assistant instruction/,
+    );
+    assert.equal(captured.length, 2);
+    assert.deepEqual(captured[1], {
+      purpose: 'confirmation_review',
+      data: supplied.data,
+      text: 'Confirma a ação apresentada.',
+    });
+    await communication.present(randomUUID(), { kind: 'paired', channel: 'telegram' });
+    await communication.present(null, { kind: 'paired', channel: 'telegram' });
+    assert.equal(captured.length, 4);
+    for (const input of captured.slice(2))
+      assert.deepEqual((input as { languageContext: unknown }).languageContext, {
+        userMessages: [],
+        rememberedPreferences: ['Prefiro português de Portugal.'],
+      });
+  },
+);
+
+test('communication retains complete action facts beyond logging limits while redacting secrets', async () => {
+  const { createCommunication } = await import('../src/server/communication.ts');
+  const recipients = Array.from({ length: 101 }, (_, index) => `recipient-${index}@example.test`);
+  const body = `${'Synthetic content. '.repeat(4000)}Final condition: send after 2030-01-01. password=synthetic-body-secret`;
+  const args = {
+    recipients,
+    body,
+    headers: { authorization: 'Bearer synthetic-authorization' },
+    fields: [['password', 'synthetic-tuple-secret']],
+    api_key: 'synthetic-api-key',
+    ...Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`field${index}`, index])),
+    finalAmount: '9123.45',
+  };
+  const before = structuredClone(args);
+  const question = `${'Synthetic complete confirmation content. '.repeat(500)}Final action condition.`;
+  const supplied: Array<{ purpose: string; data: { args: typeof args }; text?: string }> = [];
+  const communication = createCommunication({
+    pool: {
+      query: async () => {
+        throw new Error('No thread may read the database');
+      },
+    } as unknown as pg.Pool,
+    ownerId: 'fixture-owner',
+    review: async (_instructions, input) => {
+      const call = input as (typeof supplied)[number];
+      supplied.push(call);
+      if (call.purpose === 'confirmation_review') return { valid: true };
+      return { text: question };
+    },
+  });
+  assert.equal(
+    await communication.present(null, { kind: 'confirmation', action: 'BULK_SEND', args }),
+    question,
+  );
+  assert.deepEqual(
+    supplied.map(({ purpose }) => purpose),
+    ['confirmation', 'confirmation_review'],
+  );
+  for (const call of supplied) {
+    assert.deepEqual(call.data.args.recipients, recipients);
+    assert.equal(call.data.args.finalAmount, '9123.45');
+    assert.equal(Object.keys(call.data.args).length, Object.keys(args).length);
+    assert.equal(typeof call.data.args.body, 'string');
+    assert.ok(call.data.args.body.length > 64000);
+    assert.match(call.data.args.body, /Final condition: send after 2030-01-01/);
+  }
+  assert.deepEqual(supplied[1]!.data, supplied[0]!.data);
+  assert.equal(supplied[1]!.text, question);
+  assert.equal('languageContext' in supplied[1]!, false);
+  assert.doesNotMatch(
+    JSON.stringify(supplied),
+    /synthetic-body-secret|synthetic-authorization|synthetic-api-key|synthetic-tuple-secret/,
+  );
+  assert.deepEqual(args, before);
+  const command = {
+    argv: [...Array.from({ length: 30 }, () => 'x'.repeat(1000)), '--repo', 'outsider/r'],
+    timeoutSeconds: 7200,
+  };
+  supplied.length = 0;
+  await communication.present(null, {
+    kind: 'confirmation',
+    action: 'CONNECTED_CLI',
+    args: command,
+  });
+  assert.deepEqual(
+    supplied.map(({ data }) => data.args),
+    [command, command],
+  );
+});
+
+test('communication blocks unsupported confirmations unless their frozen facts pass validation', async () => {
+  const { createCommunication } = await import('../src/server/communication.ts');
+  const proposal = {
+    turn: { threadId: randomUUID(), turnId: randomUUID() },
+    action: 'GMAIL_REPLY_TO_THREAD',
+    args: { thread_id: 'thread-fixture', message_body: 'The original agreed terms still apply.' },
+    details: { account: { email: 'owner@example.test' } },
+  };
+  const original = structuredClone(proposal);
+  const unsupported = 'Reply with the subject Re: Meridian 427?';
+  let validation: unknown;
+  let failValidation = false;
+  const captured: object[] = [];
+  const communication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'fixture-owner',
+    preferences: async () => ['Use Portuguese. An earlier topic was Meridian 427.'],
+    review: async (_instructions, input) => {
+      captured.push(input);
+      if ((input as { purpose: string }).purpose === 'confirmation') {
+        (input as { data: { args: Record<string, unknown> } }).data.args.subject =
+          'Re: Meridian 427';
+        return { text: unsupported };
+      }
+      if (failValidation) throw new Error('Synthetic validator unavailable');
+      return validation;
+    },
+  });
+  for (validation of [
+    { valid: false },
+    undefined,
+    null,
+    true,
+    {},
+    { valid: 'true' },
+    { valid: true, run: true },
+  ]) {
+    captured.length = 0;
+    await assert.rejects(communication.describe(proposal));
+    assert.equal(captured.length, 2);
+    assert.deepEqual(captured[1], {
+      purpose: 'confirmation_review',
+      data: { action: original.action, args: original.args, details: original.details },
+      text: unsupported,
+    });
+  }
+  validation = { valid: true };
+  failValidation = true;
+  captured.length = 0;
+  await assert.rejects(communication.describe(proposal));
+  assert.equal(captured.length, 2);
+  assert.deepEqual(captured[1], {
+    purpose: 'confirmation_review',
+    data: { action: original.action, args: original.args, details: original.details },
+    text: unsupported,
+  });
+  assert.deepEqual(proposal, original);
+});
+
+test('communication cancellation between generation and validation cannot release a confirmation', async () => {
+  const { createCommunication } = await import('../src/server/communication.ts');
+  const proposal = {
+    turn: { threadId: randomUUID(), turnId: randomUUID() },
+    action: 'GMAIL_SEND_EMAIL',
+    args: { to: 'receiver@example.test', body: 'Synthetic approved content.' },
+  };
+  for (const abortAt of ['confirmation', 'confirmation_review']) {
+    const controller = new AbortController();
+    const purposes: string[] = [];
+    const communication = createCommunication({
+      pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+      ownerId: 'fixture-owner',
+      review: async (_instructions, input, signal) => {
+        const { purpose } = input as { purpose: string };
+        purposes.push(purpose);
+        assert.equal(signal, controller.signal);
+        if (purpose === abortAt) controller.abort();
+        return purpose === 'confirmation' ? { text: 'Confirm this action?' } : { valid: true };
+      },
+    });
+    await assert.rejects(communication.describe(proposal, controller.signal), {
+      name: 'AbortError',
+    });
+    assert.deepEqual(
+      purposes,
+      abortAt === 'confirmation' ? ['confirmation'] : ['confirmation', 'confirmation_review'],
+    );
+  }
+});
+
+test('communication rejects malformed responses and cancellation without a fallback', async () => {
+  const { createCommunication } = await import('../src/server/communication.ts');
+  let response: unknown;
+  let reviews = 0;
+  let abortDuringReview: AbortController | undefined;
+  const communication = createCommunication({
+    pool: {
+      query: async () => {
+        throw new Error('No thread may read the database');
+      },
+    } as unknown as pg.Pool,
+    ownerId: 'fixture-owner',
+    review: async (_instructions, _input, signal) => {
+      reviews++;
+      if (abortDuringReview) {
+        assert.equal(signal, abortDuringReview.signal);
+        abortDuringReview.abort();
+      }
+      return response;
+    },
+  });
+  for (response of [
+    undefined,
+    null,
+    'text',
+    { text: '' },
+    { text: '   ' },
+    { text: 'valid', run: true },
+  ])
+    await assert.rejects(communication.present(null, { kind: 'paired', channel: 'telegram' }));
+  response = { text: 'Ligação estabelecida.' };
+  const stopped = new AbortController();
+  stopped.abort();
+  const before = reviews;
+  await assert.rejects(
+    communication.present(null, { kind: 'paired', channel: 'telegram' }, stopped.signal),
+    { name: 'AbortError' },
+  );
+  assert.equal(reviews, before);
+  abortDuringReview = new AbortController();
+  await assert.rejects(
+    communication.present(null, { kind: 'paired', channel: 'telegram' }, abortDuringReview.signal),
+    { name: 'AbortError' },
+  );
+});
+
+test(
   'approvals preserve explicit-request authority, execute confirmed snapshots once and fence owners',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 60_000 },
   async (t) => {
@@ -202,6 +520,11 @@ test(
     let rejectPreflight = false;
     let executionGate: Promise<void> | undefined;
     let executionResult: (() => unknown) | undefined;
+    let descriptionFailure = false;
+    const descriptionInputs: ApprovalDescription[] = [];
+    const defaultDescription = async () => 'Synthetic approval question.';
+    let describe: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string> =
+      defaultDescription;
     const directories: string[] = [];
     let approvals: Awaited<ReturnType<typeof createApprovals>>;
     const headers = {
@@ -359,19 +682,25 @@ test(
             throw Object.assign(new Error('Fixture account disconnected.'), { statusCode: 409 });
         },
         (reply) => trust.answer(reply),
+        async (proposal, signal) => {
+          if (descriptionFailure) throw new Error('Synthetic confirmation model failure.');
+          descriptionInputs.push(structuredClone(proposal));
+          return describe(proposal, signal);
+        },
       );
       const checked = (base: typeof approved): typeof approved => ({
         ...base,
         request: async (turn, action, args, options = {}) =>
           base.request(turn, action, args, {
             ...options,
-            allowed:
-              options.allowed ??
-              (!options.question && !(await trust.check(turn, action, args)).confirm),
+            allowed: options.allowed ?? !(await trust.check(turn, action, args)).confirm,
           }),
       });
       approvals = checked(approved);
-      messages = thread.createUserMessageService({ confirmAction: approvals.chat });
+      messages = thread.createUserMessageService({
+        confirmAction: approvals.chat,
+        taskReply: (client, threadId, messageId) => tasks.resolveReply(client, threadId, messageId),
+      });
       personal.registerRoutes(app);
       const tasks = createTasks({ pool: db.pool, ownerId });
       await tasks.initialize();
@@ -403,6 +732,7 @@ test(
             const reply = String(input.reply)
               .replace(/[.!]+$/, '')
               .toLowerCase();
+            if (replyAnswers[reply] === 'fail') throw new Error('Synthetic reader outage.');
             return { answer: replyAnswers[reply] ?? 'other' };
           }
           reviews.push(input as Record<string, any>);
@@ -423,15 +753,167 @@ test(
           turn,
           'GMAIL_SEND_EMAIL',
           { ...args },
-          {
-            question: appActionConfirmation(
-              'GMAIL_SEND_EMAIL',
-              { ...args },
-              verdict.confirm ? verdict.reason : 'unrequested',
-            ),
-          },
+          { allowed: false, details: { reason: verdict.confirm ? verdict.reason : 'unrequested' } },
         );
       };
+
+      await t.test(
+        'confirmation generation fails closed without saving a message or an actionable approval',
+        async () => {
+          const turn = await begin('Synthetic confirmation generation failure');
+          const before = calls.length;
+          descriptionFailure = true;
+          try {
+            await assert.rejects(
+              approved.request(turn, 'GMAIL_SEND_EMAIL', email('fixture@example.test')),
+              /Synthetic confirmation model failure/,
+            );
+            assert.equal(await proposal(turn.turnId), undefined);
+            assert.equal(await assistantMessages(turn.turnId), 0);
+            assert.equal(calls.length, before);
+          } finally {
+            descriptionFailure = false;
+            await thread.stopThread();
+          }
+        },
+      );
+
+      await t.test(
+        'the generated question binds to detached arguments and display data before execution',
+        async () => {
+          const turn = await begin('Synthetic detached approval');
+          const args = { recipient_email: 'original@example.test', body: 'Original body.' };
+          const details = { account: { email: 'owner@example.test' } };
+          const frozen = structuredClone(args);
+          const displayed = structuredClone(details);
+          const question = `${'Synthetic generated confirmation content. '.repeat(500)}Final action condition.`;
+          let entered!: () => void;
+          let release!: () => void;
+          const started = new Promise<void>((resolve) => {
+            entered = resolve;
+          });
+          const gate = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          describe = async (input) => {
+            entered();
+            await gate;
+            assert.deepEqual(input.args, frozen);
+            assert.deepEqual(input.details, displayed);
+            input.args.recipient_email = 'model-substitution@example.test';
+            input.turn.turnId = randomUUID();
+            return question;
+          };
+          try {
+            const result = approved.request(turn, 'GMAIL_SEND_EMAIL', args, { details });
+            await started;
+            args.recipient_email = 'caller-substitution@example.test';
+            details.account.email = 'caller-account@example.test';
+            release();
+            assert.deepEqual(await result, { requiresConfirmation: true, question });
+            const saved = await proposal(turn.turnId);
+            assert.deepEqual(saved.args, frozen);
+            assert.equal(
+              (
+                await db.pool.query('SELECT text FROM messages WHERE id=$1', [
+                  saved.confirmation_message_id,
+                ])
+              ).rows[0].text,
+              question,
+            );
+            assert.equal(
+              calls.some((call) => call.context.turnId === turn.turnId),
+              false,
+            );
+            await confirmTurn(turn.turnId);
+            await execute(saved.id);
+            assert.deepEqual(calls.at(-1)?.args, frozen);
+          } finally {
+            release();
+            describe = defaultDescription;
+            await thread.stopThread();
+          }
+        },
+      );
+
+      await t.test(
+        'generation releases the turn lock and late results cannot revive cancelled or superseded proposals',
+        async () => {
+          for (const change of ['abort', 'stop', 'competing', 'preflight'] as const) {
+            const turn = await begin(`Synthetic delayed confirmation ${change}`);
+            const controller = new AbortController();
+            let entered!: () => void;
+            let release!: () => void;
+            const started = new Promise<void>((resolve) => {
+              entered = resolve;
+            });
+            const gate = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            describe = async (_input, signal) => {
+              assert.equal(signal, controller.signal);
+              entered();
+              await gate;
+              return 'Synthetic late question.';
+            };
+            const before = calls.length;
+            const pending = approved.request(
+              turn,
+              'GMAIL_SEND_EMAIL',
+              email('delayed@example.test'),
+              {
+                signal: controller.signal,
+              },
+            );
+            const rejected = assert.rejects(
+              pending,
+              /aborted|no longer active|already waiting|Fixture account disconnected/,
+            );
+            try {
+              await started;
+              await thread.withTurnLock(turn.turnId, async () => {});
+              if (change === 'abort') controller.abort();
+              else if (change === 'stop') await thread.stopThread();
+              else if (change === 'preflight') rejectPreflight = true;
+              else {
+                describe = defaultDescription;
+                await approved.request(turn, 'GMAIL_SEND_EMAIL', email('competing@example.test'));
+              }
+              release();
+              await rejected;
+              const saved = await proposal(turn.turnId);
+              if (change === 'competing')
+                assert.equal(saved.args.recipient_email, 'competing@example.test');
+              else assert.equal(saved, undefined);
+              assert.equal(await assistantMessages(turn.turnId), change === 'competing' ? 1 : 0);
+              assert.equal(calls.length, before);
+            } finally {
+              release();
+              rejectPreflight = false;
+              describe = defaultDescription;
+              await thread.stopThread();
+            }
+          }
+        },
+      );
+
+      await t.test('invalid generated questions never become approvals', async () => {
+        for (const question of ['', '   ']) {
+          const turn = await begin('Synthetic invalid generated question');
+          describe = async () => question;
+          try {
+            await assert.rejects(
+              approved.request(turn, 'GMAIL_SEND_EMAIL', email('fixture@example.test')),
+              /valid question/,
+            );
+            assert.equal(await proposal(turn.turnId), undefined);
+            assert.equal(await assistantMessages(turn.turnId), 0);
+          } finally {
+            describe = defaultDescription;
+            await thread.stopThread();
+          }
+        }
+      });
 
       await t.test(
         'the checker sees only the owner words and the action, and what it does not run waits for one confirmation',
@@ -614,7 +1096,7 @@ test(
             const turn = await begin(text);
             const before = reviews.length;
             assert.ok(
-              'question' in
+              'details' in
                 (await access.authorize(turn, { origin: site, kind: 'sign_in', itemId: first })),
             );
             assert.equal(reviews.length, before + 1);
@@ -631,7 +1113,7 @@ test(
             itemId: first,
           };
           const session = await access.authorize(group, target);
-          assert.ok('question' in session);
+          assert.ok('details' in session);
           assert.deepEqual(reviews.at(-1)?.action.name, 'OTTO_browser_session');
           const groupResumed = await confirmAccess(group, session.args);
           const afterGroup = reviews.length;
@@ -646,7 +1128,7 @@ test(
             kind: 'sign_in',
             itemId: first,
           });
-          assert.ok('question' in signIn);
+          assert.ok('details' in signIn);
           const resumed = await confirmAccess(task, signIn.args);
           assert.deepEqual(
             await access.authorize(resumed, { origin: site, kind: 'sign_in', itemId: first }),
@@ -657,9 +1139,9 @@ test(
             { origin: site, kind: 'session' as const, itemId: first },
             { origin: 'https://other.example.test', kind: 'sign_in' as const, itemId: first },
           ])
-            assert.ok('question' in (await access.authorize(resumed, other)));
+            assert.ok('details' in (await access.authorize(resumed, other)));
           assert.ok(
-            'question' in
+            'details' in
               (await access.authorize(await begin('Check what is due.'), {
                 origin: site,
                 kind: 'sign_in',
@@ -706,7 +1188,7 @@ test(
             kind: 'session',
             itemId: first,
           });
-          assert.ok('question' in verdict);
+          assert.ok('details' in verdict);
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           await db.pool.query(
             `INSERT INTO vault_activity(id,owner_id,at,action,origin,reason)
@@ -744,6 +1226,136 @@ test(
       });
 
       await t.test(
+        'the trust check always sees the owner message that started the task',
+        async () => {
+          aligned = false;
+          const origin = 'Archive the synthetic invoices from the fixture supplier.';
+          const turn = await begin(origin);
+          await db.pool.query(
+            "UPDATE messages SET created_at=now()-interval '2 days' WHERE id=(SELECT message_id FROM turns WHERE id=$1)",
+            [turn.turnId],
+          );
+          for (let index = 0; index < 6; index++)
+            await finish(
+              (await thread.submitUserMessage(`Synthetic aside ${index}`)).turnId,
+              'succeeded',
+            );
+          await trust.check(turn, 'GMAIL_FETCH_EMAILS', {});
+          const seen = reviews.at(-1)?.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(seen?.length, 6);
+          assert.equal(seen?.[0], origin);
+          assert.equal(seen?.at(-1), 'Synthetic aside 5');
+          await finish(turn.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
+        'saved task authority excludes owner instructions addressed to other work',
+        async (t) => {
+          const parent = await begin('Read my fixture flight dates.');
+          const oldStatus = randomUUID();
+          t.after(() => finish(parent.turnId, 'cancelled'));
+          const source = (await row(parent.turnId)).message_id;
+          const assigned = await tasks.execute(
+            parent,
+            { action: 'start', title: 'Flight dates', doneWhen: 'Dates checked', now: 'Reading' },
+            source,
+          );
+          assert.ok('id' in assigned);
+          const task = assigned as { id: string; messageId: string };
+          t.after(async () => {
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [oldStatus]);
+            await db.pool.query(
+              "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+              [task.id],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+          });
+          await finish(parent.turnId, 'succeeded');
+          const worker = (
+            await db.pool.query("SELECT id FROM turns WHERE task_id=$1 AND source='task'", [
+              task.id,
+            ])
+          ).rows[0].id;
+          const turn = await running(worker);
+          await tasks.inherit(turn);
+          const hotel = await begin('Send the separate hotel request to hotel@example.test.');
+          t.after(() => finish(hotel.turnId, 'cancelled'));
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Do you want the fixture summary?')",
+            [randomUUID(), ownerId, hotel.threadId, hotel.turnId],
+          );
+          await finish(hotel.turnId, 'succeeded');
+          await trust.check(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          assert.deepEqual(
+            reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text),
+            ['Read my fixture flight dates.'],
+          );
+          const oldApproval = await propose(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) SELECT $1,$2,thread_id,'assistant','Saved task question',confirmation_message_id FROM approvals WHERE id=$3",
+            [oldStatus, ownerId, oldApproval],
+          );
+          assert.equal(
+            (
+              await approvals.chat.answer({
+                threadId: turn.threadId,
+                channel: 'web',
+                text: 'Yes',
+                replyToMessageId: oldStatus,
+              })
+            )?.approvalId,
+            oldApproval,
+          );
+          const mainReply = await begin('Yes.');
+          t.after(() => finish(mainReply.turnId, 'cancelled'));
+          await trust.check(mainReply, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          assert.equal(
+            reviews.at(-1)!.assistantMessageBeforeLatestUserMessage,
+            'Do you want the fixture summary?',
+          );
+          await finish(mainReply.turnId, 'succeeded');
+          const update = await messages.submit('Use the new fixture flight dates.', [], {
+            replyToMessageId: task.messageId,
+          });
+          await finish(worker);
+          assert.equal(await confirm(oldApproval, true), undefined);
+          assert.equal(
+            await confirm(oldApproval, true, { replyToMessageId: oldStatus }),
+            undefined,
+          );
+          const continued = await running(update.turnId);
+          await tasks.inherit(continued);
+          assert.equal(await confirm(oldApproval, true), undefined);
+          const freshApproval = await propose(continued, 'GMAIL_SEND_EMAIL', {
+            to: 'hotel@example.test',
+          });
+          assert.notEqual(freshApproval, oldApproval);
+          assert.equal((await stored(oldApproval)).status, 'expired');
+          await db.pool.query("UPDATE approvals SET status='expired' WHERE id=$1", [freshApproval]);
+          await trust.check(continued, 'GMAIL_FETCH_EMAILS', {});
+          const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.deepEqual(words, [
+            'Read my fixture flight dates.',
+            'Use the new fixture flight dates.',
+          ]);
+          await tasks.execute(
+            continued,
+            { action: 'finish', id: task.id, status: 'done', result: 'Dates checked' },
+            update.messageId,
+          );
+          await finish(update.turnId, 'succeeded');
+          const chat = await begin('Summarise the fixture tasks.');
+          t.after(() => finish(chat.turnId, 'cancelled'));
+          await trust.check(chat, 'GMAIL_FETCH_EMAILS', {});
+          const chatWords = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(chatWords.includes('Read my fixture flight dates.'), false);
+          assert.equal(chatWords.includes('Use the new fixture flight dates.'), false);
+          await finish(chat.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
         async () => {
           aligned = false;
@@ -770,30 +1382,17 @@ test(
             tool: 'post_message',
             input: { text: 'x'.repeat(6000), note: 'y'.repeat(6000), channel: 'C-OUTSIDER' },
           };
-          assert.match(
-            appActionConfirmation('CONNECTED_MCP_CALL', hidden, 'background'),
-            /C-OUTSIDER/,
-          );
-          const command = [
-            ...Array.from({ length: 30 }, () => 'x'.repeat(1000)),
-            '--repo',
-            'outsider/r',
-          ];
-          assert.match(
-            appActionConfirmation('CONNECTED_CLI', { argv: command }, 'background'),
-            /--repo outsider\/r/,
-          );
           await trust.check(turn, 'CONNECTED_MCP_CALL', hidden);
           assert.match(JSON.stringify(reviews.at(-1)?.action.arguments), /C-OUTSIDER/);
 
           const asked = await begin('Email the synthetic notes to the team.');
           await approvals.request(asked, 'GMAIL_SEND_EMAIL', email('team@example.test'), {
-            question: 'Send the notes?',
+            allowed: false,
           });
           const seen = await proposal(asked.turnId);
           const background = await begin('Synthetic background event', { source: 'event' });
           await approvals.request(background, 'GMAIL_SEND_EMAIL', email('outsider@example.test'), {
-            question: 'Send this?',
+            allowed: false,
           });
           const unseen = await proposal(background.turnId);
           await messages.submit('Yes.', [], { seenMessageId: seen.confirmation_message_id });
@@ -1192,12 +1791,7 @@ test(
             assert.equal(calls.length, before);
             const saved = await stored(id);
             assert.equal(saved.args.notificationRule, 'The exact preference reviewed by the user.');
-            const visible = (
-              await db.pool.query('SELECT text FROM messages WHERE id=$1', [
-                saved.confirmation_message_id,
-              ])
-            ).rows[0].text;
-            assert.ok(visible.includes(saved.args.notificationRule));
+            assert.deepEqual(descriptionInputs.at(-1)?.args, saved.args);
             await assert.rejects(
               approvals.request(current, 'OTTO_notification_preferences_update', saved.args),
               {
@@ -1262,8 +1856,13 @@ test(
             const revised = await messages.submit('Update my preferences to be shorter.', [], {
               ...(explicit ? { replyToMessageId: (await stored(id)).confirmation_message_id } : {}),
             });
-            assert.equal((await row(revised.turnId)).source, 'user');
+            const resumed = await row(revised.turnId);
+            assert.equal(resumed.source, 'user');
             assert.equal((await stored(id)).status, 'expired');
+            assert.equal(await turnStatus(origin.turnId), explicit ? 'waiting' : 'cancelled');
+            assert.equal(resumed.background, explicit);
+            assert.equal(resumed.parent_turn_id, explicit ? origin.turnId : null);
+            if (explicit) assert.equal(resumed.session_id, (await row(origin.turnId)).session_id);
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             assert.equal(await confirm(id, true), undefined);
             const next = await propose(
@@ -1301,6 +1900,8 @@ test(
             { replyToMessageId: confirmationMessageId },
           );
           assert.equal((await row(result.turnId)).source, 'user');
+          assert.equal((await row(result.turnId)).parent_turn_id, origin.turnId);
+          assert.equal(await turnStatus(origin.turnId), 'running');
           assert.equal((await stored(id)).status, 'expired');
           assert.equal(await confirm(id, true), undefined);
           assert.equal(calls.length, before);
@@ -1536,6 +2137,148 @@ test(
       );
 
       await t.test(
+        'schedule outcome receipts fence repeat requests after the mutation advances its revision',
+        async (t) => {
+          for (const source of [undefined, 'event'] as const)
+            for (const uncertain of [false, true])
+              await t.test(
+                `${source ?? 'user'} ${uncertain ? 'uncertain' : 'completed'}`,
+                async (t) => {
+                  let executions = 0;
+                  let preflights = 0;
+                  let failResult = uncertain;
+                  let release = () => {};
+                  const executing = new Promise<void>((resolve) => {
+                    release = resolve;
+                  });
+                  let mutated = () => {};
+                  const mutation = new Promise<void>((resolve) => {
+                    mutated = resolve;
+                  });
+                  const bound = await createApprovals(
+                    async (action, args, context) => {
+                      executions++;
+                      const result = await personal.manage(
+                        action.slice('OTTO_'.length),
+                        args,
+                        context,
+                      );
+                      if (executions === 1) {
+                        mutated();
+                        await executing;
+                      }
+                      if (failResult)
+                        throw new Error('Synthetic result lost after schedule mutation.');
+                      return result;
+                    },
+                    async (action, args, expectedRevision) => {
+                      preflights++;
+                      await personal.validateReview(
+                        action.slice('OTTO_'.length),
+                        args,
+                        expectedRevision,
+                      );
+                    },
+                  );
+                  const created = await personal.manage('schedule_create', {
+                    title: 'Synthetic revision receipt',
+                    prompt: 'Review the synthetic checklist.',
+                    cron: '0 9 * * 1',
+                    timeZone: 'UTC',
+                  });
+                  const origin = await begin('Rename the synthetic schedule.', { source });
+                  const args = {
+                    id: (created as { id: string }).id,
+                    title: 'Synthetic renamed schedule',
+                  };
+                  t.after(async () => {
+                    assert.equal(
+                      (await request('DELETE', `/api/schedules/${args.id}`)).statusCode,
+                      200,
+                    );
+                    await finish(origin.turnId, 'succeeded');
+                  });
+                  const options = { allowed: true, expectedRevision: 0 };
+                  const original = bound.request(origin, 'OTTO_schedule_update', args, options);
+                  const outcome = uncertain
+                    ? assert.rejects(original, { statusCode: 502 })
+                    : original;
+                  await mutation;
+                  try {
+                    assert.equal((await proposal(origin.turnId)).status, 'executing');
+                    await assert.rejects(
+                      bound.request(origin, 'OTTO_schedule_update', args, {
+                        allowed: true,
+                        expectedRevision: 1,
+                      }),
+                      { statusCode: 409 },
+                    );
+                  } finally {
+                    release();
+                    await outcome;
+                  }
+                  const receipt = await proposal(origin.turnId);
+                  assert.equal(receipt.status, uncertain ? 'uncertain' : 'completed');
+                  const saved = await personal.getSchedule(args.id);
+                  assert.equal(saved.revision, 1);
+                  const job = (
+                    await db.pool.query(
+                      `SELECT * FROM ${bossSchema}.job WHERE data->>'scheduleId'=$1 AND state='created'`,
+                      [args.id],
+                    )
+                  ).rows;
+                  assert.equal(job.length, 1);
+                  const before = preflights;
+                  for (const expectedRevision of [0, 1]) {
+                    const repeated = bound.request(origin, 'OTTO_schedule_update', args, {
+                      allowed: true,
+                      expectedRevision,
+                    });
+                    if (uncertain) await assert.rejects(repeated, { statusCode: 409 });
+                    else assert.deepEqual(await repeated, receipt.result);
+                  }
+                  assert.equal(preflights, before);
+                  await assert.rejects(
+                    bound.request(
+                      { ...origin, threadId: randomUUID() },
+                      'OTTO_schedule_update',
+                      args,
+                      {
+                        allowed: true,
+                        expectedRevision: 1,
+                      },
+                    ),
+                    { statusCode: 409 },
+                  );
+                  assert.equal(executions, 1);
+                  assert.deepEqual(await personal.getSchedule(args.id), saved);
+                  assert.deepEqual(
+                    (
+                      await db.pool.query(
+                        `SELECT * FROM ${bossSchema}.job WHERE data->>'scheduleId'=$1 AND state='created'`,
+                        [args.id],
+                      )
+                    ).rows,
+                    job,
+                  );
+                  await finish(origin.turnId, 'succeeded');
+                  const fresh = await begin(
+                    'I checked the result. Rename the synthetic schedule again.',
+                  );
+                  t.after(() => finish(fresh.turnId, 'succeeded'));
+                  failResult = false;
+                  const freshResult = await bound.request(fresh, 'OTTO_schedule_update', args, {
+                    allowed: true,
+                    expectedRevision: saved.revision,
+                  });
+                  assert.equal(freshResult.revision, 2);
+                  assert.equal(executions, 2);
+                },
+              );
+        },
+      );
+
+      await t.test(
         'owner, turn and account preflight fences refuse every change, and upgrade cancels legacy read-only turns',
         async () => {
           const before = calls.length;
@@ -1638,22 +2381,106 @@ test(
       );
 
       await t.test(
+        'only a rendered status in the reply channel blocks a bare confirmation',
+        async (t) => {
+          const turn = await begin('Prepare the fixture notification.');
+          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Fixture rule',
+          });
+          const saved = await stored(id);
+          const statusId = randomUUID();
+          t.after(async () => {
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [statusId]);
+            await finish(turn.turnId, 'cancelled');
+          });
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,delivered_channel,created_at) SELECT $1,$2,$3,'assistant','Fixture status','telegram:fixture',created_at+interval '1 second' FROM messages WHERE id=$4",
+            [statusId, ownerId, turn.threadId, saved.confirmation_message_id],
+          );
+          const input = { threadId: turn.threadId, channel: 'web', text: 'Yes' };
+          assert.equal((await approvals.chat.answer(input))?.approvalId, id);
+          await db.pool.query("UPDATE messages SET delivered_channel='web' WHERE id=$1", [
+            statusId,
+          ]);
+          assert.equal(await approvals.chat.answer(input), undefined);
+          assert.equal(
+            (
+              await approvals.chat.answer({
+                ...input,
+                seenMessageId: saved.confirmation_message_id,
+              })
+            )?.approvalId,
+            id,
+          );
+          assert.equal(
+            await approvals.chat.answer({ ...input, seenMessageId: statusId }),
+            undefined,
+          );
+        },
+      );
+
+      await t.test(
         'a channel confirmation preserves the exact snapshot and client retries do not execute twice',
-        async () => {
+        async (t) => {
           const channel = 'telegram:fixture';
           const turn = await begin('Synthetic channel fixture', { channel });
+          const turnIds = [turn.turnId];
+          const statusMessageId = randomUUID();
+          const foreignStatus = randomUUID();
+          t.after(async () => {
+            await db.pool.query(
+              'UPDATE messages SET reply_to_message_id=NULL WHERE reply_to_message_id=ANY($1::uuid[])',
+              [[statusMessageId, foreignStatus]],
+            );
+            await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [
+              [statusMessageId, foreignStatus],
+            ]);
+            await db.pool.query(
+              "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=ANY($1::uuid[]) AND status IN ('queued','running','waiting')",
+              [turnIds],
+            );
+          });
           const args = { notificationRule: 'Synthetic original' };
           await approvals.request(turn, 'OTTO_notification_preferences_update', args);
           const saved = await proposal(turn.turnId);
           args.notificationRule = 'Substituted after proposal';
           await finish(turn.turnId);
           const clientMessageId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id,delivered_channel) VALUES($1,$2,$3,'assistant',$4,$5,$6)",
+            [
+              statusMessageId,
+              ownerId,
+              turn.threadId,
+              'Saved task question',
+              saved.confirmation_message_id,
+              channel,
+            ],
+          );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,'foreign-owner',$2,'assistant',$3,$4)",
+            [foreignStatus, turn.threadId, 'Foreign question', saved.confirmation_message_id],
+          );
+          assert.equal(
+            await approvals.chat.answer({ threadId: turn.threadId, channel, text: 'Yes' }),
+            undefined,
+          );
+          assert.equal(
+            await approvals.chat.answer({
+              threadId: turn.threadId,
+              channel,
+              text: 'Yes',
+              replyToMessageId: foreignStatus,
+            }),
+            undefined,
+          );
           const reply = {
             channel,
-            replyToMessageId: saved.confirmation_message_id,
+            replyToMessageId: statusMessageId,
             clientMessageId,
           };
           const accepted = await messages.submit('Yes.', [], reply);
+          turnIds.push(accepted.turnId);
           assert.notEqual(accepted.turnId, turn.turnId);
           assert.deepEqual(await messages.submit('Yes.', [], reply), accepted);
           const confirmed = await proposal(turn.turnId);
@@ -1695,6 +2522,7 @@ test(
                 await personal.validateReview(action.replace(/^OTTO_/, ''), args);
               },
               (reply) => trust.answer(reply),
+              async () => 'Synthetic approval question.',
             ),
           );
           const digestMessages = thread.createUserMessageService({
@@ -2187,11 +3015,23 @@ test(
           };
           const first = await ask();
           const before = replies.length;
+          assert.deepEqual(await approvals.chat.answer({ ...first.input, hasAttachments: true }), {
+            approvalId: first.id,
+          });
+          assert.equal(replies.length, before);
+          replyAnswers['reader down'] = 'fail';
+          const outage = { ...first.input, text: 'reader down' };
+          const unread = await approvals.chat.answer(outage);
+          assert.equal(unread, undefined);
           assert.equal(
-            await approvals.chat.answer({ ...first.input, hasAttachments: true }),
+            await transaction(
+              (client) => approvals.chat.accept(client, { ...outage, answer: unread }),
+              db.pool,
+            ),
             undefined,
           );
-          assert.equal(replies.length, before);
+          assert.equal((await stored(first.id)).status, 'pending');
+          delete replyAnswers['reader down'];
           const answer = await approvals.chat.answer(first.input);
           assert.deepEqual(answer, { approvalId: first.id, approved: true });
           assert.deepEqual(replies.at(-1), { reply });
@@ -2489,6 +3329,26 @@ test(
             await personal.manage('history_search', { query: 'BoundarySecretKeyword' }),
             { turns: [], messages: [] },
           );
+          const ownThread = await thread.activeThread(db.pool, ownerId);
+          const tied = new Date('2026-01-01T10:00:00.123456Z');
+          const pageIds = Array.from({ length: 17 }, () => randomUUID());
+          for (const id of pageIds)
+            await db.pool.query(
+              'INSERT INTO messages(id,owner_id,role,text,thread_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+              [id, ownerId, 'user', 'PagedHistoryKeyword', ownThread.id, tied],
+            );
+          const first = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+          })) as { messages: Array<{ id: string }> };
+          const second = (await personal.manage('history_search', {
+            query: 'PagedHistoryKeyword',
+            before: first.messages.at(-1)!.id,
+          })) as { messages: Array<{ id: string }> };
+          assert.deepEqual(
+            [...first.messages, ...second.messages].map((row) => row.id).sort(),
+            [...pageIds].sort(),
+          );
+          await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [pageIds]);
 
           const job = async (id: string) =>
             (

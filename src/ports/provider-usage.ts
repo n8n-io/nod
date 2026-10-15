@@ -1,16 +1,6 @@
-export interface ProviderUsageEvent {
-  id?: string;
-  provider: string;
-  category: 'agent' | 'memory' | 'review' | 'tasks';
-  operation: string;
-  model?: string;
+import type { UsageDetails } from '../shared/execution.ts';
+
+export interface ProviderUsageEvent extends UsageDetails {
+  id: string;
   turnId?: string;
-  status: 'succeeded' | 'failed' | 'cancelled';
-  durationMs: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  costUsd?: number | null;
-  pricing?: 'reported' | 'sdk_estimate' | 'unavailable';
 }

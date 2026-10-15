@@ -62,6 +62,7 @@ export function createSession(options: {
   const interactions: Interaction[] = [];
   const userMessages: Array<{ at: number; text: string }> = [];
   let secretIndex = 0;
+  let approvalIndex = 0;
   let threadId: string | undefined;
 
   async function post(path: string, body: unknown) {
@@ -164,7 +165,15 @@ export function createSession(options: {
         typeof user.approve === 'function'
           ? user.approve(pending.approval.action, pending.approval.args)
           : (user.approve ?? true);
-      const reply = approve ? 'Yes' : 'No';
+      const reply = user.approvalReplies
+        ? user.approvalReplies[approvalIndex++]
+        : approve
+          ? 'Yes'
+          : 'No';
+      if (reply === undefined) {
+        interactions.push({ kind: 'unanswered', text: pending.text, at });
+        return false;
+      }
       interactions.push({
         kind: 'approval',
         action: pending.approval.action,

@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { runProcess } from '../src/providers/process.ts';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import type { Schedule, ScheduleHistory } from '../src/shared/contracts.ts';
+import type { AnalyticsEvent } from '../src/server/analytics.ts';
 import {
   readSchedule,
   scheduleExpression,
@@ -90,6 +91,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
           createElement(TaskCard, { task, onScheduled: () => scheduled++ }),
           createElement(TaskCard, { task: { ...task, id: crypto.randomUUID(), status: 'cancelled' }, onScheduled: () => scheduled++ }),
         )));
+        await act(async () => document.querySelector('button[aria-controls]').click());
         assert.equal([...document.querySelectorAll('button')].filter(item => item.textContent.trim() === 'Schedule task').length, 1);
         await click('Schedule task');
         assert.equal(writes.length, 0);
@@ -102,9 +104,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
         await click('Try again');
         assert.equal(document.querySelector('textarea').value, draft.prompt);
         assert.equal(button('Create schedule').disabled, true);
-        await input(document.querySelector('textarea'), 'x'.repeat(6001));
         await pick('Choose frequency', 'Every week');
-        assert.equal(button('Create schedule').disabled, true);
         await input(document.querySelector('textarea'), 'Read only overdue invoices in the synthetic EUR account. Keep results in Otto.');
         await pick('Monday', 'Wednesday');
         const selectedZone = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Kathmandu' }).resolvedOptions().timeZone;
@@ -167,7 +167,9 @@ test(
       throw new Error('Schedule worker was not registered.');
     };
     let failAfterTask = false;
+    const captured: AnalyticsEvent[] = [];
     const personal = createPersonalService({
+      analytics: (event) => captured.push(event),
       pool: db.pool,
       ownerId: 'local-development',
       scheduler: thread.boss,
@@ -529,6 +531,7 @@ test(
             ['weekly', '0', '2035-10-28T10:30:00.000Z'],
             ['monthly', '31', '2035-10-31T10:30:00.000Z'],
           ] as Array<[ScheduleFrequency, string, string]>) {
+            captured.length = 0;
             const schedule = await create({ cron: '0 9 * * *' });
             const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
               cron: scheduleExpression(frequency, '10:30', day),
@@ -541,7 +544,24 @@ test(
             await deliver([job]);
             assert.equal((await runs(schedule.id))[0].scheduledFor, expected);
             await request('DELETE', `/api/schedules/${schedule.id}`);
+            assert.deepEqual(
+              captured,
+              ['create', 'update', 'delete'].map((operation) => ({
+                event: 'otto_schedule_changed',
+                properties: {
+                  operation,
+                  schedule_kind: 'recurring',
+                  cadence:
+                    operation === 'create'
+                      ? 'daily'
+                      : ['weekdays', 'weekends'].includes(frequency)
+                        ? 'custom'
+                        : frequency,
+                },
+              })),
+            );
           }
+          captured.length = 0;
           const customCron = '15 8 1,15 * 1-5';
           const custom = await create({ cron: customCron });
           const draft = readSchedule(custom.cron!);
@@ -563,6 +583,7 @@ test(
             ['2035-10-28', 'Europe/Lisbon', '2035-10-28T09:05:00.000Z'],
             ['2035-10-27', 'Asia/Kathmandu', '2035-10-27T03:20:00.000Z'],
           ]) {
+            captured.length = 0;
             const schedule = await create({ kind: 'once', runAt: '2035-10-27T12:00:00Z' });
             const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
               runAt: scheduleRunAt(date, '09:05', timeZone),
@@ -579,6 +600,13 @@ test(
             await deliver([job]);
             assert.equal((await runs(schedule.id))[0].scheduledFor, expected);
             await request('DELETE', `/api/schedules/${schedule.id}`);
+            assert.deepEqual(
+              captured,
+              ['create', 'update', 'delete'].map((operation) => ({
+                event: 'otto_schedule_changed',
+                properties: { operation, schedule_kind: 'once', cadence: 'once' },
+              })),
+            );
           }
         },
       );

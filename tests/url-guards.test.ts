@@ -7,7 +7,6 @@ import { crc32 } from 'node:zlib';
 import { act, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { JSDOM } from 'jsdom';
-import { actionConfirmation } from '../src/server/action-presentation.ts';
 import { createBrowserProxy } from '../src/providers/agent-browser/network.ts';
 import {
   createPublicLinkPreviewProvider,
@@ -541,38 +540,6 @@ test('only intended app paths and credential-free HTTP URLs become links', () =>
     '//evil.example/api/artifacts/id file:///credentials/id javascript:/approvals/id',
   );
   assert.doesNotMatch(result, /<a /);
-});
-
-test('approval messages preserve source URLs and render supplied markup as text', () => {
-  const links = [
-    'https://workspace.slack.com/archives/C_TEST/p123456?thread_ts=123_456&cid=C_TEST#part_one',
-    'https://example.test/path_(review)?values=one&next=two#note_1',
-    'https://example.test/path_(review)',
-    ...['!', '.', ',', ';', ':', '?', ')'].flatMap((suffix) => [
-      `https://example.test/source${suffix}`,
-      `https://example.test/source?key=value${suffix}`,
-      `https://example.test/source#section${suffix}`,
-    ]),
-  ];
-  const unsafe = [
-    '<script>alert(1)</script>',
-    '<img src="javascript:alert(1)" onerror="alert(1)">',
-    '[approve](javascript:alert(1))',
-    '[internal](/api/state)',
-    'https://user:password@example.test/private',
-    '**keep this literal**',
-  ];
-  const body = `See <${links[0]}>.\n${links.slice(1).join('\n')}\n${unsafe.join('\n')}`;
-  const args = { prompt: body };
-  const document = new JSDOM(render(actionConfirmation('OTTO_schedule_create', args))).window
-    .document;
-  assert.deepEqual(
-    [...document.querySelectorAll('a')].map((anchor) => anchor.getAttribute('href')),
-    links,
-  );
-  assert.ok(document.body.textContent?.includes(body));
-  assert.equal(document.querySelector('script,img,iframe,form,strong,em'), null);
-  assert.equal(args.prompt, body);
 });
 
 test('plain browser connection paths hide their token behind one fixed action', () => {

@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import {
   CalendarClock,
   ChevronDown,
+  Circle,
   CircleAlert,
   CircleCheck,
   CircleSlash,
@@ -9,26 +10,23 @@ import {
   Hourglass,
   LoaderCircle,
   MessageCircle,
+  MessageSquare,
 } from 'lucide-react';
-import type { Schedule, ScheduleRun, Task, TaskStatus } from '../../shared/contracts';
+import type { Schedule, ScheduleRun, Task, TaskDetail, TaskStatus } from '../../shared/contracts';
+import { taskHeadline, taskLabels } from '../../shared/task-status';
 import { PageTitle } from '../components/page-title';
 import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
+import { MessageText } from '../components/message';
 import { usePageData } from '../hooks/use-page-data';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { desktopSettingsAvailable } from '../lib/desktop';
+import { post, errorMessage } from '../lib/api';
 import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
-const labels: Record<TaskStatus, string> = {
-  working: 'Working',
-  needs_you: 'Needs you',
-  waiting: 'Waiting',
-  scheduled: 'Checking back',
-  stalled: 'Stalled',
-  done: 'Done',
-  cancelled: 'Stopped',
-};
 const icons = {
+  queued: Clock,
+  failed: CircleAlert,
   working: LoaderCircle,
   needs_you: MessageCircle,
   waiting: Hourglass,
@@ -37,72 +35,236 @@ const icons = {
   done: CircleCheck,
   cancelled: CircleSlash,
 };
-const order: TaskStatus[] = ['needs_you', 'working', 'stalled', 'waiting', 'scheduled'];
+const order: TaskStatus[] = [
+  'needs_you',
+  'failed',
+  'working',
+  'queued',
+  'stalled',
+  'waiting',
+  'scheduled',
+];
 const views = ['current', 'scheduled', 'previous'] as const;
 const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
 
-function headline(task: Task) {
-  if (closed(task)) return task.result || task.now;
-  if (task.status === 'needs_you')
-    return (
-      task.question ??
-      'Something stopped this before it finished. Check what happened, then tell Otto to continue.'
-    );
-  if (task.status === 'stalled') return 'Nothing is planned next. Tell Otto to keep going or stop.';
-  return task.now;
+function TaskActivity({ id }: { id: string }) {
+  const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
+  if (data.error) return <Notice>Could not load activity.</Notice>;
+  return (
+    <ol className="task-activity">
+      {data.data?.events.map((event) => (
+        <li key={event.id} data-helper={Boolean(event.parentRunId)}>
+          <span>
+            {event.parentRunId ? 'Helper · ' : ''}
+            {event.summary}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
-export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): void }) {
+export function TaskCard({
+  task,
+  onScheduled,
+  onReply,
+}: {
+  task: Task;
+  onScheduled?(): void;
+  onReply?(): void;
+}) {
   const headingId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState('');
   const format = useDateFormat();
   const Icon = icons[task.status];
   const when = (value: string) => formatDateTime(value, format, { weekday: true });
+  const steps = task.steps ?? [];
+  const completed =
+    task.status === 'done' ? steps.length : Math.min(task.stepIndex ?? 0, steps.length);
+  const state = (index: number) =>
+    task.status === 'done' || index < completed
+      ? 'done'
+      : !closed(task) && index === (task.stepIndex ?? 0)
+        ? 'current'
+        : 'todo';
+  const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
+  const line =
+    !onReply && expanded && task.status === 'needs_you'
+      ? task.now || 'Waiting for your answer'
+      : taskHeadline(task);
   return (
-    <article className="saved-plan task-card" aria-labelledby={headingId}>
-      <div className="saved-plan-title">
-        <h2 id={headingId}>{task.title}</h2>
-        <span className="task-status" data-status={task.status}>
-          <Icon
-            size={16}
-            aria-hidden="true"
-            className={task.status === 'working' ? 'spin' : undefined}
-          />
-          {labels[task.status]}
-        </span>
+    <article
+      className="task-preview"
+      data-status={task.status}
+      aria-labelledby={headingId}
+      tabIndex={-1}
+      data-message-id={onReply ? task.messageId : undefined}
+    >
+      <h2 className="task-preview-heading">
+        <button
+          type="button"
+          className="task-preview-head"
+          aria-expanded={expanded}
+          aria-controls={`${headingId}-body`}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span className="task-preview-top">
+            <span className="task-preview-title" id={headingId}>
+              {task.title}
+            </span>
+            <span className="task-status" data-status={task.status}>
+              <Icon
+                size={16}
+                aria-hidden="true"
+                className={task.status === 'working' ? 'spin' : undefined}
+              />
+              {taskLabels[task.status]}
+            </span>
+            {!steps.length && chevron}
+          </span>
+          <span className="task-preview-line">{line}</span>
+          {steps.length > 0 && (
+            <span className="task-preview-foot">
+              <span className="task-steps-bar" aria-hidden="true">
+                {steps.map((_, index) => (
+                  <i key={index} data-state={state(index)} />
+                ))}
+              </span>
+              <span className="task-preview-count">
+                {completed} of {steps.length} steps {chevron}
+              </span>
+            </span>
+          )}
+        </button>
+      </h2>
+      <div className="task-preview-body" id={`${headingId}-body`} hidden={!expanded}>
+        {!onReply && task.status === 'needs_you' && task.question && (
+          <div className="task-preview-question">
+            <MessageText text={task.question} />
+          </div>
+        )}
+        {closed(task) && task.result && (
+          <div className="task-preview-result">
+            <MessageText text={task.result} />
+          </div>
+        )}
+        {steps.length > 0 && (
+          <ol className="task-preview-steps">
+            {steps.map((step, index) => {
+              const progress = state(index);
+              const StepIcon =
+                progress === 'done' ? CircleCheck : progress === 'current' ? Icon : Circle;
+              return (
+                <li
+                  key={index}
+                  data-state={progress}
+                  aria-current={progress === 'current' ? 'step' : undefined}
+                >
+                  <StepIcon
+                    size={16}
+                    aria-hidden="true"
+                    className={
+                      progress === 'current' && task.status === 'working' ? 'spin' : undefined
+                    }
+                  />
+                  <span>{step}</span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        <p className="task-preview-meta">
+          <Clock size={16} aria-hidden="true" />
+          <span>
+            {task.closedAt
+              ? `${task.status === 'cancelled' ? 'Stopped' : 'Finished'} ${formatDateTime(task.closedAt, format)}`
+              : `Started ${formatDateTime(task.createdAt, format)}`}
+          </span>
+        </p>
+        {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
+          <ul className="task-facts">
+            {task.waitingFor.map((wait) => (
+              <li key={`${wait.who}:${wait.via}`}>
+                <span>Waiting on</span>
+                {wait.who} · {wait.via}
+              </li>
+            ))}
+            {task.nextCheck && (
+              <li>
+                <span>Next check</span>
+                {when(task.nextCheck)}
+              </li>
+            )}
+            {task.doneWhen && (
+              <li>
+                <span>Done when</span>
+                {task.doneWhen}
+              </li>
+            )}
+          </ul>
+        )}
+        {(task.revision ?? 0) > (task.appliedRevision ?? 0) && !closed(task) && (
+          <p className="task-preview-meta">Owner update queued</p>
+        )}
+        <div className="task-preview-actions">
+          {onReply && (
+            <Button variant="ghost" size="sm" onClick={onReply}>
+              Reply
+            </Button>
+          )}
+          {!onReply && task.messageId && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                window.dispatchEvent(
+                  new window.CustomEvent('otto:focus-message', {
+                    detail: { messageId: task.messageId },
+                  }),
+                )
+              }
+            >
+              <MessageSquare size={16} aria-hidden="true" />
+              Show in chat
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={showActivity}
+            onClick={() => setShowActivity(!showActivity)}
+          >
+            {showActivity ? 'Hide activity' : 'Show activity'}
+          </Button>
+          {!closed(task) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={stopping}
+              onClick={async () => {
+                setStopping(true);
+                setError('');
+                try {
+                  await post(`/api/tasks/${task.id}/stop`);
+                } catch (cause) {
+                  setError(errorMessage(cause));
+                } finally {
+                  setStopping(false);
+                }
+              }}
+            >
+              {stopping ? 'Stopping…' : 'Stop'}
+            </Button>
+          )}
+        </div>
+        {error && <Notice>{error}</Notice>}
+        {expanded && showActivity && <TaskActivity id={task.id} />}
+        {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
       </div>
-      <p className="saved-plan-meta">
-        <Clock size={16} aria-hidden="true" />
-        <span>
-          {task.closedAt
-            ? `${task.status === 'cancelled' ? 'Stopped' : 'Finished'} ${formatDateTime(task.closedAt, format)}`
-            : `Started ${formatDateTime(task.createdAt, format)}`}
-        </span>
-      </p>
-      <p className="task-now">{headline(task)}</p>
-      {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
-        <ul className="task-facts">
-          {task.waitingFor.map((wait) => (
-            <li key={`${wait.who}:${wait.via}`}>
-              <span>Waiting on</span>
-              {wait.who} · {wait.via}
-            </li>
-          ))}
-          {task.nextCheck && (
-            <li>
-              <span>Next check</span>
-              {when(task.nextCheck)}
-            </li>
-          )}
-          {task.doneWhen && (
-            <li>
-              <span>Done when</span>
-              {task.doneWhen}
-            </li>
-          )}
-        </ul>
-      )}
-      {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
     </article>
   );
 }

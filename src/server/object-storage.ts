@@ -3,12 +3,12 @@ import type { Pool } from 'pg';
 import { transaction } from './transaction.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
 import {
-  maxObjectBytes,
   objectFailure,
   objectKey,
   objectLimit,
   objectVersion,
 } from '../ports/object-storage-validation.ts';
+import { fileBytes } from '../shared/files.ts';
 
 export function createPostgresObjectStore(options: {
   database: Pool;
@@ -33,9 +33,11 @@ export function createPostgresObjectStore(options: {
           );
           await client.query(`CREATE TABLE IF NOT EXISTS private_objects (
         owner_id text NOT NULL, object_key text NOT NULL, version text NOT NULL,
-        bytes bytea NOT NULL CHECK(octet_length(bytes)<=16777216),
-        PRIMARY KEY(owner_id,object_key)
+        bytes bytea NOT NULL, PRIMARY KEY(owner_id,object_key)
       )`);
+          await client.query(
+            'ALTER TABLE private_objects DROP CONSTRAINT IF EXISTS private_objects_bytes_check',
+          );
         }, options.database),
       ),
     read: (value, maxBytes) =>
@@ -57,7 +59,7 @@ export function createPostgresObjectStore(options: {
       }),
     write: (value, bytes, { expectedVersion }) =>
       safe(async () => {
-        if (bytes.byteLength > maxObjectBytes) throw objectFailure();
+        if (bytes.byteLength > fileBytes) throw objectFailure();
         if (expectedVersion !== null) objectVersion(expectedVersion);
         const version = randomUUID();
         const result =

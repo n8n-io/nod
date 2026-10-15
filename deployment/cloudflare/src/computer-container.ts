@@ -384,7 +384,7 @@ abstract class ComputerContainer extends Container<Bindings> {
             this.exec(
               workspaceCommand,
               connected
-                ? { user: '1002:1002', cwd: '/home/otto-connected', stdin: 'pipe', signal }
+                ? { user: `${connected}:1002`, cwd: '/var/tmp', stdin: 'pipe', signal }
                 : { cwd: `/workspace/${threadId}`, stdin: 'pipe', signal },
             ),
         });

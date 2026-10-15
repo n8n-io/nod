@@ -21,6 +21,8 @@ import { registerLocalAccess } from '../src/server/access.ts';
 import { verificationCode, verificationSenderDomain } from '../src/server/email-code.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
 import type { TurnRef } from '../src/server/thread.ts';
+import type { AnalyticsEvent } from '../src/server/analytics.ts';
+import { analyticsEvent } from '../src/server/analytics-events.ts';
 import {
   credentialOrigin,
   checkedKeyStore,
@@ -222,7 +224,9 @@ test(
     const injectionComplete = new Promise<void>((resolve) => {
       complete = resolve;
     });
+    const captured: AnalyticsEvent[] = [];
     const vault = await createVault(pool, {
+      analytics: (event) => captured.push(event),
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       retry: async () => {},
       inject: async (input) => {
@@ -278,6 +282,7 @@ test(
         },
       });
       await injectionStarted;
+      assert.deepEqual(captured, []);
       assert.equal(resumed, 0);
       let secondSettled = false;
       const second = app
@@ -306,6 +311,17 @@ test(
         ).statusCode,
         409,
       );
+      assert.deepEqual(captured, [
+        {
+          event: 'otto_vault_changed',
+          properties: {
+            item_type: 'login',
+            operation: 'create',
+            source: 'user',
+            domain: 'example.com',
+          },
+        },
+      ]);
       const metadata = await app.inject({ url: '/api/vault' });
       assert.equal(metadata.json().length, 1);
       assert.equal(metadata.body.includes('secret-password'), false);
@@ -337,10 +353,7 @@ test(
       assert.equal(JSON.stringify(requests.rows).includes(result.url.split('/').at(-1)!), false);
       const expired = await vault.request(expiredTask, 'local-development', input);
       await wait(expiredTask);
-      await pool.query(
-        "UPDATE credential_requests SET expires_at = now() - interval '1 second' WHERE turn_id = $1",
-        [expiredTask.turnId],
-      );
+      await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [expiredTask.turnId]);
       const expiredUrl = expired.url.replace('/vault/', '/api/credential-requests/');
       assert.equal((await app.inject({ url: expiredUrl })).json().status, 'expired');
       assert.equal(
@@ -619,10 +632,9 @@ test(
       await wait(task1);
       const url = request.url.replace('/vault/', '/api/credential-requests/');
       assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
-      await pool.query(
-        "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-        [task1.turnId],
-      );
+      await pool.query('UPDATE credential_requests SET failed_at=now() WHERE turn_id=$1', [
+        task1.turnId,
+      ]);
       const concurrent = await Promise.all([
         app.inject({ method: 'POST', url: `${url}/retry` }),
         app.inject({ method: 'POST', url: `${url}/retry` }),
@@ -1017,17 +1029,9 @@ test(
       assert.equal((await f.submit(checkUrl)).statusCode, 200);
       assert.deepEqual(f.calls, { injected: 1, retried: [] });
       assert.deepEqual(await f.resumed(), [check.turnId]);
-      await f.pool.query(
-        "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-        [running.turnId],
-      );
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
 
       await f.pool.query('UPDATE turns SET started_at=NULL WHERE id=$1', [later.turnId]);
-      await f.pool.query(
-        "UPDATE credential_requests SET expires_at=now()+interval '5 minutes' WHERE turn_id=$1",
-        [running.turnId],
-      );
       assert.equal((await f.submit(url)).statusCode, 200);
       assert.deepEqual(f.calls, { injected: 2, retried: [] });
       assert.deepEqual(await f.resumed(), [check.turnId, running.turnId].sort());
@@ -1714,14 +1718,13 @@ test(
       await t.test(
         'expired, archived and foreign requests cannot select saved entries and OTP has no accounts',
         async () => {
-          for (const state of ['expired', 'archived']) {
+          for (const state of ['ended', 'archived']) {
             await addTask(state);
             const url = await form(state);
-            if (state === 'expired')
-              await pool.query(
-                "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-                [task(state).turnId],
-              );
+            if (state === 'ended')
+              await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
+                task(state).turnId,
+              ]);
             else {
               await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [
                 task(state).threadId,
@@ -1963,10 +1966,12 @@ test(
       'INSERT INTO vault_entries(id,owner_id,label,origin,username_hint,ciphertext) VALUES($1,$2,$3,$4,$5,$6)',
       [login.id, owner, 'Legacy login', login.origin, 'fu…', legacyCiphertext],
     );
+    const captured: AnalyticsEvent[] = [];
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const app = Fastify({ logger: false });
       registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
+        analytics: (event) => captured.push(event),
         keyStore: { id: 'synthetic', configured: true, getKey },
         inject: async () => assert.fail('Cards must never enter a website login.'),
         resume: async () => assert.fail('Card management must not resume a task.'),
@@ -1989,6 +1994,32 @@ test(
       instance: FastifyInstance = app,
     ) => instance.inject({ method: 'PATCH', url: `/api/vault/${id}`, headers, payload });
     try {
+      await t.test(
+        'card analytics omit values and do not count unchanged edits or repeated deletes',
+        async () => {
+          captured.length = 0;
+          const entry = await create();
+          assert.equal((await update(entry.id, input)).statusCode, 200);
+          assert.equal(
+            (await update(entry.id, { ...input, label: 'Updated card' })).statusCode,
+            200,
+          );
+          for (let attempt = 0; attempt < 2; attempt++) {
+            assert.equal(
+              (await app.inject({ method: 'DELETE', url: `/api/vault/${entry.id}`, headers }))
+                .statusCode,
+              200,
+            );
+          }
+          assert.deepEqual(
+            captured,
+            ['create', 'update', 'delete'].map((operation) => ({
+              event: 'otto_vault_changed',
+              properties: { item_type: 'card', operation, source: 'user' },
+            })),
+          );
+        },
+      );
       const first = await create();
       await create({
         ...input,
@@ -2132,10 +2163,12 @@ test(
       origin: 'http://localhost:4310',
       cookie: 'otto-access-4310=synthetic-local-access',
     };
+    const captured: AnalyticsEvent[] = [];
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const instance = Fastify({ logger: false });
       registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
+        analytics: (event) => captured.push(event),
         keyStore: checkedKeyStore(pool, { id: 'fixture', configured: true, getKey }),
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),
         resume: async () => assert.fail('Viewing or editing a login must not resume a turn.'),
@@ -2149,14 +2182,14 @@ test(
       app.inject({ method: 'PATCH', url: `/api/vault/${id}`, headers, payload });
     const read = (id: string, field: 'details' | 'password') =>
       app.inject({ method: 'POST', url: `/api/vault/${id}/${field}`, headers, payload: {} });
-    const save = async (label: string) => {
+    const save = async (label: string, origin = 'https://accounts.example.test:8443') => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/vault',
         headers,
         payload: {
           label,
-          origin: 'https://accounts.example.test:8443',
+          origin,
           username: `${label}@example.test`,
           password: `${label}-secret`,
         },
@@ -2183,6 +2216,133 @@ test(
     try {
       const first = await save('First');
       const second = await save('Second');
+      await t.test(
+        'Vault analytics count committed mutations without private item data',
+        async () => {
+          captured.length = 0;
+          const origin = 'https://tenant.accounts.example.co.uk:8443';
+          const entry = await save('Analytics', origin);
+          await save('Analytics', origin);
+          const same = { label: 'Analytics', username: 'Analytics@example.test' };
+          assert.equal((await patch(entry.id, same)).statusCode, 200);
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: '/api/vault',
+                headers,
+                payload: { ...same, origin, password: 'updated-synthetic-secret' },
+              })
+            ).statusCode,
+            200,
+          );
+          assert.equal(
+            (await patch(entry.id, { ...same, label: 'Updated analytics' })).statusCode,
+            200,
+          );
+          assert.equal((await patch(randomUUID(), same)).statusCode, 404);
+          for (let attempt = 0; attempt < 2; attempt++) {
+            assert.equal(
+              (await app.inject({ method: 'DELETE', url: `/api/vault/${entry.id}`, headers }))
+                .statusCode,
+              200,
+            );
+          }
+          assert.deepEqual(
+            captured,
+            ['create', 'update', 'update', 'delete'].map((operation) => ({
+              event: 'otto_vault_changed',
+              properties: {
+                item_type: 'login',
+                operation,
+                source: 'user',
+                domain: 'example.co.uk',
+              },
+            })),
+          );
+          await pool.query(`CREATE FUNCTION reject_analytics_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN IF NEW.label='Rolled back analytics' THEN RAISE EXCEPTION 'Synthetic rejected write'; END IF; RETURN NEW; END $$;
+          CREATE TRIGGER reject_analytics_fixture BEFORE INSERT ON vault_entries FOR EACH ROW EXECUTE FUNCTION reject_analytics_fixture()`);
+          const refused = await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: {
+              label: 'Rolled back analytics',
+              origin: 'https://example.test',
+              username: 'synthetic',
+              password: 'synthetic-secret',
+            },
+          });
+          assert.equal(refused.statusCode, 500);
+          const imported = await app.inject({
+            method: 'POST',
+            url: '/api/vault/import',
+            headers,
+            payload: {
+              logins: [
+                {
+                  label: 'Imported before rollback',
+                  origin: 'https://rollback.example.com',
+                  username: 'synthetic',
+                  password: 'synthetic-secret',
+                },
+                {
+                  label: 'Rolled back analytics',
+                  origin: 'https://rollback.example.org',
+                  username: 'synthetic',
+                  password: 'synthetic-secret',
+                },
+              ],
+            },
+          });
+          assert.equal(imported.statusCode, 500);
+          assert.equal(captured.length, 4);
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT id FROM vault_entries WHERE label='Imported before rollback'",
+              )
+            ).rowCount,
+            0,
+          );
+          await pool.query(
+            'DROP TRIGGER reject_analytics_fixture ON vault_entries; DROP FUNCTION reject_analytics_fixture()',
+          );
+          for (const [origin, domain] of [
+            ['https://пример.рф', 'xn--e1afmkfd.xn--p1ai'],
+            ['https://accounts.example.test', undefined],
+            ['http://localhost:4310', undefined],
+            ['https://127.0.0.1', undefined],
+            ['https://[::1]', undefined],
+          ] as const) {
+            captured.length = 0;
+            const savedEntry = await save('Domain analytics', origin);
+            assert.equal(
+              (
+                await app.inject({
+                  method: 'DELETE',
+                  url: `/api/vault/${savedEntry.id}`,
+                  headers,
+                })
+              ).statusCode,
+              200,
+            );
+            assert.deepEqual(
+              captured.map((event) => analyticsEvent.parse(event)),
+              ['create', 'delete'].map((operation) => ({
+                event: 'otto_vault_changed',
+                properties: {
+                  item_type: 'login',
+                  operation,
+                  source: 'user',
+                  ...(domain ? { domain } : {}),
+                },
+              })),
+            );
+          }
+        },
+      );
 
       await t.test(
         'foreign, missing and malformed IDs and body overrides cannot read or change values',
@@ -2378,6 +2538,39 @@ test(
       );
 
       await t.test(
+        'large imports batch only committed normalized domains within the hosted capture limit',
+        async () => {
+          captured.length = 0;
+          const response = await app.inject({
+            method: 'POST',
+            url: '/api/vault/import',
+            headers,
+            payload: {
+              logins: Array.from({ length: 501 }, (_, i) => ({
+                label: `Private imported ${i}`,
+                origin: `https://private${i}.example.com`,
+                username: `private-${i}@example.test`,
+                password: 'private-import-secret',
+              })),
+            },
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          assert.equal(response.json().imported, 501);
+          const batches = captured.filter((event) => event.event === 'otto_vault_imported');
+          assert.equal(batches.length, 6);
+          assert.equal(batches.flatMap((event) => event.properties.domains).length, 501);
+          assert.ok(
+            batches.every((event) =>
+              event.properties.domains.every((domain) => domain === 'example.com'),
+            ),
+          );
+          assert.ok(batches.every((event) => analyticsEvent.safeParse(event).success));
+          assert.doesNotMatch(JSON.stringify(batches), /private|secret|username|password/);
+          captured.length = 0;
+        },
+      );
+
+      await t.test(
         'an import adds new logins encrypted and keeps the ones already saved',
         async () => {
           const existing = await app.inject({
@@ -2386,7 +2579,7 @@ test(
             headers,
             payload: {
               label: 'Kept',
-              origin: 'https://import.fixture.test',
+              origin: 'https://import.example.com',
               username: 'kept@example.test',
               password: 'kept-original-secret',
             },
@@ -2394,13 +2587,14 @@ test(
           assert.equal(existing.statusCode, 200);
           const { logins, unreadable } = parsePasswordCsv(
             'name,url,username,password,note\n' +
-              'Kept,https://import.fixture.test/login,kept@example.test,kept-changed-secret,\n' +
-              'Fresh,http://import.fixture.test/,fresh@example.test,fresh-import-secret,\n' +
-              'Fresh again,https://import.fixture.test,fresh@example.test,fresh-import-secret,\n' +
-              ',https://other.fixture.test,,other-import-secret,\n' +
+              'Kept,https://import.example.com/login,kept@example.test,kept-changed-secret,\n' +
+              'Fresh,http://import.example.com/,fresh@example.test,fresh-import-secret,\n' +
+              'Fresh again,https://import.example.com,fresh@example.test,fresh-import-secret,\n' +
+              ',https://other.example.org,,other-import-secret,\n' +
               'App,android://key@com.fixture.app/,ana,app-import-secret,\n',
           );
           assert.equal(unreadable, 1);
+          captured.length = 0;
           const imported = await app.inject({
             method: 'POST',
             url: '/api/vault/import',
@@ -2426,14 +2620,20 @@ test(
           });
           assert.equal(imported.statusCode, 200);
           assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
+          assert.deepEqual(captured, [
+            {
+              event: 'otto_vault_imported',
+              properties: { domains: ['example.com', 'example.org'] },
+            },
+          ]);
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
           >();
           const fresh = listed.find((entry) => entry.label === 'Fresh again');
-          const other = listed.find((entry) => entry.label === 'other.fixture.test');
-          assert.equal(fresh?.origin, 'https://import.fixture.test');
-          assert.equal(other?.origin, 'https://other.fixture.test');
+          const other = listed.find((entry) => entry.label === 'other.example.org');
+          assert.equal(fresh?.origin, 'https://import.example.com');
+          assert.equal(other?.origin, 'https://other.example.org');
           assert.equal((await read(fresh!.id, 'password')).json().password, 'fresh-import-secret');
           const kept = listed.find((entry) => entry.label === 'Kept');
           assert.equal((await read(kept!.id, 'password')).json().password, 'kept-original-secret');
@@ -2442,17 +2642,6 @@ test(
           );
           assert.equal(JSON.stringify(stored.rows).includes('import-secret'), false);
           assert.equal(JSON.stringify(stored.rows).includes('fresh@example.test'), false);
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: '/api/vault/import',
-                headers,
-                payload: { logins: Array.from({ length: 5001 }, () => logins[0]) },
-              })
-            ).json().error,
-            'Import at most 5,000 logins at a time.',
-          );
         },
       );
     } finally {
@@ -2980,6 +3169,13 @@ test(
       let elsewhere: string | undefined;
       let captureFails = false;
       let failFill = false;
+      let presentationFailure = false;
+      let presentedText = 'Synthetic private payment step.';
+      let duringPresentation = async () => {};
+      const presentations: Array<{
+        turn: { threadId: string; turnId: string };
+        input: Record<string, unknown>;
+      }> = [];
       let duringFill = async () => {};
       const make = (local: boolean) =>
         createPayments(pool, {
@@ -2987,6 +3183,13 @@ test(
           uses: vault.uses,
           local,
           inOtto: async () => inOtto,
+          present: async (turn, input) => {
+            if (presentationFailure) throw new Error('Synthetic payment presentation failure.');
+            presentations.push(structuredClone({ turn, input }));
+            await duringPresentation();
+            input.amount = '0.01';
+            return presentedText;
+          },
           page: async () => ({ origin: new URL(url).origin, url }),
           destinations: async () => {
             const origin = new URL(url).origin;
@@ -3046,6 +3249,20 @@ test(
         assert.equal(saved.statusCode, 200, saved.body);
         return saved.json<VaultCardEntry>();
       };
+      const zeros = await app.inject({
+        method: 'POST',
+        url: '/api/vault',
+        headers,
+        payload: {
+          kind: 'card',
+          label: 'Zero card',
+          cardholder: 'Synthetic Cardholder',
+          cardNumber: '0000 0000 0000 0000',
+          expiryMonth: 8,
+          expiryYear,
+        },
+      });
+      assert.equal(zeros.statusCode, 400);
       const card = await save('Studio card', '4242 4242 4242 4242');
       const turn = { threadId: randomUUID(), turnId: randomUUID() };
       await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
@@ -3080,6 +3297,24 @@ test(
       ])
         await assert.rejects(payments.request(turn, invalid));
       assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      presentationFailure = true;
+      await assert.rejects(payments.request(turn, order), /Synthetic payment presentation failure/);
+      presentationFailure = false;
+      assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      assert.equal(fills.length, 0);
+      assert.equal(recorded.length, 0);
+      presentedText = '   ';
+      await assert.rejects(payments.request(turn, order), /valid question/);
+      presentedText = 'Synthetic private payment step.';
+      duringPresentation = async () => {
+        await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
+      };
+      await assert.rejects(payments.request(turn, order), /no longer active/);
+      duringPresentation = async () => {};
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
+      assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      assert.equal(fills.length, 0);
+      assert.equal(recorded.length, 0);
       const parallel = { threadId: turn.threadId, turnId: randomUUID() };
       await pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,background) VALUES($1,'local-development',$2,true)",
@@ -3109,10 +3344,22 @@ test(
       ]);
       assert.equal(first.paymentId, undefined);
       assert.deepEqual([...first.image], [255, 216, 255]);
-      assert.equal(
-        first.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
-      );
+      assert.deepEqual(presentations.at(-1), {
+        turn,
+        input: {
+          kind: 'payment',
+          origin: shop,
+          amount: '43.20',
+          amountMinor: 4320,
+          currency: 'EUR',
+          card: { brand: 'Visa', last4: '4242' },
+          destinations: [shop],
+          keepCode: false,
+          requires: 'security_code',
+        },
+      });
+      assert.equal(first.details.amount, '43.20');
+      assert.equal(first.question, presentedText);
       assert.equal(
         (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
         'unavailable',
@@ -3165,16 +3412,18 @@ test(
         /keeps its security code at the next/,
       );
       const keep = await payments.request(turn, order);
-      assert.match(keep.question, /Otto will keep it, so next time a yes is enough\.$/);
+      assert.equal(keep.details.keepCode, true);
+      assert.equal(presentations.at(-1)?.input.keepCode, true);
       assert.equal(await reply('737'), 'submitted');
       assert.equal((await studio()).doItForMe, true);
 
       elsewhere = 'https://pay.fixture.test';
+      const presented = presentations.length;
       const yes = await payments.request(turn, order);
-      assert.equal(
-        yes.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Card details go to pay.fixture.test.',
-      );
+      assert.equal(yes.question, undefined);
+      assert.equal(presentations.length, presented);
+      assert.deepEqual(yes.details.destinations, ['https://pay.fixture.test', shop]);
+      assert.equal(yes.details.requires, 'approval');
       assert.ok(yes.paymentId);
       assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, true);
       assert.equal(fills.at(-1)?.card.securityCode, '737');
@@ -3218,19 +3467,20 @@ test(
       assert.equal(fills.length, beforeLink + 1);
       assert.match(resumed.at(-1)!, /Check whether the shop accepted/);
       assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
-      await assert.rejects(
-        payments.setting(turn, { doItForMe: true }, true),
-        /only from a message/,
-      );
+      assert.match(await payments.setting(turn, { doItForMe: true }, true), /on for Visa ••4242/);
       assert.match(await payments.setting(turn, { doItForMe: false }, true), /off for Visa ••4242/);
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
       inOtto = true;
 
       await save('Travel card', '5555 5555 5555 4444');
       await assert.rejects(payments.request(turn, order), /Ask the owner which card/);
-      assert.match(
-        (await payments.request(turn, { ...order, card: 'travel' })).question,
-        /••4444\?/,
+      assert.equal(
+        (
+          (await payments.request(turn, { ...order, card: 'travel' })).details.card as {
+            last4: string;
+          }
+        ).last4,
+        '4444',
       );
       const yen = await payments.request(turn, {
         ...order,
@@ -3238,7 +3488,9 @@ test(
         amount: '1200',
         currency: 'JPY',
       });
-      assert.match(yen.question, /^Pay ¥1,200 at shop\.fixture\.test with Visa ••4242\?/);
+      assert.equal(yen.details.amountMinor, 1200);
+      assert.equal(yen.details.amount, '1200');
+      assert.equal(yen.details.currency, 'JPY');
       await assert.rejects(payments.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
       await assert.rejects(payments.request(turn, { ...order, currency: 'ZZZ' }));
       await assert.rejects(payments.request(turn, { ...order, fields: { number: '@e4' } }));
@@ -3420,10 +3672,7 @@ test(
       }
       const expired = await payments.request(turn, { ...order, card: card.id });
       const expiredId = expired.url!.split('/').at(-1)!;
-      await pool.query(
-        "UPDATE vault_payments SET expires_at=now()-interval '1 second' WHERE id=$1",
-        [expiredId],
-      );
+      await payments.request(turn, { ...order, card: card.id });
       const beforeExpiry = fills.length;
       assert.equal(
         (
@@ -3575,6 +3824,10 @@ test(
             )
           ).rows,
         ),
+        /4242424242424242|737|1234/,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(presentations.map((item) => item.input)),
         /4242424242424242|737|1234/,
       );
     } finally {
@@ -3943,7 +4196,7 @@ test(
         read++;
         assert.equal(request.recipient, username);
         assert.equal(request.origin, origin);
-        assert.ok(request.after > Date.now() - 35_000);
+        assert.ok(request.after >= Date.now() - 5 * 60_000 - 31_000);
         assert.ok(request.before <= Date.now());
         assert.equal(signal.aborted, false);
         await lookup?.();
@@ -4029,24 +4282,6 @@ test(
         },
       ],
       [
-        'legacy',
-        async (id: string) => {
-          await pool.query(
-            'UPDATE credential_account_selections SET credential_entered_at=NULL WHERE root_turn_id=$1',
-            [root(id)],
-          );
-        },
-      ],
-      [
-        'old-auth',
-        async (id: string) => {
-          await pool.query(
-            "UPDATE credential_account_selections SET credential_entered_at=now()-interval '6 minutes' WHERE root_turn_id=$1",
-            [root(id)],
-          );
-        },
-      ],
-      [
         'cancelled',
         async (id: string) => {
           await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [task(id).turnId]);
@@ -4058,9 +4293,21 @@ test(
       assert.equal(await fill(id), false, id);
       assert.equal(read, afterConcurrentReads, id);
     }
+    for (const [id, entered] of [
+      ['entered-long-ago', "now()-interval '6 minutes'"],
+      ['never-entered', 'NULL'],
+    ] as const) {
+      await start(id);
+      await pool.query(
+        `UPDATE credential_account_selections SET credential_entered_at=${entered} WHERE root_turn_id=$1`,
+        [root(id)],
+      );
+      assert.equal(await fill(id), true, id);
+    }
+    const readsBeforeOwner = read;
     await start('wrong-owner');
     assert.equal(await vault.fillEmailCode(task('wrong-owner'), 'other', otpInput), false);
-    assert.equal(read, afterConcurrentReads);
+    assert.equal(read, readsBeforeOwner);
     for (const [id, recipient] of [
       ['masked', 'o***@example.com'],
       ['masked-bullets', 'ow•••@example.com'],
@@ -4148,9 +4395,9 @@ test(
       assert.equal(await fill(id), false, id);
       assert.equal(read, before, id);
     }
-    for (const [id, offset] of [
-      ['stale-direct-email', -6 * 60_000],
-      ['future-direct-email', 60_000],
+    for (const [id, offset, filled] of [
+      ['long-direct-email', -6 * 60_000, true],
+      ['future-direct-email', 60_000, false],
     ] as const) {
       const turn = await begin(id);
       await pool.query('UPDATE turns SET started_at=$2 WHERE id=$1', [
@@ -4158,22 +4405,14 @@ test(
         new Date(Date.now() + offset),
       ]);
       const before: number = read;
-      assert.equal(await fill(id), false, id);
-      assert.equal(read, before, id);
+      assert.equal(await fill(id), filled, id);
+      assert.equal(read, before + (filled ? 1 : 0), id);
     }
     for (const [id, change] of [
       [
         'cancelled-direct-email',
         async (turn: TurnRef) => {
           await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
-        },
-      ],
-      [
-        'expired-direct-email',
-        async (turn: TurnRef) => {
-          await pool.query("UPDATE turns SET started_at=now()-interval '6 minutes' WHERE id=$1", [
-            turn.turnId,
-          ]);
         },
       ],
       [
@@ -4569,7 +4808,13 @@ test(
     assert.deepEqual(reads, []);
     await pool.query('DELETE FROM app_connections WHERE id=$1', [duplicate]);
     messages = [];
-    assert.equal(await read(), undefined);
+    assert.equal(await read({}, AbortSignal.timeout(200)), undefined);
+    const arrival = setTimeout(() => {
+      messages = [mail];
+    }, 200);
+    assert.equal((await read({}, AbortSignal.timeout(15_000)))?.code, '381742');
+    clearTimeout(arrival);
+    messages = [];
     messages = [mail, { ...mail, id: 'mail2', text: 'Your login verification code is 940173.' }];
     assert.equal(await read(), undefined);
     messages = [{ ...mail, receivedAt: now - 60_000 }];
@@ -5209,7 +5454,6 @@ test('secure sign-in keeps failed submissions editable and returns to chat only 
     label: 'Fixture sign-in',
     kind: 'otp',
     status: 'pending',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
     fields: [{ kind: 'otp', selector: '#code', label: 'Verification code' }],
   };
   let finish!: (value: Response) => void;
@@ -5394,12 +5638,22 @@ globalThis.location = window.location;
 const requests=[];
 window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
-window.fetch = globalThis.fetch = async (url, init={}) => { requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body}); return Response.json(new URL(url).pathname.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1}); };
+window.fetch = globalThis.fetch = async (url, init={}) => {
+  const path = new URL(url,window.location.href).pathname;
+  if (path==='/api/configuration') return Response.json({localOnly:true,integrationsReady:true});
+  if (path==='/api/apps') return Response.json([{slug:'gmail',status:'disconnected'}]);
+  if (path==='/api/integrations/key') return Response.json({managed:false,saved:true,suffix:'K7Q9'});
+  requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body});
+  return Response.json(path.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1});
+};
 const { recordingOptions } = await import('./src/web/lib/analytics-privacy.ts');
-const { createElement } = await import('react');
+const { createElement, act } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { Sidebar } = await import('./src/web/components/sidebar.tsx');
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(Sidebar, {path:'/', unreadCount:73, collapsed:false, onToggle() {}, onNavigate() {}})));
+const stylesheet = document.createElement('style');
+document.head.append(stylesheet);
+stylesheet.sheet.insertRule('.fixture-stylesheet { background-image: url("file:///synthetic-private-local/image.png") }');
 await import('posthog-js/dist/posthog-recorder.js');
 const events = [];
 const record = window.__PosthogExtensions__.rrweb.record;
@@ -5417,6 +5671,7 @@ stop();
 const recordedNodes = [];
 function visit(node) { recordedNodes.push(node); node.childNodes?.forEach(visit); }
 visit(events.find(event => event.type === 2).data.node);
+assert.ok(recordedNodes.some(node => node.attributes?._cssText?.includes('.fixture-stylesheet')));
 const badges = recordedNodes.filter(node => node.attributes?.class === 'chat-unread-badge');
 assert.equal(badges.length, document.querySelectorAll('.chat-unread-badge').length);
 assert.ok(badges.length > 0);
@@ -5442,6 +5697,15 @@ analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
 assert.equal(sdk.sessionRecordingStarted(), true);
+const { createRoot } = await import('react-dom/client');
+const { Email } = await import('./src/web/pages/onboarding/steps/email.tsx');
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const emailContainer = document.createElement('div');
+document.body.append(emailContainer);
+const emailRoot = createRoot(emailContainer);
+await act(async () => {emailRoot.render(createElement(Email,{arrived:'back',onNext() {},onBack() {}})); await new Promise(resolve => setTimeout(resolve,50));});
+await act(async () => {await new Promise(resolve => setTimeout(resolve,50));});
+assert.match(emailContainer.textContent,/Key saved.*K7Q9/);
 document.querySelector('#mutable').textContent = 'synthetic-private-recorded-mutation';
 document.querySelector('input').value = 'synthetic-private-recorded-input';
 document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));
@@ -5460,7 +5724,10 @@ assert.ok(snapshots.some(event => event.type === 2));
 assert.ok(snapshots.some(event => event.type === 3));
 assert.equal(snapshots.find(event => event.type === 4).data.href, 'https://otto.invalid/credentials');
 assert.match(JSON.stringify(snapshots), /Settings/);
+assert.match(JSON.stringify(snapshots), /Sign in to Gmail/);
+assert.doesNotMatch(JSON.stringify(snapshots), /K7Q9/);
 assert.doesNotMatch(JSON.stringify(snapshots), /synthetic-private/);
+await act(async () => emailRoot.unmount());
 assert.equal(requests.filter(request => new URL(request.url).pathname.endsWith('/config')).length, 1);
 assert.ok(requests.every(request => !new URL(request.url).pathname.startsWith('/flags')));
 analytics.capturePageview('/credentials/synthetic-private-request?token=synthetic-private-query');
@@ -5541,6 +5808,332 @@ process.exit(0);
   });
   assert.equal(result.exitCode, 0, result.stderr);
 });
+
+test(
+  'analytics consent fences SDK batches, replay, retries and delayed callbacks',
+  { concurrency: 3 },
+  async (t) => {
+    await Promise.all(
+      [
+        'disabled',
+        'desktop_disabled',
+        'batched_optin',
+        'queued_event',
+        'replay',
+        'late_config',
+        'retry',
+        'late_failure',
+        'owner_change',
+        'reoptin',
+        'cross_tab',
+        'failed_revoke',
+        'peer_failed_revoke',
+        'stale_peer_grant',
+      ].map((scenario) =>
+        t.test(scenario, async () => {
+          const result = await runProcess(
+            process.execPath,
+            ['--import', 'tsx', '--input-type=module'],
+            {
+              timeoutMs: 40_000,
+              input:
+                `const scenario = ${JSON.stringify(scenario)};\n` +
+                String.raw`
+import assert from 'node:assert/strict';
+import {gunzipSync} from 'node:zlib';
+import {JSDOM} from 'jsdom';
+const NativeMessageEvent = MessageEvent;
+const dom = new JSDOM('<!doctype html><html><head></head><body><nav data-analytics-public>Settings</nav><div id="private">synthetic-private-chat</div><input value="synthetic-private-input"></body></html>', {url:'https://otto.fixture.invalid/',pretendToBeVisual:true});
+for (const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLFormElement','HTMLIFrameElement','HTMLImageElement','HTMLLinkElement','HTMLStyleElement','HTMLMediaElement','HTMLVideoElement','HTMLAudioElement','HTMLCanvasElement','SVGElement','Document','DocumentFragment','ShadowRoot','CSSStyleSheet','CSSStyleDeclaration','MutationObserver','Event','CustomEvent']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:dom.window[name]});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
+Object.defineProperty(globalThis,'MessageEvent',{configurable:true,value:NativeMessageEvent});
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location = window.location;
+window.XMLHttpRequest = globalThis.XMLHttpRequest = undefined;
+const requests = [];
+let phase = 'disabled';
+let releaseConfig;
+let releaseFailure;
+let failed = false;
+let session;
+let delaySession = false;
+let releaseSession;
+let releasePatch;
+let revokeSignal;
+const wait = ms => new Promise(resolve => setTimeout(resolve,ms));
+async function decode(body) {
+  if (!body) return undefined;
+  if (body instanceof ArrayBuffer) body = Buffer.from(body);
+  if (ArrayBuffer.isView(body)) body = Buffer.from(body.buffer,body.byteOffset,body.byteLength);
+  if (typeof body.text === 'function') body = await body.text();
+  if (Buffer.isBuffer(body)) body = (body[0]===31 ? gunzipSync(body) : body).toString();
+  if (body.startsWith('data=')) body = Buffer.from(new URLSearchParams(body).get('data'),'base64').toString();
+  return JSON.parse(body);
+}
+window.fetch = globalThis.fetch = async (url,init={}) => {
+  const path = new URL(url,window.location.href).pathname;
+  if (path==='/api/session' || path==='/api/account') {
+    if (path==='/api/account') {
+      const change = JSON.parse(init.body);
+      if (scenario==='stale_peer_grant' && change.usageData===false) {
+        revokeSignal = init.signal;
+        await new Promise(resolve => {releasePatch=resolve;});
+      }
+      if (change.usageData!==undefined) session = {...session,settings:{...session.settings,usageData:change.usageData},analytics:{...session.analytics,enabled:change.usageData}};
+      if (scenario==='failed_revoke' && change.usageData===false) {
+        await new Promise(resolve => {releasePatch=resolve;});
+        return Response.json({error:'Synthetic tenant synchronization failure'},{status:503});
+      }
+    } else if (delaySession) {
+      const snapshot = session;
+      await new Promise(resolve => {releaseSession=resolve;});
+      return Response.json(snapshot);
+    }
+    return Response.json(session);
+  }
+  const request = {phase,path};
+  requests.push(request);
+  request.payload = await decode(init.body);
+  if (request.path.endsWith('/config')) {
+    if (scenario==='late_config' && !releaseConfig) await new Promise(resolve => {releaseConfig=resolve;});
+    return Response.json({sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false});
+  }
+  if (['retry','late_failure'].includes(scenario) && !failed && request.payload) {
+    failed = true;
+    if (scenario==='late_failure') await new Promise(resolve => {releaseFailure=resolve;});
+    return new Response('',{status:503});
+  }
+  return Response.json({status:1});
+};
+Object.defineProperty(navigator,'sendBeacon',{configurable:true,value:(url,body) => {
+  const request = {phase,path:new URL(url).pathname};
+  requests.push(request);
+  void decode(body).then(payload => {request.payload=payload;});
+  return true;
+}});
+const analytics = await import('./src/web/lib/analytics-client.ts');
+const {analyticsForCurrentSession} = await import('./src/web/lib/analytics.ts');
+const {posthog:sdk} = await import('posthog-js/no-external');
+const enabled = id => ({enabled:true,distinctId:'hosted:fixture-'+id,deployment:'hosted',environment:'production',appVersion:'0.1.0'});
+const disabled = {...enabled('a'),enabled:false};
+const events = request => Array.isArray(request.payload) ? request.payload : request.payload?.batch ?? (request.payload?.event ? [request.payload] : []);
+function interact() {
+  document.querySelector('#private').textContent = 'synthetic-private-'+phase;
+  document.querySelector('input').value = 'synthetic-private-'+phase;
+  document.querySelector('input').dispatchEvent(new window.Event('input',{bubbles:true}));
+}
+if (scenario==='desktop_disabled') {
+  window.ottoDesktop = {getAnalyticsConfiguration:async () => disabled};
+  await import('./desktop/ui/analytics.ts');
+  window.ottoSetupAnalytics.step('preparing');
+  await wait(100);
+  await window.ottoSetupAnalytics.completed();
+} else {
+  analytics.configureAnalytics(disabled,'web');
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  analytics.capturePageview('/');
+}
+assert.equal(requests.length,0);
+if (scenario==='batched_optin') {
+  phase='enabled';
+  analytics.configureAnalytics(enabled('a'),'web');
+  sdk.set_config({api_transport:'fetch'});
+  await wait(350);
+  analytics.captureAnalytics('otto_settings_viewed',{tab:'models'});
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  await wait(3500);
+  assert.ok(requests.some(request => events(request).some(event => event.event==='otto_settings_viewed') && events(request).some(event => event.event==='otto_chat_stop_requested')), 'The opted-in events must arrive in the same SDK batch.');
+  assert.ok(requests.flatMap(events).every(event => event.properties.distinct_id==='hosted:fixture-a'));
+  assert.ok(!JSON.stringify(requests).includes('synthetic-private'));
+  await sdk.shutdown();
+  dom.window.close();
+  process.exit(0);
+}
+if (['cross_tab','failed_revoke','peer_failed_revoke','stale_peer_grant'].includes(scenario)) {
+  const {act,createElement} = await import('react');
+  const {createRoot} = await import('react-dom/client');
+  const {useSession} = await import('./src/web/hooks/use-session.ts');
+  const {sessionStore} = await import('./src/web/lib/session.ts');
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  session = {auth:{mode:'google',googleAvailable:true},user:{id:'fixture-a',name:'Fixture',email:null,avatarUrl:null},settings:{theme:'light',onboardingCompleted:true,usageData:true},capabilities:{developer:false},analytics:enabled('a')};
+  sessionStore.subscribe(() => analytics.configureAnalytics(sessionStore.getSnapshot().session?.user ? sessionStore.getSnapshot().session.analytics : undefined,'web'));
+  let current;
+  function Account() { current=useSession(); return null; }
+  const root = createRoot(document.createElement('div'));
+  const peer = new BroadcastChannel('otto.auth');
+  let notices = 0;
+  const changes = [];
+  peer.onmessage = ({data}) => {notices++; changes.push(data);};
+  await act(async () => {root.render(createElement(Account)); await wait(100);});
+  if (scenario==='stale_peer_grant') {
+    phase='enabled';
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    phase='revoked';
+    let pending;
+    await act(async () => {pending=current.update({usageData:false}); await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    assert.equal(sdk.sessionRecordingStarted(),false);
+    await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
+    assert.equal(revokeSignal.aborted,false);
+    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    assert.equal(sdk.sessionRecordingStarted(),false);
+    await act(async () => {releasePatch(); await pending; await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    session = {...session,settings:{...session.settings,usageData:true},analytics:enabled('a')};
+    await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
+    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    assert.equal(sdk.sessionRecordingStarted(),false);
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    await wait(8000);
+    assert.equal(requests.filter(request => request.phase==='revoked').length,0);
+    assert.equal(requests.flatMap(events).length,0);
+    phase='renewed';
+    await act(async () => {await current.update({usageData:true}); await wait(100);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,true);
+    assert.equal(sdk.has_opted_out_capturing(),false);
+    assert.equal(sdk.sessionRecordingStarted(),true);
+    await act(async () => {root.unmount();});
+    peer.close();
+    dom.window.close();
+    process.exit(0);
+  }
+  if (scenario!=='cross_tab') {
+    phase='enabled';
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    delaySession=true;
+    let pending;
+    if (scenario==='failed_revoke') {
+      await act(async () => {void current.refresh(); await wait(20);});
+      await act(async () => {
+        pending = current.update({usageData:false}).then(() => {throw new Error('Expected failed revocation');}, cause => assert.match(cause.message,/Synthetic tenant synchronization failure/));
+        assert.equal(sdk.has_opted_out_capturing(),true);
+        assert.equal(sdk.sessionRecordingStarted(),false);
+        await wait(100);
+      });
+      assert.equal(notices,1);
+      assert.deepEqual(changes[0],{type:'usage-data',owner:'fixture-a',enabled:false});
+      assert.equal(typeof releasePatch,'function');
+    } else {
+      await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:false}); await wait(100);});
+      assert.equal(sdk.has_opted_out_capturing(),true);
+      assert.equal(sdk.sessionRecordingStarted(),false);
+    }
+    phase='revoked';
+    delaySession=false;
+    await act(async () => {releaseSession(); await wait(50);});
+    if (pending) await act(async () => {releasePatch(); await pending; await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
+    session = {...session,settings:{...session.settings,usageData:true},analytics:enabled('a')};
+    await act(async () => {await current.refresh(); await wait(50);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
+    assert.equal(sdk.has_opted_out_capturing(),true);
+    analytics.captureAnalytics('otto_chat_stop_requested');
+    interact();
+    await wait(8000);
+    assert.equal(requests.filter(request => request.phase==='revoked').length,0);
+    assert.equal(requests.flatMap(events).length,0);
+    phase='renewed';
+    if (scenario==='failed_revoke') await act(async () => {await current.update({usageData:true}); await wait(100);});
+    else await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
+    assert.equal(sessionStore.getSnapshot().session.settings.usageData,true);
+    assert.equal(sdk.has_opted_out_capturing(),false);
+    assert.equal(sdk.sessionRecordingStarted(),true);
+    await act(async () => {root.unmount();});
+    peer.close();
+    dom.window.close();
+    process.exit(0);
+  }
+  await act(async () => {await current.update({usageData:false}); await wait(50);});
+  assert.equal(notices,1);
+  assert.equal(sdk.has_opted_out_capturing(),true);
+  await act(async () => {await current.update({usageData:true}); await wait(100);});
+  assert.equal(notices,2);
+  phase='enabled';
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  interact();
+  session = {...session,settings:{...session.settings,usageData:false},analytics:disabled};
+  delaySession=true;
+  await act(async () => {peer.postMessage('changed'); await wait(100);});
+  assert.equal(sdk.has_opted_out_capturing(),true);
+  assert.equal(sdk.sessionRecordingStarted(),false);
+  phase='revoked';
+  await wait(3500);
+  assert.equal(requests.filter(request => request.phase==='revoked').length,0);
+  assert.equal(requests.flatMap(events).length,0);
+  delaySession=false;
+  await act(async () => {releaseSession(); await wait(100); root.unmount();});
+  peer.close();
+  dom.window.close();
+  process.exit(0);
+}
+if (!['disabled','desktop_disabled'].includes(scenario)) {
+  phase='enabled';
+  analytics.configureAnalytics(enabled('a'),'web');
+  sdk.set_config({api_transport:'fetch',...(['retry','late_failure'].includes(scenario)?{request_batching:false}:{})});
+  await wait(scenario==='late_config'?100:350);
+  analytics.captureAnalytics('otto_chat_stop_requested');
+  const previous = analyticsForCurrentSession();
+  const previousSession = sdk.get_session_id();
+  interact();
+  await wait(scenario==='replay'?750:50);
+  phase='transition';
+  analytics.configureAnalytics(disabled,'web');
+  assert.equal(sdk.sessionRecordingStarted(),false);
+  assert.equal(sdk.has_opted_out_capturing(),true);
+  phase='revoked';
+  previous('otto_ui_error',{area:'chat',action:'send'});
+  analytics.capturePageview('/apps');
+  interact();
+  if (releaseConfig) releaseConfig();
+  if (['owner_change','reoptin','late_failure','late_config'].includes(scenario)) {
+    await wait(50);
+    phase='renewed';
+    const owner = scenario==='owner_change'?'b':'a';
+    analytics.configureAnalytics(enabled(owner),'web');
+    analytics.captureAnalytics('otto_settings_viewed',{tab:'models'});
+    previous('otto_ui_error',{area:'chat',action:'send'});
+    await wait(100);
+    assert.equal(sdk.sessionRecordingStarted(),true);
+    assert.notEqual(sdk.get_session_id(),previousSession);
+    interact();
+  }
+  if (releaseFailure) releaseFailure();
+  await wait(['retry','late_failure'].includes(scenario)?12000:8000);
+  await sdk.shutdown();
+  await wait(100);
+  assert.equal(requests.filter(request => ['transition','revoked'].includes(request.phase)).length,0);
+  const renewed = requests.filter(request => request.phase==='renewed').flatMap(events);
+  assert.ok(renewed.every(event => event.event!=='otto_chat_stop_requested' && event.event!=='otto_ui_error' && event.properties.$session_id!==previousSession));
+  if (['owner_change','reoptin','late_failure','late_config'].includes(scenario)) {
+    assert.ok(renewed.some(event => event.event==='otto_settings_viewed'));
+    assert.ok(renewed.some(event => event.event==='$snapshot'));
+    assert.ok(renewed.every(event => event.properties.distinct_id==='hosted:fixture-'+(scenario==='owner_change'?'b':'a')));
+    assert.ok(renewed.every(event => event.properties.app_version==='0.1.0'));
+  }
+} else {
+  await wait(3500);
+  assert.equal(requests.length,0);
+}
+assert.ok(requests.flatMap(events).every(event => event.event!=='otto_ui_error'));
+dom.window.close();
+process.exit(0);
+`,
+            },
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+        }),
+      ),
+    );
+  },
+);
 
 test(
   'a legacy Vault proves the old key before it creates a key check and concurrent saves keep one account',

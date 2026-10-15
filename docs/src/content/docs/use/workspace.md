@@ -11,15 +11,15 @@ The workspace is separate from your computer. Otto can write documents, convert 
 
 ## What Otto can use
 
-| For                     | The workspace has                                                    |
-| ----------------------- | -------------------------------------------------------------------- |
-| Office files            | LibreOffice, to convert, render and recalculate documents and sheets |
-| PDFs                    | qpdf, Ghostscript and pypdf, to fill forms and repair files          |
-| Text in any language    | Noto fonts for other scripts and emoji                               |
-| Video from a link       | `save-video`, which saves a video as an MP4 of 15 MB or less         |
-| Anything else in Python | `pip install`, which adds libraries to `~/.local`                    |
+| For                     | The workspace has                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| Office files            | LibreOffice, to convert, render and recalculate documents and sheets                                  |
+| PDFs                    | qpdf, Ghostscript and pypdf, to fill forms and repair files                                           |
+| Text in any language    | Noto fonts for other scripts and emoji                                                                |
+| Video from a link       | `save-video`, which saves a video as an MP4 of 50 MB or less to send, or the full video with `--full` |
+| Anything else in Python | `pip install`, which adds libraries to `~/.local`                                                     |
 
-`save-video` refuses live streams and videos too long to fit at a watchable quality.
+`save-video` refuses live streams and videos too long to fit at a watchable quality. `save-video --full` keeps the whole video at full quality in the workspace instead, for example to transcribe or cut it.
 
 ## What the workspace can't reach
 
@@ -49,15 +49,23 @@ The workspace can reach the internet. Code that Otto runs there can download fil
 
 ## Give Otto files
 
-- **Attach them in chat.** You can attach up to 20 files per message, each 15 MB or smaller. Otto gets a copy in the workspace and sees images directly.
+- **Attach them in chat.** Each file can be 90 MB or smaller. Otto gets a copy in the workspace and sees images directly.
 - **From your apps.** Files from a connected app, such as an email attachment, are saved privately in the workspace.
 - **From the web.** Files that Otto downloads in its [browser](/use/browser/) go into the workspace.
 
 ## Get files from Otto
 
-When Otto shares a file, it appears as an attachment in chat, up to 15 MB. Select it to preview or download it.
+When Otto shares a file, it appears as an attachment in the Otto app, up to 90 MB. Select it to preview or download it.
 
-Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
+Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
+
+## One workspace for all tasks
+
+The main chat and all saved tasks use the same conversation workspace. Each task has a folder under `tasks/`, with `drafts/` for working files and `outputs/` for results. `shared/` holds common files.
+
+A task can read files from another task's output folder. These folders organize work; they do not create separate computers or file access boundaries. Each task keeps its own saved conversation history. Sharing a file does not automatically add its content to every active task's context.
+
+See [Task sessions](/how-it-works/task-sessions/#shared-information-separate-histories) for how files, memory and owner updates keep the work connected.
 
 ## How long files stay
 

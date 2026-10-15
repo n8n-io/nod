@@ -153,6 +153,37 @@ test(
       const turnId = await insertTurn(thread.id, ownerId, 'Synthetic browser');
       const foreignTurnId = await insertTurn(foreignThread.id, 'other', 'Foreign browser');
       await db.pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=ANY($1::uuid[])",
+        [[turnId, foreignTurnId]],
+      );
+      await db.pool.query(
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES
+         ($1,$2,'assistant','Continue in [Open browser](/browser).',$3,$4),
+         ($5,'other','assistant','Which date works?',$6,$7)`,
+        [randomUUID(), ownerId, thread.id, turnId, randomUUID(), foreignThread.id, foreignTurnId],
+      );
+      await db.pool.query('ALTER TABLE turns DROP COLUMN handoff_browser_id');
+      await db.initializeDatabase();
+      const legacyInput = { type: 'key', key: 'Tab' };
+      const legacy = await app.inject({
+        method: 'POST',
+        url: '/api/browser-handoff',
+        headers,
+        payload: { turnId, inputs: [legacyInput] },
+      });
+      assert.equal(legacy.statusCode, 200);
+      assert.deepEqual(controls.pop(), [thread.id, legacyInput]);
+      assert.equal(
+        (await db.pool.query('SELECT handoff_browser_id FROM turns WHERE id=$1', [foreignTurnId]))
+          .rows[0].handoff_browser_id,
+        null,
+      );
+      await db.initializeDatabase();
+      await db.pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL WHERE id=ANY($1::uuid[])",
+        [[turnId, foreignTurnId]],
+      );
+      await db.pool.query(
         "INSERT INTO turn_events(id,turn_id,type,summary,created_at) VALUES($1,$2,'tool_start','browser',$3)",
         [randomUUID(), turnId, capturedAt],
       );
@@ -247,11 +278,11 @@ test(
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
       const frames: Buffer[] = [];
       const post = (url: string, payload: object) =>
-        app.inject({ method: 'POST', url, payload, headers });
+        app.inject({ method: 'POST', url, payload: { turnId: nextTurnId, ...payload }, headers });
       const handoff = async (input: unknown = click) => {
         const controller = new AbortController();
         const stream = await app.inject({
-          url: '/api/browser-handoff/stream',
+          url: `/api/browser-handoff/stream?turnId=${nextTurnId}`,
           headers,
           payloadAsStream: true,
           signal: controller.signal,
@@ -279,7 +310,10 @@ test(
         [nextTurnId],
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
-      await db.pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [nextTurnId]);
+      await db.pool.query(
+        "UPDATE turns SET waiting_reason='question',handoff_browser_id=session_id::text WHERE id=$1",
+        [nextTurnId],
+      );
       assert.deepEqual(await handoff(), [200, 200, 200]);
       assert.equal(frames[0].readUInt32BE(0), Buffer.byteLength('synthetic-live-frame'));
       assert.equal(frames[0].subarray(4).toString(), 'synthetic-live-frame');
@@ -291,13 +325,39 @@ test(
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
-      assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
+      assert.equal(
+        (await request(`/api/browser-handoff/stream?turnId=${nextTurnId}`)).statusCode,
+        409,
+      );
       pageShown = true;
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Check','running',true)",
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [200, 200, 200]);
+      assert.equal(controls.length, 6);
+      const backgroundId = randomUUID();
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,waiting_reason,handoff_browser_id) VALUES($1,$2,$3,'event','Background handoff','waiting',true,'question',$1::uuid::text)",
+        [backgroundId, ownerId, next.id],
+      );
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: backgroundId, inputs: [click] })).statusCode,
+        200,
+      );
+      assert.deepEqual(controls.pop(), [backgroundId, click]);
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: foreignTurnId, inputs: [click] })).statusCode,
+        423,
+      );
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt) VALUES($1,$2,$3,$4,'resume','Continued background work')",
+        [randomUUID(), ownerId, next.id, backgroundId],
+      );
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: backgroundId, inputs: [click] })).statusCode,
+        423,
+      );
       assert.equal(controls.length, 6);
       for (const reason of ['timeout', 'revoked', 'archived', 'cancelled']) {
         const started = deferred<AbortSignal>();
@@ -324,7 +384,7 @@ test(
         const deadline = new AbortController();
         if (reason === 'timeout') t.mock.timers.enable({ apis: ['setTimeout'] });
         const pending = app.inject({
-          url: '/api/browser-handoff/stream',
+          url: `/api/browser-handoff/stream?turnId=${nextTurnId}`,
           headers,
           signal: controller.signal,
         });
@@ -379,7 +439,7 @@ test(
       const deadline = new AbortController();
       t.mock.timers.enable({ apis: ['setTimeout'] });
       const pending = app.inject({
-        url: '/api/browser-handoff/stream',
+        url: `/api/browser-handoff/stream?turnId=${nextTurnId}`,
         headers,
         signal: controller.signal,
       });
@@ -802,6 +862,37 @@ test('browser requests wait for native completion without a second execution dea
     release.resolve();
     await bridge.close();
     await browser.cleanup();
+  }
+});
+
+test('browser files larger than one protocol message stream through the bridge both ways', async () => {
+  const file = Buffer.alloc(13 * 1024 * 1024 + 7);
+  for (let index = 0; index < file.length; index += 4099) file[index] = index % 251;
+  const uploaded: Buffer[] = [];
+  const bridge = await harness({
+    computer: fakeComputer({
+      download: async () => ({ bytes: file, name: 'export.zip', mimeType: 'application/zip' }),
+      upload: async (_id, input) => {
+        uploaded.push(Buffer.from(input.bytes));
+        return { text: 'Uploaded', url: 'https://example.test/' };
+      },
+    }),
+  });
+  try {
+    const computer = bridge.client('/synthetic/transfer');
+    const downloaded = await computer.download('fixture', {});
+    assert.equal(downloaded.name, 'export.zip');
+    assert.ok(downloaded.bytes.equals(file));
+    const result = await computer.upload('fixture', {
+      selector: '#file',
+      name: 'export.zip',
+      bytes: file,
+    });
+    assert.equal(result.text, 'Uploaded');
+    assert.equal(uploaded.length, 1);
+    assert.ok(uploaded[0]!.equals(file));
+  } finally {
+    await bridge.close();
   }
 });
 
@@ -1339,14 +1430,13 @@ test('discarding a thread closes its browser and deletes only its throwaway data
   }
 });
 
-async function wedgedBrowser(options: { idleTimeoutMs?: number } = {}) {
+async function wedgedBrowser() {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
   let failClose = true;
   const computer = createBrowserFixture({
     dataRoot: directory,
-    ...options,
     run: async (executable, args, input) => {
       const action = args[args.indexOf('--idle-timeout') + 2];
       commands.push(action);
@@ -1386,27 +1476,6 @@ test('failed interruption cleanup blocks actions until the next open retries the
     );
     assert.equal(commands.slice(count).at(-1), 'close');
     wedged.repair();
-    const reopened = await computer.act('fixture', {
-      action: 'open',
-      url: 'https://1.1.1.1/login',
-    });
-    assert.equal(reopened.url, 'https://1.1.1.1/login');
-  } finally {
-    await wedged.cleanup();
-  }
-});
-
-test('calls rejected by a wedged browser do not keep it from idling out', async () => {
-  const wedged = await wedgedBrowser({ idleTimeoutMs: 40 });
-  const { computer, commands } = wedged;
-  try {
-    wedged.repair();
-    const count = commands.length;
-    for (const deadline = Date.now() + 3000; !commands.slice(count).includes('close');) {
-      assert.ok(Date.now() < deadline, 'the idle sweep never closed the wedged browser');
-      await assert.rejects(computer.act('fixture', { action: 'snapshot' }));
-      await delay(5);
-    }
     const reopened = await computer.act('fixture', {
       action: 'open',
       url: 'https://1.1.1.1/login',
@@ -1462,6 +1531,7 @@ async function runtimeFixture(
   const runtime = createAgentRuntime({ agent, computer, workspace: fakeWorkspace() });
   const context: RuntimeContext = {
     threadId,
+    sessionId: threadId,
     turnId: randomUUID(),
     prompt: 'Open the synthetic destination after dismissing its covering dialog.',
     history: [],
@@ -1517,8 +1587,8 @@ test('every session drives its own browser, so background work never waits for t
       discard: async (id) => {
         discarded.push(id);
       },
-      hold: async (id) => {
-        held.push(id);
+      hold: async (id, value) => {
+        if (value) held.push(id);
       },
     }),
     workspace: fakeWorkspace(),
@@ -1533,7 +1603,7 @@ test('every session drives its own browser, so background work never waits for t
     return runtime.runTurn({
       threadId,
       turnId,
-      browserId: sessionId,
+      sessionId: sessionId ?? threadId,
       background: sessionId !== undefined,
       resumed,
       prompt: 'Use the browser.',
@@ -1598,7 +1668,7 @@ test('every session drives its own browser, so background work never waits for t
   }
 });
 
-test('at the browser cap only a browser idle past the window and not held makes room, and a new one waits until then', async () => {
+test('at the browser cap a new browser waits for one idle past the window and never evicts a held one', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-cap-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({
@@ -1606,25 +1676,29 @@ test('at the browser cap only a browser idle past the window and not held makes 
     run: fixture.run,
     maxLiveSessions: 2,
     evictIdleMs: 3000,
-    slotWaitMs: 1000,
   });
   const open = (id: string, signal?: AbortSignal) =>
     computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
   const pages = () => [...fixture.pages.keys()].sort();
   try {
     await open('chat');
+    await computer.hold('chat', true);
     await open('subagent');
-    await assert.rejects(open('scheduled'), /The browser sessions are busy/);
-    assert.deepEqual(pages(), ['chat', 'subagent']);
     const stop = new AbortController();
     const stopped = open('event', stop.signal);
     await delay(200);
     stop.abort();
     await assert.rejects(stopped, { name: 'AbortError' });
     assert.deepEqual(pages(), ['chat', 'subagent']);
-    await computer.hold('chat', Date.now() + 60_000);
-    await delay(3200);
     await open('scheduled');
+    assert.deepEqual(pages(), ['chat', 'scheduled']);
+    await computer.hold('scheduled', true);
+    await delay(3100);
+    const waiting = new AbortController();
+    const blocked = open('later', waiting.signal);
+    await delay(700);
+    waiting.abort();
+    await assert.rejects(blocked, { name: 'AbortError' });
     assert.deepEqual(pages(), ['chat', 'scheduled']);
   } finally {
     await computer.dispose();
@@ -1642,7 +1716,6 @@ test('Stop ends a browser slot wait queued behind a slow close and leaves no pha
     run: fixture.run,
     maxLiveSessions: 1,
     evictIdleMs: 1000,
-    slotWaitMs: 1000,
     onDaemonCommand: async (command) => {
       if (slowClose && command.action === 'close') await closing.promise;
     },
@@ -1711,6 +1784,7 @@ test('a browser handoff needs an open page, so Pi reopens it instead of handing 
   try {
     const result = await runtime.runTurn({
       threadId: randomUUID(),
+      sessionId: randomUUID(),
       turnId: randomUUID(),
       prompt: 'Hand me the browser.',
       history: [],
@@ -1906,10 +1980,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
     return process as unknown as ChildProcessWithoutNullStreams;
   };
   const clients: Computer[] = [];
-  function client(
-    dataRoot: string,
-    options: { timeoutMs?: number; openTimeoutMs?: number; drainTimeoutMs?: number } = {},
-  ) {
+  function client(dataRoot: string, options: { timeoutMs?: number; drainTimeoutMs?: number } = {}) {
     const value = createContainerBrowserComputer({ dataRoot, spawn: launch, ...options });
     clients.push(value);
     return value;
@@ -3487,6 +3558,7 @@ async function handoffView(
     root.render(
       content ??
         createElement(BrowserHandoff, {
+          turnId: '00000000-0000-4000-8000-000000000001',
           onDone: async () => {
             completions++;
           },
@@ -3685,6 +3757,44 @@ test('chat request submits once under StrictMode and keeps the pending message v
     assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
   } finally {
     pending.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
+
+test('a long paste in a browser handoff arrives whole in requests under the body limit', async () => {
+  const bodies: string[] = [];
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/browser-handoff') bodies.push(String(options?.body));
+    return Response.json({ ok: true });
+  });
+  try {
+    await view.showFrame();
+    const text = '漢字'.repeat(150_000);
+    const paste = new view.dom.window.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', { value: { getData: () => text } });
+    await act(async () => {
+      view.element('.browser-handoff-screen').dispatchEvent(paste);
+    });
+    for (
+      let attempt = 0;
+      attempt < 100 &&
+      bodies
+        .flatMap((body) => JSON.parse(body).inputs)
+        .map((input: { text: string }) => input.text)
+        .join('') !== text;
+      attempt++
+    )
+      await act(async () => delay(10));
+    assert.ok(bodies.length > 1);
+    assert.ok(bodies.every((body) => Buffer.byteLength(body) < 256 * 1024));
+    assert.equal(
+      bodies
+        .flatMap((body) => JSON.parse(body).inputs)
+        .map((input: { text: string }) => input.text)
+        .join(''),
+      text,
+    );
+  } finally {
     await view.close();
   }
 });
@@ -3910,6 +4020,52 @@ test('chat request isolates a stale reply and attachments and restores failure b
   }
 });
 
+test('chat surfaces an unavailable private submission without restoring or retrying its code', async () => {
+  for (const kind of ['otp', 'payment'] as const) {
+    const state = requestedChatState();
+    const turnId = state.messages[0].turnId!;
+    state.verificationRequests = [{ id: randomUUID(), turnId, kind }];
+    const text = kind === 'payment' ? '737' : '582674';
+    const requestedMessage = { id: randomUUID(), text };
+    let submitted = 0;
+    const chat = () =>
+      createElement(Chat, {
+        ownerId: 'synthetic-feedback-owner',
+        state,
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+        requestedMessage,
+      });
+    const view = await handoffView(async (path, options) => {
+      if (path === '/api/apps') return Response.json([]);
+      assert.equal(path, '/api/messages');
+      submitted++;
+      const input = JSON.parse(String(options?.body));
+      return Response.json({
+        threadId: state.threadId,
+        turnId,
+        messageId: input.clientMessageId,
+        messageText: 'Synthetic masked private receipt.',
+        verificationStatus: 'unavailable',
+      });
+    }, chat());
+    try {
+      assert.equal(submitted, 1);
+      assert.ok(view.dom.window.document.querySelector('[role="alert"]'));
+      assert.equal(
+        view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor.getMarkdown(),
+        '',
+      );
+      assert.equal(view.dom.window.document.body.textContent!.includes(text), false);
+      await view.render(chat());
+      assert.equal(submitted, 1);
+    } finally {
+      await view.close();
+    }
+  }
+});
+
 test('chat restores rejected numeric prose but clears rejected private codes', async () => {
   for (const text of ['call 911', '737']) {
     const state = requestedChatState();
@@ -3918,7 +4074,6 @@ test('chat restores rejected numeric prose but clears rejected private codes', a
       {
         id: requestId,
         turnId: state.messages[0].turnId!,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
         kind: 'payment',
       },
     ];
@@ -3961,6 +4116,7 @@ test('chat keeps a waiting browser handoff after a background message and closes
       id: turnId,
       source: 'user',
       status: 'waiting',
+      handoffMessageId: state.messages[0].id,
       showTyping: true,
       createdAt: '2026-10-01T12:00:00.000Z',
     },
@@ -4022,6 +4178,7 @@ test('chat keeps a waiting browser handoff after a background message and closes
       },
       ...state.turns,
     ];
+    state.turns = state.turns.map((turn) => ({ ...turn, handoffMessageId: null }));
     await view.render(chat());
     assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
   } finally {
@@ -4057,6 +4214,15 @@ for (const failure of ['rejected', 'disconnected'] as const)
         conversationResetEnabled: false,
       },
     };
+    state.turns = [
+      {
+        id: state.messages[0].turnId!,
+        source: 'user',
+        status: 'waiting',
+        handoffMessageId: state.messages[0].id,
+        createdAt: state.messages[0].createdAt,
+      },
+    ];
     const view = await handoffView(
       async (path, options) => {
         if (path === '/api/apps') return Response.json([]);
@@ -4146,7 +4312,7 @@ test('the live handoff waits for a frame, merges moves and typing behind a pendi
   try {
     assert.match(
       view.streams.at(-1)!.path,
-      /^\/api\/browser-handoff\/stream\?view=[0-9a-f-]{36}-0$/,
+      /^\/api\/browser-handoff\/stream\?turnId=[0-9a-f-]{36}&view=[0-9a-f-]{36}-0$/,
     );
     await view.pointer('mousemove');
     assert.deepEqual(posted, []);
@@ -4800,7 +4966,7 @@ test('session failures retry local bootstrap without offering hosted sign-in or 
         }
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+          fields: [], savedEntries: [],
         });
         throw new Error('Unexpected fixture request: ' + path);
       };
@@ -4894,11 +5060,11 @@ test('native Settings and feedback preserve the active credential form', async (
           capabilities: { developer: true },
         });
         if (path === '/api/feedback/context') return Response.json({
-          enabled: true, appVersion: null, appRelease: null, appModified: null, source: 'local-web', development: false, computerName: null, platform: null,
+          enabled: true, recipient: 'collector.example.com', appVersion: null, appRelease: null, appModified: null, source: 'local-web', development: false, computerName: null, platform: null,
         });
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+          fields: [], savedEntries: [],
         });
         throw new Error('Unexpected fixture request: ' + path);
       };
@@ -5288,6 +5454,7 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       const requests = [];
       const reports = [];
       const submissions = [];
+      let feedbackEnabled = true;
       const snapshot = {
         id: crypto.randomUUID(),
         content: JSON.stringify({ messages: ['Synthetic redacted conversation'], trace: ['Synthetic tool result'] }, null, 2),
@@ -5296,7 +5463,7 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       globalThis.fetch = async (path, options) => {
         requests.push(path);
         if (path === '/api/feedback/context') return Response.json({
-          enabled: true, appVersion: null, appRelease: 'synthetic-runtime-commit', appModified: true, source: 'local-web', development: true, computerName: null, platform: null,
+          enabled: feedbackEnabled, recipient: feedbackEnabled ? 'collector.example.com' : null, appVersion: null, appRelease: 'synthetic-runtime-commit', appModified: true, source: 'local-web', development: true, computerName: null, platform: null,
         });
         if (path === '/api/feedback/report') return new Promise(resolve => reports.push({ resolve, signal: options.signal }));
         if (path === '/api/feedback') {
@@ -5346,6 +5513,8 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         for (let attempt = 0; attempt < 100 && document.querySelector('.feedback-editor')?.getAttribute('contenteditable') !== 'true'; attempt++)
           await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
         const restoredEditor = document.querySelector('.feedback-editor').editor;
+        assert.ok(document.querySelector('p.feedback-send-notice')?.textContent.includes('collector.example.com'));
+        assert.equal(document.body.textContent.includes('Otto team'), false);
         assert.equal(restoredEditor.isEmpty, true);
         assert.equal(restoredEditor.state.doc.firstChild.type.name, 'orderedList');
         assert.equal(document.querySelector('.feedback-form button[type="submit"]').disabled, true);
@@ -5403,6 +5572,8 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         await act(async () => document.querySelector('[data-open]').click());
         assert.equal(document.querySelector('.feedback-editor').editor.getMarkdown(), 'Synthetic **feedback**Synthetic pasted text');
         assert.equal(document.querySelectorAll('.feedback-thumbnail-item').length, 3);
+        assert.ok(document.querySelector('p.feedback-send-notice')?.textContent.includes('collector.example.com'));
+        assert.equal(document.body.textContent.includes('Otto team'), false);
         await submitForm();
         for (let attempt = 0; submissions.length < 1 && attempt < 50; attempt++)
           await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
@@ -5488,6 +5659,17 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         assert.equal(reports.length, reportCount);
         assert.equal(submissions.at(-1).category, 'other');
         assert.equal(submissions.at(-1).reportId, null);
+        feedbackEnabled = false;
+        await act(async () => document.querySelector('[data-open]').click());
+        const reportToggle = document.querySelector('.feedback-diagnostics input[type="checkbox"]');
+        if (reportToggle.checked) await act(async () => reportToggle.click());
+        await writeFeedback('Synthetic feedback must stay on this device');
+        assert.equal(document.querySelector('p.feedback-send-notice'), null);
+        assert.equal(document.querySelector('.feedback-form button[type="submit"]').disabled, true);
+        const disabledCount = submissions.length;
+        await submitForm();
+        await act(async () => document.querySelector('.feedback-editor').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true })));
+        assert.equal(submissions.length, disabledCount);
       } finally {
         await act(async () => root.unmount());
         dom.window.close();

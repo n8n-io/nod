@@ -1,10 +1,11 @@
 import type { RuntimeContext } from '../ports/agent.ts';
 import type { Computer } from '../ports/computer.ts';
+import type { ExecutionScope } from '../shared/execution.ts';
 
 export interface Turn {
   context: RuntimeContext;
   computer: Computer;
-  browserId: string;
+  execution: ExecutionScope;
   reply(text: string, id?: string, replyToMessageId?: string): Promise<unknown>;
   invite(text: string): Promise<unknown>;
   pause(

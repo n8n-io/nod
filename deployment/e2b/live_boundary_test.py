@@ -284,7 +284,7 @@ class BoundaryTests(unittest.TestCase):
                 def run(uid, args, timeout=5, extra=None, data=None):
                     calls.append((uid, args, extra, json.loads(data)))
                     request = calls[-1][3]
-                    prefix = connected / "cli" / request["cli"]["id"]
+                    prefix = connected / ("otto-cli-" + request["cli"]["id"])
                     values = {**sealed, "PATH": f"{prefix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
                     text = "".join(f"{key}={value}\n" for key, value in values.items()) + (printed or "")
                     frames = [{"type": "stdout", "data": base64.b64encode(text.encode()).decode()}, {"type": "exit", "code": 0, "reason": None}]
@@ -302,7 +302,7 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(args, ["/bin/sh", "-c", f"cd {connected} && exec /usr/bin/python3 -I -u /opt/otto/workspace-command.py"])
                 self.assertTrue(extra["PATH"].startswith(str(workspace / "bin") + ":"))
                 self.assertEqual(request["environment"], {"OTTO_BOUNDARY_TOKEN": "synthetic-live-boundary"})
-                self.assertTrue((connected / "cli" / request["cli"]["id"] / ".installed").exists())
+                self.assertTrue((connected / ("otto-cli-" + request["cli"]["id"]) / ".installed").exists())
 
     def test_cleanup_kills_an_adopted_child_outside_the_original_group(self):
         processes = boundary.Processes()

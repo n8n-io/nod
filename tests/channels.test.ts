@@ -4,10 +4,18 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { channelReply, createChannels } from '../src/server/channels.ts';
+import { createAgentReactionService } from '../src/server/agent-reactions.ts';
 import { createChatVerification } from '../src/server/chat-verification.ts';
 import { createVault } from '../src/server/vault.ts';
 import { channelConfiguration, createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
+
+const attachment = (name: string, mimeType: string, text: string) => ({
+  name,
+  mimeType,
+  size: Buffer.byteLength(text),
+  read: async () => Buffer.from(text),
+});
 
 const fixtureEnv = {
   TELEGRAM_ENABLED: 'true',
@@ -26,7 +34,7 @@ const fixtureEnv = {
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -243,6 +251,10 @@ test(
     const submitted: string[] = [];
     const app = Fastify();
     const channels = await createChannels(pool, {
+      present: async (_thread, input) => {
+        assert.deepEqual(input, { kind: 'verification_refused' });
+        return 'Usa o pedido de verificação na conversa correspondente.';
+      },
       ownerId: 'local-development',
       transport: {
         channels: [
@@ -323,7 +335,7 @@ test(
       for (const [messageId, text] of [
         ['ambiguous-code', 'Code: 481927 or 739126'],
         ['malformed-code', 'Code: +481927'],
-        ['empty-code', 'Código ='],
+        ['leading-code', '739126 ist der Code'],
       ]) {
         assert.equal((await send(messageId, text)).statusCode, 200);
         await channels.drain();
@@ -409,6 +421,11 @@ test(
       const channels = await createChannels(pool, {
         ownerId: 'fixture-owner',
         transport: transport(),
+        present: async (thread, input) => {
+          assert.equal(thread, threadId);
+          assert.deepEqual(input, { kind: 'verification_refused' });
+          return 'Usa o pedido de verificação na conversa correspondente.';
+        },
         intervalMs: 600000,
         subscribe: () => () => {},
         acceptVerification: async (text, input) => {
@@ -507,7 +524,7 @@ test(
           channelId: 'telegram',
           accountId: 'fixture-account',
           threadId: 'fixture-thread',
-          text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
+          text: 'Usa o pedido de verificação na conversa correspondente.',
         },
       ]);
       const guidance = (
@@ -516,7 +533,7 @@ test(
         )
       ).rows[0];
       assert.deepEqual(guidance, {
-        text: 'Code not applied.',
+        text: '',
         state: 'discarded',
         turn_id: null,
         role: 'assistant',
@@ -582,6 +599,336 @@ test(
 );
 
 test(
+  'unavailable channel verification persists one private failure notice across duplicates and restart',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_channel_failure_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+      max: 1,
+      connectionTimeoutMillis: 1000,
+    });
+    const ownerId = 'fixture-owner';
+    const threadId = await createFixtureTables(pool, ownerId);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 37) };
+    const vault = await createVault(pool, {
+      keyStore,
+      page: async () => ({ url: 'https://1.1.1.1/login', origin: 'https://1.1.1.1' }),
+      inject: async () => assert.fail('The synthetic provider owns code submission.'),
+      resume: async () => {},
+      retry: async () => {},
+    });
+    let held: { start: () => void; released: Promise<void> } | undefined;
+    const releases: Array<() => void> = [];
+    function holdOutcome() {
+      let start = () => {};
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        start = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      held = { start, released };
+      releases.push(release);
+      return { started, release };
+    }
+    let submissions = 0;
+    let inlinePresentations = 0;
+    const verification = await createChatVerification(pool, {
+      ownerId,
+      keyStore,
+      submitCode: async (owner, _turnId, code, requestId) => {
+        assert.equal(owner, ownerId);
+        assert.equal(code, '481927');
+        submissions++;
+        const pending = held;
+        held = undefined;
+        pending?.start();
+        await pending?.released;
+        await pool.query("UPDATE credential_requests SET status='failed' WHERE id=$1", [requestId]);
+        return { status: 'unavailable' };
+      },
+      present: async () => {
+        inlinePresentations++;
+        throw new Error('Inline presentation is unavailable.');
+      },
+      refresh() {},
+    });
+    const channel = `telegram:${createHash('sha256')
+      .update(JSON.stringify(['fixture-account', ownerId]))
+      .digest('hex')
+      .slice(0, 32)}`;
+    async function requestCode() {
+      const turnId = await fixtureTurn(pool, threadId, ownerId, channel, null, 'running');
+      await pool.query('UPDATE turns SET started_at=now() WHERE id=$1', [turnId]);
+      await vault.request({ threadId, turnId }, ownerId, {
+        origin: 'https://1.1.1.1',
+        label: 'Fixture sign-in',
+        kind: 'otp',
+        passwordSelector: '#code',
+      });
+      await pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
+        [turnId],
+      );
+      return turnId;
+    }
+    const posted: string[] = [];
+    const presentations: unknown[] = [];
+    let ordinarySubmissions = 0;
+    let closing: { start: () => void; released: Promise<void> } | undefined;
+    let modelDown = false;
+    const modelNotice = 'Verifica o estado do acesso antes de tentares novamente.';
+    function transport(accountId = 'fixture-account'): MessagingTransport {
+      return {
+        channels: [
+          {
+            id: 'telegram',
+            status: 'configured',
+            missing: [],
+            accountId,
+            allowedSenderIds: [ownerId],
+          },
+        ],
+        receive: async (request) => ({
+          status: 200,
+          body: 'accepted',
+          messages: [
+            {
+              channelId: 'telegram',
+              accountId: 'fixture-account',
+              senderId: ownerId,
+              threadId: 'fixture-thread',
+              text: '481927',
+              sentAt: new Date(),
+              ...JSON.parse(Buffer.from(request.body).toString('utf8')),
+            },
+          ],
+        }),
+        post: async (input) => {
+          posted.push(input.text);
+          return { id: `fixture-${posted.length}` };
+        },
+        close: () => {
+          const pending = closing;
+          closing = undefined;
+          pending?.start();
+          return pending?.released ?? Promise.resolve();
+        },
+      };
+    }
+    async function open() {
+      const app = Fastify();
+      const channels = await createChannels(pool, {
+        ownerId,
+        transport: transport(),
+        acceptVerification: (text, input) => verification.accept(text, input),
+        present: async (thread, input) => {
+          assert.equal(thread, threadId);
+          presentations.push(input);
+          await pool.query('SELECT 1');
+          if (modelDown) throw new Error('Synthetic unavailable model');
+          return modelNotice;
+        },
+        submit: async (text, sourceId, client, channel, messageId) => {
+          assert.equal(text, '2026');
+          ordinarySubmissions++;
+          const turnId = await fixtureTurn(
+            client,
+            threadId,
+            ownerId,
+            channel,
+            sourceId,
+            'succeeded',
+          );
+          await client.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user',$3,$4,$5)",
+            [messageId, ownerId, text, threadId, turnId],
+          );
+          return turnId;
+        },
+        subscribe: () => () => {},
+        intervalMs: 600000,
+      });
+      channels.registerRoutes(app);
+      return { app, channels };
+    }
+    let fixture = await open();
+    const send = (messageId: string, text?: string) =>
+      fixture.app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        headers: { 'content-type': 'application/json' },
+        payload: { messageId, ...(text ? { text } : {}) },
+      });
+    const notices = async () =>
+      (
+        await pool.query(
+          `SELECT o.state,o.reason,o.presentation,m.thread_id,m.turn_id FROM channel_outbox o
+           JOIN messages m ON m.id=o.message_id ORDER BY m.created_at,m.id`,
+        )
+      ).rows;
+    try {
+      const firstTurn = await requestCode();
+      const outcome = holdOutcome();
+      const original = send('duplicate').then((response) => response);
+      await outcome.started;
+      assert.equal((await send('duplicate')).statusCode, 200);
+      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 1);
+      assert.equal((await notices()).length, 0);
+      assert.equal(submissions, 1);
+      await pool.query('ALTER TABLE channel_outbox ADD CONSTRAINT fail_notice CHECK(false)');
+      outcome.release();
+      assert.equal((await original).statusCode, 503);
+      assert.equal(
+        (await pool.query('SELECT status FROM chat_verification_submissions')).rows[0].status,
+        'unavailable',
+      );
+      assert.equal((await notices()).length, 0);
+      await pool.query('ALTER TABLE channel_outbox DROP CONSTRAINT fail_notice');
+      assert.equal((await send('duplicate')).statusCode, 200);
+      await fixture.channels.drain();
+      assert.deepEqual(posted, [modelNotice]);
+      assert.deepEqual(presentations, [{ kind: 'verification_failure', verification: 'otp' }]);
+      assert.deepEqual(await notices(), [
+        {
+          state: 'sent',
+          reason: null,
+          presentation: { kind: 'verification_failure', verification: 'otp' },
+          thread_id: threadId,
+          turn_id: firstTurn,
+        },
+      ]);
+      await fixture.app.close();
+      fixture = await open();
+      await Promise.all([send('duplicate'), send('duplicate')]);
+      await fixture.channels.drain();
+      assert.equal(submissions, 1);
+      assert.equal(posted.length, 1);
+      assert.equal((await send('ordinary-number', '2026')).statusCode, 200);
+      await fixture.channels.drain();
+      const waitingTurn = await requestCode();
+      assert.equal((await send('ordinary-number', '2026')).statusCode, 200);
+      await fixture.channels.drain();
+      assert.equal(submissions, 1);
+      assert.equal(ordinarySubmissions, 1);
+      assert.equal(
+        (await pool.query('SELECT status FROM credential_requests WHERE turn_id=$1', [waitingTurn]))
+          .rows[0].status,
+        'pending',
+      );
+      modelDown = true;
+      assert.equal((await send('model-down')).statusCode, 200);
+      await fixture.channels.drain();
+      const blocked = (await notices()).find((notice) => notice.state === 'blocked');
+      assert.equal(blocked?.reason, 'presentation_unavailable');
+      assert.deepEqual(blocked?.presentation, {
+        kind: 'verification_failure',
+        verification: 'otp',
+      });
+      await fixture.app.close();
+      fixture = await open();
+      await send('model-down');
+      await fixture.channels.drain();
+      assert.equal(submissions, 2);
+      assert.equal(presentations.length, 2);
+      assert.equal(posted.length, 1);
+      modelDown = false;
+      const replacedTurn = await requestCode();
+      let startClose = () => {};
+      let releaseClose = () => {};
+      const closeStarted = new Promise<void>((resolve) => {
+        startClose = resolve;
+      });
+      const closeReleased = new Promise<void>((resolve) => {
+        releaseClose = resolve;
+      });
+      closing = { start: startClose, released: closeReleased };
+      releases.push(releaseClose);
+      const client = await pool.connect();
+      const query = client.query;
+      let replaceOnSavepoint = true;
+      let replacement: Promise<void> | undefined;
+      t.mock.method(client, 'query', async (...args: unknown[]) => {
+        const result = await Reflect.apply(query, client, args);
+        if (args[0] !== 'SAVEPOINT channel_verification_receipt' || !replaceOnSavepoint)
+          return result;
+        replaceOnSavepoint = false;
+        replacement = fixture.channels.replaceTransport(transport());
+        await closeStarted;
+        queueMicrotask(releaseClose);
+        return result;
+      });
+      client.release();
+      const replaced = await send('same-account-replacement');
+      await replacement;
+      assert.deepEqual(
+        {
+          http: replaced.statusCode,
+          status: (
+            await pool.query(
+              `SELECT v.status FROM chat_verification_submissions v JOIN messages m ON m.id=v.message_id
+               WHERE m.turn_id=$1`,
+              [replacedTurn],
+            )
+          ).rows[0].status,
+          receipts: (
+            await pool.query('SELECT 1 FROM channel_inbox WHERE source_id=$1', [
+              'channel:telegram:fixture-account:same-account-replacement',
+            ])
+          ).rowCount,
+          notices: (await notices()).length,
+        },
+        { http: 200, status: 'unavailable', receipts: 0, notices: 2 },
+      );
+      await requestCode();
+      const revoked = holdOutcome();
+      const revoking = send('revoked').then((response) => response);
+      await revoked.started;
+      await fixture.channels.replaceTransport(transport('new-account'));
+      revoked.release();
+      assert.equal((await revoking).statusCode, 200);
+      await fixture.channels.replaceTransport(transport());
+      await requestCode();
+      const reset = holdOutcome();
+      const resetting = send('reset').then((response) => response);
+      await reset.started;
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+      reset.release();
+      assert.equal((await resetting).statusCode, 200);
+      await fixture.channels.drain();
+      assert.equal(submissions, 5);
+      assert.equal(inlinePresentations, 0);
+      assert.equal((await notices()).length, 2);
+      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 3);
+      assert.equal(
+        (await pool.query("SELECT * FROM chat_verification_submissions WHERE status='unavailable'"))
+          .rowCount,
+        5,
+      );
+      assert.equal(posted.length, 1);
+      assert.doesNotMatch(
+        JSON.stringify(
+          (await pool.query('SELECT text FROM messages UNION ALL SELECT text FROM channel_inbox'))
+            .rows,
+        ),
+        /481927/,
+      );
+    } finally {
+      for (const release of releases) release();
+      await fixture.app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
   'memory and usage commands get a digest from the outbox without a turn and only for the paired sender',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
@@ -600,6 +947,13 @@ test(
     const app = Fastify();
     const channels = await createChannels(pool, {
       ownerId: 'fixture-owner',
+      present: async (thread, input) => {
+        assert.equal(thread, threadId);
+        assert.equal(input.kind, 'command');
+        if (input.kind !== 'command') throw new Error('Expected command presentation');
+        assert.equal(input.attachments, 'pending');
+        return input.command === 'memory' ? 'Synthetic memory digest' : 'Synthetic usage digest';
+      },
       transport: {
         channels: [
           {
@@ -635,16 +989,15 @@ test(
         close: async () => {},
       },
       commandReply: async (command, _client, thread) => ({
-        text: `Synthetic ${command} digest`,
+        text: '',
+        presentation: { kind: 'command', command, data: {} },
         attachments: [
           { id: fileId, name: `otto-${command}.md`, mimeType: 'text/markdown', size: 9, url: '' },
         ].filter(() => thread === threadId),
       }),
       resolveAttachments: async (thread, ids) => {
         resolved.push([thread, ...ids]);
-        return [
-          { name: 'otto-memory.md', mimeType: 'text/markdown', bytes: Buffer.from('# Memory\n') },
-        ];
+        return [attachment('otto-memory.md', 'text/markdown', '# Memory\n')];
       },
       submit: async (_text, sourceId) => {
         submitted.push(sourceId);
@@ -723,54 +1076,113 @@ test('channels stay disabled without explicit enablement and require a single ow
   );
 });
 
-test('channel replies keep secure credential and approval links in the local app', () => {
-  const reply = channelReply(
-    'Continue [Add credentials](/credentials/secret-id?token=secret-token) and [Approve](http://localhost:4310/approvals/private-id). Read https://example.com/docs.',
-    true,
+test('channel presentation isolates private links from the model and preserves owned attachment delivery', async () => {
+  const privateFileId = '00000000-0000-4000-8000-000000000001';
+  const presentation: unknown[] = [];
+  const present = async (threadId: string | null, input: unknown) => {
+    presentation.push({ threadId, input });
+    return 'Continua na aplicação Otto.';
+  };
+  const reply = await channelReply(
+    'Continua [em segurança](/credentials/secret-id?token=secret-token) ou [aprova](http://localhost:4310/payments/private-id). Consulta https://example.com/docs.',
+    { threadId: 'owned-thread', present, appOrigin: 'https://otto.example' },
   );
-  assert.equal(reply.includes('secret-token'), false);
-  assert.equal(reply.includes('private-id'), false);
-  assert.match(reply, /https:\/\/example.com\/docs/);
-  const paymentReply = channelReply(
-    '[Approve](/payments/private-id) [Owned](https://otto.example/payments/private-id) [HTTP](http://otto.example/payments/private-id) [Invoice](https://merchant.example/payments/invoice)',
-    false,
-    false,
-    [],
-    'https://otto.example',
+  assert.equal(reply, 'Continua na aplicação Otto.');
+  assert.equal(presentation.length, 1);
+  assert.doesNotMatch(JSON.stringify(presentation), /secret-id|secret-token|private-id/);
+  assert.match(JSON.stringify(presentation), /https:\/\/example\.com\/docs/);
+  assert.deepEqual(presentation[0], {
+    threadId: 'owned-thread',
+    input: {
+      kind: 'delivery',
+      text: 'Continua em segurança ou aprova. Consulta https://example.com/docs.',
+      attachments: 'none',
+      secureAction: true,
+    },
+  });
+  const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
+  assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
+  assert.equal(presentation.length, 1);
+  const imageReply = await channelReply(
+    'O ficheiro está anexado. [Imagem](http://localhost:4310/api/artifacts/private-file)',
+    { threadId: 'owned-thread', present, deliversAttachments: true },
   );
-  assert.equal(paymentReply.includes('private-id'), false);
-  assert.match(paymentReply, /https:\/\/merchant\.example\/payments\/invoice/);
-  const imageReply = channelReply(
-    '[Image](http://localhost:4310/api/artifacts/private-file)',
-    false,
-    true,
+  assert.equal(imageReply, 'Continua na aplicação Otto.');
+  assert.deepEqual(presentation[1], {
+    threadId: 'owned-thread',
+    input: {
+      kind: 'delivery',
+      text: 'O ficheiro está anexado. Imagem',
+      attachments: 'pending',
+      secureAction: false,
+    },
+  });
+  assert.equal(
+    await channelReply('', { threadId: 'owned-thread', present, deliversAttachments: true }),
+    '',
   );
-  assert.equal(imageReply.includes('private-file'), false);
-  assert.match(imageReply, /Attached file/);
-  assert.equal(channelReply('', false, true), '');
-  assert.ok(channelReply('', true).trim());
-  assert.ok(channelReply('').trim());
+  const fileReply = await channelReply(
+    `Relatório pronto. [Relatório](/api/artifacts/${privateFileId})`,
+    {
+      threadId: 'owned-thread',
+      present,
+      hasAttachments: true,
+      privateLinks: [
+        { name: 'report.csv', url: `https://otto.example/api/artifacts/${privateFileId}` },
+      ],
+    },
+  );
+  assert.match(fileReply, /report\.csv/);
+  assert.equal((fileReply.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
+  assert.equal(presentation.length, 2);
+  await channelReply('Relatório pronto.', {
+    threadId: 'owned-thread',
+    present,
+    hasAttachments: true,
+  });
+  assert.equal(presentation.length, 3);
+  assert.equal(
+    (presentation[2] as { input: { attachments: string } }).input.attachments,
+    'in_otto',
+  );
+  const memoryReply = await channelReply(
+    '[Memória](https://otto.example/memory) e https://otto.example/usage. Consulta https://merchant.example/memory.',
+    { threadId: 'owned-thread', present, appOrigin: 'https://otto.example' },
+  );
+  assert.equal(memoryReply, 'Continua na aplicação Otto.');
+  const memoryPresentation = presentation.at(-1) as { input: { secureAction: boolean } };
+  assert.equal(memoryPresentation.input.secureAction, true);
+  assert.doesNotMatch(JSON.stringify(memoryPresentation), /otto\.example/);
+  assert.match(JSON.stringify(memoryPresentation), /Memória/);
+  assert.match(JSON.stringify(memoryPresentation), /https:\/\/merchant\.example\/memory/);
 });
 
-test('text-only channel replies show verified private file links when an app address is available', () => {
-  const reply = channelReply(
-    'Research is ready. [Report](/api/artifacts/00000000-0000-4000-8000-000000000001)',
-    true,
-    false,
-    [
-      {
-        name: 'report.csv',
-        url: 'https://otto.example/api/artifacts/00000000-0000-4000-8000-000000000001',
+test('channel presentation rejects failed or unsafe generated output before provider delivery', async () => {
+  for (const generated of [
+    '',
+    'https://otto.example/credentials/secret-id',
+    '[Memória](https://otto.example/memory)',
+    'https://otto.example/usage',
+    '[Continua](/payments/private-id)',
+    '[Ficheiro](/api/artifacts/private-id)',
+  ]) {
+    await assert.rejects(
+      channelReply('/credentials/request-id', {
+        threadId: 'owned-thread',
+        appOrigin: 'https://otto.example',
+        present: async () => generated,
+      }),
+    );
+  }
+  await assert.rejects(
+    channelReply('/credentials/request-id', {
+      threadId: 'owned-thread',
+      present: async () => {
+        throw new Error('Synthetic generation failure');
       },
-    ],
+    }),
   );
-  assert.match(reply, /Research is ready/);
-  assert.match(reply, /report\.csv/);
-  assert.match(
-    reply,
-    /https:\/\/otto\.example\/api\/artifacts\/00000000-0000-4000-8000-000000000001/,
-  );
-  assert.equal((reply.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
+  await assert.rejects(channelReply('/credentials/request-id', { threadId: 'owned-thread' }));
 });
 
 test(
@@ -898,6 +1310,7 @@ test(
     let providerCalls = 0;
     let failSend = false;
     let failSubmit = false;
+    let failReaction = false;
     const reacting: { provider: string; body: Record<string, unknown> }[] = [];
     const reactedTo: [string, string | null][] = [];
     t.mock.method(
@@ -915,6 +1328,7 @@ test(
           });
         if (url === 'https://api.telegram.org/bot987:fixture-not-live/setMessageReaction') {
           reacting.push({ provider: 'telegram', body });
+          if (failReaction) throw new Error('Fixture reaction delivery is uncertain.');
           return Response.json({ ok: true, result: true });
         }
         if (url.startsWith('https://api.telegram.org/bot987:fixture-not-live/send')) {
@@ -947,12 +1361,17 @@ test(
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
       appOrigin: 'https://otto.example',
+      present: async (_thread, input) => {
+        assert.equal(input.kind, 'delivery');
+        assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
+        return 'Continua na aplicação Otto.';
+      },
       transport: createChatSdkTransport(pool, fixtureEnv),
       resolveAttachments: async (resolvedThreadId, ids) => {
         assert.equal(resolvedThreadId, threadId);
         if (ids.length !== 1 || ids[0] !== whatsappFileId)
           throw new Error('Attachment unavailable.');
-        return [{ name: 'research.csv', mimeType: 'text/csv', bytes: Buffer.from('A,B\n1,2\n') }];
+        return [attachment('research.csv', 'text/csv', 'A,B\n1,2\n')];
       },
       subscribe: () => () => {},
       intervalMs: 600000,
@@ -1113,14 +1532,15 @@ test(
         { id: randomUUID() },
       ]);
       await channels.drain();
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
+      assert.equal((sent[3].body.text as { body: string }).body, 'Continua na aplicação Otto.');
       assert.deepEqual(
         (
           await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
             missingReply,
           ])
         ).rows[0],
-        { state: 'blocked', reason: 'attachment_unavailable' },
+        { state: 'sent', reason: null },
       );
       assert.equal(sent.find((message) => message.provider === 'telegram')?.body.chat_id, '123456');
       assert.equal(
@@ -1131,7 +1551,7 @@ test(
       assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
 
       const idOf = async (query: string) => (await pool.query(query)).rows[0].message_id;
       const ownerMessage = await idOf(
@@ -1178,7 +1598,11 @@ test(
           },
         ],
       });
-      await sendTelegram(telegramReaction(101, ['👍']));
+      await pool.query(
+        'UPDATE channel_outbox SET provider_message_ids=ARRAY[provider_message_id,$2] WHERE message_id=$1',
+        [telegramReply, '123456:102'],
+      );
+      await sendTelegram(telegramReaction(102, ['👍']));
       await sendTelegram(telegramReaction(101, ['🔥'], 456789));
       await sendTelegram(telegramReaction(10, ['👍']));
       await sendTelegram(telegramReaction(101, []));
@@ -1212,6 +1636,62 @@ test(
         reacting.slice(0, 2).map(({ body }) => body.reaction),
         [[{ type: 'emoji', emoji: '👍' }], []],
       );
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,'local-development','user','Synthetic request',$2)",
+        [ownerMessage, threadId],
+      );
+      const reactions = createAgentReactionService({
+        pool,
+        ownerId: 'local-development',
+        refresh() {},
+        deliver: channels.react,
+      });
+      const reactionTurn = await fixtureTurn(
+        pool,
+        threadId,
+        'local-development',
+        'telegram',
+        null,
+        'running',
+      );
+      const react = (reaction: string | null) =>
+        reactions.react({ threadId, turnId: reactionTurn, messageId: ownerMessage, reaction });
+      const storedReaction = async () =>
+        (
+          await pool.query(
+            'SELECT assistant_reaction,assistant_reacted_at FROM messages WHERE id=$1',
+            [ownerMessage],
+          )
+        ).rows[0];
+      assert.deepEqual(await react('🫠'), { status: 'skipped', reason: 'unsupported' });
+      assert.deepEqual(await storedReaction(), {
+        assistant_reaction: null,
+        assistant_reacted_at: null,
+      });
+      failReaction = true;
+      assert.deepEqual(await react('👍'), { status: 'skipped', reason: 'delivery_failed' });
+      assert.equal((await storedReaction()).assistant_reaction, '👍');
+      assert.ok((await storedReaction()).assistant_reacted_at);
+      const reactionAttempts = reacting.length;
+      assert.deepEqual(await react('👍'), { status: 'unchanged' });
+      assert.equal(reacting.length, reactionAttempts);
+      failReaction = false;
+      await pool.query(
+        'UPDATE messages SET assistant_reaction=NULL,assistant_reacted_at=NULL WHERE id=$1',
+        [ownerMessage],
+      );
+      assert.deepEqual(await react('👍'), { status: 'updated' });
+      failReaction = true;
+      assert.deepEqual(await react(null), { status: 'skipped', reason: 'delivery_failed' });
+      assert.equal((await storedReaction()).assistant_reaction, '👍');
+      failReaction = false;
+      assert.deepEqual(await react(null), { status: 'updated' });
+      const aborted = new AbortController();
+      aborted.abort();
+      const beforeCancel = reacting.length;
+      await assert.rejects(channels.react(ownerMessage, '👍', aborted.signal));
+      assert.equal(reacting.length, beforeCancel);
+
       await sendWhatsApp(
         whatsappPayload('wamid.old', undefined, undefined, Math.floor(Date.now() / 1000) - 172800),
       );
@@ -1229,7 +1709,22 @@ test(
         ).rows[0],
         { state: 'blocked', reason: 'reply_window_closed' },
       );
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
+
+      const paragraphs = Array.from({ length: 30 }, (_, index) =>
+        `Paragraph ${index} ${'detail '.repeat(40)}`.trim(),
+      );
+      await addReply('channel:telegram:987:123456:10', paragraphs.join('\n\n'));
+      await channels.drain();
+      const parts = sent
+        .slice(4)
+        .map((message) =>
+          String(
+            (message.body.rich_message as { markdown?: string })?.markdown ?? message.body.text,
+          ),
+        );
+      assert.ok(parts.length > 1 && parts.every((part) => part.length <= 4096));
+      assert.ok(paragraphs.every((paragraph) => parts.some((part) => part.includes(paragraph))));
 
       failSend = true;
       const uncertainId = await addReply('channel:telegram:987:123456:10');
@@ -1254,10 +1749,15 @@ test(
       await app.close();
       const restarted = await createChannels(pool, {
         ownerId: 'local-development',
+        present: async (_thread, input) => {
+          assert.equal(input.kind, 'delivery');
+          assert.equal(input.attachments, 'in_otto');
+          return 'Consulta os ficheiros na aplicação Otto.';
+        },
         resolveAttachments: async (_threadId, ids) => {
           if (ids.length !== 1 || ids[0] !== whatsappFileId)
             throw new Error('Attachment unavailable.');
-          return [{ name: 'research.csv', mimeType: 'text/csv', bytes: Buffer.from('A,B\n1,2\n') }];
+          return [attachment('research.csv', 'text/csv', 'A,B\n1,2\n')];
         },
         transport: createChatSdkTransport(pool, {
           ...fixtureEnv,
@@ -1297,7 +1797,7 @@ test(
         await restarted.drain();
         assert.equal(sent.length, attempts + 1);
         const fallbackText = JSON.stringify(sent.at(-1)?.body);
-        assert.match(fallbackText, /Attachments are available in Otto/);
+        assert.match(fallbackText, /Consulta os ficheiros na aplicação Otto/);
         assert.doesNotMatch(fallbackText, /api\/artifacts/);
       } finally {
         await restarted.close();
