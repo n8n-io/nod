@@ -4020,6 +4020,52 @@ test('chat request isolates a stale reply and attachments and restores failure b
   }
 });
 
+test('chat surfaces an unavailable private submission without restoring or retrying its code', async () => {
+  for (const kind of ['otp', 'payment'] as const) {
+    const state = requestedChatState();
+    const turnId = state.messages[0].turnId!;
+    state.verificationRequests = [{ id: randomUUID(), turnId, kind }];
+    const text = kind === 'payment' ? '737' : '582674';
+    const requestedMessage = { id: randomUUID(), text };
+    let submitted = 0;
+    const chat = () =>
+      createElement(Chat, {
+        ownerId: 'synthetic-feedback-owner',
+        state,
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+        requestedMessage,
+      });
+    const view = await handoffView(async (path, options) => {
+      if (path === '/api/apps') return Response.json([]);
+      assert.equal(path, '/api/messages');
+      submitted++;
+      const input = JSON.parse(String(options?.body));
+      return Response.json({
+        threadId: state.threadId,
+        turnId,
+        messageId: input.clientMessageId,
+        messageText: 'Synthetic masked private receipt.',
+        verificationStatus: 'unavailable',
+      });
+    }, chat());
+    try {
+      assert.equal(submitted, 1);
+      assert.ok(view.dom.window.document.querySelector('[role="alert"]'));
+      assert.equal(
+        view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor.getMarkdown(),
+        '',
+      );
+      assert.equal(view.dom.window.document.body.textContent!.includes(text), false);
+      await view.render(chat());
+      assert.equal(submitted, 1);
+    } finally {
+      await view.close();
+    }
+  }
+});
+
 test('chat restores rejected numeric prose but clears rejected private codes', async () => {
   for (const text of ['call 911', '737']) {
     const state = requestedChatState();

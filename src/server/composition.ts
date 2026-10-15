@@ -862,6 +862,21 @@ async function initializeApplication(
             ...provenance,
             allowed: !verdict.confirm,
             admit,
+            validate: schedule
+              ? async (client) => {
+                  const current = (
+                    await client.query(
+                      'SELECT revision FROM schedules WHERE id=$1 AND owner_id=$2 FOR SHARE',
+                      [schedule.id, ownerId],
+                    )
+                  ).rows[0];
+                  if (current?.revision !== schedule.revision)
+                    throw Object.assign(
+                      new Error('The schedule changed. Review it before asking again.'),
+                      { statusCode: 409 },
+                    );
+                }
+              : undefined,
             details: {
               ...(verdict.confirm ? { reason: verdict.reason } : {}),
               ...(schedule

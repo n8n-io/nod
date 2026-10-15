@@ -22,7 +22,7 @@ export type ChannelPresentation =
   | {
       kind: 'delivery';
       text: string;
-      attachments: 'none' | 'delivered' | 'linked' | 'in_otto';
+      attachments: 'none' | 'pending' | 'linked' | 'in_otto';
       secureAction: boolean;
       files?: string[];
     }
@@ -32,7 +32,7 @@ export type ChannelPresentation =
       kind: 'command';
       command: 'memory' | 'usage';
       data: object;
-      attachments?: 'none' | 'delivered' | 'linked' | 'in_otto';
+      attachments?: 'none' | 'pending' | 'linked' | 'in_otto';
     };
 
 interface ChannelOptions {
@@ -132,15 +132,15 @@ function channelText(text: string, appOrigin?: string) {
       artifact = true;
       return true;
     }
+    if (loopbackHost(url.hostname) || (appOrigin && url.host === new URL(appOrigin).host)) {
+      secureAction = true;
+      return true;
+    }
     if (
       /^\/(?:vault|credentials|payments|approvals)\//.test(url.pathname) ||
       (url.pathname === '/vault' && url.searchParams.has('add'))
     ) {
-      if (
-        !/^https?:\/\//.test(value) ||
-        loopbackHost(url.hostname) ||
-        (appOrigin && url.host === new URL(appOrigin).host)
-      ) {
+      if (!/^https?:\/\//.test(value)) {
         secureAction = true;
         return true;
       }
@@ -190,14 +190,17 @@ export async function channelReply(
   const safe = channelText(text, options.appOrigin);
   const privateLinks = options.privateLinks ?? [];
   const attachments = options.deliversAttachments
-    ? 'delivered'
+    ? 'pending'
     : privateLinks.length
       ? 'linked'
       : options.hasAttachments || safe.artifact
         ? 'in_otto'
         : 'none';
   const needsPresentation =
-    safe.secureAction || attachments === 'in_otto' || (!safe.text && attachments === 'none');
+    safe.secureAction ||
+    attachments === 'in_otto' ||
+    (attachments === 'pending' && Boolean(safe.text)) ||
+    (!safe.text && attachments === 'none');
   const reply = needsPresentation
     ? await presentChannelText(
         options.threadId,
@@ -247,12 +250,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   );
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS presentation jsonb;
+  ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS claim_id uuid;
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
   CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC)`);
   await pool.query(
-    "UPDATE channel_outbox o SET state='uncertain',reason='interrupted_send',updated_at=now() FROM channel_inbox i WHERE o.source_id=i.source_id AND i.owner_id=$1 AND o.state='sending'",
+    `UPDATE channel_outbox o SET
+       state=CASE WHEN o.state='sending' THEN 'uncertain' ELSE 'pending' END,
+       reason=CASE WHEN o.state='sending' THEN 'interrupted_send' ELSE NULL END,
+       claim_id=NULL,updated_at=now()
+     FROM channel_inbox i WHERE o.source_id=i.source_id AND i.owner_id=$1
+       AND o.state IN ('preparing','sending')`,
     [ownerId],
   );
   let closed = false;
@@ -532,30 +541,38 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     );
   }
 
-  async function currentMessage(row: OutboxRow) {
+  async function currentMessage(row: OutboxRow, claimId: string, state: 'preparing' | 'sending') {
     const result = await pool.query(
-      `SELECT 1 FROM messages m WHERE m.id=$1 AND m.owner_id=$2
+      `SELECT 1 FROM messages m JOIN channel_outbox o ON o.message_id=m.id
+       WHERE m.id=$1 AND m.owner_id=$2 AND o.claim_id=$4 AND o.state=$5
        AND m.thread_id IS NOT DISTINCT FROM $3::uuid
        AND (m.thread_id IS NULL OR EXISTS (
          SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$2 AND th.archived_at IS NULL))`,
-      [row.message_id, ownerId, row.message_thread_id],
+      [row.message_id, ownerId, row.message_thread_id, claimId, state],
     );
     return Boolean(result.rowCount);
   }
 
   async function outboxStep() {
     if (closed || replacing) return false;
+    const claimId = randomUUID();
     const result = await pool.query<OutboxRow>(
       `WITH claimed AS (
-      UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
+      UPDATE channel_outbox SET state='preparing',claim_id=$2,updated_at=now() WHERE message_id=(
         SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
       ) RETURNING message_id,source_id,presentation
     ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,c.presentation
       FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
-      [ownerId],
+      [ownerId, claimId],
     );
     const row = result.rows[0];
     if (!row) return false;
+    const block = (reason: string, state: 'preparing' | 'sending' = 'preparing') =>
+      pool.query(
+        `UPDATE channel_outbox SET state='blocked',reason=$2,claim_id=NULL,updated_at=now()
+         WHERE message_id=$1 AND claim_id=$3 AND state=$4`,
+        [row.message_id, reason, claimId, state],
+      );
     let reason: string | null =
       row.owner_id !== ownerId
         ? 'message_owner_changed'
@@ -576,10 +593,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         reason = 'reply_window_closed';
     }
     if (reason) {
-      await pool.query(
-        "UPDATE channel_outbox SET state='blocked',reason=$2,updated_at=now() WHERE message_id=$1",
-        [row.message_id, reason],
-      );
+      await block(reason);
       return true;
     }
     let attachments: MessagingAttachment[] | undefined;
@@ -623,7 +637,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             ? {
                 ...row.presentation,
                 attachments: attachments
-                  ? ('delivered' as const)
+                  ? ('pending' as const)
                   : privateLinks.length
                     ? ('linked' as const)
                     : row.attachments?.length
@@ -641,47 +655,62 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       text = await channelReply(generated ?? row.text, {
         threadId: row.message_thread_id,
         hasAttachments: !row.presentation && Boolean(row.attachments?.length),
-        deliversAttachments: Boolean(attachments),
+        deliversAttachments: !row.presentation && Boolean(attachments),
         privateLinks,
         appOrigin: options.appOrigin,
         present: options.present,
       });
     } catch (cause) {
       logFailure('channel_presentation_failed', cause);
-      await pool.query(
-        "UPDATE channel_outbox SET state='blocked',reason='presentation_unavailable',updated_at=now() WHERE message_id=$1",
-        [row.message_id],
-      );
+      await block('presentation_unavailable');
       return true;
     }
     if (generated && !closed && !replacing && permitted(row)) {
-      const saved = await pool.query(
-        `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3
-         AND (m.thread_id IS NULL OR EXISTS (
-           SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))`,
-        [row.message_id, generated, ownerId],
-      );
-      if (!saved.rowCount) {
-        await pool.query(
-          "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
-          [row.message_id],
+      const saved = await transaction(async (client) => {
+        const current = await client.query(
+          `SELECT 1 FROM channel_outbox WHERE message_id=$1 AND claim_id=$2
+           AND state='preparing' FOR UPDATE`,
+          [row.message_id, claimId],
         );
+        if (!current.rowCount) return false;
+        const result = await client.query(
+          `UPDATE messages m SET text=$2 WHERE m.id=$1 AND m.owner_id=$3
+           AND (m.thread_id IS NULL OR EXISTS (
+             SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))`,
+          [row.message_id, generated, ownerId],
+        );
+        return Boolean(result.rowCount);
+      }, pool);
+      if (!saved) {
+        await block('thread_changed');
         return true;
       }
       options.refresh?.();
     }
-    if (!(await currentMessage(row))) {
-      await pool.query(
-        "UPDATE channel_outbox SET state='blocked',reason='thread_changed',updated_at=now() WHERE message_id=$1",
-        [row.message_id],
-      );
+    if (closed || replacing || !permitted(row)) {
+      await block('channel_access_changed');
+      return true;
+    }
+    const sending = await pool.query(
+      `UPDATE channel_outbox o SET state='sending',updated_at=now() FROM messages m
+       WHERE o.message_id=$1 AND o.claim_id=$2 AND o.state='preparing'
+         AND m.id=o.message_id AND m.owner_id=$3
+         AND m.thread_id IS NOT DISTINCT FROM $4::uuid
+         AND (m.thread_id IS NULL OR EXISTS (
+           SELECT 1 FROM threads th WHERE th.id=m.thread_id AND th.owner_id=$3 AND th.archived_at IS NULL))
+       RETURNING o.message_id`,
+      [row.message_id, claimId, ownerId, row.message_thread_id],
+    );
+    if (!sending.rowCount) {
+      await block('thread_changed');
+      return true;
+    }
+    if (!(await currentMessage(row, claimId, 'sending'))) {
+      await block('thread_changed', 'sending');
       return true;
     }
     if (closed || replacing || !permitted(row)) {
-      await pool.query(
-        "UPDATE channel_outbox SET state='blocked',reason='channel_access_changed',updated_at=now() WHERE message_id=$1",
-        [row.message_id],
-      );
+      await block('channel_access_changed', 'sending');
       return true;
     }
     try {
@@ -706,7 +735,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                   options.present,
                   options.appOrigin,
                 );
-                if (!(await currentMessage(row)) || closed || replacing || !permitted(row))
+                if (
+                  !(await currentMessage(row, claimId, 'sending')) ||
+                  closed ||
+                  replacing ||
+                  !permitted(row)
+                )
                   return undefined;
                 return notice;
               },
@@ -714,14 +748,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           : {}),
       });
       await pool.query(
-        "UPDATE channel_outbox SET state='sent',provider_message_id=$2,updated_at=now() WHERE message_id=$1",
-        [row.message_id, sent.id],
+        `UPDATE channel_outbox SET state='sent',provider_message_id=$2,claim_id=NULL,updated_at=now()
+         WHERE message_id=$1 AND claim_id=$3 AND state='sending'`,
+        [row.message_id, sent.id, claimId],
       );
     } catch (cause) {
       logFailure('channel_send_failed', cause);
       await pool.query(
-        "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',updated_at=now() WHERE message_id=$1",
-        [row.message_id],
+        `UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',claim_id=NULL,updated_at=now()
+         WHERE message_id=$1 AND claim_id=$2 AND state='sending'`,
+        [row.message_id, claimId],
       );
     }
     return true;

@@ -312,7 +312,7 @@ export async function createChatVerification(
           verification: reserved.kind,
         })
         .catch(() => undefined);
-      if (typeof message === 'string' && message.trim() && message.length <= 12000)
+      if (typeof message === 'string' && message.trim())
         await pool.query(
           `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
            SELECT $1,$2,'assistant',$3,u.thread_id,u.id FROM turns u JOIN threads th ON th.id=u.thread_id

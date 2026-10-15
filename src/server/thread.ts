@@ -674,8 +674,15 @@ async function interruptTurn(turnId: string, present: ThreadDependencies['presen
   const turn = await transaction(async (client) => {
     await lockThread(client);
     const turn = (
-      await client.query<{ thread_id: string; background: boolean }>(
-        "SELECT thread_id,background FROM turns WHERE id=$1 AND owner_id=$2 AND status='running' FOR UPDATE",
+      await client.query<{
+        thread_id: string;
+        background: boolean;
+        latest_message_id: string | null;
+      }>(
+        `SELECT u.thread_id,u.background,
+         (SELECT m.id FROM messages m WHERE m.owner_id=$2 AND m.thread_id=u.thread_id
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS latest_message_id
+         FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
         [turnId, ownerId],
       )
     ).rows[0];
@@ -686,14 +693,16 @@ async function interruptTurn(turnId: string, present: ThreadDependencies['presen
   if (!turn) return false;
   if (turn.background) return true;
   const message = await present?.(turn.thread_id, { kind: 'interrupted' }).catch(() => undefined);
-  if (typeof message !== 'string' || !message.trim() || message.length > 12000) return true;
+  if (typeof message !== 'string' || !message.trim()) return true;
   await transaction(async (client) => {
     if ((await lockThread(client)).id !== turn.thread_id) return;
     const current = await client.query(
       `SELECT id FROM turns WHERE id=$1 AND owner_id=$2 AND thread_id=$3
        AND status='failed' AND error='Interrupted.'
+       AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3
+            ORDER BY created_at DESC,id DESC LIMIT 1) IS NOT DISTINCT FROM $5::uuid
        AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
-      [turnId, ownerId, turn.thread_id, `failure:${turnId}`],
+      [turnId, ownerId, turn.thread_id, `failure:${turnId}`, turn.latest_message_id],
     );
     if (current.rowCount)
       await insertAssistantMessage(

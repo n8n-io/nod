@@ -57,7 +57,7 @@ export interface Run {
   scheduleRuns: Array<{ title: string; observation: any; turnId: string | null }>;
   memory: string;
   modelErrors: string[];
-  approvals: Array<{ action: string; status: string; args: unknown }>;
+  approvals: Array<{ turnId: string; action: string; status: string; args: unknown }>;
   visits: Visit[];
   usage: { tokens: number; modelCalls: number; costUsd: number | null };
   firstReplySeconds: number | null;
@@ -292,9 +292,10 @@ export async function collect(options: {
   });
   const approvals = (
     await stack.pool.query(
-      `SELECT action,status,args FROM approvals ORDER BY ${await approvalOrder(stack.pool)}`,
+      `SELECT turn_id,action,status,args FROM approvals ORDER BY ${await approvalOrder(stack.pool)}`,
     )
   ).rows.map((row) => ({
+    turnId: row.turn_id as string,
     action: row.action as string,
     status: row.status as string,
     args: row.args,

@@ -1299,7 +1299,7 @@ async function outboxFixture(t: TestContext, max?: number) {
       },
       ...extra,
     });
-  return { pool, threadId, posts, receive, turnOf, reply, create };
+  return { pool, threadId, posts, receive, turnOf, reply, create, transport };
 }
 
 test(
@@ -1456,7 +1456,7 @@ test(
 
 test(
   'outbox presentation failures and revocation never send private URLs or replay a claimed reply',
-  { skip: !process.env.TEST_DATABASE_URL },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
   async (t) => {
     const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
     const inputs: unknown[] = [];
@@ -1546,7 +1546,7 @@ test(
 
 test(
   'reset during ordinary channel presentation blocks the obsolete reply',
-  { skip: !process.env.TEST_DATABASE_URL },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
   async (t) => {
     const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
     let startGeneration!: () => void;
@@ -1597,6 +1597,174 @@ test(
       releaseGeneration();
       await channels.close();
     }
+  },
+);
+
+test(
+  'restart reclaims presentation without replaying an interrupted provider send',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, posts, receive, turnOf, reply, create, transport } = await outboxFixture(t, 1);
+    let startPresentation = () => {};
+    let releasePresentation = () => {};
+    const presentationStarted = new Promise<void>((resolve) => {
+      startPresentation = resolve;
+    });
+    const presentationReleased = new Promise<void>((resolve) => {
+      releasePresentation = resolve;
+    });
+    let startSend = () => {};
+    let releaseSend = () => {};
+    const sendStarted = new Promise<void>((resolve) => {
+      startSend = resolve;
+    });
+    const sendReleased = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const instances: Awaited<ReturnType<typeof create>>[] = [];
+    const original = await create({
+      present: async () => {
+        await pool.query('SELECT 1');
+        startPresentation();
+        await presentationReleased;
+        return 'Stale prepared reply';
+      },
+    });
+    instances.push(original);
+    const state = async (id: string) =>
+      (await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [id]))
+        .rows[0];
+    try {
+      receive('111', 'restart', 'chat-restart');
+      await original.drain();
+      const { turn_id: turnId } = await turnOf('restart');
+      const preparedReply = randomUUID();
+      await reply(turnId, '', preparedReply, 0);
+      await pool.query(
+        'INSERT INTO channel_outbox(message_id,source_id,presentation) VALUES($1,$2,$3)',
+        [
+          preparedReply,
+          'channel:telegram:bot:restart',
+          JSON.stringify({ kind: 'verification_refused' }),
+        ],
+      );
+      const preparing = original.drain();
+      await presentationStarted;
+      assert.deepEqual(await state(preparedReply), { state: 'preparing', reason: null });
+      assert.deepEqual(posts, []);
+      const restarted = await create({ present: async () => 'Current prepared reply' });
+      instances.push(restarted);
+      await restarted.drain();
+      releasePresentation();
+      await preparing;
+      assert.deepEqual(posts, [{ threadId: 'chat-restart', text: 'Current prepared reply' }]);
+      assert.deepEqual(await state(preparedReply), { state: 'sent', reason: null });
+      assert.equal(
+        (await pool.query('SELECT text FROM messages WHERE id=$1', [preparedReply])).rows[0].text,
+        'Current prepared reply',
+      );
+      await restarted.replaceTransport({
+        ...transport,
+        post: async (input) => {
+          const result = await transport.post(input);
+          startSend();
+          await sendReleased;
+          return result;
+        },
+      });
+      const interruptedReply = randomUUID();
+      await reply(turnId, 'Provider send started', interruptedReply, 1);
+      const sending = restarted.drain();
+      await sendStarted;
+      assert.deepEqual(await state(interruptedReply), { state: 'sending', reason: null });
+      const recovered = await create();
+      instances.push(recovered);
+      await recovered.drain();
+      releaseSend();
+      await sending;
+      await Promise.all(instances.map((instance) => instance.drain()));
+      assert.deepEqual(await state(interruptedReply), {
+        state: 'uncertain',
+        reason: 'interrupted_send',
+      });
+      assert.deepEqual(posts, [
+        { threadId: 'chat-restart', text: 'Current prepared reply' },
+        { threadId: 'chat-restart', text: 'Provider send started' },
+      ]);
+    } finally {
+      releasePresentation();
+      releaseSend();
+      await Promise.all(instances.map((instance) => instance.close()));
+    }
+  },
+);
+
+test(
+  'reset and revocation during the send transition prevent a provider attempt',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    for (const change of ['reset', 'replace'])
+      await t.test(change, async (t) => {
+        const { pool, threadId, posts, receive, turnOf, reply, create, transport } =
+          await outboxFixture(t);
+        const channels = await create();
+        const blocker = await pool.connect();
+        const lockId = (randomBytes(4).readUInt32BE(0) % 2147483646) + 1;
+        try {
+          receive('111', 'transition', 'chat-transition');
+          await channels.drain();
+          const messageId = randomUUID();
+          await reply((await turnOf('transition')).turn_id, 'Prepared reply', messageId, 0);
+          await pool.query(`CREATE FUNCTION hold_send_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              IF NEW.state='sending' AND OLD.state='preparing' THEN
+                PERFORM pg_advisory_xact_lock(${lockId});
+              END IF;
+              RETURN NEW;
+            END $$;
+            CREATE TRIGGER hold_send_transition BEFORE UPDATE ON channel_outbox
+              FOR EACH ROW EXECUTE FUNCTION hold_send_transition()`);
+          await blocker.query('SELECT pg_advisory_lock($1)', [lockId]);
+          const draining = channels.drain();
+          let waiting = false;
+          for (let attempt = 0; attempt < 200; attempt++) {
+            waiting = (
+              await pool.query(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1::oid AND NOT granted) AS waiting",
+                [lockId],
+              )
+            ).rows[0].waiting;
+            if (waiting) break;
+            await sleep(10);
+          }
+          assert.equal(waiting, true);
+          const changed =
+            change === 'reset'
+              ? pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId])
+              : channels.replaceTransport({ ...transport, channels: [] });
+          if (change === 'reset') await changed;
+          await blocker.query('SELECT pg_advisory_unlock($1)', [lockId]);
+          await Promise.all([draining, changed]);
+          assert.deepEqual(posts, []);
+          assert.deepEqual(
+            (
+              await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
+                messageId,
+              ])
+            ).rows[0],
+            {
+              state: 'blocked',
+              reason: change === 'reset' ? 'thread_changed' : 'channel_access_changed',
+            },
+          );
+          await channels.drain();
+          assert.deepEqual(posts, []);
+        } finally {
+          await blocker.query('SELECT pg_advisory_unlock($1)', [lockId]);
+          blocker.release();
+          await channels.close();
+        }
+      });
   },
 );
 
@@ -2084,6 +2252,7 @@ test(
     const app = Fastify();
     const presentations: unknown[] = [];
     const attachmentNotice = 'Ficheiro disponível na aplicação.';
+    const pendingNotice = 'O ficheiro está disponível no Otto.';
     let presentationOutcome = 'success';
     let markPresentationStarted = () => {};
     let releasePresentation = () => {};
@@ -2099,6 +2268,7 @@ test(
       transport: createChatSdkTransport(pool, telegramEnvironment),
       present: async (_threadId, input) => {
         presentations.push(input);
+        if (input.kind === 'delivery' && input.attachments === 'pending') return pendingNotice;
         if (presentationOutcome === 'failure') throw new Error('Fixture presentation failure');
         if (presentationOutcome === 'hold') {
           markPresentationStarted();
@@ -2230,7 +2400,7 @@ test(
       const partial = await addReply(turnId, [image, document]);
       await channels.drain();
       assert.equal((await state(partial)).state, 'sent');
-      assert.deepEqual(texts.slice(-2), ['Here is the file.', attachmentNotice]);
+      assert.deepEqual(texts.slice(-2), [pendingNotice, attachmentNotice]);
       assert.deepEqual(presentations.at(-1), {
         kind: 'delivery',
         text: '',
@@ -2242,11 +2412,17 @@ test(
       await channels.drain();
       assert.equal(sent.length, partialCount);
       presentationOutcome = 'failure';
-      const unavailableNotice = await addReply(turnId, [document]);
+      const unavailableNotice = await addReply(turnId, [document], 'I attached the file.');
       const beforeNoticeFailure = texts.length;
       await channels.drain();
       assert.deepEqual(await state(unavailableNotice), { state: 'sent', reason: null });
-      assert.deepEqual(texts.slice(beforeNoticeFailure), ['Here is the file.']);
+      assert.deepEqual(texts.slice(beforeNoticeFailure), [pendingNotice]);
+      assert.deepEqual(presentations.at(-2), {
+        kind: 'delivery',
+        text: 'I attached the file.',
+        attachments: 'pending',
+        secureAction: false,
+      });
       const noReceipt = await addReply(turnId, [document], '');
       const beforeNoReceipt = texts.length;
       await channels.drain();
@@ -2359,12 +2535,12 @@ test(
       presentationOutcome = 'hold';
       const staleNotice = await addReply(turnId, [document]);
       const beforeReset = texts.length;
-      const pendingNotice = channels.drain();
+      const pendingPresentation = channels.drain();
       await presentationStarted;
       await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
       releasePresentation();
-      await pendingNotice;
-      assert.deepEqual(texts.slice(beforeReset), ['Here is the file.']);
+      await pendingPresentation;
+      assert.deepEqual(texts.slice(beforeReset), [pendingNotice]);
       assert.deepEqual(await state(staleNotice), { state: 'sent', reason: null });
       const deliveredBeforeReset = sent.length;
       const generatedBeforeReset = presentations.length;

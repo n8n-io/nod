@@ -616,6 +616,13 @@ test(
     const app = Fastify();
     const channels = await createChannels(pool, {
       ownerId: 'fixture-owner',
+      present: async (thread, input) => {
+        assert.equal(thread, threadId);
+        assert.equal(input.kind, 'command');
+        if (input.kind !== 'command') throw new Error('Expected command presentation');
+        assert.equal(input.attachments, 'pending');
+        return input.command === 'memory' ? 'Synthetic memory digest' : 'Synthetic usage digest';
+      },
       transport: {
         channels: [
           {
@@ -651,7 +658,8 @@ test(
         close: async () => {},
       },
       commandReply: async (command, _client, thread) => ({
-        text: `Synthetic ${command} digest`,
+        text: '',
+        presentation: { kind: 'command', command, data: {} },
         attachments: [
           { id: fileId, name: `otto-${command}.md`, mimeType: 'text/markdown', size: 9, url: '' },
         ].filter(() => thread === threadId),
@@ -765,11 +773,19 @@ test('channel presentation isolates private links from the model and preserves o
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
   const imageReply = await channelReply(
-    '[Imagem](http://localhost:4310/api/artifacts/private-file)',
+    'O ficheiro está anexado. [Imagem](http://localhost:4310/api/artifacts/private-file)',
     { threadId: 'owned-thread', present, deliversAttachments: true },
   );
-  assert.equal(imageReply, 'Imagem');
-  assert.equal(presentation.length, 1);
+  assert.equal(imageReply, 'Continua na aplicação Otto.');
+  assert.deepEqual(presentation[1], {
+    threadId: 'owned-thread',
+    input: {
+      kind: 'delivery',
+      text: 'O ficheiro está anexado. Imagem',
+      attachments: 'pending',
+      secureAction: false,
+    },
+  });
   assert.equal(
     await channelReply('', { threadId: 'owned-thread', present, deliversAttachments: true }),
     '',
@@ -787,23 +803,35 @@ test('channel presentation isolates private links from the model and preserves o
   );
   assert.match(fileReply, /report\.csv/);
   assert.equal((fileReply.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
-  assert.equal(presentation.length, 1);
+  assert.equal(presentation.length, 2);
   await channelReply('Relatório pronto.', {
     threadId: 'owned-thread',
     present,
     hasAttachments: true,
   });
-  assert.equal(presentation.length, 2);
+  assert.equal(presentation.length, 3);
   assert.equal(
-    (presentation[1] as { input: { attachments: string } }).input.attachments,
+    (presentation[2] as { input: { attachments: string } }).input.attachments,
     'in_otto',
   );
+  const memoryReply = await channelReply(
+    '[Memória](https://otto.example/memory) e https://otto.example/usage. Consulta https://merchant.example/memory.',
+    { threadId: 'owned-thread', present, appOrigin: 'https://otto.example' },
+  );
+  assert.equal(memoryReply, 'Continua na aplicação Otto.');
+  const memoryPresentation = presentation.at(-1) as { input: { secureAction: boolean } };
+  assert.equal(memoryPresentation.input.secureAction, true);
+  assert.doesNotMatch(JSON.stringify(memoryPresentation), /otto\.example/);
+  assert.match(JSON.stringify(memoryPresentation), /Memória/);
+  assert.match(JSON.stringify(memoryPresentation), /https:\/\/merchant\.example\/memory/);
 });
 
 test('channel presentation rejects failed or unsafe generated output before provider delivery', async () => {
   for (const generated of [
     '',
     'https://otto.example/credentials/secret-id',
+    '[Memória](https://otto.example/memory)',
+    'https://otto.example/usage',
     '[Continua](/payments/private-id)',
     '[Ficheiro](/api/artifacts/private-id)',
   ]) {
@@ -1157,10 +1185,7 @@ test(
       ]);
       await channels.drain();
       assert.equal(sent.length, 4);
-      assert.deepEqual(sent[3].body.text, {
-        preview_url: false,
-        body: 'Continua na aplicação Otto.',
-      });
+      assert.equal((sent[3].body.text as { body: string }).body, 'Continua na aplicação Otto.');
       assert.deepEqual(
         (
           await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [

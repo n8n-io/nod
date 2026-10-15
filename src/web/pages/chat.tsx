@@ -50,7 +50,7 @@ function verificationFailure(
   if (ambiguous)
     return 'More than one sign-in needs a code. Reply to the verification request you want to complete.';
   if (status === 'unavailable')
-    return 'That verification request is no longer available. Wait for a new code request.';
+    return 'The result could not be confirmed. Check the sign-in or payment before trying again.';
   return 'The verification code could not be confirmed. Check the sign-in request and try again.';
 }
 function scrollBehavior(): ScrollBehavior {
@@ -569,6 +569,8 @@ export function Chat({
             : item,
         ),
       );
+      if (verificationStatus === 'unavailable')
+        setError(verificationFailure(verificationStatus, false));
       void refresh().catch(() => {});
       return { sent: true };
     } catch (cause) {

@@ -1734,8 +1734,10 @@ test(
         async (t) => {
           const logged = t.mock.method(console, 'error', () => {});
           try {
-            for (const mode of ['offline', 'invalid', 'stale']) {
+            for (const mode of ['offline', 'invalid', 'stale', 'advanced', 'long']) {
               let presented = 0;
+              let advanced: Awaited<ReturnType<typeof thread.submitUserMessage>> | undefined;
+              const completeText = mode === 'long' ? interruptedText.repeat(1000) : interruptedText;
               const before = runs.filter((context) => context.prompt === 'runtime-failure').length;
               presentInterruption = async (presentedThread, input) => {
                 presented++;
@@ -1755,7 +1757,11 @@ test(
                     ]);
                 }, db.pool);
                 if (mode === 'offline') throw new Error('Synthetic model failure.');
-                return mode === 'invalid' ? ' ' : interruptedText;
+                if (mode === 'advanced')
+                  advanced = await thread.submitUserMessage(
+                    'New request during interruption presentation.',
+                  );
+                return mode === 'invalid' ? ' ' : completeText;
               };
               const failed = await thread.submitUserMessage('runtime-failure');
               await waitFor(() =>
@@ -1766,15 +1772,20 @@ test(
                 await turnStatus(failed.turnId),
                 mode === 'stale' ? 'cancelled' : 'failed',
               );
-              assert.equal(
+              assert.deepEqual(
                 (
                   await db.pool.query(
-                    "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'",
+                    "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'",
                     [failed.turnId],
                   )
-                ).rowCount,
-                0,
+                ).rows.map((row) => row.text),
+                mode === 'long' ? [completeText] : [],
               );
+              if (advanced) {
+                const advancedTurnId = advanced.turnId;
+                await waitFor(settled(advancedTurnId));
+                assert.equal(runs.filter((context) => context.turnId === advancedTurnId).length, 1);
+              }
               assert.equal(
                 runs.filter((context) => context.prompt === 'runtime-failure').length,
                 before + 1,

@@ -61,6 +61,8 @@ test(
     const confirmationText = 'Proceed with the saved synthetic action?';
     let confirmationValid = true;
     let confirmationReviews = 0;
+    let beforeConfirmation = async () => {};
+    const executedApps: string[] = [];
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -135,7 +137,18 @@ test(
         },
         computer: fakeComputer(),
         workspace: fakeWorkspace(),
-        integrations: integrationFixture.provider,
+        integrations: {
+          ...integrationFixture.provider,
+          createSession: async (...args) => {
+            const session = await integrationFixture.provider.createSession(...args);
+            const execute = session.execute.bind(session);
+            session.execute = async (...input) => {
+              executedApps.push(input[0]);
+              return execute(...input);
+            };
+            return session;
+          },
+        },
         speech: {
           id: 'fixture',
           configured: false,
@@ -153,6 +166,7 @@ test(
           curate: async ({ task, input }) => {
             if ('purpose' in input && input.purpose === 'confirmation') {
               descriptions.push(input);
+              await beforeConfirmation();
               return { text: confirmationText };
             }
             if ('purpose' in input && input.purpose === 'confirmation_review') {
@@ -353,6 +367,77 @@ test(
           } finally {
             confirmationValid = true;
           }
+        },
+      );
+
+      await t.test(
+        'a schedule changed during confirmation generation cannot save a stale approval',
+        async () => {
+          const schedule = await reminder();
+          const text = `Synthetic stale schedule confirmation ${randomUUID()}`;
+          plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
+          beforeConfirmation = async () => {
+            const changed = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              title: 'A different synthetic reminder',
+              prompt: 'Review a different synthetic checklist.',
+            });
+            assert.equal(changed.statusCode, 200, changed.body);
+          };
+          try {
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            await waitFor(turn, 'failed|succeeded|waiting');
+            assert.deepEqual(await approvalsFor(turn), []);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text=$2",
+                  [turn, confirmationText],
+                )
+              ).rowCount,
+              0,
+            );
+            const current = (
+              await pool.query('SELECT title,enabled FROM schedules WHERE id=$1', [schedule.id])
+            ).rows[0];
+            assert.equal(current.title, 'A different synthetic reminder');
+            assert.equal(current.enabled, true);
+          } finally {
+            beforeConfirmation = async () => {};
+          }
+        },
+      );
+
+      await t.test(
+        'an explicit confirmation request can hold a read until the bound approval is accepted',
+        async () => {
+          const before = executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length;
+          const turn = await propose(
+            'GMAIL_FETCH_EMAILS',
+            { query: 'in:inbox' },
+            'apps',
+            'Ask before reading my synthetic inbox.',
+          );
+          const [pending] = await approvalsFor(turn);
+          assert.equal(pending.status, 'pending');
+          assert.equal(pending.action, 'GMAIL_FETCH_EMAILS');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
+            before,
+          );
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: pending.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          await waitFor(response.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
+            before + 1,
+          );
         },
       );
 

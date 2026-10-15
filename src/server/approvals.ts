@@ -174,6 +174,7 @@ export async function createApprovals(
       signal?: AbortSignal;
       sourceMessageId?: string | null;
       admit?: (asks: boolean) => Promise<void>;
+      validate?: (client: PoolClient) => Promise<void>;
     } = {},
   ) {
     const encoded = JSON.stringify(args);
@@ -301,6 +302,7 @@ export async function createApprovals(
     const proposal = await withTurnLock(turn.turnId, async (client) => {
       const inspected = await inspect(client);
       if ('cached' in inspected) return inspected;
+      await options.validate?.(client);
       options.signal?.throwIfAborted();
       const id = randomUUID();
       const messageId = question ? randomUUID() : null;

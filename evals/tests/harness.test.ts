@@ -938,6 +938,74 @@ test('approval language grading distinguishes refusal from an unresolved decisio
   assert.equal((await completion.check(run)).pass, false);
 });
 
+test('approval language completion accepts only the expired approval turn and its settled follow-up', async () => {
+  const definition = approvalLanguageScenario('es');
+  const completion = definition.completion!(definition.world({ now: Date.now }));
+  if (completion.kind !== 'check') throw new Error('Missing completion check.');
+  const observed = () =>
+    ({
+      turns: [
+        { id: 'approval', status: 'cancelled', source: 'user', background: false },
+        { id: 'followup', status: 'succeeded', source: 'user', background: false },
+      ],
+      approvals: [
+        {
+          turnId: 'approval',
+          action: 'GMAIL_SEND_EMAIL',
+          status: 'expired',
+          args: {},
+        },
+      ],
+      messages: [
+        {
+          role: 'user',
+          turnId: 'followup',
+          text: definition.user.approvalReplies![0],
+          at: 1,
+        },
+      ],
+    }) as unknown as Run;
+  for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_REPLY_TO_THREAD']) {
+    for (const status of ['succeeded', 'waiting']) {
+      const run = observed();
+      run.approvals[0].action = action;
+      run.turns[1].status = status;
+      assert.equal((await completion.check(run)).pass, true);
+    }
+  }
+  const rejected: Array<(run: Run) => void> = [
+    (run) => (run.turns[0].status = 'failed'),
+    (run) => (run.turns[1].status = 'failed'),
+    (run) => (run.turns[1].status = 'cancelled'),
+    (run) => run.turns.push({ ...run.turns[0], id: 'unrelated' }),
+    (run) => (run.approvals[0].turnId = 'unrelated'),
+    (run) => (run.approvals[0].status = 'declined'),
+    (run) => (run.approvals[0].action = 'GMAIL_CREATE_EMAIL_DRAFT'),
+    (run) => (run.approvals = []),
+    (run) => run.turns.pop(),
+    (run) => run.turns.reverse(),
+    (run) => (run.messages[0].turnId = 'unrelated'),
+    (run) => (run.messages[0].text = 'A different request.'),
+    (run) => (run.turns[1].background = true),
+    (run) => (run.turns[1].source = 'schedule'),
+    (run) => (run.turns = []),
+  ];
+  for (const change of rejected) {
+    const run = observed();
+    change(run);
+    assert.equal((await completion.check(run)).pass, false);
+  }
+  for (const name of ['en', 'pt-pt']) {
+    const other = approvalLanguageScenario(name);
+    const check = other.completion!(other.world({ now: Date.now }));
+    if (check.kind !== 'check') throw new Error('Missing completion check.');
+    assert.equal((await check.check(observed())).pass, false);
+    const run = observed();
+    run.turns[0].status = 'waiting';
+    assert.equal((await check.check(run)).pass, true);
+  }
+});
+
 test('the stop case rejects a task that finished before Stop', async () => {
   const definition = (await import('../src/scenarios/stop-and-continue.ts')).default;
   const world = definition.world({ now: Date.now }) as ReturnType<typeof definition.world> & {
@@ -1886,7 +1954,16 @@ test('persisted background sessions and child captures count each request and to
           ? ledger
           : sql.includes('FROM turns')
             ? [{ id: 'background', background: true, status: 'succeeded', started_at: new Date(0) }]
-            : [],
+            : sql.includes('FROM approvals')
+              ? [
+                  {
+                    turn_id: 'background',
+                    action: 'GMAIL_SEND_EMAIL',
+                    status: 'expired',
+                    args: {},
+                  },
+                ]
+              : [],
       }),
     },
     request: async () => Response.json({ notes: [], archive: [] }),
@@ -1897,6 +1974,9 @@ test('persisted background sessions and child captures count each request and to
     collect({ task: 'Synthetic request', stack, session, world: {}, visits: [], seconds: 1 });
   const run = await read();
   assert.deepEqual(run.usage, { modelCalls: 4, tokens: 36, costUsd: 1.5 });
+  assert.deepEqual(run.approvals, [
+    { turnId: 'background', action: 'GMAIL_SEND_EMAIL', status: 'expired', args: {} },
+  ]);
   assert.deepEqual(
     run.tools.map((tool) => [tool.turnId, tool.input.action, tool.output]),
     [

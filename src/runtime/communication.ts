@@ -13,11 +13,11 @@ export function actionLink(url: unknown, message: unknown) {
     !['http:', 'https:'].includes(destination.protocol) ||
     destination.username ||
     destination.password ||
-    /[\s()<>\\]/.test(url) ||
+    /[\s<>\\]/.test(url) ||
     url.startsWith('//')
   )
     throw new Error('The action link is unavailable.');
-  return `[${plain(message)}](${url})`;
+  return `[${plain(message)}](<${url}>)`;
 }
 
 export function vaultInvitation(

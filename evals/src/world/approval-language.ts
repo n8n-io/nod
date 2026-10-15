@@ -148,12 +148,38 @@ export function approvalLanguageScenario(name: string) {
       for (const message of frozen.messages) await session.say(message);
     },
     completion() {
-      return check(
-        'completion',
-        (run) =>
+      return check('completion', (run) => {
+        const settled = (status: string) => status === 'succeeded' || status === 'waiting';
+        return (
           run.turns.length > 0 &&
-          run.turns.every((turn) => turn.status === 'succeeded' || turn.status === 'waiting'),
-      );
+          run.turns.every(
+            (turn, index) =>
+              settled(turn.status) ||
+              (frozen.answer === 'other' &&
+                turn.status === 'cancelled' &&
+                run.approvals.some(
+                  (approval) =>
+                    approval.turnId === turn.id &&
+                    approval.status === 'expired' &&
+                    sendsMail(approval.action),
+                ) &&
+                run.turns
+                  .slice(index + 1)
+                  .some(
+                    (followup) =>
+                      settled(followup.status) &&
+                      followup.source === 'user' &&
+                      !followup.background &&
+                      run.messages.some(
+                        (message) =>
+                          message.role === 'user' &&
+                          message.turnId === followup.id &&
+                          message.text === frozen.reply,
+                      ),
+                  )),
+          )
+        );
+      });
     },
     evidence(run) {
       return JSON.stringify({
