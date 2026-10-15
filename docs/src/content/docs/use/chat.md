@@ -22,20 +22,13 @@ Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 You don't have to wait. The message box stays open while Otto works.
 
-A follow-up, such as "also check Friday" or a screenshot of an error, joins the task that's running. Otto reads it before its next step. A message from another app waits in line and runs as its own request.
+Reply to a task's message to continue that task. A message without a reply target goes to the main chat. If it clearly changes an existing task, Otto sends your message to that task. If the target is unclear, Otto asks which task you mean.
 
-```mermaid
-flowchart LR
-  new[You send a message] --> busy{{Is Otto<br/>working?}}
-  busy -- no --> run[Otto starts on it]:::go
-  busy -- yes --> plain{{From the<br/>same app?}}
-  plain -- yes --> join[Joins the running task]:::accent
-  plain -- no --> queue[Waits for its own turn]:::muted
-```
+Short questions stay in the main chat. Independent work with a goal gets a saved task session, so you can discuss other work while it runs. Updates may wait for the current step to finish. Different tasks can continue in parallel. See [Track tasks](/use/tasks/).
 
 ## Answer Otto's questions
 
-When Otto needs a decision, an approval or your help in its browser, it asks and stops. Your next message is the answer, and Otto continues from there. For actions that need a yes or no, see [Approvals](/trust/approvals/).
+When a task needs a decision, an approval or your help in its browser, it asks and waits. Reply to its question to continue the session that asked. Other tasks can keep working. For actions that need a yes or no, see [Approvals](/trust/approvals/).
 
 Otto doesn't ask for passwords or card numbers in chat. It uses a saved login or a private form instead. See [Vault](/trust/vault/).
 
@@ -43,9 +36,9 @@ Otto doesn't ask for passwords or card numbers in chat. It uses a saved login or
 
 To stop Otto, select **Stop** next to the send button.
 
-Stop ends the work that's running, including background runs, and cancels queued messages and open questions. It doesn't cancel your schedules. It can't undo something that already happened, such as an email that was already sent.
+The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
-Otto never repeats a task on its own. If Otto restarts during a task, it marks the task as interrupted. For work in the main chat, it explains what needs checking when the model is available.
+Otto never repeats interrupted work on its own. If it restarts during a run, that run fails. When the model is available, Otto posts an interruption notice in the main chat or as a reply to the affected task. Saved tasks and waiting questions survive a restart.
 
 If Otto may have sent or changed something, verify the result yourself or ask Otto to inspect it before continuing. Don't make a new attempt while the result is unclear.
 
@@ -76,7 +69,7 @@ Otto has no button for a new conversation in normal use. When you run Otto from 
 | The chat you see and Otto's working context | Your earlier messages, stored but no longer shown |
 | The workspace folder                        | Memory, connected apps and Vault                  |
 | The browser, with its temporary downloads   | Saved browser sessions                            |
-| Running and queued work, which is cancelled | Tasks and schedules                               |
+| Running and queued work, which is cancelled | Task history and schedules                        |
 
 ## Related resources
 

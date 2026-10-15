@@ -59,6 +59,14 @@ When Otto shares a file, it appears as an attachment in the Otto app, up to 90 M
 
 Files Otto saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. On Telegram, shared files arrive as documents, up to 50 MB each. WhatsApp can't receive files from Otto, so open Otto to get them. See [Telegram and WhatsApp](/use/channels/).
 
+## One workspace for all tasks
+
+The main chat and all saved tasks use the same conversation workspace. Each task has a folder under `tasks/`, with `drafts/` for working files and `outputs/` for results. `shared/` holds common files.
+
+A task can read files from another task's output folder. These folders organize work; they do not create separate computers or file access boundaries. Each task keeps its own saved conversation history. Sharing a file does not automatically add its content to every active task's context.
+
+See [Task sessions](/how-it-works/task-sessions/#shared-information-separate-histories) for how files, memory and owner updates keep the work connected.
+
 ## How long files stay
 
 Files stay in the workspace for the whole conversation. Otto can come back to them days later.

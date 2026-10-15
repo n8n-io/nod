@@ -1,6 +1,6 @@
 ---
 title: Threads and turns
-description: How every message, schedule fire and event becomes a turn in a session, how sessions run in parallel, and how subagents split a turn.
+description: How messages, saved tasks, schedules and events run as turns in parallel sessions.
 sidebar:
   order: 2
 ---
@@ -79,39 +79,23 @@ A secure form closes when a newer turn starts in its session, and a payment requ
 
 ## Sessions
 
-```mermaid
-sequenceDiagram
-  participant C as Chat session
-  participant T as Other sessions
-  participant W as Shared workspace
-  C->>W: One turn at a time, saved Pi session
-  T->>W: In parallel, one turn at a time each
-  T-->>C: Messages sent with send_message
-  Note over C: Next chat turn sees them
-```
+| Session                | Key                                                             | Reports to the conversation                                                |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Main chat              | The thread ID.                                                  | Streams its replies.                                                       |
+| Task started from chat | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.          |
+| Schedule or event      | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply. |
 
-|             | Chat                       | Schedule and event sessions                                                                                        |
-| ----------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Key         | The thread ID              | The session's first turn                                                                                           |
-| Concurrency | One turn at a time         | One turn at a time each, in parallel with everything else                                                          |
-| Pi session  | The thread's saved session | A saved session, keyed by the session ID                                                                           |
-| Context     | The full conversation      | Turns from any session that finished before the trigger, plus the session's own messages                           |
-| Output      | Streams replies to chat    | Streams nothing. Delivers only explicit `send_message`, `share_file`, `share_screenshot` and `create_audio` calls. |
-| Browser     | The thread's browser       | Its own browser, deleted when the session ends                                                                     |
+Every session saves its Pi history and opens its own browser on first use. Each runs one turn at a time; different sessions run in parallel.
 
-When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
+When a background turn starts, it loads its own messages and recent conversation messages available before that turn, with other sessions' work included only after it finished. The saved Pi history remains separate. A new main chat turn receives reports sent by other sessions. All sessions share the workspace, so files one writes are available for the others to read.
 
 ## Saved tasks
 
-The main chat uses `task start` for work with an independent goal. In one transaction, the server saves a task record, posts its first message and queues its first turn. The task ID keys its saved session. Short requests stay in the main chat.
+The main chat uses `task start` for work with an independent goal. One transaction saves the task, posts its first message and queues its first turn. Short requests stay in the main chat. A successful turn alone does not close the task; the task checks its completion condition and calls `task finish`.
 
-The task uses `task update` for progress and planned steps. It uses `task finish` only after it checks the completion condition. A successful turn alone does not close the task. Questions, approvals and secure forms use the existing wait and resume path.
+Explicit replies select a task before the coordinator runs. The coordinator uses `task reply` to forward the exact owner message when an ordinary follow-up selects an existing task. Owner updates keep their source message and revision. Questions, approvals and secure forms use the same wait and resume path as other sessions.
 
-The server routes explicit replies before the coordinator runs. The coordinator can use `task reply` to forward the exact current owner message to selected tasks. It cannot replace that message with model-written instructions. The source message and revision stay in the database. Task sessions cannot send owner updates to other tasks.
-
-Task reports are replies to the task's first message. Telegram and WhatsApp retain native reply links. Every text part and file message maps back to the internal message. A reply to any of those parts can select the correct task or confirmation. A task's final reply goes straight to chat. Complete documents use the existing file delivery path.
-
-The task card reads the ledger and runtime events. Steps are declared plans. Activity shows tool and helper events, not private reasoning. Stop on a card cancels only that task session and its helpers. Late writes are refused by the existing turn fence. An outside action that started before Stop can still finish. Interrupted actions are not retried.
+See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context, channel reply links and task controls.
 
 ## Subagents
 
@@ -136,25 +120,26 @@ A session opens its browser on its first browser call, so a session that never b
 
 ## Stop and failures
 
-**Stop** aborts running turns and cancels queued and waiting turns in every session. It can't undo an external action that already started. Ordinary turns have no time limit.
+The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. A task's **Stop** control affects only that session and its helpers. Stop can't undo an external action that already started. Ordinary turns have no time limit.
 
-Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a server restart, ends the turn `failed`. A conversation turn then posts one fixed message asking you to check outside effects or say continue.
+Turns and tool calls are never retried. Pi retries a model request that fails with a temporary provider error up to three times with backoff, and leaves the failed attempt out of the model context. Any other error, or a restart during execution, ends the turn `failed`. When the model is available, Otto prepares an interruption notice for the main chat or the affected task's message. A restart keeps saved task sessions and waiting questions.
 
 When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model.
 
 ## Reset
 
-Reset is a development tool. In a local development build, **Clear messages** archives the thread and cancels its turns. The next turn starts a new Pi session, workspace and browser.
+Reset is a development tool. In a local development build, **Clear messages** archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.
 
-| Archived                               | Deleted                                                    | Kept                                                                 |
-| -------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| The thread with its messages and turns | The old browser's throwaway profile, downloads and screens | Accounts, Vault, tasks, schedules, saved browser sessions and memory |
+| Archived                                             | Deleted                                                    | Kept                                                          |
+| ---------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
+| The thread with its messages, turns and task history | The old browser's throwaway profile, downloads and screens | Accounts, Vault, schedules, saved browser sessions and memory |
 
 The web client sends its `threadId` with each message, so a late message from before the reset is refused.
 
 ## Related resources
 
 - [Architecture](/how-it-works/architecture/)
+- [Task sessions](/how-it-works/task-sessions/)
 - [The agent runtime](/how-it-works/agent-runtime/)
 - [Sandbox and browser isolation](/how-it-works/sandbox-and-browser/)
 - [One use, one result](/trust/outcomes/)

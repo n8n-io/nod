@@ -9,6 +9,10 @@ The **Tasks** page shows what Otto is working on, what's scheduled and what's do
 
 Otto starts a saved task session for independent work with a goal and a completion condition. The main chat stays available while the task runs. Quick questions stay in chat. There is no fixed limit of three tasks.
 
+For example, "What does this sentence mean?" can stay in chat. "Compare these options and make a report" can become a task. The task keeps its goal and history while you discuss other work.
+
+Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and owner memory. Each task has its own working folder and saved session. See [Task sessions](/how-it-works/task-sessions/) for the architecture.
+
 ## Three views
 
 | View          | Shows                                                                          |
