@@ -106,45 +106,19 @@ async function sessionEvents(sessionRoot: string) {
     const latest = files.sort((a, b) => b.modified - a.modified)[0];
     if (latest)
       for (const line of (await readFile(latest.path, 'utf8')).split('\n'))
-        if (line.trim()) entries.push(JSON.parse(line));
+        if (line.trim()) entries.push({ sessionId: thread, entry: JSON.parse(line) });
   }
   return entries;
 }
 
-async function backgroundCapture(stack: Stack, background: Set<string>) {
-  const models: Array<{ tokens: number; cost?: number }> = [];
-  const legacy =
-    !stack.observations.length &&
-    (await stack.pool.query("SELECT to_regclass('inspector_records') IS NOT NULL AS found")).rows[0]
-      .found;
-  if (legacy) {
-    const prompts = (
-      await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
-    ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
-    const records = (
-      await stack.pool.query('SELECT * FROM inspector_records ORDER BY started_at,id')
-    ).rows.filter((record) => background.has(record.turn_id));
-    for (const record of records)
-      if (record.kind === 'model')
-        models.push({ tokens: record.usage?.totalTokens ?? 0, cost: record.usage?.costUsd });
-    const tools = records
-      .filter((record) => record.kind === 'tool')
-      .map((record): ToolCall => ({
-        turnId: record.turn_id,
-        name: record.name,
-        input: record.input,
-        output: JSON.stringify(record.output ?? record.error ?? ''),
-        isError: record.status !== 'succeeded',
-        at: new Date(record.started_at).getTime(),
-        lead: '',
-      }));
-    return { prompts, tools, models };
-  }
+function capturedTools(stack: Stack) {
   const tools: ToolCall[] = [];
   const started = new Map<string, ToolCall>();
   for (const { turnId, event } of stack.observations) {
-    if (!background.has(turnId)) continue;
+    if (event.type === 'model_usage' || !event.execution?.parentRunId) continue;
+    const id = `${event.execution?.runId ?? turnId}:${event.id}`;
     if (event.type === 'tool_start') {
+      if (started.has(id)) continue;
       const call: ToolCall = {
         turnId,
         name: event.name,
@@ -154,17 +128,28 @@ async function backgroundCapture(stack: Stack, background: Set<string>) {
         at: Date.parse(event.startedAt),
         lead: '',
       };
-      started.set(event.id, call);
+      started.set(id, call);
       tools.push(call);
     } else if (event.type === 'tool_end') {
-      const call = started.get(event.id);
+      const call = started.get(id);
       if (call) {
-        call.output = JSON.stringify(event.output ?? event.error ?? '');
+        const output = event.output ?? event.error ?? '';
+        call.output =
+          output &&
+          typeof output === 'object' &&
+          'content' in output &&
+          Array.isArray(output.content)
+            ? output.content
+                .map((block: any) => (block.type === 'text' ? block.text : `[${block.type}]`))
+                .join('\n')
+            : typeof output === 'string'
+              ? output
+              : JSON.stringify(output);
         call.isError = event.status !== 'succeeded';
       }
-    } else models.push({ tokens: event.totalTokens, cost: event.costUsd ?? undefined });
+    }
   }
-  return { prompts: stack.prompts, tools, models };
+  return tools;
 }
 
 export async function collect(options: {
@@ -176,18 +161,16 @@ export async function collect(options: {
   seconds: number;
 }): Promise<Run> {
   const { stack, session, world } = options;
+  const tools = capturedTools(stack);
   const calls = new Map<string, ToolCall>();
-  const tools: ToolCall[] = [];
+  const prompts = [...stack.prompts];
+  const currentTurns = new Map<string, string | undefined>();
   let turnsWithTools = 0;
   let acknowledged = 0;
   let waitingForFirst = false;
   let foreground = false;
   const modelErrors: string[] = [];
-  let tokens = 0;
-  let modelCalls = 0;
-  let cost = 0;
-  let costKnown = false;
-  for (const entry of await sessionEvents(stack.sessionRoot)) {
+  for (const { sessionId, entry } of await sessionEvents(stack.sessionRoot)) {
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user') {
@@ -196,6 +179,10 @@ export async function collect(options: {
         .join('');
       foreground = /"mode":"conversation"/.test(text);
       waitingForFirst = foreground;
+      const index = prompts.findIndex(
+        (prompt) => prompt.sessionId === sessionId && prompt.instruction === text,
+      );
+      currentTurns.set(sessionId, index < 0 ? undefined : prompts.splice(index, 1)[0].turnId);
     }
     if (message.role === 'assistant') {
       if (waitingForFirst) {
@@ -208,33 +195,30 @@ export async function collect(options: {
             acknowledged++;
         }
       }
-      modelCalls++;
       if (message.stopReason === 'error')
         modelErrors.push(String(message.errorMessage ?? 'model error'));
-      tokens += message.usage?.totalTokens ?? 0;
-      if (typeof message.usage?.cost?.total === 'number') {
-        cost += message.usage.cost.total;
-        costKnown = true;
-      }
       const lead = (message.content ?? [])
-        .map((block: any) => (block.type === 'text' ? block.text : ''))
+        .filter((block: any) => block.type === 'text')
+        .map((block: any) => block.text)
         .join('')
         .trim();
-      for (const block of message.content ?? [])
-        if (block.type === 'toolCall') {
-          const call: ToolCall = {
-            name: block.name,
-            input: block.arguments,
-            output: '',
-            isError: false,
-            at: Date.parse(entry.timestamp),
-            lead,
-          };
-          calls.set(block.id, call);
-          tools.push(call);
-        }
+      for (const block of message.content ?? []) {
+        if (block.type !== 'toolCall') continue;
+        const id = `${sessionId}:${block.id}`;
+        const call: ToolCall = {
+          turnId: currentTurns.get(sessionId),
+          name: block.name,
+          input: block.arguments,
+          output: '',
+          isError: false,
+          at: Date.parse(entry.timestamp),
+          lead,
+        };
+        calls.set(id, call);
+        tools.push(call);
+      }
     } else if (message.role === 'toolResult') {
-      const call = calls.get(message.toolCallId);
+      const call = calls.get(`${sessionId}:${message.toolCallId}`);
       if (call) {
         call.output = (message.content ?? [])
           .map((block: any) => (block.type === 'text' ? block.text : `[${block.type}]`))
@@ -243,6 +227,18 @@ export async function collect(options: {
       }
     }
   }
+  const usage = (await stack.pool.query('SELECT cost_usd,details FROM model_usage')).rows;
+  const tokens = usage.reduce(
+    (total, row) =>
+      total +
+      ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'].reduce(
+        (sum, key) => sum + (row.details[key] ?? 0),
+        0,
+      ),
+    0,
+  );
+  const cost = usage.reduce((total, row) => total + (row.cost_usd ?? 0), 0);
+  const costKnown = usage.length > 0 && usage.every((row) => row.cost_usd !== null);
   const messages = (
     await stack.pool.query(
       'SELECT role,text,turn_id,created_at FROM messages ORDER BY created_at, id',
@@ -262,21 +258,7 @@ export async function collect(options: {
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
-  const capture = await backgroundCapture(
-    stack,
-    new Set(turns.filter((turn) => turn.background).map((turn) => turn.id)),
-  );
-  const prompts = capture.prompts;
-  requireBackgroundPrompts(turns, prompts);
-  tools.push(...capture.tools);
-  for (const model of capture.models) {
-    modelCalls++;
-    tokens += model.tokens;
-    if (typeof model.cost === 'number') {
-      cost += model.cost;
-      costKnown = true;
-    }
-  }
+  requireBackgroundPrompts(turns, stack.prompts);
   tools.sort((a, b) => a.at - b.at);
   const schedules = (
     await stack.pool.query(
@@ -336,7 +318,7 @@ export async function collect(options: {
     said: replies.join('\n\n'),
     tools,
     turns,
-    prompts,
+    prompts: stack.prompts,
     interactions: session.interactions,
     userMessages: session.userMessages,
     writes: world.apps?.writes ?? [],
@@ -347,7 +329,7 @@ export async function collect(options: {
     modelErrors,
     approvals,
     visits: options.visits,
-    usage: { tokens, modelCalls, costUsd: costKnown ? cost : null },
+    usage: { tokens, modelCalls: usage.length, costUsd: costKnown ? cost : null },
     firstReplySeconds,
     acknowledgement: { turnsWithTools, acknowledged },
     seconds: options.seconds,
@@ -360,22 +342,13 @@ export async function collect(options: {
     },
     transcript(limit = 60_000) {
       const build = (outputCap: number) => {
-        const issued = new Map<string, number[]>();
-        for (const call of tools) {
-          const times = issued.get(call.lead) ?? [];
-          if (call.lead && times.at(-1) !== call.at) issued.set(call.lead, [...times, call.at]);
-        }
         return [
           ...messages
             .filter((m) => m.text.trim())
-            .map((m) => {
-              const issuedAt =
-                m.role === 'assistant' ? issued.get(m.text.trim())?.shift() : undefined;
-              return {
-                at: issuedAt === undefined ? m.at : Math.min(m.at, issuedAt - 1),
-                text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
-              };
-            }),
+            .map((m) => ({
+              at: m.at,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+            })),
           ...tools.map((call) => ({
             at: call.at,
             text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, outputCap)}`,

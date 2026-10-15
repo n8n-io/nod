@@ -708,12 +708,22 @@ export function createComposioProvider(options: {
       async execute(action, args, accountId, signal) {
         signal?.throwIfAborted();
         actionToolkit(action);
-        const result = await value.execute(
-          action,
-          args,
-          accountId ? { account: accountId } : undefined,
-          { signal, maxRetries: 0 } as Parameters<typeof value.execute>[3],
-        );
+        const result = await value
+          .execute(action, args, accountId ? { account: accountId } : undefined, {
+            signal,
+            maxRetries: 0,
+          } as Parameters<typeof value.execute>[3])
+          .catch((error: unknown) => {
+            const kind = error instanceof Error ? error.constructor.name : '';
+            const reason =
+              kind === 'APIConnectionTimeoutError'
+                ? 'timeout'
+                : kind === 'APIConnectionError'
+                  ? 'unavailable'
+                  : undefined;
+            if (reason) Object.assign(error!, { reason });
+            throw error;
+          });
         signal?.throwIfAborted();
         if (
           result.error != null ||

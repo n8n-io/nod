@@ -88,6 +88,26 @@ Run each command as `pnpm run eval:capability <command>`. `help` lists every opt
 | Compare with a release | `gate --baseline desktop-v0.1.10`: side by side, with a verdict                       |
 | Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
 
+## Evaluate the analytics classifier
+
+The separate `analytics` command tests synthetic conversations against the production classifier prompt and output schema. It calls the chosen live model through the production curator with the lightest available reasoning effort, without starting Docker, a database, connected apps or PostHog.
+
+```sh title="Terminal"
+pnpm run eval:capability analytics --model openai/gpt-6-luna --repeat 3 --label analytics-baseline
+```
+
+Set the matching provider key as for capability evals. Choose the model you intend to assess. The command uses and records `lightest`, matching production: the first model effort listed among `off`, `minimal`, `low` and `medium`, or the model's first level if none matches. Add `--scenario <case-id>` to run a subset. Repeat is capped at 10 per selected case; each uses the production analytics timeout and output limit.
+
+Results go to `.local/capability-evals/analytics/<label>/results.json`. The file contains only the synthetic fixtures, reference labels, model output, per-case measurements, cost when available, and a fingerprint of the prompt, schema and fixtures. Existing labels are never overwritten.
+
+The classifier combines bounded, generic actions and subjects into activities. Several activities can belong to one goal. It chooses a broad task type and uses `unknown` when the available words cannot describe a dimension. The schema rejects invented labels, including private details written in an otherwise valid label format.
+
+The report separates task lifecycle checks from semantic agreement. Lifecycle checks cover missing or extra tasks and activity counts, outcomes, request/continuation links and frustration evidence. Disagreement with a fixture's reference labels is reported separately and needs review; it is not automatically a semantic error. Multiple tasks are matched independently of output order; ambiguous outcome matching is reported rather than scored as correct.
+
+Repeated runs and equivalent paraphrased requests report label agreement and distinct-label counts, including audio translation and a Portuguese email summary. These measurements expose inconsistency; consistent labels can still be wrong. Schema validity, usable response coverage, unknown labels and model failures remain visible. Injection cases test whether the model follows requests to put private topics or names in analytics labels. Case and message IDs identify fixtures and lifecycle references; categories have no separate IDs.
+
+These are initial, reviewed synthetic cases, not a calibrated release gate. Run and review them manually before making claims about classifier quality. The ordinary eval unit tests only test the grader offline; they do not measure model quality.
+
 ## Run evals in CI
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases.

@@ -120,7 +120,7 @@ Ask Otto to check the result in the app or website before you try again. See [On
 
 ### Send feedback with a diagnostic report
 
-Select **Send feedback** in the chat. In the desktop app, it's also in the menu bar menu. The report goes to the Otto team at n8n.
+Select **Send feedback** in the chat. In the desktop app, it's also in the menu bar menu. The dialog names the recipient before you send: the Otto team at n8n by default, or your operator's configured collector.
 
 By default it includes a diagnostic report of your recent chat, actions and their results. Review it, or clear **Include diagnostic report** before you send. Never add API keys, passwords or your settings file.
 

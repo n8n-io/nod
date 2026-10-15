@@ -7,7 +7,14 @@ import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/a
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
-import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
+import {
+  analyticsEnabled,
+  analyticsEnvironment,
+  createAnalytics,
+  type CaptureAnalytics,
+} from './analytics.ts';
+import { captureConnectionInventory } from './analytics-connections.ts';
+import { createConversationAnalytics } from './conversation-analytics.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
@@ -85,7 +92,11 @@ import { createGateway } from './gateway.ts';
 import { createTenantStore } from './tenants.ts';
 import { createTenantRuntimeHost } from './runtime-host.ts';
 import { createChannelAccountRegistry } from './channel-account-registry.ts';
-import { createTenantControl, createTenantChannelRegistry } from './tenant-control.ts';
+import {
+  createTenantControl,
+  createTenantChannelRegistry,
+  createTenantAnalytics,
+} from './tenant-control.ts';
 import { createHostedWebhooks } from './hosted-webhooks.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
@@ -146,6 +157,7 @@ export interface ApplicationAdapters {
   integrations: IntegrationProvider;
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
+  analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
@@ -160,6 +172,16 @@ export interface ApplicationAdapters {
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
 ): ApplicationAdapters {
+  const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/otto/feedback';
+  const feedbackUrl = env.OTTO_FEEDBACK_URL ?? defaultFeedbackUrl;
+  const feedbackEnabled = env.OTTO_FEEDBACK_ENABLED !== 'false';
+  if (
+    feedbackEnabled &&
+    feedbackUrl &&
+    feedbackUrl !== defaultFeedbackUrl &&
+    !env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX
+  )
+    throw new Error('Set OTTO_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
   const provider = env.LLM_PROVIDER || 'openai';
   if (!['openai', 'anthropic', 'openrouter'].includes(provider))
     throw new Error('LLM_PROVIDER must be openai, anthropic or openrouter.');
@@ -283,7 +305,20 @@ export function createDefaultAdapters(
   if (runtimeMode === 'tenant' && !objectStore)
     throw new Error('Private durable storage is required.');
   return {
-    ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
+    ...(analyticsEnabled(env)
+      ? {
+          analytics:
+            runtimeMode === 'tenant'
+              ? createTenantAnalytics({
+                  origin: env.OTTO_CONTROL_URL!,
+                  ownerId,
+                  environment: env.OTTO_ENVIRONMENT!,
+                  generation: env.OTTO_RUNTIME_GENERATION!,
+                  secret: env.OTTO_RUNTIME_SECRET!,
+                })
+              : createPostHogAnalytics(),
+        }
+      : {}),
     initialize: async () => {
       await models.initialize();
       await integrationKey?.initialize();
@@ -343,6 +378,7 @@ export function createDefaultAdapters(
     ...(integrationKey ? { integrationKey } : {}),
     keyStore,
     memoryCurator: modelCurator,
+    analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(
@@ -356,8 +392,12 @@ export function createDefaultAdapters(
     },
     linkPreviews: createPublicLinkPreviewProvider(),
     feedback: createN8nFeedback({
-      url: env.OTTO_FEEDBACK_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/feedback',
+      enabled: feedbackEnabled,
+      url: feedbackUrl,
       token: env.OTTO_FEEDBACK_TOKEN,
+      receiptUrlPrefix:
+        feedbackUrl === defaultFeedbackUrl ? undefined : env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
+      recipient: feedbackUrl === defaultFeedbackUrl ? 'n8n' : undefined,
     }),
     get model() {
       return models.current;
@@ -389,8 +429,19 @@ async function initializeApplication(
     environment: analyticsEnvironment(process.env),
     dataRoot,
     installationId: process.env.OTTO_ANALYTICS_ID,
+    appVersion:
+      process.env.OTTO_APP_VERSION || process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE,
   });
-  const captureAnalytics = analytics.forOwner(ownerId);
+  let observeConnections: (() => Promise<void>) | undefined;
+  const captureAnalytics: CaptureAnalytics = (event, delivery) => {
+    analytics.capture(ownerId, event, delivery);
+    if (
+      event.event === 'otto_connection_changed' &&
+      ['connected', 'disconnected'].includes(event.properties.status)
+    )
+      void observeConnections?.();
+  };
+  const analyticsConsent = () => analytics.consent(ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const deploymentDrain = createTenantDrain({
@@ -497,6 +548,8 @@ async function initializeApplication(
     keyStore: adapters.keyStore,
   });
   const discovered = await createDiscoveredConnections(pool, {
+    analytics: captureAnalytics,
+    analyticsConsent,
     ownerId,
     baseUrl: publicOrigin,
     grantVault,
@@ -524,6 +577,8 @@ async function initializeApplication(
     ? cachedIcons((origin) => adapters.linkPreviews!.icon!(origin))
     : undefined;
   const integrations = await createIntegrations(pool, {
+    analytics: captureAnalytics,
+    analyticsConsent,
     admission,
     ownerId,
     provider: adapters.integrations,
@@ -541,6 +596,7 @@ async function initializeApplication(
     icon,
   });
   vault = await createVault(pool, {
+    analytics: captureAnalytics,
     refresh,
     keyStore: adapters.keyStore,
     resume: resumeAfterCredentials,
@@ -563,6 +619,8 @@ async function initializeApplication(
       ),
   });
   browserConnections = await createBrowserConnections(pool, {
+    analytics: captureAnalytics,
+    analyticsConsent,
     ownerId,
     computer,
     refresh,
@@ -632,12 +690,46 @@ async function initializeApplication(
         ),
       ),
   });
+  const localConsent = await localAccounts?.readConsent(ownerId);
   analytics.setUsageData(
     ownerId,
-    localAccounts
-      ? (await localAccounts.read(ownerId)).usageData
-      : ((await accountProfiles.read())?.usageData ?? false),
+    runtimeMode === 'tenant'
+      ? Boolean(
+          (await accountProfiles.read())?.usageData &&
+          (await adapters.analytics?.permitted?.().catch(() => false)),
+        )
+      : localConsent
+        ? localConsent.enabled
+        : ((await accountProfiles.read())?.usageData ?? false),
+    localConsent?.revision,
   );
+  let pendingInventory = Promise.resolve();
+  observeConnections = () =>
+    (pendingInventory = pendingInventory
+      .then(() =>
+        captureConnectionInventory(analytics, ownerId, async () =>
+          (
+            await Promise.all([
+              integrations.analyticsConnections(),
+              discovered.analyticsConnections(),
+              browserConnections.analyticsConnections(),
+            ])
+          ).flat(),
+        ),
+      )
+      .catch(() => {}));
+  const stopConnectionInventory = analytics.subscribe(ownerId, (enabled) => {
+    if (enabled) void observeConnections?.();
+  });
+  void observeConnections();
+  const conversationAnalytics = createConversationAnalytics({
+    pool,
+    ownerId,
+    analytics,
+    curator: adapters.analyticsCurator ? ledger.curator(adapters.analyticsCurator) : curator,
+    secrets,
+  });
+  await conversationAnalytics.initialize();
   const accountProfile = async () =>
     runtimeAccount(
       localAccounts
@@ -701,6 +793,7 @@ async function initializeApplication(
     await startThreadWorkers({
       present: communication.present,
       analytics: captureAnalytics,
+      observeTurn: conversationAnalytics.observe,
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),
@@ -967,6 +1060,7 @@ async function initializeApplication(
     context: await feedbackContext({ runtimeMode, environment: process.env }),
     delivery: adapters.feedback ?? {
       configured: false,
+      recipient: null,
       submit: async (input) => ({ submissionId: input.submissionId, status: 'rejected' }),
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
@@ -1138,10 +1232,12 @@ async function initializeApplication(
     }
   }
   app.addHook('onClose', async () => {
+    stopConnectionInventory();
     const failures: unknown[] = [];
     for (const close of [
       () => channels?.close(),
       () => stopThreadWorkers(),
+      () => conversationAnalytics.close(),
       finishWork,
       async () => {
         await runtime.dispose();
@@ -1199,8 +1295,17 @@ export async function createGatewayApplication(
     options: '-c search_path=otto_auth',
   });
   let runtimes: ReturnType<typeof createTenantRuntimeHost> | undefined;
+  const accounts = createAccountStore(authenticationDatabase);
   const analytics = await createAnalytics({
-    provider: analyticsEnabled(env) ? createPostHogAnalytics() : undefined,
+    provider: analyticsEnabled(env)
+      ? createPostHogAnalytics({
+          permitted: async (distinctId, revision) => {
+            if (!distinctId.startsWith('hosted:') || revision === undefined) return false;
+            const current = await accounts.readConsent(distinctId.slice(7));
+            return current.enabled && current.revision === revision;
+          },
+        })
+      : undefined,
     deployment: 'hosted',
     environment: analyticsEnvironment(env),
     dataRoot,
@@ -1215,7 +1320,6 @@ export async function createGatewayApplication(
       clientSecret: env.GOOGLE_CLIENT_SECRET || '',
     });
     await authentication.initialize();
-    const accounts = createAccountStore(authenticationDatabase);
     await accounts.initialize();
     const channelAccounts = createChannelAccountRegistry({ admin: pool, environment });
     await channelAccounts.initialize();
@@ -1261,6 +1365,16 @@ export async function createGatewayApplication(
         environment,
         accounts: channelAccounts,
         currentLease: tenants.currentLease,
+        analytics: {
+          consent: async (owner) => {
+            const current = await accounts.readConsent(owner);
+            return { ...current, enabled: analyticsEnabled(env) && current.enabled };
+          },
+          capture: (owner, event, delivery) => {
+            analytics.setUsageData(owner, true, delivery?.consentRevision);
+            analytics.capture(owner, event, delivery);
+          },
+        },
       }),
       webhook: createHostedWebhooks({
         runtimes,

@@ -94,13 +94,19 @@ Set up Telegram and WhatsApp in **Channels** instead. The app checks the account
 
 ## Analytics and feedback
 
-| Variable                     | What it does                                                                                                                       | Default                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `OTTO_ANALYTICS_ENABLED`     | `false` turns off usage data and recordings for everyone. `true` turns them on in development too. Each owner still has to opt in. | On with `pnpm start`, off with `pnpm run dev` |
-| `OTTO_ANALYTICS_ENVIRONMENT` | The label on events: `production` or `development`.                                                                                | Follows how you started Otto                  |
-| `OTTO_FEEDBACK_URL`          | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                          |
+| Variable                           | What it does                                                                                                                       | Default                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `OTTO_ANALYTICS_ENABLED`           | `false` turns off usage data and recordings for everyone. `true` turns them on in development too. Each owner still has to opt in. | On with `pnpm start`, off with `pnpm run dev`       |
+| `OTTO_ANALYTICS_ENVIRONMENT`       | The label on events: `production` or `development`.                                                                                | Follows how you started Otto                        |
+| `OTTO_FEEDBACK_ENABLED`            | `false` disables feedback submissions and status checks, regardless of the configured collector.                                   | Enabled                                             |
+| `OTTO_FEEDBACK_URL`                | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                                |
+| `OTTO_FEEDBACK_RECEIPT_URL_PREFIX` | Required with a custom collector. An HTTPS issue collection URL ending in `/`; receipts must belong to that origin and path.       | n8n's Linear `LAB` issues for the default collector |
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
+
+Analytics go to the Otto team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/otto/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false`, then restart Otto. These settings apply to source installs, the desktop process environment and hosted `GATEWAY_ENV` (including tenant runtimes). They do not disable model, app or update traffic.
+
+For an operator-owned collector, set `OTTO_FEEDBACK_URL=https://feedback.example.com/intake` and `OTTO_FEEDBACK_RECEIPT_URL_PREFIX=https://issues.example.com/projects/otto/issues/`. A submitted receipt can then link to `https://issues.example.com/projects/otto/issues/123`, but not another project or origin. Receipt URLs cannot contain credentials, queries, fragments or encoded path separators. The collector uses Otto's existing feedback envelope and receipt contract; setting an endpoint alone does not create a compatible service. `OTTO_FEEDBACK_TOKEN`, when set, supplies the server-only `x-otto-feedback-token` header. It never goes to the browser or sandbox.
 
 ## Computers
 

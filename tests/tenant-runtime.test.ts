@@ -108,6 +108,10 @@ describe('runtime host', () => {
         OPENAI_API_KEY: 'synthetic-server-provider-key',
         COMPOSIO_WEBHOOK_SECRET: 'synthetic-webhook-secret',
         COMPUTER_PROVIDER: 'e2b',
+        OTTO_FEEDBACK_ENABLED: 'false',
+        OTTO_FEEDBACK_URL: 'https://feedback.example.test/intake',
+        OTTO_FEEDBACK_TOKEN: 'synthetic-feedback-token',
+        OTTO_FEEDBACK_RECEIPT_URL_PREFIX: 'https://issues.example.test/projects/otto/issues/',
         OBJECT_STORAGE_ROOT: '/private/otto-files',
       },
       tenants: {
@@ -442,6 +446,16 @@ describe('runtime host', () => {
       assert.equal(configuration.environment.OTTO_OWNER_ID, configuration.ownerId);
       assert.equal(configuration.environment.OTTO_CONTROL_URL, 'http://otto.control');
       assert.equal(configuration.environment.OPENAI_API_KEY, 'synthetic-server-provider-key');
+      assert.equal(configuration.environment.OTTO_FEEDBACK_ENABLED, 'false');
+      assert.equal(
+        configuration.environment.OTTO_FEEDBACK_URL,
+        'https://feedback.example.test/intake',
+      );
+      assert.equal(configuration.environment.OTTO_FEEDBACK_TOKEN, 'synthetic-feedback-token');
+      assert.equal(
+        configuration.environment.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
+        'https://issues.example.test/projects/otto/issues/',
+      );
       assert.equal(
         configuration.environment.OBJECT_STORAGE_ROOT,
         `/private/otto-files/${configuration.ownerId}`,
@@ -1334,7 +1348,7 @@ describe('local runtime host', () => {
         getSecret: () => secret,
       });
       await tenants.initialize();
-      const create = () =>
+      const create = (feedbackEnvironment: Record<string, string> = { OTTO_FEEDBACK_URL: '' }) =>
         createTenantRuntimeHost({
           tenants,
           masterKey: secret,
@@ -1349,6 +1363,7 @@ describe('local runtime host', () => {
             COMPUTER_PROVIDER: 'e2b',
             E2B_API_KEY: 'synthetic-unused-key',
             E2B_COMPUTER_TEMPLATE: 'synthetic-computer',
+            ...feedbackEnvironment,
           },
         });
       host = create();
@@ -1365,16 +1380,30 @@ describe('local runtime host', () => {
         assert.equal(response.status, 200);
         return (await response.json()) as { notificationRule: string; quietHoursEnabled: boolean };
       }
+      async function feedback(owner: string) {
+        const response = await host!.fetch(
+          owner,
+          new Request('http://otto.test/api/feedback/context'),
+          { developer: false },
+        );
+        assert.equal(response.status, 200);
+        const context = (await response.json()) as { enabled: boolean; recipient: string | null };
+        return { enabled: context.enabled, recipient: context.recipient };
+      }
       await Promise.all([
         request(ownerA, 'PATCH', { notificationRule: 'fixture A', quietHoursEnabled: false }),
         request(ownerB, 'PATCH', { notificationRule: 'fixture B', quietHoursEnabled: true }),
       ]);
       assert.equal((await request(ownerA, 'GET')).notificationRule, 'fixture A');
       assert.equal((await request(ownerB, 'GET')).notificationRule, 'fixture B');
+      assert.deepEqual(await feedback(ownerA), { enabled: false, recipient: null });
       const previous = await tenants.currentLease(ownerA);
       await host.close();
       assert.equal(await tenants.currentLease(ownerA), undefined);
-      host = create();
+      host = create({
+        OTTO_FEEDBACK_ENABLED: 'false',
+        OTTO_FEEDBACK_URL: 'invalid disabled configuration',
+      });
       const restored = await request(ownerA, 'GET');
       assert.equal(restored.notificationRule, 'fixture A');
       assert.equal(restored.quietHoursEnabled, false);
@@ -1382,6 +1411,16 @@ describe('local runtime host', () => {
       assert.ok(
         BigInt((await tenants.currentLease(ownerA))!.generation) > BigInt(previous!.generation),
       );
+      assert.deepEqual(await feedback(ownerA), { enabled: false, recipient: null });
+      await host.close();
+      host = create({
+        OTTO_FEEDBACK_URL: 'https://feedback.example.test/intake',
+        OTTO_FEEDBACK_RECEIPT_URL_PREFIX: 'https://issues.example.test/projects/otto/issues/',
+      });
+      assert.deepEqual(await feedback(ownerA), {
+        enabled: true,
+        recipient: 'feedback.example.test',
+      });
     },
   );
 });

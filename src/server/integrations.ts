@@ -32,6 +32,14 @@ import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { privateEmailResult } from './integration-result.ts';
 import { withoutSecretKeys } from './redaction.ts';
+import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
+import {
+  captureConnection,
+  captureServiceFailure,
+  serviceFailureReason,
+  withServiceAnalytics,
+  type AnalyticsConnection,
+} from './analytics-connections.ts';
 import {
   hasWorkspaceFiles,
   uploadWorkspaceFiles,
@@ -107,6 +115,8 @@ type ConnectionRow = {
 };
 type IntegrationOptions = {
   admission?: WorkAdmission;
+  analytics?: CaptureAnalytics;
+  analyticsConsent?: () => { enabled: boolean; revision?: string };
   ownerId: string;
   wake(
     prompt: string,
@@ -180,6 +190,28 @@ export function eventOverview(toolkit: string, trigger: string, data: Record<str
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
   const configuredOwner = z.string().min(1).max(200).parse(options.ownerId);
   const provider = options.provider;
+  function connectionAnalytics(app: string): AnalyticsConnection {
+    return {
+      app,
+      publicApp: slugSchema.safeParse(app).success,
+      connection_method: 'managed_app',
+      consentRevision: options.analyticsConsent?.().revision ?? 'disabled',
+    };
+  }
+  function track(
+    app: string,
+    status: Extract<AnalyticsEvent, { event: 'otto_connection_changed' }>['properties']['status'],
+    failureReason?: Extract<
+      AnalyticsEvent,
+      { event: 'otto_connection_changed' }
+    >['properties']['failure_reason'],
+  ) {
+    captureConnection(options.analytics, connectionAnalytics(app), status, failureReason);
+  }
+  function connectionFailure(error: unknown) {
+    if (error instanceof IntegrationAuthConfigurationError) return 'invalid_configuration';
+    return serviceFailureReason(error);
+  }
   const providerId = z
     .string()
     .regex(/^[a-z][a-z0-9-]{0,39}$/)
@@ -639,6 +671,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       }));
   }
 
+  async function analyticsConnections(): Promise<AnalyticsConnection[]> {
+    return (await connectionRows(configuredOwner))
+      .filter((row) => row.account_id && row.account_active && !row.revoked)
+      .map((row) => connectionAnalytics(row.slug));
+  }
+
   async function icon(connectionId: string) {
     const fetchIcon = options.icon;
     if (!fetchIcon || !z.uuid().safeParse(connectionId).success) return null;
@@ -699,8 +737,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const nonce = randomBytes(32).toString('base64url');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
     callbackUrl.searchParams.set('state', nonce);
-    const session = await provider.createSession(configuredOwner, {});
+    track(slug, 'started');
+    let session: IntegrationSession | undefined;
     try {
+      session = await provider.createSession(configuredOwner, {});
       const attempt = await session.authorize(slug, callbackUrl.href);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
@@ -723,8 +763,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         ],
       );
       return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
+    } catch (error) {
+      track(slug, 'failed', connectionFailure(error));
+      throw error;
     } finally {
-      provider.deleteSession(session.id).catch(() => {});
+      if (session) provider.deleteSession(session.id).catch(() => {});
     }
   }
 
@@ -800,6 +843,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (!reserved.rowCount)
       throw new IntegrationError('This connected account changed. Try again.', 409);
     await discardReconnect(reserved.rows[0]);
+    track(slug, 'started');
     let attemptedId: string | undefined;
     try {
       const attempt = await provider.reconnectAccount(
@@ -838,6 +882,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       const cleared = await clearReconnect(row.id, hash);
       if (attemptedId && cleared !== attemptedId) await discardReconnect(row, attemptedId);
+      track(slug, 'failed', connectionFailure(error));
       throw error;
     }
   }
@@ -935,6 +980,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
       }
     }, pool);
+    track(row.slug, 'connected');
     if (row.account_id) {
       if (previousTrigger) await provider.unsubscribe(previousTrigger).catch(() => {});
       if (row.account_id !== row.pending_account_id)
@@ -975,6 +1021,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         [row.id, configuredOwner],
       );
     }, pool);
+    if (!row.revoked) track(row.slug, 'disconnected');
     if (row.trigger_id) await provider.unsubscribe(row.trigger_id);
     if (row.account_id) await provider.deleteAccount(row.account_id);
     if (row.pending_account_id && row.pending_account_id !== row.account_id)
@@ -1050,15 +1097,31 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         throw new IntegrationError('Discovered connections are unavailable.', 503);
       return options.discovered.execute(action, args, turn, signal);
     }
-    const row = await selectedConnection(ownerId, action, args);
+    assertOwner(ownerId);
+    const connectionId = z.uuid().safeParse(args.connectionId);
+    const observed = connectionId.success
+      ? (await connectionRows(ownerId)).find((row) => row.id === connectionId.data)
+      : undefined;
+    const known = observed ?? (await selectedConnection(ownerId, action, args));
+    const connection = connectionAnalytics(known.slug);
     try {
-      const { connectionId: _connectionId, ...providerArgs } = args;
-      return await withAccountSession(ownerId, [row], signal, async (session) => {
-        const current = await selectedConnection(ownerId, action, args);
-        if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
-        signal?.throwIfAborted();
-        return session.execute(action, providerArgs, row.account_id!, signal);
-      });
+      return await withServiceAnalytics(
+        options.analytics,
+        connection,
+        async () => {
+          const row = await selectedConnection(ownerId, action, args);
+          const { connectionId: _connectionId, ...providerArgs } = args;
+          const result = await withAccountSession(ownerId, [row], signal, async (session) => {
+            const current = await selectedConnection(ownerId, action, args);
+            if (current.account_id !== row.account_id)
+              throw new IntegrationError('The selected account changed.', 409);
+            signal?.throwIfAborted();
+            return session.execute(action, providerArgs, row.account_id!, signal);
+          });
+          return result;
+        },
+        signal,
+      );
     } catch (error) {
       if (error instanceof IntegrationError) throw error;
       throw new IntegrationError(
@@ -1183,7 +1246,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 connectionId: 'Saved account ID.',
                 pathId: 'Saved path ID.',
                 argv: 'CLI arguments without the program name or a token.',
-                timeoutSeconds: 'Optional limit from 1 to 120 seconds.',
+                timeoutSeconds: 'Optional runtime limit in seconds.',
               },
             },
           });
@@ -1222,49 +1285,61 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     assertOwner(ownerId);
     signal?.throwIfAborted();
     if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
-    const connectionId = z.string().uuid().optional().parse(args.connectionId);
-    const slug = await actionToolkit(ownerId, action, connectionId);
-    const row = await selectConnection(ownerId, slug, connectionId);
-    if (hasWorkspaceFiles(args)) {
-      const read = options.readWorkspaceFile;
-      if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
-      let remaining = fileBytes;
-      args = (await withAccountSession(ownerId, [row], signal, async (session) => {
-        if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
-        return uploadWorkspaceFiles(
-          args,
-          async (input) => {
-            signal?.throwIfAborted();
-            if (!remaining)
-              throw new IntegrationError(
-                `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
-              );
-            const bytes = await read(turn, input.workspaceFile, remaining);
-            if (!bytes.byteLength || bytes.byteLength > remaining)
-              throw new IntegrationError(
-                `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
-              );
-            remaining -= bytes.byteLength;
-            signal?.throwIfAborted();
-            return {
-              name: input.name ?? basename(input.workspaceFile),
-              mimeType: input.mimeType,
-              bytes,
-            };
-          },
-          async (file) => {
-            signal?.throwIfAborted();
-            const result = await session.upload!(action, file, signal);
-            signal?.throwIfAborted();
-            return result;
-          },
-        );
-      })) as Record<string, unknown>;
-      const current = await selectConnection(ownerId, slug, row.id);
-      if (current.account_id !== row.account_id)
-        throw new IntegrationError('The selected account changed.');
+    const started = performance.now();
+    const consent = options.analyticsConsent?.();
+    let connection: AnalyticsConnection | undefined;
+    try {
+      const connectionId = z.string().uuid().optional().parse(args.connectionId);
+      const slug = await actionToolkit(ownerId, action, connectionId);
+      connection = connectionAnalytics(slug);
+      connection.consentRevision = consent?.revision ?? 'disabled';
+      connection.operation_phase = 'preparation';
+      const row = await selectConnection(ownerId, slug, connectionId);
+      if (hasWorkspaceFiles(args)) {
+        const read = options.readWorkspaceFile;
+        if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
+        let remaining = fileBytes;
+        args = (await withAccountSession(ownerId, [row], signal, async (session) => {
+          if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
+          return uploadWorkspaceFiles(
+            args,
+            async (input) => {
+              signal?.throwIfAborted();
+              if (!remaining)
+                throw new IntegrationError(
+                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+                );
+              const bytes = await read(turn, input.workspaceFile, remaining);
+              if (!bytes.byteLength || bytes.byteLength > remaining)
+                throw new IntegrationError(
+                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+                );
+              remaining -= bytes.byteLength;
+              signal?.throwIfAborted();
+              return {
+                name: input.name ?? basename(input.workspaceFile),
+                mimeType: input.mimeType,
+                bytes,
+              };
+            },
+            async (file) => {
+              signal?.throwIfAborted();
+              const result = await session.upload!(action, file, signal);
+              signal?.throwIfAborted();
+              return result;
+            },
+          );
+        })) as Record<string, unknown>;
+        const current = await selectConnection(ownerId, slug, row.id);
+        if (current.account_id !== row.account_id)
+          throw new IntegrationError('The selected account changed.');
+      }
+      return { ...args, connectionId: row.id };
+    } catch (error) {
+      if (connection?.publicApp)
+        captureServiceFailure(options.analytics, connection, error, started, signal);
+      throw error;
     }
-    return { ...args, connectionId: row.id };
   }
 
   function gmailMailbox(value: string) {
@@ -1707,18 +1782,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 const result = await provider.parseCallback(request.query);
                 if (!result.success) {
                   outcome = 'cancelled';
-                  await pool.query(
+                  const deleted = await pool.query(
                     'DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NULL',
                     [row.id, configuredOwner, hash],
                   );
-                  await clearReconnect(row.id, hash);
+                  const cleared = await clearReconnect(row.id, hash);
+                  if (deleted.rowCount || cleared) track(row.slug, 'failed', 'cancelled');
                 } else {
                   const resumed = await completeConnection(result, row);
                   outcome = resumed && returnTo === 'chat' ? 'continued' : 'connected';
                 }
               } catch {
                 outcome = 'failed';
+                const pending = await pool.query(
+                  'SELECT 1 FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3',
+                  [row.id, configuredOwner, hash],
+                );
                 await clearReconnect(row.id, hash);
+                if (pending.rowCount) track(row.slug, 'failed', 'verification_failed');
               }
             } else await clearReconnect(row.id, hash);
           } else if (options.discovered) {
@@ -1824,6 +1905,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     list,
     catalog,
     connectedApps,
+    analyticsConnections,
     manageConnections: async (
       action: 'list' | 'connect' | 'propose' | 'discover',
       service?: string,

@@ -17,6 +17,7 @@ export interface FeedbackEnvelope extends Omit<FeedbackSubmission, 'reportId' | 
 
 export interface FeedbackDelivery {
   configured: boolean;
+  recipient: string | null;
   submit(envelope: FeedbackEnvelope): Promise<FeedbackReceipt>;
   status(submissionId: string, payloadHash: string): Promise<FeedbackReceipt>;
 }

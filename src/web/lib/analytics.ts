@@ -45,9 +45,57 @@ let surface: 'web' | 'desktop' = 'web';
 let lastPage: string | undefined;
 let recordingFrame: number | undefined;
 let generation = 0;
+const eventGenerations = new WeakMap<object, number>();
+const guardedClients = new WeakSet<PostHog>();
+
+type AnalyticsRequest = Parameters<PostHog['_send_request']>[0];
+
+function dispatchRequest(request: AnalyticsRequest, send: (request: AnalyticsRequest) => void) {
+  if (!configuration?.enabled) return;
+  const events = Array.isArray(request.data) ? request.data : request.data ? [request.data] : [];
+  if (events.some((event) => eventGenerations.get(event) !== generation)) return;
+  const current = generation;
+  send({
+    ...request,
+    preferSyncCompression: true,
+    callback: (response) => {
+      if (current === generation && configuration?.enabled) request.callback?.(response);
+    },
+  });
+}
+
+function guardRetryQueue(client: PostHog) {
+  const queue = client._retryQueue;
+  if (!queue) return;
+  const send = queue.retriableRequest.bind(queue);
+  queue.retriableRequest = (request, transport) =>
+    dispatchRequest(request, (guarded) => send(guarded, transport));
+}
 
 export function setAnalyticsClient(client: PostHog) {
   posthog = client;
+  if (guardedClients.has(client) || !client._send_request) return;
+  guardedClients.add(client);
+  const send = client._send_request.bind(client);
+  client._send_request = (request) => dispatchRequest(request, send);
+}
+
+function suspendAnalytics() {
+  generation++;
+  configuration = undefined;
+  identity = undefined;
+  lastPage = undefined;
+  if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
+  recordingFrame = undefined;
+  if (!posthog || !initialized) return;
+  const recording = posthog.sessionRecording as unknown as
+    { _discardRecording(discardProducerEvents: boolean): void } | undefined;
+  recording?._discardRecording(true);
+  posthog.stopSessionRecording();
+  posthog.set_config({ opt_out_capturing_by_default: true });
+  posthog.__request_queue = [];
+  posthog._requestQueue?.unload();
+  posthog._retryQueue?.unload();
 }
 
 const sdkProperties = [
@@ -134,13 +182,14 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   const route = analyticsRoute(
     String(event.properties.route ?? lastPage ?? window.location.pathname),
   );
-  return {
+  const sanitized = {
     uuid: event.uuid,
     event: event.event,
     timestamp: event.timestamp,
     properties: {
       ...properties,
       analytics_schema: posthogConfig.schemaVersion,
+      ...(configuration.appVersion ? { app_version: configuration.appVersion } : {}),
       deployment: configuration.deployment,
       environment: configuration.environment,
       surface,
@@ -152,6 +201,8 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       $geoip_disable: true,
     },
   };
+  eventGenerations.set(sanitized, generation);
+  return sanitized;
 }
 
 export function configureAnalytics(
@@ -163,12 +214,8 @@ export function configureAnalytics(
   try {
     applyConfiguration(next, nextSurface);
   } catch {
-    generation++;
-    configuration = undefined;
-    identity = undefined;
-    lastPage = undefined;
     try {
-      posthog?.stopSessionRecording();
+      suspendAnalytics();
     } catch {}
   }
 }
@@ -179,22 +226,20 @@ function applyConfiguration(
 ) {
   if (!posthog) return;
   if (!next?.enabled) {
-    generation++;
-    if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
-    if (initialized && configuration?.enabled) {
-      posthog.stopSessionRecording();
-      posthog.reset(true);
-      posthog.set_config({ opt_out_capturing_by_default: true });
-    }
-    configuration = undefined;
-    identity = undefined;
-    lastPage = undefined;
+    suspendAnalytics();
     return;
   }
   surface = nextSurface;
   const changed = identity !== next.distinctId;
-  if (changed) generation++;
-  if (initialized && changed) posthog.stopSessionRecording();
+  if (changed) suspendAnalytics();
+  if (initialized && changed) {
+    posthog.reset({
+      resetDeviceID: true,
+      bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
+    });
+    posthog.set_config({ opt_out_capturing_by_default: false });
+    posthog._retryQueue?.resume();
+  }
   configuration = next;
   if (!initialized) {
     posthog.init(posthogConfig.key, {
@@ -233,25 +278,23 @@ function applyConfiguration(
         },
       },
       bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
+      loaded: () => posthog && guardRetryQueue(posthog),
       before_send: sanitizeEvent,
       get_current_url: sanitizedAnalyticsUrl,
     });
     initialized = true;
-  } else if (changed) {
-    posthog.reset({
-      resetDeviceID: true,
-      bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
-    });
-    posthog.set_config({ opt_out_capturing_by_default: false });
+  } else if (changed && !posthog._lastRemoteConfig?.ok) {
+    posthog._remoteConfigLoader?.load();
   }
   if (changed) {
     identity = next.distinctId;
     lastPage = undefined;
+    const current = generation;
     if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
     recordingFrame = requestAnimationFrame(() => {
       recordingFrame = undefined;
       try {
-        if (configuration?.enabled) posthog?.startSessionRecording();
+        if (current === generation && configuration?.enabled) posthog?.startSessionRecording();
       } catch {}
     });
   }

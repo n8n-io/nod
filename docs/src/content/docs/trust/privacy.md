@@ -7,7 +7,7 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to the model provider and apps you choose. The Otto team at n8n receives none of your data unless you send feedback or opt in to usage analytics.
+The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to the model provider and apps you choose. The Otto team at n8n receives none of your data unless you send feedback to its collector or opt in to usage analytics. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
@@ -39,7 +39,8 @@ flowchart LR
 | Composio, if you connect apps through it  | Those app connections and the actions Otto sends                                                                                                        |
 | Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                             |
 | Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                        |
-| n8n                                       | Feedback you send, and masked usage analytics if you opt in                                                                                             |
+| n8n                                       | Masked usage analytics if you opt in; feedback when using the default collector                                                                         |
+| Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                    |
 
 Provider keys, such as your model and Composio keys, stay in the Otto server. They never enter a prompt, Otto's workspace or its browser.
 
@@ -47,11 +48,15 @@ Provider keys, such as your model and Composio keys, stay in the Otto server. Th
 
 Usage analytics are off until you turn on **Share usage data** in onboarding or in **Settings**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
-Analytics never include your messages, anything you type, Vault values, sign-in or model-key forms, the remote browser view, images, real page addresses, names or email addresses. See [Analytics](/deploy/analytics/) for the full list and the switch that turns them off for a whole installation.
+The recipient is the Otto team at n8n, through its EU PostHog project. This also applies to self-hosted installations. Operators can disable collection for everyone with `OTTO_ANALYTICS_ENABLED=false`.
+
+Analytics have no fields for raw messages, Vault values, full page addresses, names or email addresses. Recordings block credential-entry and model-key forms, the remote browser view and images. Events can include normalized public domains for connections and Vault logins, Vault item types, task categories, inferred outcomes, timing and signs of friction. Your selected model analyzes bounded chat text using your model account. Only allowed generic task type, action and subject labels can leave Otto as task categories; raw text and invented labels are rejected. These classifications can still be wrong. Measurements are associated with a pseudonymous installation or account ID. See [Analytics](/deploy/analytics/) for the full list, limitations and deployment switch.
 
 ## Feedback
 
-Feedback you send goes to the Otto team at n8n. By default it includes a diagnostic report of your recent chat, actions and their results. Select **Review** to read the report first, or untick **Include diagnostic report** to leave it out. Otto removes known secret values from the report before you see it.
+The feedback dialog shows who receives your submission. The default is the Otto team at n8n; an operator can set a different HTTPS collector. By default feedback includes a diagnostic report of your recent chat, actions and their results. Select **Review** to read the report first, or untick **Include diagnostic report** to leave it out. Otto removes known secret values from the report before you see it. Feedback is a separate, deliberate submission and does not turn on usage analytics.
+
+Operators can disable submission and status checks with `OTTO_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
 
 ## What memory learns from
 

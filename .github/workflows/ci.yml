@@ -171,6 +171,7 @@ jobs:
           --volume "$PWD/tests:/app/tests:ro"
           --volume "$PWD/scripts:/app/scripts:ro"
           --volume "$PWD/deployment/e2b:/app/deployment/e2b:ro"
+          --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
           --tmpfs /app/.local:uid=1000,gid=1000

@@ -5,6 +5,8 @@ import pg from 'pg';
 import type { BrowserConnectionRequest } from '../src/ports/agent.ts';
 import type { Computer } from '../src/ports/computer.ts';
 import { createBrowserConnections } from '../src/server/browser-connections.ts';
+import { createAnalytics, type AnalyticsEvent } from '../src/server/analytics.ts';
+import type { ProductAnalytics } from '../src/ports/analytics.ts';
 
 test(
   'browser profiles require an explicit observed sign-in outcome and retain owner and turn fences',
@@ -64,7 +66,12 @@ test(
           removed.push(profileId);
         },
       } as unknown as Computer;
-      const service = await createBrowserConnections(pool, { ownerId: 'owner-a', computer });
+      const captured: AnalyticsEvent[] = [];
+      const service = await createBrowserConnections(pool, {
+        ownerId: 'owner-a',
+        computer,
+        analytics: (event) => captured.push(event),
+      });
       const opened = await service.request(
         { action: 'connect', url: 'https://example.test/login' },
         first,
@@ -133,6 +140,16 @@ test(
       assert.equal((await service.list())[0].browserState, 'needs_sign_in');
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [first.turnId]);
       cancelTurnId = undefined;
+      assert.deepEqual(captured, [
+        {
+          event: 'otto_connection_changed',
+          properties: {
+            app: 'custom',
+            connection_method: 'browser',
+            status: 'started',
+          },
+        },
+      ]);
       assert.equal((await service.request(save, first)).status, 'session_saved');
       assert.equal((await service.list())[0].browserState, 'saved');
       await pool.query(
@@ -260,6 +277,33 @@ test(
         /no longer active/,
       );
       await service.disconnect(connectionId);
+      assert.deepEqual(
+        captured.filter((event) => event.event === 'otto_connection_changed'),
+        ['started', 'connected', 'disconnected'].map((status) => ({
+          event: 'otto_connection_changed',
+          properties: {
+            app: 'custom',
+            connection_method: 'browser',
+            status,
+          },
+        })),
+      );
+      assert.deepEqual(
+        captured
+          .filter((event) => event.event === 'otto_service_used')
+          .map((event) => {
+            const { duration_ms, ...properties } = event.properties;
+            assert.ok(Number.isSafeInteger(duration_ms) && duration_ms >= 0);
+            return properties;
+          }),
+        [
+          { outcome: 'failed', failure_reason: 'unavailable' },
+          { outcome: 'failed', failure_reason: 'invalid_request' },
+          { outcome: 'failed', failure_reason: 'unavailable' },
+          { outcome: 'succeeded' },
+          { outcome: 'failed', failure_reason: 'authentication' },
+        ].map((result) => ({ app: 'custom', connection_method: 'browser', ...result })),
+      );
       assert.deepEqual(removed, [bindings[0]]);
       await pool.query(
         "INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state) VALUES($1,'owner-a','https://example.test','https://example.test','Synthetic', $2,'disconnecting')",
@@ -270,6 +314,130 @@ test(
         undefined,
       );
     } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'saved browser analytics exclude other browsing and do not revive in-flight work after consent changes',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `browser_analytics_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const events: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '',
+      provider: { capture: (event) => events.push(event), shutdown: async () => {} },
+    });
+    try {
+      const ownerId = 'synthetic-browser-owner';
+      const turn = { threadId: randomUUID(), turnId: randomUUID() };
+      await pool.query(
+        'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,archived_at timestamptz)',
+      );
+      await pool.query(
+        'CREATE TABLE turns(id uuid PRIMARY KEY,thread_id uuid,owner_id text,status text)',
+      );
+      await pool.query('INSERT INTO threads VALUES($1,$2,NULL)', [turn.threadId, ownerId]);
+      await pool.query("INSERT INTO turns VALUES($1,$2,$3,'running')", [
+        turn.turnId,
+        turn.threadId,
+        ownerId,
+      ]);
+      let location = 'https://tenant.example.com/account';
+      let waiting: Promise<void> | undefined;
+      let entered = () => {};
+      const computer = {
+        bindProfile: async () => {},
+        hold: async () => {},
+        close: async () => {},
+        deleteProfile: async () => {},
+        act: async () => {
+          entered();
+          await waiting;
+          return { url: location, text: 'Synthetic private account page' };
+        },
+        currentPage: async () => ({ origin: new URL(location).origin, url: location }),
+      } as unknown as Computer;
+      const options = {
+        ownerId,
+        computer,
+        analytics: analytics.forOwner(ownerId),
+        analyticsConsent: () => analytics.consent(ownerId),
+      };
+      analytics.setUsageData(ownerId, true, randomUUID());
+      const service = await createBrowserConnections(pool, options);
+      const open = async () => {
+        const result = await service.request(
+          {
+            action: 'connect',
+            url: 'https://tenant.example.com/login?secret=synthetic-private',
+            label: 'Private fixture account',
+          },
+          turn,
+        );
+        assert.ok('connectionId' in result && result.connectionId);
+        return result.connectionId;
+      };
+      const save = async (connectionId: string) =>
+        service.request({ action: 'save', url: location, connectionId, signedIn: true }, turn);
+      const use = async (connectionId: string) =>
+        service.request({ action: 'use', url: location, connectionId }, turn);
+      const id = await open();
+      await use(id);
+      assert.equal(events.filter((event) => event.event === 'otto_service_used').length, 0);
+      await save(id);
+      await use(id);
+      assert.ok(events.every((event) => event.properties.domain === 'example.com'));
+      const count = events.length;
+      location = 'https://other.example.org/private-path?secret=synthetic-private';
+      await use(id);
+      assert.equal(events.length, count);
+      location = 'https://tenant.example.com/account';
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const inFlight = use(id);
+      await started;
+      analytics.setUsageData(ownerId, false, randomUUID());
+      analytics.setUsageData(ownerId, true, randomUUID());
+      release();
+      await inFlight;
+      assert.equal(events.length, count);
+      waiting = undefined;
+      analytics.setUsageData(ownerId, false, randomUUID());
+      await use(id);
+      assert.equal(events.length, count);
+      analytics.setUsageData(ownerId, true, randomUUID());
+      await use(id);
+      assert.equal(events.length, count + 1);
+      assert.equal(events.at(-1)?.event, 'otto_service_used');
+      const serialized = JSON.stringify(events);
+      for (const value of [
+        'tenant.',
+        'private-path',
+        'synthetic-private',
+        'Private fixture account',
+        id,
+      ])
+        assert.ok(!serialized.includes(value));
+      assert.equal((await service.analyticsConnections()).length, 1);
+    } finally {
+      await analytics.shutdown();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();

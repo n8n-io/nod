@@ -20,6 +20,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
+import { captureConnectionInventory } from '../src/server/analytics-connections.ts';
+import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
+import { gunzipSync } from 'node:zlib';
 import {
   analyticsEnabled,
   analyticsEnvironment,
@@ -46,6 +49,9 @@ describe('account routes', () => {
     };
     let enabled = true;
     const accounts: AccountStore = {
+      async readConsent(owner) {
+        return { enabled: (await this.read(owner)).usageData, revision: '0' };
+      },
       async read(owner) {
         return (
           records.get(owner) ?? {
@@ -155,7 +161,30 @@ describe('account routes', () => {
       });
       await root.query(`CREATE SCHEMA ${schema}`);
       const stores = [createAccountStore(database), createAccountStore(database)];
+      const migratedOwner = randomUUID();
+      await database.query(`CREATE TABLE account_settings (
+        owner_id text PRIMARY KEY,
+        theme text NOT NULL DEFAULT 'system',
+        display_name text,
+        onboarding_completed boolean NOT NULL DEFAULT false,
+        usage_data boolean NOT NULL DEFAULT false,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`);
+      await database.query('INSERT INTO account_settings (owner_id,usage_data) VALUES ($1,true)', [
+        migratedOwner,
+      ]);
       await stores[0].initialize();
+      await stores[1].initialize();
+      assert.deepEqual(await stores[1].readConsent(migratedOwner), {
+        enabled: true,
+        revision: '0',
+      });
+      await stores[0].update(migratedOwner, { usageData: false });
+      await stores[1].update(migratedOwner, { usageData: true });
+      assert.deepEqual(await stores[0].readConsent(migratedOwner), {
+        enabled: true,
+        revision: '2',
+      });
       const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
       const analytics = await createAnalytics({
         provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
@@ -207,6 +236,7 @@ describe('account routes', () => {
             onboardingCompleted: true,
             usageData: true,
           });
+          assert.deepEqual(await stores[1].readConsent(ownerId), { enabled: true, revision: '1' });
           const repeated = await apps[0].inject({
             method: 'PATCH',
             url: '/api/account',
@@ -222,6 +252,15 @@ describe('account routes', () => {
             ).length,
             1,
           );
+          await Promise.all(stores.map((store) => store.update(ownerId, { usageData: false })));
+          assert.deepEqual(await stores[0].readConsent(ownerId), { enabled: false, revision: '2' });
+          await Promise.all(stores.map((store) => store.update(ownerId, { usageData: true })));
+          await stores[0].update(ownerId, { theme: 'light' });
+          assert.deepEqual(await stores[1].readConsent(ownerId), { enabled: true, revision: '3' });
+          assert.deepEqual(await stores[1].readConsent(randomUUID()), {
+            enabled: false,
+            revision: '0',
+          });
         } finally {
           await Promise.all(apps.map((app) => app.close()));
         }
@@ -408,6 +447,159 @@ describe('account routes', () => {
     }
   });
 
+  test(
+    'durable opt-out does not wait for an earlier tenant profile sync or revive when it completes',
+    { skip: !process.env.TEST_DATABASE_URL, timeout: 10_000 },
+    async (t) => {
+      const schema = `test_consent_sync_${randomUUID().replaceAll('-', '')}`;
+      const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+      await root.query(`CREATE SCHEMA ${schema}`);
+      const database = new pg.Pool({
+        connectionString: process.env.TEST_DATABASE_URL,
+        options: `-c search_path=${schema}`,
+      });
+      const accounts = createAccountStore(database);
+      await accounts.initialize();
+      const analytics = await createAnalytics({
+        provider: { capture: () => {}, shutdown: async () => {} },
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      const app = Fastify();
+      let reached!: () => void;
+      let release!: () => void;
+      let persisted!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const revoked = new Promise<void>((resolve) => {
+        persisted = resolve;
+      });
+      const profiles: boolean[] = [];
+      t.after(async () => {
+        release();
+        await app.close();
+        await analytics.shutdown();
+        await database.end();
+        await root.query(`DROP SCHEMA ${schema} CASCADE`);
+        await root.end();
+      });
+      createAccountSession({
+        origin: 'http://localhost:4399',
+        analytics,
+        localUser: { id: 'alex', name: 'Synthetic', email: null, avatarUrl: null },
+        accounts: {
+          ...accounts,
+          async update(owner, input) {
+            const result = await accounts.update(owner, input);
+            if (input.usageData === false) persisted();
+            return result;
+          },
+        },
+        async usageDataChanged(session) {
+          const consent = await accounts.readConsent(session.user.id);
+          profiles.push(consent.enabled);
+          if (profiles.length === 1) {
+            reached();
+            await hold;
+          }
+        },
+      }).register(app);
+      const update = (usageData: boolean) =>
+        app.inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers: { origin: 'http://localhost:4399' },
+          payload: { usageData },
+        });
+      const granting = update(true);
+      await ready;
+      const revoking = update(false);
+      await revoked;
+      assert.deepEqual(await accounts.readConsent('alex'), { enabled: false, revision: '2' });
+      assert.equal(analytics.configuration('alex').enabled, false);
+      const current = await app.inject({ url: '/api/session' });
+      assert.equal(current.json().settings.usageData, false);
+      release();
+      for (const response of await Promise.all([granting, revoking])) {
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.json().analytics.enabled, false);
+      }
+      assert.deepEqual(profiles, [true, false]);
+      assert.deepEqual(await accounts.readConsent('alex'), { enabled: false, revision: '2' });
+    },
+  );
+
+  test(
+    'a delayed account read cannot restore consent after a saved revocation',
+    { timeout: 10_000 },
+    async (t) => {
+      let saved: StoredAccount = {
+        theme: 'system',
+        onboardingCompleted: true,
+        displayName: null,
+        usageData: true,
+      };
+      const captured: unknown[] = [];
+      const analytics = await createAnalytics({
+        provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      analytics.setUsageData('alex', true);
+      let release: () => void;
+      let reached: () => void;
+      const ready = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let hold = true;
+      const app = Fastify();
+      t.after(() => app.close());
+      createAccountSession({
+        origin: 'http://localhost:4399',
+        analytics,
+        localUser: { id: 'alex', name: 'Synthetic', email: null, avatarUrl: null },
+        accounts: {
+          readConsent: async () => ({ enabled: saved.usageData, revision: '0' }),
+          async read() {
+            const snapshot = { ...saved };
+            if (hold) {
+              hold = false;
+              reached();
+              await new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            }
+            return snapshot;
+          },
+          async update(_owner, input) {
+            return (saved = { ...saved, ...input });
+          },
+        },
+      }).register(app);
+      const earlier = app.inject({ url: '/api/session' });
+      await ready;
+      const revoked = await app.inject({
+        method: 'PATCH',
+        url: '/api/account',
+        headers: { origin: 'http://localhost:4399' },
+        payload: { usageData: false },
+      });
+      assert.equal(revoked.statusCode, 200);
+      release!();
+      const resumed = await earlier;
+      assert.equal(resumed.json().settings.usageData, false);
+      assert.equal(resumed.json().analytics.enabled, false);
+      analytics.capture('alex', { event: 'otto_chat_stopped' });
+      assert.deepEqual(captured, []);
+    },
+  );
+
   test('account preparation requires a current same-origin principal and never accepts provider or owner input', async (t) => {
     const f = await fixture();
     t.after(() => f.app.close());
@@ -573,6 +765,225 @@ describe('account routes', () => {
 });
 
 describe('analytics privacy', () => {
+  test('connection inventories normalize domains, require public app identity and discard revoked reads', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '.',
+    });
+    t.after(() => analytics.shutdown());
+    let reads = 0;
+    const read = async () => {
+      reads++;
+      return [
+        { app: 'github', publicApp: true, connection_method: 'managed_app' as const },
+        { app: 'private_customer', connection_method: 'managed_app' as const },
+        {
+          connection_method: 'http' as const,
+          endpoint: 'https://private.example.com/secret?key=private',
+        },
+        { connection_method: 'http' as const, endpoint: 'https://another.example.com' },
+      ];
+    };
+    await captureConnectionInventory(analytics, 'owner', read);
+    assert.equal(reads, 0);
+    analytics.setUsageData('owner', true, '1');
+    await captureConnectionInventory(analytics, 'owner', read);
+    assert.equal(captured.length, 3);
+    assert.deepEqual(
+      captured.map((e) => [e.properties.app, e.properties.domain]),
+      [
+        ['github', undefined],
+        ['custom', undefined],
+        ['custom', 'example.com'],
+      ],
+    );
+    assert.doesNotMatch(JSON.stringify(captured), /private_customer|private\.example|secret|key=/);
+    let release!: (value: Awaited<ReturnType<typeof read>>) => void;
+    const pending = captureConnectionInventory(
+      analytics,
+      'owner',
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    while (!release) await new Promise((resolve) => setImmediate(resolve));
+    analytics.setUsageData('owner', false, '2');
+    analytics.setUsageData('owner', true, '3');
+    release(await read());
+    await pending;
+    assert.equal(captured.length, 3);
+    await captureConnectionInventory(analytics, 'owner', async () => []);
+    assert.equal(captured.length, 3);
+  });
+
+  test('analytics run scopes isolate concurrent owners and discard inherited work after consent changes', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '.',
+    });
+    t.after(() => analytics.shutdown());
+    analytics.setUsageData('alex', true, '1');
+    analytics.setUsageData('sam', true, '1');
+    const event = { event: 'otto_chat_stopped' } as const;
+    const firstRun = analytics.withRun('alex', () => {
+      analytics.capture('alex', event);
+      analytics.capture('sam', event);
+      return analytics.currentRun('alex')!;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = analytics.withRun('alex', async () => {
+      analytics.capture('alex', event);
+      await gate;
+      await Promise.all([Promise.resolve().then(() => analytics.capture('alex', event))]);
+    });
+    analytics.withRun('sam', () => analytics.capture('sam', event));
+    analytics.setUsageData('alex', false, '2');
+    analytics.setUsageData('alex', true, '3');
+    release();
+    await pending;
+    analytics.withRun('alex', () => analytics.capture('alex', event));
+    assert.equal(captured.length, 4);
+    assert.equal(new Set(captured.map((entry) => entry.properties.run_id)).size, 4);
+    assert.equal(captured[0].properties.run_id, firstRun.id);
+    assert.equal(firstRun.consent.signal.aborted, true);
+    assert.deepEqual(
+      captured.map((entry) => entry.distinctId),
+      ['hosted:alex', 'hosted:alex', 'hosted:sam', 'hosted:alex'],
+    );
+    analytics.setUsageData('alex', false, '4');
+    analytics.withRun('alex', () => {
+      analytics.setUsageData('alex', true, '5');
+      analytics.capture('alex', event);
+    });
+    assert.equal(captured.length, 4);
+    analytics.capture('alex', event);
+    assert.equal(captured.length, 5);
+    assert.equal(captured.at(-1)!.properties.run_id, undefined);
+  });
+
+  test('server analytics drops queued events from a superseded consent revision before transport', async (t) => {
+    const bodies: string[] = [];
+    const received: { distinct_id: string; event: string }[] = [];
+    const request = t.mock.method(
+      globalThis,
+      'fetch',
+      async (_url: string, options: RequestInit) => {
+        const body =
+          typeof options.body === 'string'
+            ? options.body
+            : gunzipSync(options.body as Uint8Array).toString();
+        bodies.push(body);
+        received.push(...JSON.parse(body).batch);
+        return Response.json({ status: 1 });
+      },
+    );
+    let enabled = true;
+    let currentRevision = 'synthetic-consent-before-revocation';
+    const checks: { distinctId: string; revision?: string }[] = [];
+    const analytics = createPostHogAnalytics({
+      async permitted(distinctId, revision) {
+        checks.push({ distinctId, revision });
+        return enabled && distinctId === 'hosted:alex' && revision === currentRevision;
+      },
+    });
+    t.after(() => analytics.shutdown());
+    const oldGrant = new AbortController();
+    analytics.capture(
+      {
+        distinctId: 'hosted:alex',
+        event: 'otto_chat_stopped',
+        properties: {},
+        consentRevision: currentRevision,
+      },
+      oldGrant.signal,
+    );
+    assert.equal(request.mock.callCount(), 0);
+    assert.deepEqual(checks, []);
+    enabled = false;
+    currentRevision = 'synthetic-consent-revoked';
+    enabled = true;
+    currentRevision = 'synthetic-consent-after-revocation';
+    analytics.capture(
+      {
+        distinctId: 'hosted:alex',
+        event: 'otto_conversation_reset',
+        properties: {},
+        consentRevision: currentRevision,
+      },
+      oldGrant.signal,
+    );
+    analytics.capture(
+      {
+        distinctId: 'hosted:alex',
+        event: 'otto_onboarding_completed',
+        properties: {},
+        consentRevision: currentRevision,
+      },
+      new AbortController().signal,
+    );
+    assert.equal(oldGrant.signal.aborted, false);
+    assert.equal(request.mock.callCount(), 0);
+    await analytics.shutdown();
+    assert.deepEqual(
+      new Set(checks),
+      new Set([
+        { distinctId: 'hosted:alex', revision: 'synthetic-consent-before-revocation' },
+        { distinctId: 'hosted:alex', revision: 'synthetic-consent-after-revocation' },
+      ]),
+    );
+    assert.equal(request.mock.callCount(), 1);
+    assert.deepEqual(
+      received.map(({ distinct_id, event }) => ({ distinct_id, event })),
+      [{ distinct_id: 'hosted:alex', event: 'otto_onboarding_completed' }],
+    );
+    assert.doesNotMatch(bodies.join('\n'), /consentRevision|consent_revision|synthetic-consent/);
+  });
+
+  test('consent generations cancel pending authorization and never reuse an earlier grant', async () => {
+    let resolve: (enabled: boolean) => void;
+    const checked = new Promise<boolean>((accept) => {
+      resolve = accept;
+    });
+    const analytics = await createAnalytics({
+      provider: { permitted: () => checked, capture() {}, shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'production',
+      dataRoot: '.',
+    });
+    const changes: boolean[] = [];
+    const unsubscribe = analytics.subscribe('alex', (enabled) => changes.push(enabled));
+    assert.equal(await analytics.permitted('alex'), false);
+    analytics.setUsageData('alex', true);
+    const initial = analytics.consent('alex');
+    const pending = analytics.permitted('alex');
+    analytics.setUsageData('alex', true);
+    assert.equal(analytics.consent('alex').version, initial.version);
+    analytics.setUsageData('alex', false);
+    analytics.setUsageData('alex', true);
+    resolve!(true);
+    assert.equal(await pending, false);
+    assert.equal(initial.signal.aborted, true);
+    assert.equal(await analytics.permitted('alex'), true);
+    assert.deepEqual(changes, [true, false, true]);
+    unsubscribe();
+    analytics.setUsageData('alex', false);
+    assert.deepEqual(changes, [true, false, true]);
+    analytics.setUsageData('alex', true);
+    const closing = analytics.permitted('alex');
+    await analytics.shutdown();
+    assert.equal(await closing, false);
+  });
+
   test('hosted development suppresses collection in production Node mode unless explicitly enabled', async () => {
     for (const mode of ['gateway', 'tenant']) {
       for (const [overrides, enabled, environment] of [
@@ -772,6 +1183,9 @@ describe('account avatar', () => {
       authentication: auth,
       developerIds: new Set([owners[0]]),
       accounts: {
+        async readConsent(id) {
+          return { enabled: (await this.read(id)).usageData, revision: '0' };
+        },
         async read(id) {
           return (
             accounts.get(id) ?? {
