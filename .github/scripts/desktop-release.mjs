@@ -287,8 +287,6 @@ async function plan() {
     throw new Error('The configured distribution repositories are unavailable.');
   if (signingMode === 'self-signed' && (!appRepo.private || !runtimeRepo.private))
     throw new Error('Self-signed builds are restricted to private distribution repositories.');
-  if (signingMode === 'developer-id' && runtimeRepo.private)
-    throw new Error('Developer ID releases require a public runtime download destination.');
   const tag = `desktop-v${release.version}`;
   const existing = releaseByTag(releaseRepository, tag);
   if (existing && !existing.draft) {

@@ -35,20 +35,54 @@ Mac ZIP files, runtime packs, checksums, the public certificate and update metad
 
 ## Configure the repository once
 
-Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
+CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on GitHub's Mac runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
 
-| Kind              | Name                             | Value                                                                                |
-| ----------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
-| Secret            | `APPLE_CERTIFICATE`              | Base64-encoded PKCS#12 certificate and private key                                   |
-| Secret            | `APPLE_CERTIFICATE_PASSWORD`     | The PKCS#12 export password                                                          |
-| Variable          | `APPLE_SIGNING_IDENTITY`         | The exact certificate common name, such as `Otto Internal`                           |
-| Variable          | `APPLE_CERTIFICATE_SHA256`       | Lowercase SHA-256 of the public DER certificate, from `shasum -a 256 signing.cer`    |
-| Variable          | `OTTO_SIGNING_MODE`              | `self-signed`, which is also the default                                             |
-| Optional variable | `OTTO_DESKTOP_UPDATE_SOURCE_URL` | Base URL of the private update service. Leave it unset to use the public GitHub API. |
+| Kind              | Name                             | Value                                                                                   |
+| ----------------- | -------------------------------- | --------------------------------------------------------------------------------------- |
+| Secret            | `APPLE_CERTIFICATE`              | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate |
+| Secret            | `APPLE_CERTIFICATE_PASSWORD`     | The PKCS#12 export password                                                             |
+| Secret            | `APPLE_API_KEY`                  | The App Store Connect team API key (`.p8`) that notarizes builds                        |
+| Variable          | `APPLE_API_KEY_ID`               | That key's ID                                                                           |
+| Variable          | `APPLE_API_ISSUER`               | The issuer ID shown above the team keys                                                 |
+| Variable          | `APPLE_TEAM_ID`                  | The 10-character Apple team ID                                                          |
+| Variable          | `APPLE_SIGNING_IDENTITY`         | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`            |
+| Variable          | `APPLE_CERTIFICATE_SHA256`       | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`  |
+| Variable          | `OTTO_SIGNING_MODE`              | `developer-id`                                                                          |
+| Optional variable | `OTTO_DESKTOP_UPDATE_SOURCE_URL` | Base URL of the private update service. Leave it unset to use the public GitHub API.    |
 
 - In the repository's Actions settings, allow GitHub Actions to create pull requests.
-- Self-signed builds require the source repository to stay private.
-- Without the original certificate export, create a code-signing certificate in Keychain Access. Export it with its private key and keep the original for later builds.
+- The default mode, `self-signed`, signs with an internal certificate and skips notarization. It needs only the certificate rows and a private repository.
+- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there and republish the **Otto Install** workflow.
+
+### Create or renew the certificate
+
+Developer ID certificates expire. Apps signed before then keep opening, but releases fail until you renew. Only the Apple account holder, or an admin they allow, can create one.
+
+<Steps>
+
+1. Create a private key and a signing request.
+
+   ```sh title="Terminal"
+   mkdir -m 700 ~/otto-signing && cd ~/otto-signing
+   /usr/bin/openssl req -new -newkey rsa:2048 -nodes -keyout otto.key -out otto.csr -subj "/CN=n8n GmbH/C=DE"
+   ```
+
+2. In the Apple Developer account, open **Certificates**, select **+**, then **Developer ID Application** and **G2 Sub-CA**. Upload `otto.csr` and download `developerID_application.cer` into the same folder.
+
+3. Bundle the certificate with its key and Apple's G2 certificate. Without the G2 certificate, a runner can find no valid signing identity. Use macOS's `/usr/bin/openssl`, because the keychain can reject files from Homebrew's OpenSSL.
+
+   ```sh title="Terminal"
+   curl -fsSLO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+   /usr/bin/openssl x509 -inform DER -in DeveloperIDG2CA.cer -out g2.pem
+   /usr/bin/openssl x509 -inform DER -in developerID_application.cer -out otto.pem
+   /usr/bin/openssl pkcs12 -export -inkey otto.key -in otto.pem -certfile g2.pem -out otto.p12
+   ```
+
+4. For a new notarization key, open **App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys**. Generate a key with the **Developer** role and download it. Apple offers the download only once.
+
+5. Save `otto.p12`, its password and the `.p8` key in the company password manager. Set the values above, then delete the folder.
+
+</Steps>
 
 Private releases use the configured n8n download service for first-run downloads and updates. Its GitHub credential stays in n8n, and no token enters the app.
 
@@ -91,16 +125,17 @@ Drafts are never offered to the installer or the updater.
 
 ## Help private-alpha testers
 
-Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy Otto to Applications, or run the [Terminal installer](/get-started/install-desktop/), and follow the **Open Anyway** and Keychain prompts if macOS shows them. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
+Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy Otto to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
 
 On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex` in PowerShell. To install by hand, they download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder, keep the runtime pack compressed, then run the installer. After that, Otto updates itself.
 
-| Situation                | What to know                                                                                                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Not enough storage       | Otto needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept. |
-| Moving from Otto Preview | Version 0.1.2 introduced the Otto app identity and a fresh profile. Install it by hand. There's no migration, and earlier data is left untouched.                             |
-| Setup was interrupted    | Retry it.                                                                                                                                                                     |
-| It still fails           | Open **Send feedback** in Chat to review and send the diagnostic report. If Chat can't open, send the visible setup error.                                                    |
+| Situation                       | What to know                                                                                                                                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Not enough storage              | Otto needs the runtime's extracted size plus 512 MiB, and downloads also reserve the archive size. The error says how much to free. Free it and retry. Existing data is kept.                      |
+| Moving from a self-signed build | Builds 0.1.12 and earlier use an internal certificate, so they can't update themselves to a notarized build. Install the newest release by hand or with the Terminal installer once. Data is kept. |
+| Moving from Otto Preview        | Version 0.1.2 introduced the Otto app identity and a fresh profile. Install it by hand. There's no migration, and earlier data is left untouched.                                                  |
+| Setup was interrupted           | Retry it.                                                                                                                                                                                          |
+| It still fails                  | Open **Send feedback** in Chat to review and send the diagnostic report. If Chat can't open, send the visible setup error.                                                                         |
 
 :::danger[Don't delete the profile to recover]
 Never delete the profile, VM, database or runtime cache as a routine recovery step. A downgrade or full backup-and-restore isn't supported. Testers should never send API keys, passwords or the settings file.
@@ -114,11 +149,11 @@ The storage check covers installing the runtime only. The VM reserves 3 to 6 GiB
 
 ## Signing limits
 
-:::caution[Self-signed, not notarized]
-Mac builds use an internal self-signed certificate, not an Apple Developer ID, and aren't notarized. A new Mac may need **System Settings → Privacy & Security → Open Anyway**. Windows builds are unsigned and can show a publisher warning.
+:::caution[Windows builds are unsigned]
+Mac builds are signed with n8n's Developer ID and notarized by Apple. Windows builds are unsigned and can show a publisher warning.
 :::
 
-Keeping the same certificate gives the app a stable signing identity, but macOS can still ask for Keychain approval. Otto explains that prompt before it reads saved API keys.
+Updates check the new build against n8n's Apple team, not one certificate, so a renewed certificate doesn't break them. macOS can still ask for Keychain approval. Otto explains that prompt before it reads saved API keys.
 
 GitHub-hosted Mac runners can't run nested virtualization. CI checks binaries and packaging, but it can't prove Otto's private computer boots on a real Mac.
 
@@ -134,8 +169,6 @@ Use disposable profiles and synthetic content on a physical Apple silicon Mac.
 - **Oldest macOS:** run on the oldest advertised macOS version.
 
 </details>
-
-The full release guide, including build cost and the later Developer ID path, is in [`desktop/RELEASING.md`](https://github.com/n8n-io/otto/blob/main/desktop/RELEASING.md).
 
 ## Related resources
 
