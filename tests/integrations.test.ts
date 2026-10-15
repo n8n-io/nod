@@ -7559,7 +7559,14 @@ test(
         ).prompt('Synthetic message', []);
       assert.deepEqual(
         forwarded.map((event) => event.type),
-        ['model_usage', 'model_usage', 'model_usage'],
+        [
+          'model_usage',
+          'provider_usage',
+          'model_usage',
+          'provider_usage',
+          'model_usage',
+          'provider_usage',
+        ],
       );
       await ledger.withTurn(chat, () =>
         ledger

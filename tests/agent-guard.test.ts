@@ -526,7 +526,21 @@ test('past the spending check-in a turn stops working but can ask, and one that 
   const asked = await fixture(
     async (tools, emit, options) => {
       await read(tools);
-      emit(usage(null, 1.5));
+      emit(usage(null, 0.5));
+      await read(tools);
+      emit({
+        type: 'provider_usage',
+        usage: {
+          id: randomUUID(),
+          provider: 'codemode',
+          category: 'agent',
+          operation: 'models',
+          status: 'succeeded',
+          durationMs: 0,
+          costUsd: null,
+          estimateUsd: 1,
+        },
+      });
       assert.equal(options.shouldStop(), false);
       await assert.rejects(read(tools), /past the \$5 check-in/);
       await call(tools, 'ask_user', { question: 'Read 12 of 40 threads. Keep going?' });
@@ -535,7 +549,7 @@ test('past the spending check-in a turn stops working but can ask, and one that 
   );
   assert.equal(asked.result.status, 'waiting_user');
   assert.deepEqual(asked.replies, ['Read 12 of 40 threads. Keep going?']);
-  assert.equal(reads.length, 1);
+  assert.equal(reads.length, 2);
   await assert.rejects(
     fixture(
       async (tools, emit, options) => {
@@ -546,7 +560,7 @@ test('past the spending check-in a turn stops working but can ask, and one that 
     ),
     /Paused at the \$5 check-in/,
   );
-  assert.equal(reads.length, 1);
+  assert.equal(reads.length, 2);
   await fixture(
     async (tools, emit) => {
       emit(usage(50));
@@ -554,7 +568,7 @@ test('past the spending check-in a turn stops working but can ask, and one that 
     },
     { integration },
   );
-  assert.equal(reads.length, 2);
+  assert.equal(reads.length, 3);
 });
 
 test('a failing observer never breaks a tool call', async () => {

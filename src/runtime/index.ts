@@ -148,7 +148,13 @@ export function createAgentRuntime(dependencies: {
     const overBudget = () =>
       context.checkIn !== undefined && checkInSpent >= context.checkIn.budgetUsd;
     const countUsage = (event: AgentEvent) => {
-      if (event.type === 'model_usage') checkInSpent += event.costUsd ?? event.estimateUsd ?? 0;
+      const usage =
+        event.type === 'model_usage'
+          ? event
+          : event.type === 'provider_usage'
+            ? event.usage
+            : undefined;
+      if (usage) checkInSpent += usage.costUsd ?? usage.estimateUsd ?? 0;
     };
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();

@@ -152,8 +152,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
                 session,
               );
             }
-            if (event.type !== 'provider_usage') return session.onEvent(event);
-            record({ ...event.usage, turnId: session.turnId }, session);
+            if (event.type === 'provider_usage')
+              record({ ...event.usage, turnId: session.turnId }, session);
+            session.onEvent(event);
           },
         });
         return {

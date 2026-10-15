@@ -405,9 +405,9 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         </Notice>
       )}
       <div
-        role="tabpanel"
+        role={pageMode ? undefined : 'tabpanel'}
         id={`${tabsId}-panel`}
-        aria-labelledby={`${tabsId}-tab-${view}`}
+        aria-labelledby={pageMode ? undefined : `${tabsId}-tab-${view}`}
         className="vault-panel"
       >
         <div hidden={view !== 'activity'}>
