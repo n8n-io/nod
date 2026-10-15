@@ -361,7 +361,7 @@ export function createChatSdkTransport(
                 messageId: `${chat.id}:${message_id}`,
                 reaction: emoji?.emoji
                   ? emoji.emoji.replace(
-                      /^(\p{Extended_Pictographic})(?!\uFE0F)(?<!\p{Emoji_Presentation})/u,
+                      /(\p{Extended_Pictographic})(?!\uFE0F)(?<!\p{Emoji_Presentation})/gu,
                       '$1\uFE0F',
                     )
                   : null,

@@ -1607,6 +1607,8 @@ test(
       await sendTelegram(telegramReaction(10, ['👍']));
       await sendTelegram(telegramReaction(101, []));
       await sendTelegram(telegramReaction(101, ['❤']));
+      await sendTelegram(telegramReaction(101, ['🤷‍♂']));
+      await sendTelegram(telegramReaction(101, ['🤷‍♀']));
       await sendWhatsApp(whatsappReaction('wamid.fixture-out-2', '❤️'));
       await sendWhatsApp(whatsappReaction('wamid.fixture-out-2', '😂', '351920000000'));
       await sendWhatsApp(whatsappReaction('123456:101', '😂'));
@@ -1614,6 +1616,8 @@ test(
         [telegramReply, '👍'],
         [telegramReply, null],
         [telegramReply, '❤️'],
+        [telegramReply, '🤷‍♂️'],
+        [telegramReply, '🤷‍♀️'],
         [whatsappReply, '❤️'],
       ]);
       const whatsappOwnerMessage = await idOf(
