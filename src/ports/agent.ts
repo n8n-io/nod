@@ -16,6 +16,7 @@ export interface ModelUsageObservation {
   cacheWriteTokens: number;
   totalTokens: number;
   costUsd: number | null;
+  estimateUsd?: number | null;
   costSource: 'sdk_estimate' | 'unavailable';
   createdAt: string;
 }
@@ -82,6 +83,7 @@ export interface RuntimeContext {
     turnId?: string | null;
   }>;
   memory?: string;
+  checkIn?: { budgetUsd: number; spentUsd: number };
   taskContext?: {
     id: string;
     title: string;

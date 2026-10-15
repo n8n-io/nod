@@ -355,14 +355,6 @@
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
-.vault-statement {
-  display: grid;
-  gap: 32px;
-}
-.vault-statement > p {
-  max-width: 640px;
-  text-wrap: balance;
-}
 .vault-days {
   display: grid;
   gap: 16px;

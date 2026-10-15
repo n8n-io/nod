@@ -65,7 +65,7 @@ Otto learns only from your own short messages, never from its replies, tool resu
 ## Delete your data
 
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Otto to forget something.
-- **Vault items.** Open the item in **Vault → Saved** and delete it. For a saved browser session, select **Sign out**.
+- **Vault items.** Open the item in **Trust → Saved** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. In hosted mode, ask your operator.
 

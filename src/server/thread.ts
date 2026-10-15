@@ -93,6 +93,7 @@ export interface ThreadDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   spendingLimitReached?: () => Promise<boolean>;
+  checkIn?: (sessionId: string, turnId: string) => Promise<RuntimeContext['checkIn']>;
   skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
@@ -1157,6 +1158,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     await emit('started', 'Turn started.');
+    const checkIn = await dependencies.checkIn?.(turn.session_id, turnId);
     const result = await dependencies.runTurn({
       threadId,
       turnId,
@@ -1168,6 +1170,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ...loaded.context,
       taskContext,
       tasks,
+      ...(checkIn ? { checkIn } : {}),
       currentMessageId: loaded.sourceMessageId ?? undefined,
       replyTo: loaded.replyTo && describe(loaded.replyTo),
       history: loaded.history.map(describe),

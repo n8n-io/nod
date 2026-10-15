@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { VaultDetails } from '../src/web/components/vault-details.tsx';
 import { Credentials, Payment } from '../src/web/pages/credentials.tsx';
-import { Vault } from '../src/web/pages/vault.tsx';
+import { Trust } from '../src/web/pages/trust.tsx';
 import { setRequestAccount } from '../src/web/lib/api.ts';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
@@ -5144,11 +5144,11 @@ test(
     setRequestAccount('local-development');
     try {
       view = await vaultPage(
-        createElement(Vault),
+        createElement(Trust),
         (path, init) => {
           const request = (async () => {
             assert.equal(new Headers(init.headers).get('X-Otto-Account'), 'local-development');
-            assert.ok(path.startsWith('/api/vault'));
+            assert.ok(path.startsWith('/api/vault') || path === '/api/trust');
             if (path === '/api/vault' && init.method === 'POST')
               submitted.push(JSON.parse(String(init.body)));
             const response = await app.inject({
@@ -5165,7 +5165,7 @@ test(
           void request.catch(() => undefined).finally(() => requests.delete(request));
           return request;
         },
-        'http://localhost:4310/vault?add=login',
+        'http://localhost:4310/trust?add=login',
       );
       await settle();
       const form = view.document.querySelector<HTMLFormElement>('.vault-add-form');
@@ -5216,7 +5216,7 @@ test(
       view = undefined;
       pageDataCache.clear();
       view = await vaultPage(
-        createElement(Vault),
+        createElement(Trust),
         (path, init) => {
           const request = (async () => {
             const response = await app.inject({
@@ -5230,7 +5230,7 @@ test(
           void request.catch(() => undefined).finally(() => requests.delete(request));
           return request;
         },
-        'http://localhost:4310/vault?add=card',
+        'http://localhost:4310/trust?add=card',
       );
       const cardForm = view.document.querySelector<HTMLFormElement>('.vault-add-form');
       assert.ok(cardForm);
@@ -5281,15 +5281,32 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
   ]) {
     pageDataCache.clear();
     const view = await vaultPage(
-      createElement(Vault),
+      createElement(Trust),
       async (path, init) => {
         assert.notEqual(init.method, 'POST');
         if (path === '/api/vault/activity')
           return Response.json({ week: { signIns: 0, held: 0, asked: 0 }, entries: [] });
+        if (path === '/api/trust')
+          return Response.json({
+            week: { things: 0, actions: 0, spentUsd: 0 },
+            month: {
+              start: new Date().toISOString(),
+              days: 31,
+              elapsedDays: 1,
+              spentUsd: 0,
+              forecastUsd: 0,
+              daily: [0],
+              unpriced: false,
+            },
+            limit: null,
+            taskUsd: 5,
+            entries: [],
+            next: null,
+          });
         assert.ok(['/api/vault', '/api/vault/sessions'].includes(path), path);
         return Response.json([]);
       },
-      `http://localhost:4310/vault${query}`,
+      `http://localhost:4310/trust${query}`,
     );
     try {
       assert.equal(view.document.querySelector('.vault-add-form'), null);

@@ -126,6 +126,8 @@ Turns and tool calls are never retried. Pi retries a model request that fails wi
 
 When the monthly spending limit is reached, new turns end `failed` with a limit notice before they call the model.
 
+Each session also checks in with you. When its model spend since your last message to it passes the task check-in ($5 by default, set in **Trust**), its tools refuse new work and the model asks you whether to keep going with `ask_user`. Reporting tools still work, and helpers stop at their next step. A model that keeps trying to work for two more steps ends the turn `failed` with a check-in notice. Your next message to that session starts a new count.
+
 ## Reset
 
 Reset is a development tool. In a local development build, **Clear messages** archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.

@@ -274,9 +274,9 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
-test('Vault save links open only an empty local form without accepting secret query data', () => {
+test('Trust save links open only an empty local form without accepting secret query data', () => {
   for (const kind of ['login', 'card']) {
-    const path = `/vault?add=${kind}`;
+    const path = `/trust?add=${kind}`;
     const expected = { href: path, kind: 'setup', setup: 'vault' };
     assert.deepEqual(safeMessageLink(path, origin), expected);
     assert.deepEqual(safeMessageLink(`${origin}${path}`, origin), expected);
@@ -289,16 +289,16 @@ test('Vault save links open only an empty local form without accepting secret qu
     '?add=login&add=login',
     '?add=login#synthetic',
   ]) {
-    assert.equal(safeMessageLink(`/vault${query}`, origin), null);
-    assert.equal(safeMessageLink(`${origin}/vault${query}`, origin), null);
+    assert.equal(safeMessageLink(`/trust${query}`, origin), null);
+    assert.equal(safeMessageLink(`${origin}/trust${query}`, origin), null);
   }
-  const external = safeMessageLink('https://outside.example/vault?add=login', origin)!;
+  const external = safeMessageLink('https://outside.example/trust?add=login', origin)!;
   assert.equal(external.kind, 'external');
   assert.equal(setupLink(external, 'Save login in Vault'), null);
-  assert.equal(safeMessageLink('//outside.example/vault?add=login', origin), null);
-  const result = render('[Save login in Vault](/vault?add=login)');
+  assert.equal(safeMessageLink('//outside.example/trust?add=login', origin), null);
+  const result = render('[Save login in Vault](/trust?add=login)');
   const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
-  assert.equal(link?.getAttribute('href'), '/vault?add=login');
+  assert.equal(link?.getAttribute('href'), '/trust?add=login');
   assert.equal(link?.getAttribute('rel'), 'noopener noreferrer');
 });
 

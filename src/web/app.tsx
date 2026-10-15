@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
-import { Vault } from './pages/vault';
+import { Trust } from './pages/trust';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
@@ -152,6 +152,8 @@ function Workspace({
   useEffect(() => {
     prefetchPageData([
       '/api/vault',
+      '/api/vault/activity',
+      '/api/trust',
       '/api/tasks',
       '/api/schedules',
       '/api/apps',
@@ -232,8 +234,8 @@ function Workspace({
                   </div>
                 )}
               </div>
-              {currentPath === '/vault' && (
-                <Vault hosted={session.auth.mode === 'google'} onAsk={askInChat} />
+              {currentPath === '/trust' && (
+                <Trust hosted={session.auth.mode === 'google'} onAsk={askInChat} />
               )}
               {currentPath === '/apps' && (
                 <Apps configuration={state?.configuration} onAsk={askInChat} />
@@ -318,7 +320,7 @@ function AuthenticatedApp({
   const [settingsError, setSettingsError] = useState('');
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const lastPath = useRef('/');
-  const settingsPath = path === '/memory' ? 'Memory' : path === '/trust' ? 'Trust' : undefined;
+  const settingsPath = path === '/memory' ? 'Memory' : undefined;
   if (!settingsPath) lastPath.current = path;
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     setSettingsError('');
@@ -356,7 +358,8 @@ function AuthenticatedApp({
       if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
         return;
       event.preventDefault();
-      openSettings(link.getAttribute('href') === '/trust' ? 'Trust' : 'Memory', link);
+      if (link.getAttribute('href') === '/trust') navigate('/trust');
+      else openSettings('Memory', link);
     };
     document.addEventListener('click', openSettingsLink);
     return () => document.removeEventListener('click', openSettingsLink);

@@ -825,6 +825,7 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
+      checkIn: ledger.checkIn,
       skipTurn: triage.staleCheck,
       accountProfile,
       connectedApps: integrations.connectedApps,

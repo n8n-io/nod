@@ -58,7 +58,6 @@ export function registerLocalAccess(
     '/onboarding',
     '/connected.html',
     '/channels',
-    '/vault',
     '/you',
     '/browser',
     '/privacy',

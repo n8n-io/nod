@@ -499,6 +499,64 @@ test('an app call issued after one that asks never runs, unless the ask fails fi
   assert.ok(events.includes('end GMAIL_LIST_LABELS'));
 });
 
+test('past the spending check-in a turn stops working but can ask, and one that keeps working pauses', async () => {
+  const usage = (costUsd: number | null, estimateUsd?: number): AgentEvent => ({
+    type: 'model_usage',
+    id: randomUUID(),
+    provider: 'fixture',
+    model: 'fixture',
+    inputTokens: 1,
+    outputTokens: 1,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 2,
+    costUsd,
+    ...(estimateUsd === undefined ? {} : { estimateUsd }),
+    costSource: costUsd === null ? 'unavailable' : 'sdk_estimate',
+    createdAt: new Date().toISOString(),
+  });
+  const reads: string[] = [];
+  const integration: RuntimeContext['integration'] = async (action) => {
+    reads.push(action);
+    return { ok: true };
+  };
+  const read = (tools: Map<string, AgentTool>) =>
+    tools.get('apps')!.execute({ action: 'GMAIL_FETCH_EMAILS', args: {} });
+  const checkIn = { budgetUsd: 5, spentUsd: 4 };
+  const asked = await fixture(
+    async (tools, emit, options) => {
+      await read(tools);
+      emit(usage(null, 1.5));
+      assert.equal(options.shouldStop(), false);
+      await assert.rejects(read(tools), /past the \$5 check-in/);
+      await call(tools, 'ask_user', { question: 'Read 12 of 40 threads. Keep going?' });
+    },
+    { integration, checkIn },
+  );
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.deepEqual(asked.replies, ['Read 12 of 40 threads. Keep going?']);
+  assert.equal(reads.length, 1);
+  await assert.rejects(
+    fixture(
+      async (tools, emit, options) => {
+        emit(usage(6));
+        while (!options.shouldStop()) await read(tools).catch(() => {});
+      },
+      { integration, checkIn },
+    ),
+    /Paused at the \$5 check-in/,
+  );
+  assert.equal(reads.length, 1);
+  await fixture(
+    async (tools, emit) => {
+      emit(usage(50));
+      await read(tools);
+    },
+    { integration },
+  );
+  assert.equal(reads.length, 2);
+});
+
 test('a failing observer never breaks a tool call', async () => {
   let result: AgentToolResult | undefined;
   await fixture(

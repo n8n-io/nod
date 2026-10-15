@@ -10,9 +10,11 @@ import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
+import { transaction } from './transaction.ts';
 
 export const spendingLimitReached =
-  'Paused because this month’s spending limit was reached. Raise the limit in Settings › Trust to resume.';
+  'Paused because this month’s spending limit was reached. Raise the limit in Trust to resume.';
+export const defaultTaskUsd = 5;
 
 const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UTC')`;
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
@@ -54,6 +56,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
     CREATE INDEX IF NOT EXISTS model_usage_owner_time ON model_usage(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS model_usage_turn ON model_usage(turn_id);
+    CREATE INDEX IF NOT EXISTS model_usage_session_time ON model_usage(session_id,created_at);
     CREATE TABLE IF NOT EXISTS app_actions (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL,
       turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
@@ -63,8 +66,11 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
-      owner_id text PRIMARY KEY, monthly_usd double precision NOT NULL CHECK (monthly_usd > 0)
-    );`);
+      owner_id text PRIMARY KEY, monthly_usd double precision CHECK (monthly_usd > 0)
+    );
+    ALTER TABLE spending_limits ALTER COLUMN monthly_usd DROP NOT NULL;
+    ALTER TABLE spending_limits ADD COLUMN IF NOT EXISTS task_usd double precision
+      DEFAULT ${defaultTaskUsd} CHECK (task_usd > 0);`);
   }
 
   function save(sql: string, values: unknown[]) {
@@ -188,19 +194,41 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
-  async function limit() {
+  async function limits() {
     const row = (
       await pool.query(
-        `SELECT monthly_usd,${spentThisMonth} AS spent FROM spending_limits WHERE owner_id=$1`,
+        `SELECT monthly_usd,task_usd,${spentThisMonth} AS spent FROM spending_limits WHERE owner_id=$1`,
         [ownerId],
       )
     ).rows[0];
-    return row ? { monthlyUsd: row.monthly_usd, reached: row.spent >= row.monthly_usd } : null;
+    return {
+      limit:
+        typeof row?.monthly_usd === 'number'
+          ? { monthlyUsd: row.monthly_usd, reached: row.spent >= row.monthly_usd }
+          : null,
+      taskUsd: row ? (row.task_usd as number | null) : defaultTaskUsd,
+    };
   }
 
   async function limitReached() {
     await flushUsage();
-    return Boolean((await limit())?.reached);
+    return Boolean((await limits()).limit?.reached);
+  }
+
+  async function checkIn(sessionId: string, turnId: string) {
+    await flushUsage();
+    const [{ taskUsd }, spent] = await Promise.all([
+      limits(),
+      pool.query(
+        `SELECT COALESCE(sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8)),0)::float8 AS spent
+         FROM model_usage WHERE owner_id=$1 AND session_id=$2 AND created_at>=COALESCE(
+           (SELECT max(t.created_at) FROM turns t JOIN turns c ON c.id=$3 AND c.owner_id=$1
+             WHERE t.owner_id=$1 AND t.session_id=$2 AND t.source='user'
+               AND (t.created_at,t.id)<=(c.created_at,c.id)),'-infinity')`,
+        [ownerId, sessionId, turnId],
+      ),
+    ]);
+    return taskUsd === null ? undefined : { budgetUsd: taskUsd, spentUsd: spent.rows[0].spent };
   }
 
   async function messageCosts(turnIds: string[]) {
@@ -279,7 +307,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         [ownerId],
       ),
       entries(),
-      limit(),
+      limits(),
     ]);
     const row = summary.rows[0];
     const elapsed = Math.min(row.days, Math.max(row.elapsed, 0));
@@ -297,7 +325,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         daily: days,
         unpriced: row.unpriced,
       },
-      limit: current,
+      ...current,
       ...page,
     };
   }
@@ -334,29 +362,40 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       entries(z.object({ at: z.iso.datetime(), id: z.uuid() }).strict().parse(request.query)),
     );
     app.put('/api/trust/limit', async (request) => {
-      const { monthlyUsd } = z
-        .object({
-          monthlyUsd: z
-            .number()
-            .min(1)
-            .refine(
-              (value) =>
-                Number.isSafeInteger(Math.round(value * 100)) &&
-                Math.round(value * 100) / 100 === value,
-            )
-            .nullable(),
-        })
+      const usd = z
+        .number()
+        .min(1)
+        .refine(
+          (value) =>
+            Number.isSafeInteger(Math.round(value * 100)) &&
+            Math.round(value * 100) / 100 === value,
+        )
+        .nullable();
+      const body = z
+        .object({ monthlyUsd: usd.optional(), taskUsd: usd.optional() })
         .strict()
+        .refine((value) => Object.keys(value).length > 0)
         .parse(request.body);
-      if (monthlyUsd === null)
-        await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
-      else
-        await pool.query(
-          `INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,$2)
-           ON CONFLICT(owner_id) DO UPDATE SET monthly_usd=$2`,
-          [ownerId, Math.round(monthlyUsd * 100) / 100],
+      await transaction(async (client) => {
+        await client.query(
+          'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
+          [ownerId],
         );
-      return { limit: await limit() };
+        for (const [key, column] of [
+          ['monthlyUsd', 'monthly_usd'],
+          ['taskUsd', 'task_usd'],
+        ] as const)
+          if (body[key] !== undefined)
+            await client.query(`UPDATE spending_limits SET ${column}=$2 WHERE owner_id=$1`, [
+              ownerId,
+              body[key],
+            ]);
+        await client.query(
+          `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
+          [ownerId],
+        );
+      }, pool);
+      return limits();
     });
   }
 
@@ -366,6 +405,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     curator,
     action,
     limitReached,
+    checkIn,
     messageCosts,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     read,

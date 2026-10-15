@@ -29,4 +29,5 @@ export interface TrustView extends TrustPage {
     unpriced: boolean;
   };
   limit: { monthlyUsd: number; reached: boolean } | null;
+  taskUsd: number | null;
 }

@@ -1,331 +1,467 @@
-import { useState, type FormEvent } from 'react';
-import { CalendarClock, MessageCircle, Pencil, ScanSearch, Undo2, Zap } from 'lucide-react';
-import type { TrustEntry, TrustSource, TrustView } from '../../shared/trust';
-import { Button, Input, Loading, Notice } from '../components/ui';
+import { PageTitle } from '../components/page-title';
+import { useEffect, useId, useRef, useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
+import { ChevronRight, CreditCard, Globe, Plus, Upload } from 'lucide-react';
+import type {
+  VaultActivity,
+  VaultActivityEntry,
+  VaultListEntry,
+  VaultSession,
+} from '../../shared/contracts';
+import type { TrustView } from '../../shared/trust';
 import { usePageData } from '../hooks/use-page-data';
-import { api, errorMessage } from '../lib/api';
-import {
-  formatDayLabel,
-  formatNumber,
-  formatTime,
-  useDateFormat,
-  type DateFormat,
-} from '../lib/date-format';
+import { usePhone } from '../hooks/use-phone';
+import { TrustActivity } from '../components/trust-activity';
+import { VaultDetails } from '../components/vault-details';
+import { VaultSessionDetails, VaultSiteAccess } from '../components/vault-site';
+import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
+import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
+import { VaultCardPayments } from '../components/vault-card';
+import { VaultImportDialog } from '../components/vault-import-dialog';
+import { WebsiteSessionDialog } from '../components/website-session-dialog';
+import { originLabel } from '../lib/vault-name';
+import { cn } from '../lib/utils';
+import { Loading, Notice, SearchField } from '../components/ui';
 
-const day = 86_400_000;
-const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
-  chat: { icon: MessageCircle, label: '' },
-  task: { icon: MessageCircle, label: 'Task' },
-  schedule: { icon: CalendarClock, label: 'Schedule' },
-  event: { icon: Zap, label: '' },
-  check: { icon: ScanSearch, label: 'Activity check' },
-  resume: { icon: Undo2, label: 'Approved action' },
+type Item = VaultListEntry | VaultSession;
+type View = 'activity' | 'saved';
+
+const sessionLabels: Record<VaultSession['state'], string> = {
+  saved: 'Saved session',
+  needs_sign_in: 'Sign-in needed',
+  pending: 'Sign-in not finished',
+  disconnecting: 'Signing out…',
 };
 
-function date(ms: number, format: DateFormat) {
-  return new Date(ms).toLocaleDateString(format.locale, {
-    day: 'numeric',
-    month: 'long',
-    timeZone: format.timeZone,
-  });
+function subtitle(item: Item) {
+  if (item.kind === 'card')
+    return `${item.brand} •••• ${item.last4} · ${formatCardExpiry(item.expiryMonth, item.expiryYear)}`;
+  if (item.kind === 'session') return `${originLabel(item.origin)} · ${sessionLabels[item.state]}`;
+  if (item.unreadable) return 'Can’t be opened';
+  return item.username || originLabel(item.origin);
 }
 
-function money(value: number) {
-  if (value > 0 && value < 0.01) return '<$0.01';
-  return formatNumber(value, {
-    style: 'currency',
-    currency: 'USD',
-    currencyDisplay: 'narrowSymbol',
-    minimumFractionDigits: Number.isInteger(value) && value >= 1 ? 0 : 2,
-  });
-}
-
-function Summary({ week }: { week: TrustView['week'] }) {
-  if (!week.things && !week.actions && !week.spentUsd)
-    return <p className="statement-summary">Nothing yet this week.</p>;
-  return (
-    <p className="statement-summary">
-      In the last 7 days, Otto did{' '}
-      <b>
-        {formatNumber(week.things)} {week.things === 1 ? 'thing' : 'things'}
-      </b>
-      .{' '}
-      {week.actions > 0 && (
-        <>
-          It used your apps{' '}
-          <b>{week.actions === 1 ? 'once' : `${formatNumber(week.actions)} times`}</b>.{' '}
-        </>
-      )}
-      {week.spentUsd > 0 && (
-        <>
-          It spent <b>{money(week.spentUsd)}</b>.
-        </>
-      )}
-    </p>
+export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text: string): void }) {
+  const {
+    data: entries,
+    error: loadError,
+    loading,
+    refresh,
+    update,
+  } = usePageData<VaultListEntry[]>('/api/vault');
+  const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
+  const activity = usePageData<VaultActivity>('/api/vault/activity');
+  const trust = usePageData<TrustView>('/api/trust');
+  const phone = usePhone();
+  const tabsId = useId();
+  const addRequested = window.location.hash
+    ? null
+    : window.location.search === '?add=login'
+      ? 'login'
+      : window.location.search === '?add=card' && !hosted
+        ? 'card'
+        : null;
+  const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
+  const [savedOpened, setSavedOpened] = useState(Boolean(addRequested));
+  useEffect(() => {
+    if (view === 'saved') setSavedOpened(true);
+  }, [view]);
+  const [query, setQuery] = useState('');
+  const [menu, setMenu] = useState(false);
+  const [website, setWebsite] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested);
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
+  const [savingNew, setSavingNew] = useState(false);
+  const [chosen, setChosen] = useState(false);
+  const returnTo = useRef<string | null>(null);
+  const backTo = useRef<View>('saved');
+  const activityTrigger = useRef<string | null>(null);
+  const newTrigger = useRef<HTMLButtonElement>(null);
+  const openingDialog = useRef(false);
+  const split = !phone;
+  const logins = new Set(
+    (entries ?? []).flatMap((entry) =>
+      entry.kind === 'login' && !entry.unreadable ? [entry.origin] : [],
+    ),
   );
-}
+  const items: Item[] = [
+    ...(entries ?? []),
+    ...(sessions.data ?? []).filter((session) => !logins.has(session.origin)),
+  ];
+  const search = query.trim().toLowerCase();
+  const visible = items
+    .filter(
+      (item) =>
+        !search ||
+        [item.label, subtitle(item), item.kind === 'card' ? '' : originLabel(item.origin)]
+          .join(' ')
+          .toLowerCase()
+          .includes(search),
+    )
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const selected =
+    items.find((item) => item.id === selectedId) ??
+    (selectedId === undefined && split && !adding ? visible[0] : undefined);
+  const detailOpen = view === 'saved' && Boolean(adding || selected);
+  const pageMode = detailOpen && !split;
 
-function Chart({ month, limit }: { month: TrustView['month']; limit: number | undefined }) {
-  const top = Math.max(month.forecastUsd, month.spentUsd, limit ?? 0) * 1.1 || 1;
-  const x = (days: number) => (days / month.days) * 600;
-  const y = (usd: number) => 116 - (usd / top) * 108;
-  let total = 0;
-  const points = [`${x(0)},${y(0)}`];
-  month.daily.forEach((value, index) => {
-    total += value;
-    points.push(`${x(Math.min(index + 1, month.elapsedDays))},${y(total)}`);
-  });
-  const now = `${x(month.elapsedDays)},${y(month.spentUsd)}`;
-  return (
-    <svg
-      className="trust-chart"
-      viewBox="0 0 600 120"
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
-      {limit !== undefined && (
-        <line className="trust-chart-limit" x1="0" x2="600" y1={y(limit)} y2={y(limit)} />
-      )}
-      <polygon
-        className="trust-chart-area"
-        points={`${points.join(' ')} ${x(month.elapsedDays)},116`}
-      />
-      <polyline className="trust-chart-spent" points={points.join(' ')} />
-      <polyline
-        className="trust-chart-forecast"
-        points={`${now} ${x(month.days)},${y(month.forecastUsd)}`}
-      />
-    </svg>
-  );
-}
+  useEffect(() => {
+    if (addRequested) window.history.replaceState(null, '', '/trust');
+  }, [addRequested]);
 
-function Limit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
-  const format = useDateFormat();
-  const [draft, setDraft] = useState<string>();
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const resets = date(Date.parse(view.month.start) + view.month.days * day + day / 2, format);
-  async function save(monthlyUsd: number | null) {
-    setBusy(true);
-    setError('');
-    try {
-      await api('/api/trust/limit', { method: 'PUT', body: JSON.stringify({ monthlyUsd }) });
-      setDraft(undefined);
-      onSaved();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
+  useEffect(() => {
+    if (pageMode || !returnTo.current) return;
+    const id = returnTo.current;
+    returnTo.current = null;
+    (id === 'new'
+      ? newTrigger.current
+      : id.startsWith('activity:')
+        ? [...document.querySelectorAll<HTMLElement>('[data-vault-activity]')].find(
+            (item) => item.dataset.vaultActivity === id.slice(9),
+          )
+        : [...document.querySelectorAll<HTMLElement>('[data-vault-item]')].find(
+            (item) => item.dataset.vaultItem === id,
+          )
+    )?.focus();
+  }, [pageMode, adding, selectedId, view]);
+
+  function save(entry: VaultListEntry) {
+    update((current) => [entry, ...(current ?? []).filter((value) => value.id !== entry.id)]);
+    void refresh();
   }
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const value = Number(draft);
-    if (Number.isFinite(value) && value >= 1) void save(value);
-    else setError('Enter a limit of at least $1.');
-  }
-  const amount = draft ? Number(draft) : view.limit?.monthlyUsd;
-  return (
-    <div className="trust-limit">
-      {draft === undefined ? (
-        <Button
-          variant={view.limit ? 'ghost' : 'outline'}
-          size="sm"
-          onClick={() => setDraft(String(view.limit?.monthlyUsd ?? ''))}
-        >
-          {view.limit ? (
-            <>
-              <Pencil size={14} aria-hidden="true" />
-              {money(view.limit.monthlyUsd)} monthly limit
-            </>
-          ) : (
-            'Set a monthly limit'
-          )}
-        </Button>
-      ) : (
-        <form className="trust-limit-form" onSubmit={submit}>
-          <label className="trust-limit-input">
-            <span aria-hidden="true">$</span>
-            <Input
-              type="number"
-              inputMode="decimal"
-              min={1}
-              step={0.01}
-              value={draft}
-              autoFocus
-              aria-label="Monthly limit in US dollars"
-              onChange={(event) => setDraft(event.target.value)}
-            />
-          </label>
-          <Button size="sm" type="submit" disabled={busy || !draft}>
-            Save
-          </Button>
-          {view.limit && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => void save(null)}
-            >
-              Remove
-            </Button>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => setDraft(undefined)}
-          >
-            Cancel
-          </Button>
-        </form>
-      )}
-      {view.limit?.reached ? (
-        <Notice kind="info">
-          Limit reached. New chat and background requests pause until {resets}. Running turns can
-          finish. Raise your limit to resume.
-        </Notice>
-      ) : (
-        (view.limit || draft !== undefined) && (
-          <p className="trust-limit-note">
-            {amount ? `At ${money(amount)}` : 'At the limit'}, new chat and background requests
-            pause until {resets}.
-          </p>
-        )
-      )}
-      {error && <Notice>{error}</Notice>}
-    </div>
-  );
-}
 
-function Cost({ view, onSaved }: { view: TrustView; onSaved(): void }) {
-  const format = useDateFormat();
-  const { month, limit } = view;
-  const name = new Date(month.start).toLocaleDateString(format.locale, {
-    month: 'long',
-    timeZone: format.timeZone,
-  });
-  const pace = month.spentUsd / Math.max(month.elapsedDays, 1);
-  const crossing =
-    limit && !limit.reached && month.forecastUsd > limit.monthlyUsd && pace > 0
-      ? date(
-          Date.parse(month.start) +
-            (month.elapsedDays + (limit.monthlyUsd - month.spentUsd) / pace) * day,
-          format,
-        )
+  function open(item: Item, from: View = 'saved') {
+    backTo.current = from;
+    setView('saved');
+    setAdding(null);
+    setChosen(true);
+    setSelectedId(item.id);
+  }
+
+  function opener(entry: VaultActivityEntry) {
+    const item =
+      items.find((value) => value.id === entry.itemId) ??
+      (!entry.itemId &&
+        items.find((value) => value.kind === 'session' && value.origin === entry.origin));
+    return item
+      ? () => {
+          activityTrigger.current = entry.id;
+          open(item, 'activity');
+        }
       : undefined;
-  return (
-    <section className="trust-cost" aria-label="Spending">
-      <div className="trust-cost-head">
-        <div>
-          <span className="trust-label">{name}</span>
-          <div className="trust-amount">
-            {money(month.spentUsd)}
-            {limit && <small>of {money(limit.monthlyUsd)}</small>}
-          </div>
-          {month.spentUsd > 0 && (
-            <span className={`trust-forecast${crossing ? ' is-over' : ''}`}>
-              On track for {money(month.forecastUsd)}
-              {crossing && `, reaching your limit around ${crossing}`}
-            </span>
-          )}
-        </div>
-        <Limit view={view} onSaved={onSaved} />
-      </div>
-      <Chart month={month} limit={limit?.monthlyUsd} />
-      {month.unpriced && (
-        <p className="trust-limit-note">Some usage has no price, so it isn’t counted here.</p>
-      )}
-    </section>
-  );
-}
+  }
 
-function Entry({ entry }: { entry: TrustEntry }) {
-  const format = useDateFormat();
-  const { icon: Icon, label } = sources[entry.source];
-  const did = [...new Set(entry.actions)].join(', ');
-  return (
-    <li className="statement-entry">
-      <Icon size={16} aria-hidden="true" />
-      <div>
-        <span className="statement-entry-title">{entry.title}</span>
-        <span className={`statement-entry-meta${entry.error ? ' is-error' : ''}`}>
-          {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
-          {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
-        </span>
-      </div>
-      <span
-        className="statement-entry-end"
-        title={entry.unpriced ? 'Included in your plan' : undefined}
+  function closeDetail() {
+    if (split) return;
+    returnTo.current =
+      backTo.current === 'activity' && activityTrigger.current
+        ? `activity:${activityTrigger.current}`
+        : (selectedId ?? null);
+    setChosen(false);
+    setSelectedId(null);
+    setView(backTo.current);
+  }
+
+  function start(kind: 'login' | 'card') {
+    setMenu(false);
+    setView('saved');
+    setChosen(true);
+    setAdding(kind);
+  }
+
+  function closeAdd() {
+    if (savingNew) return;
+    returnTo.current = 'new';
+    setChosen(false);
+    setAdding(null);
+  }
+
+  function removed(id: string) {
+    update((current) => current?.filter((value) => value.id !== id) ?? current);
+    sessions.update((current) => current?.filter((value) => value.id !== id) ?? current);
+    returnTo.current = 'new';
+    setSelectedId(null);
+    void refresh();
+    void sessions.refresh();
+  }
+
+  function row(item: Item) {
+    const current = split && selected?.id === item.id;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={cn('button vault-item', current ? 'button-secondary' : 'button-ghost')}
+        data-vault-item={item.id}
+        aria-current={current ? 'true' : undefined}
+        onClick={() => open(item)}
       >
-        {entry.costUsd !== null ? money(entry.costUsd) : '—'}
-      </span>
-    </li>
-  );
-}
+        <span className="vault-item-icon" aria-hidden="true">
+          {item.kind === 'session' ? (
+            <Globe size={24} />
+          ) : (
+            <VaultEntryIcon entry={item} size={24} />
+          )}
+        </span>
+        <span className="vault-item-text">
+          <strong>{item.label}</strong>
+          <span>{subtitle(item)}</span>
+        </span>
+        {!split && <ChevronRight className="vault-item-chevron" size={16} aria-hidden="true" />}
+      </button>
+    );
+  }
 
-function Statement({ view }: { view: TrustView }) {
-  const format = useDateFormat();
-  const [more, setMore] = useState<TrustEntry[]>([]);
-  const [next, setNext] = useState(view.next);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const entries = [...view.entries, ...more];
-  async function load() {
-    if (!next) return;
-    setLoading(true);
-    try {
-      const page = await api<{ entries: TrustEntry[]; next: TrustView['next'] }>(
-        `/api/trust/entries?at=${encodeURIComponent(next.at)}&id=${next.id}`,
-      );
-      setMore((current) => [...current, ...page.entries]);
-      setNext(page.next);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setLoading(false);
-    }
-  }
-  if (!entries.length)
-    return <p className="statement-empty">What Otto spends will show up here.</p>;
-  const days = new Map<string, TrustEntry[]>();
-  for (const entry of entries) {
-    const label = formatDayLabel(entry.at, format);
-    days.set(label, [...(days.get(label) ?? []), entry]);
-  }
-  return (
-    <section className="statement" aria-label="Statement">
-      {[...days].map(([label, items]) => (
-        <div key={label} className="statement-day">
-          <h4>{label}</h4>
-          <ul>
-            {items.map((entry) => (
-              <Entry key={entry.id} entry={entry} />
-            ))}
-          </ul>
-        </div>
-      ))}
-      {error && <Notice>{error}</Notice>}
-      {next && (
-        <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
-          Show earlier
-        </Button>
+  const sessionsFor = (origin: string) =>
+    sessions.data?.filter((value) => value.origin === origin && value.state !== 'disconnecting') ??
+    [];
+
+  const detail = adding ? (
+    <VaultSurface
+      key={`new-${adding}`}
+      label={adding === 'card' ? 'New payment card' : 'New login'}
+      autoFocus={false}
+      onClose={closeAdd}
+    >
+      <VaultItemForm
+        kind={adding}
+        hosted={hosted}
+        onCancel={closeAdd}
+        onSavingChange={setSavingNew}
+        onSaved={(entry) => {
+          setSavingNew(false);
+          save(entry);
+          setAdding(null);
+          setSelectedId(entry.id);
+        }}
+      />
+    </VaultSurface>
+  ) : selected?.kind === 'session' ? (
+    <VaultSessionDetails
+      key={selected.id}
+      session={selected}
+      autoFocus={chosen && selectedId === selected.id}
+      onClose={closeDetail}
+      onRemoved={removed}
+      onAsk={onAsk}
+    />
+  ) : selected ? (
+    <VaultDetails
+      key={`${selected.id}-${revision}`}
+      entry={selected}
+      visible={view === 'saved'}
+      hosted={hosted}
+      autoFocus={chosen && selectedId === selected.id}
+      onClose={closeDetail}
+      onSaved={(entry) => {
+        save(entry);
+        setSelectedId(entry.id);
+      }}
+      onDeleted={removed}
+    >
+      {() => (
+        <>
+          {selected.kind === 'login' && (
+            <VaultSiteAccess
+              origin={selected.origin}
+              sessions={sessionsFor(selected.origin)}
+              onSessionRemoved={(id) =>
+                sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
+              }
+              onAsk={onAsk}
+            />
+          )}
+          {selected.kind === 'card' && <VaultCardPayments cardId={selected.id} />}
+        </>
       )}
-    </section>
-  );
-}
+    </VaultDetails>
+  ) : null;
 
-export function Trust() {
-  const { data, error, loading, refresh } = usePageData<TrustView>('/api/trust');
-  if (!data)
-    return loading ? <Loading /> : <Notice>{error || 'Trust could not be loaded.'}</Notice>;
+  const views: View[] = ['activity', 'saved'];
   return (
-    <div className="trust">
-      <Summary week={data.week} />
-      <Cost view={data} onSaved={() => void refresh()} />
-      <Statement key={data.entries[0]?.id ?? 'empty'} view={data} />
+    <div
+      className={cn(
+        'content-page secondary-page vault-page',
+        split && view === 'saved' && 'is-split',
+        pageMode && 'is-detail',
+      )}
+    >
+      {!pageMode && (
+        <>
+          <header className="page-heading secondary-heading vault-heading">
+            <PageTitle path="/trust" />
+            <div className="vault-heading-actions">
+              <div
+                className="vault-seg"
+                role="tablist"
+                aria-label="Trust views"
+                onKeyDown={(event) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  const next =
+                    event.key === 'Home'
+                      ? 'activity'
+                      : event.key === 'End'
+                        ? 'saved'
+                        : view === 'activity'
+                          ? 'saved'
+                          : 'activity';
+                  setView(next);
+                  event.currentTarget
+                    .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
+                    ?.focus();
+                }}
+              >
+                {views.map((item) => (
+                  <button
+                    key={item}
+                    id={`${tabsId}-tab-${item}`}
+                    data-view={item}
+                    role="tab"
+                    tabIndex={view === item ? 0 : -1}
+                    aria-selected={view === item}
+                    aria-controls={`${tabsId}-panel`}
+                    onClick={() => setView(item)}
+                  >
+                    {item === 'activity' ? 'Activity' : 'Saved'}
+                    {item === 'saved' && entries && <span>{items.length}</span>}
+                  </button>
+                ))}
+              </div>
+              <Popover.Root open={menu} onOpenChange={setMenu}>
+                <Popover.Trigger asChild>
+                  <button
+                    ref={newTrigger}
+                    type="button"
+                    className="button button-primary button-sm vault-new"
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    New
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    className="connection-menu-options menu vault-new-menu"
+                    align="end"
+                    sideOffset={6}
+                    onCloseAutoFocus={(event) => {
+                      if (!openingDialog.current) return;
+                      openingDialog.current = false;
+                      event.preventDefault();
+                    }}
+                  >
+                    <button type="button" className="menu-item" onClick={() => start('login')}>
+                      <Globe size={16} aria-hidden="true" />
+                      New login
+                    </button>
+                    {!hosted && (
+                      <button type="button" className="menu-item" onClick={() => start('card')}>
+                        <CreditCard size={16} aria-hidden="true" />
+                        New payment card
+                      </button>
+                    )}
+                    {onAsk && (
+                      <button
+                        type="button"
+                        className="menu-item"
+                        onClick={() => {
+                          openingDialog.current = true;
+                          setMenu(false);
+                          setWebsite(true);
+                        }}
+                      >
+                        <Globe size={16} aria-hidden="true" />
+                        Website session
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="menu-item"
+                      onClick={() => {
+                        openingDialog.current = true;
+                        setMenu(false);
+                        setImporting(true);
+                      }}
+                    >
+                      <Upload size={16} aria-hidden="true" />
+                      Import passwords
+                    </button>
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+            </div>
+          </header>
+        </>
+      )}
+      {loadError && <Notice>{loadError}</Notice>}
+      {sessions.error && (
+        <Notice>
+          {sessions.error}{' '}
+          <button type="button" onClick={() => void sessions.refresh()}>
+            Try again
+          </button>
+        </Notice>
+      )}
+      <div
+        role="tabpanel"
+        id={`${tabsId}-panel`}
+        aria-labelledby={`${tabsId}-tab-${view}`}
+        className="vault-panel"
+      >
+        {view === 'activity' &&
+          (activity.data && trust.data ? (
+            <TrustActivity
+              view={trust.data}
+              vault={activity.data}
+              opener={opener}
+              onSaved={() => void trust.refresh()}
+            />
+          ) : activity.error || trust.error ? (
+            <Notice>{activity.error || trust.error}</Notice>
+          ) : (
+            <Loading label="Opening activity…" />
+          ))}
+        {(view === 'saved' || savedOpened) && (
+          <div className="vault-layout" hidden={view !== 'saved'}>
+            {!pageMode && (
+              <div className="vault-browser">
+                <SearchField
+                  className="vault-search"
+                  type="search"
+                  value={query}
+                  placeholder="Search"
+                  aria-label="Search saved"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                {!entries ? (
+                  loading && <Loading label="Opening saved items…" />
+                ) : !items.length ? (
+                  <div className="secondary-empty">
+                    <h2>Nothing saved yet</h2>
+                    <p>Add a login, a payment card or a website session.</p>
+                  </div>
+                ) : visible.length ? (
+                  <div className="vault-items">{visible.map(row)}</div>
+                ) : (
+                  <p className="vault-no-results">No items match “{query.trim()}”.</p>
+                )}
+              </div>
+            )}
+            {detail && <div className="vault-detail-column">{detail}</div>}
+          </div>
+        )}
+      </div>
+      {onAsk && <WebsiteSessionDialog open={website} onOpenChange={setWebsite} onAsk={onAsk} />}
+      <VaultImportDialog
+        open={importing}
+        onOpenChange={setImporting}
+        onImported={() => {
+          setView('saved');
+          void refresh();
+        }}
+      />
     </div>
   );
 }

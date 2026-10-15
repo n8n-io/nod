@@ -10,7 +10,6 @@ import {
   LogOut,
   Monitor,
   Moon,
-  ShieldCheck,
   SlidersHorizontal,
   Sun,
   UserRound,
@@ -46,7 +45,6 @@ import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { Memory } from '../pages/memory';
-import { Trust } from '../pages/trust';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
 const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
@@ -338,9 +336,6 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
   );
 }
 
-function tabLabel(tab: string) {
-  return tab === 'Trust' ? 'Trust & cost' : tab;
-}
 export function AccountSettings({
   account,
   open,
@@ -361,10 +356,10 @@ export function AccountSettings({
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
   const tabs: AccountTab[] = desktop
-    ? ['General', 'Models', 'Preferences', 'Memory', 'Trust']
+    ? ['General', 'Models', 'Preferences', 'Memory']
     : account.local
-      ? ['Models', 'Appearance', 'Preferences', 'Memory', 'Trust']
-      : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory', 'Trust'];
+      ? ['Models', 'Appearance', 'Preferences', 'Memory']
+      : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [composioDirty, setComposioDirty] = useState(false);
@@ -455,11 +450,13 @@ export function AccountSettings({
           }
         }}
         onKeyDown={(event) => {
-          const shortcut = navigationShortcut(event.nativeEvent)?.type;
-          if ((shortcut !== 'memory' && shortcut !== 'trust') || isEditingTarget(event.target))
+          if (
+            navigationShortcut(event.nativeEvent)?.type !== 'memory' ||
+            isEditingTarget(event.target)
+          )
             return;
           event.preventDefault();
-          changeTab(shortcut === 'memory' ? 'Memory' : 'Trust');
+          changeTab('Memory');
         }}
       >
         <DialogTitle className="sr-only" data-analytics-public>
@@ -480,11 +477,9 @@ export function AccountSettings({
                     ? UserRound
                     : value === 'Memory'
                       ? Brain
-                      : value === 'Trust'
-                        ? ShieldCheck
-                        : value === 'Appearance' || value === 'General'
-                          ? Sun
-                          : SlidersHorizontal;
+                      : value === 'Appearance' || value === 'General'
+                        ? Sun
+                        : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -492,17 +487,11 @@ export function AccountSettings({
                   type="button"
                   role="tab"
                   aria-selected={value === tab}
-                  aria-label={tabLabel(value)}
-                  aria-keyshortcuts={
-                    value === 'Memory'
-                      ? 'Meta+Y Control+Y'
-                      : value === 'Trust'
-                        ? 'Meta+I Control+I'
-                        : undefined
-                  }
+                  aria-label={value}
+                  aria-keyshortcuts={value === 'Memory' ? 'Meta+Y Control+Y' : undefined}
                   title={
-                    value === 'Memory' || value === 'Trust'
-                      ? `${tabLabel(value)} (${shortcutLabel(value === 'Memory' ? 'y' : 'i', /Mac|iPhone|iPad/.test(navigator.platform))})`
+                    value === 'Memory'
+                      ? `${value} (${shortcutLabel('y', /Mac|iPhone|iPad/.test(navigator.platform))})`
                       : value
                   }
                   aria-controls={`${id}-content`}
@@ -526,7 +515,7 @@ export function AccountSettings({
                   }}
                 >
                   <Icon size={24} aria-hidden="true" />
-                  <span>{tabLabel(value)}</span>
+                  <span>{value}</span>
                 </button>
               );
             })}
@@ -538,7 +527,7 @@ export function AccountSettings({
             aria-labelledby={`${id}-${tab}`}
           >
             <header className="account-settings-header" data-analytics-public>
-              <h3>{tabLabel(tab)}</h3>
+              <h3>{tab}</h3>
             </header>
             <div key={tab} className="account-settings-body" tabIndex={0}>
               {!account.local && tab === 'Profile' && (
@@ -681,7 +670,6 @@ export function AccountSettings({
               )}
               {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
               {tab === 'Memory' && <Memory />}
-              {tab === 'Trust' && <Trust />}
               {tab === 'Models' && (
                 <>
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />

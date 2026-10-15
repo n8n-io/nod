@@ -6,7 +6,7 @@ import type {
   VaultActivityReason,
 } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
-import { formatDayLabel, formatNumber, formatTime, useDateFormat } from '../lib/date-format';
+import { formatDayLabel, formatTime, useDateFormat } from '../lib/date-format';
 import { originLabel } from '../lib/vault-name';
 import { Button, Notice } from './ui';
 
@@ -81,8 +81,29 @@ function pill(entry: VaultActivityEntry): [string, string] {
   return [reasons[entry.reason], ''];
 }
 
-function times(count: number) {
-  return count === 1 ? 'once' : count === 2 ? 'twice' : `${formatNumber(count)} times`;
+export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): void }) {
+  const format = useDateFormat();
+  const Icon = icons[entry.action];
+  const [text, tone] = pill(entry);
+  const content = (
+    <>
+      <span className={`vault-glyph is-${entry.action}`} aria-hidden="true">
+        <Icon size={14} />
+      </span>
+      <span className="vault-use-text">
+        <b>{title(entry)}</b>
+        <span>{[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}</span>
+      </span>
+      <span className={`vault-pill ${tone}`}>{text}</span>
+    </>
+  );
+  return open ? (
+    <button type="button" className="vault-use" data-vault-activity={entry.id} onClick={open}>
+      {content}
+    </button>
+  ) : (
+    <div className="vault-use">{content}</div>
+  );
 }
 
 export function VaultActivityList({
@@ -104,41 +125,11 @@ export function VaultActivityList({
         <div key={label} className="vault-day">
           <h4>{label}</h4>
           <ul>
-            {items.map((entry) => {
-              const Icon = icons[entry.action];
-              const open = opener?.(entry);
-              const [text, tone] = pill(entry);
-              const content = (
-                <>
-                  <span className={`vault-glyph is-${entry.action}`} aria-hidden="true">
-                    <Icon size={14} />
-                  </span>
-                  <span className="vault-use-text">
-                    <b>{title(entry)}</b>
-                    <span>
-                      {[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}
-                    </span>
-                  </span>
-                  <span className={`vault-pill ${tone}`}>{text}</span>
-                </>
-              );
-              return (
-                <li key={entry.id}>
-                  {open ? (
-                    <button
-                      type="button"
-                      className="vault-use"
-                      data-vault-activity={entry.id}
-                      onClick={open}
-                    >
-                      {content}
-                    </button>
-                  ) : (
-                    <div className="vault-use">{content}</div>
-                  )}
-                </li>
-              );
-            })}
+            {items.map((entry) => (
+              <li key={entry.id}>
+                <VaultUse entry={entry} open={opener?.(entry)} />
+              </li>
+            ))}
           </ul>
         </div>
       ))}
@@ -203,55 +194,5 @@ export function VaultActivityPages({
         </Button>
       )}
     </>
-  );
-}
-
-export function VaultStatement({
-  activity,
-  opener,
-}: {
-  activity: VaultActivity;
-  opener(entry: VaultActivityEntry): (() => void) | undefined;
-}) {
-  const { signIns, payments, held } = activity.week;
-  return (
-    <div className="vault-statement">
-      <p className="statement-summary">
-        {signIns || payments ? (
-          <>
-            This week Otto
-            {signIns > 0 && (
-              <>
-                {' '}
-                submitted logins <b>{times(signIns)}</b>
-              </>
-            )}
-            {signIns > 0 && payments > 0 && ' and'}
-            {payments > 0 && (
-              <>
-                {' '}
-                submitted cards <b>{times(payments)}</b>
-              </>
-            )}
-            . Check the site for each final result.
-          </>
-        ) : (
-          'No login or card submission was confirmed this week.'
-        )}
-        {held > 0 && (
-          <>
-            {' '}
-            <b>
-              {held === 1 ? '1 attempt was held.' : `${formatNumber(held)} attempts were held.`}
-            </b>
-          </>
-        )}
-      </p>
-      {activity.entries.length > 0 && (
-        <section className="vault-days" aria-label="Activity">
-          <VaultActivityPages activity={activity} opener={opener} />
-        </section>
-      )}
-    </div>
   );
 }

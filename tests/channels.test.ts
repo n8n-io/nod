@@ -1501,7 +1501,7 @@ test(
       assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 2);
       await addReply(
         'channel:telegram:987:123456:10',
-        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/vault?add=card).',
+        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/trust?add=card).',
       );
       await addReply('channel:whatsapp:555000:wamid.good');
       await pool.query(
@@ -1548,7 +1548,7 @@ test(
         '351910000000',
       );
       assert.equal(JSON.stringify(sent).includes('private-token'), false);
-      assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
+      assert.equal(JSON.stringify(sent).includes('/trust?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
       assert.equal(sent.length, 4);

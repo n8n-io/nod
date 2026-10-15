@@ -149,9 +149,22 @@ export function createPiAgent(options: {
           onEvent: (event) =>
             observe(
               event.type === 'model_usage'
-                ? { ...event, costUsd: null, costSource: 'unavailable' }
+                ? {
+                    ...event,
+                    costUsd: null,
+                    estimateUsd: event.costUsd,
+                    costSource: 'unavailable',
+                  }
                 : event.type === 'provider_usage'
-                  ? { ...event, usage: { ...event.usage, costUsd: null, pricing: 'unavailable' } }
+                  ? {
+                      ...event,
+                      usage: {
+                        ...event.usage,
+                        costUsd: null,
+                        estimateUsd: event.usage.costUsd,
+                        pricing: 'unavailable',
+                      },
+                    }
                   : event,
             ),
         };

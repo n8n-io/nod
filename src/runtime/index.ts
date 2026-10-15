@@ -6,6 +6,7 @@ import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import type {
   Agent,
+  AgentEvent,
   AgentImage,
   AgentSession,
   AgentTool,
@@ -60,6 +61,8 @@ const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
+const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
+const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
   'apps',
   'delegate',
@@ -138,6 +141,15 @@ export function createAgentRuntime(dependencies: {
     let modelIncomplete = false;
     let completed = false;
     let lastReply = '';
+    let checkInSpent = context.checkIn?.spentUsd ?? 0;
+    let checkInBlocked = false;
+    let checkInStrikes = 0;
+    let checkInStopped = false;
+    const overBudget = () =>
+      context.checkIn !== undefined && checkInSpent >= context.checkIn.budgetUsd;
+    const countUsage = (event: AgentEvent) => {
+      if (event.type === 'model_usage') checkInSpent += event.costUsd ?? event.estimateUsd ?? 0;
+    };
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
     let streamId: string | undefined;
@@ -259,6 +271,12 @@ export function createAgentRuntime(dependencies: {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
         assertActive();
+        if (overBudget() && !reportingTools.has(name)) {
+          if (source === execution) checkInBlocked = true;
+          throw new Error(
+            `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to say in a line what is done and what is left, and ask whether to keep going.`,
+          );
+        }
         const id = randomUUID();
         const started = performance.now();
         const end = (fields: {
@@ -491,8 +509,9 @@ export function createAgentRuntime(dependencies: {
             timeZone: context.timeZone,
             runTool: (name, params, run, options) =>
               guard(name, params, run, { ...options, execution: source }),
-            shouldStop: () => stopped,
+            shouldStop: () => stopped || overBudget(),
             onEvent: (event) => {
+              countUsage(event);
               if (event.type === 'final') answer = event.text;
               if (event.type === 'error') failed = true;
               if (event.type === 'message_end' && event.status === 'incomplete') incomplete = true;
@@ -603,7 +622,12 @@ export function createAgentRuntime(dependencies: {
         workspace,
         timeZone: context.timeZone,
         runTool: guard,
-        shouldStop: () => stopped,
+        shouldStop: () => {
+          if (stopped) return true;
+          if (checkInBlocked) checkInStrikes++;
+          checkInBlocked = false;
+          return (checkInStopped = checkInStrikes >= 2);
+        },
         nextMessages:
           takeMessages &&
           (async () => {
@@ -613,9 +637,11 @@ export function createAgentRuntime(dependencies: {
               const { images, omitted } = await inline(message.attachments, budget);
               messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
             }
+            if (messages.length) checkInSpent = checkInStrikes = 0;
             return messages;
           }),
         onEvent: (event) => {
+          countUsage(event);
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
@@ -648,6 +674,10 @@ export function createAgentRuntime(dependencies: {
       await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
       await pendingReplies;
       signal.throwIfAborted();
+      if (checkInStopped && status === 'succeeded')
+        throw new Error(
+          `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
+        );
       if (modelFailed)
         throw new Error('The model request failed. Check the configured provider and model.');
       if (modelIncomplete && status === 'succeeded')

@@ -13,15 +13,7 @@ type SafeLink =
   | { href: string; kind: 'artifact' | 'external' | 'navigation' }
   | { href: string; kind: 'setup'; setup: SetupKind };
 
-const navigationPaths = new Set([
-  '/',
-  '/apps',
-  '/tasks',
-  '/memory',
-  '/trust',
-  '/channels',
-  '/vault',
-]);
+const navigationPaths = new Set(['/', '/apps', '/tasks', '/memory', '/trust', '/channels']);
 const connectionPath =
   /^\/apps\?connect=[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const e2eConsentPath =
@@ -57,8 +49,8 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     !absolute &&
     !localPath.test(value.split(/[?#]/, 1)[0]) &&
     !navigationPaths.has(value) &&
-    value !== '/vault?add=login' &&
-    value !== '/vault?add=card' &&
+    value !== '/trust?add=login' &&
+    value !== '/trust?add=card' &&
     value !== '/browser' &&
     !connectionPath.test(value) &&
     !e2eConsentPath.test(value)
@@ -79,9 +71,9 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     )
       return { href: url.pathname, kind: 'navigation' };
     if (!absolute || url.origin === base.origin) {
-      if (url.pathname === '/vault' && (url.search || url.hash))
+      if (url.pathname === '/trust' && (url.search || url.hash))
         return ['?add=login', '?add=card'].includes(url.search) && !url.hash
-          ? { href: `/vault${url.search}`, kind: 'setup', setup: 'vault' }
+          ? { href: `/trust${url.search}`, kind: 'setup', setup: 'vault' }
           : null;
       if (url.origin === base.origin && url.pathname === '/browser' && !url.search && !url.hash)
         return { href: '/browser', kind: 'setup', setup: 'browser' };

@@ -24,5 +24,6 @@ export interface UsageDetails {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   costUsd?: number | null;
+  estimateUsd?: number | null;
   pricing?: 'reported' | 'sdk_estimate' | 'unavailable';
 }
