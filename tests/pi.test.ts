@@ -1866,6 +1866,75 @@ test('saved tasks use their folder and return their final result without a coord
   }
 });
 
+test('Telegram task progress replies to its task and does not repeat its finished result', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-task-telegram-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const id = randomUUID();
+  const messageId = randomUUID();
+  const replies: Array<{ text: string; target?: string }> = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (options) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          const task = options.tools.find((tool) => tool.name === 'task')!;
+          await task.execute({ action: 'update', id, now: 'Check the output' });
+          await task.execute({ action: 'update', id, now: 'Check the output' });
+          await task.execute({ action: 'finish', id, status: 'done', result: 'Fixture checked' });
+          options.onEvent({ type: 'final', text: 'Fixture checked' });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      sessionId: id,
+      background: true,
+      channel: 'telegram:fixture',
+      taskContext: {
+        id,
+        title: 'Fixture',
+        brief: 'Check the output',
+        doneWhen: 'Checked',
+        revision: 1,
+        messageId,
+      },
+      task: async (input) => ({
+        id,
+        messageId,
+        title: 'Fixture',
+        doneWhen: 'Checked',
+        now: 'Check the output',
+        status: (input as { action: string }).action === 'finish' ? 'done' : 'working',
+        result: 'Fixture checked',
+        question: null,
+        waitingFor: [],
+        nextCheck: null,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+        closedAt:
+          (input as { action: string }).action === 'finish' ? new Date(0).toISOString() : null,
+      }),
+      reply: async (text, _id, target) => {
+        replies.push({ text, target });
+      },
+    });
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.result, undefined);
+    assert.equal(replies.length, 2);
+    assert.ok(replies.every((reply) => reply.target === messageId));
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test('an attached photo reaches a model that reads images and is listed as omitted for one that does not', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-images-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

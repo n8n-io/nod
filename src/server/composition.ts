@@ -1008,6 +1008,7 @@ async function initializeApplication(
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       activeThread: (client) => activeThread(client),
+      taskCommand: tasks.chatCommand,
       commandReply: async (command, client, threadId, link) => {
         const now = new Date();
         if (command === 'usage') {

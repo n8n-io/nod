@@ -11,6 +11,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import type { Schedule, ScheduleRun, Task, TaskDetail, TaskStatus } from '../../shared/contracts';
+import { taskHeadline, taskLabels } from '../../shared/task-status';
 import { PageTitle } from '../components/page-title';
 import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
@@ -20,17 +21,6 @@ import { desktopSettingsAvailable } from '../lib/desktop';
 import { post, errorMessage } from '../lib/api';
 import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
-const labels: Record<TaskStatus, string> = {
-  queued: 'Queued',
-  failed: 'Failed',
-  working: 'Working',
-  needs_you: 'Needs you',
-  waiting: 'Waiting',
-  scheduled: 'Checking back',
-  stalled: 'Stalled',
-  done: 'Done',
-  cancelled: 'Stopped',
-};
 const icons = {
   queued: Clock,
   failed: CircleAlert,
@@ -54,18 +44,6 @@ const order: TaskStatus[] = [
 const views = ['current', 'scheduled', 'previous'] as const;
 const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
-
-function headline(task: Task) {
-  if (closed(task)) return task.result || task.now;
-  if (task.status === 'needs_you')
-    return (
-      task.question ??
-      'Something stopped this before it finished. Check what happened, then tell Otto to continue.'
-    );
-  if (task.status === 'failed') return 'This task failed. Reply to continue, or stop the task.';
-  if (task.status === 'stalled') return 'Nothing is planned next. Tell Otto to keep going or stop.';
-  return task.now;
-}
 
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
@@ -114,7 +92,7 @@ export function TaskCard({
             aria-hidden="true"
             className={task.status === 'working' ? 'spin' : undefined}
           />
-          {labels[task.status]}
+          {taskLabels[task.status]}
         </span>
       </div>
       <p className="saved-plan-meta">
@@ -125,7 +103,7 @@ export function TaskCard({
             : `Started ${formatDateTime(task.createdAt, format)}`}
         </span>
       </p>
-      <p className="task-now">{headline(task)}</p>
+      <p className="task-now">{taskHeadline(task)}</p>
       {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
         <ul className="task-facts">
           {task.waitingFor.map((wait) => (
@@ -151,8 +129,11 @@ export function TaskCard({
       {Boolean(task.steps?.length) && (
         <ol className="task-steps">
           {task.steps!.map((step, index) => (
-            <li key={index} aria-current={index === task.stepIndex ? 'step' : undefined}>
-              {index < (task.stepIndex ?? 0) ? '✓ ' : ''}
+            <li
+              key={index}
+              aria-current={!closed(task) && index === task.stepIndex ? 'step' : undefined}
+            >
+              {task.status === 'done' || index < (task.stepIndex ?? 0) ? '✓ ' : ''}
               {step}
             </li>
           ))}

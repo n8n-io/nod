@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
+import { taskSummary } from '../shared/task-status.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
   abortTurns,
@@ -176,7 +177,7 @@ export function createTasks(options: {
        JOIN messages m ON m.owner_id=t.owner_id AND m.thread_id=u.thread_id
        LEFT JOIN turns mt ON mt.id=m.turn_id AND mt.owner_id=m.owner_id
        WHERE t.owner_id=$1 AND u.thread_id=$2 AND m.id=$3
-         AND (t.message_id=m.id OR mt.task_id=t.id) ORDER BY t.updated_at DESC LIMIT 1`,
+         AND (t.message_id=m.id OR mt.task_id=t.id OR m.reply_to_message_id=t.message_id) ORDER BY t.updated_at DESC LIMIT 1`,
         [ownerId, threadId, messageId],
       )
     ).rows[0];
@@ -286,11 +287,15 @@ export function createTasks(options: {
       id = randomUUID();
       const independent = current.session_id === turn.threadId;
       if (independent && !sourceMessageId) throw failure('A new task needs an owner request.');
-      const messageId = await insertAssistantMessage(client, turn, request.title);
+      const messageId = await insertAssistantMessage(
+        client,
+        turn,
+        `${independent ? 'Queued' : 'Working'} · ${request.title}\n${request.now}\n\nReply to this message to continue this task.`,
+      );
       const sessionId = independent ? id : current.session_id;
       await client.query(
-        `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,brief,now_text,steps,waiting_for,next_check)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,brief,now_text,steps,waiting_for,next_check,applied_revision)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           id,
           ownerId,
@@ -305,6 +310,7 @@ export function createTasks(options: {
           JSON.stringify(request.steps ?? []),
           JSON.stringify(request.waitingFor ?? []),
           request.nextCheck ?? null,
+          independent ? 0 : 1,
         ],
       );
       if (independent) {
@@ -438,6 +444,13 @@ export function createTasks(options: {
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id);
       CREATE INDEX IF NOT EXISTS turns_task ON turns(task_id) WHERE task_id IS NOT NULL;
+      WITH missing AS (
+        SELECT t.id,gen_random_uuid() AS message_id,t.owner_id,u.thread_id,t.title,t.created_at
+        FROM tasks t JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id WHERE t.message_id IS NULL
+      ), inserted AS (
+        INSERT INTO messages(id,owner_id,thread_id,role,text,created_at)
+        SELECT message_id,owner_id,thread_id,'assistant',title,created_at FROM missing RETURNING id
+      ) UPDATE tasks t SET message_id=m.message_id FROM missing m JOIN inserted i ON i.id=m.message_id WHERE t.id=m.id;
     `);
   }
 
@@ -514,6 +527,53 @@ export function createTasks(options: {
     refresh();
   }
 
+  async function chatCommand(
+    client: PoolClient,
+    command: 'tasks' | 'status' | 'stop',
+    replyToMessageId?: string,
+    hasReply = Boolean(replyToMessageId),
+  ): Promise<{
+    threadId: string;
+    replies: Array<{ text: string; replyToMessageId?: string }>;
+    afterCommit?: () => Promise<void>;
+  }> {
+    const thread = await lockThread(client);
+    const target = replyToMessageId
+      ? await resolveReply(client, thread.id, replyToMessageId)
+      : undefined;
+    if (hasReply && !target)
+      return {
+        threadId: thread.id,
+        replies: [
+          { text: 'Reply to a task message to select that task. Use /tasks to see open tasks.' },
+        ],
+      };
+    const cancelled =
+      command === 'stop'
+        ? target
+          ? await stop(client, target.task_id, thread.id)
+          : await cancelTurns(client, thread.id)
+        : undefined;
+    const tasks = await read(client, target ? { id: target.task_id, closed: true } : {});
+    return {
+      threadId: thread.id,
+      replies:
+        command === 'stop' && !target
+          ? [{ text: 'Stopped active work and closed open tasks.' }]
+          : tasks.length
+            ? tasks.map((task) => ({
+                text:
+                  taskSummary(task, Boolean(target)) +
+                  (target
+                    ? ''
+                    : '\n\nReply to continue. Reply /status for details or /stop to stop this task.'),
+                replyToMessageId: task.messageId ?? undefined,
+              }))
+            : [{ text: 'No open tasks.' }],
+      afterCommit: cancelled ? () => afterStop(cancelled) : undefined,
+    };
+  }
+
   async function execute(turn: TurnRef, raw: unknown, sourceMessageId: string | null) {
     const result = await transaction(async (client) => {
       await lockThread(client);
@@ -530,6 +590,7 @@ export function createTasks(options: {
     inherit,
     context,
     resolveReply,
+    chatCommand,
     read: () => read(pool, { closed: true }),
     registerRoutes,
   };

@@ -1,6 +1,6 @@
 ---
 title: Track tasks
-description: See what Otto is working on, what it's waiting for, what's scheduled and what's done on the Tasks page.
+description: See task status in web chat, on the Tasks page and in Telegram.
 sidebar:
   order: 2
 ---
@@ -42,6 +42,28 @@ Complete reports can be Markdown documents. Otto sends the file and a short resu
 
 A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
 
+## Telegram without a task page
+
+Telegram shows each task as a text message. The first message shows its name and status. Progress and completion messages reply to that message. A progress message shows the current step. A question or approval request also stays linked to the task.
+
+```text
+Working · Compare travel options
+Check the train times
+Step 2/3: Compare travel time and price
+```
+
+Use Telegram's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands work without a model request:
+
+| Command   | Result                                                                                                  |
+| --------- | ------------------------------------------------------------------------------------------------------- |
+| `/tasks`  | List open tasks and their current state.                                                                |
+| `/status` | List open tasks. Reply to a task message with `/status` to see its goal, steps and current state.       |
+| `/stop`   | Stop all active work and close open tasks. Reply to a task message with `/stop` to stop only that task. |
+
+The task list sends one message per task. You can reply to that message, the task's first message, a progress message, a question, a file, a result or a status response. If Otto cannot match a reply to a task, `/stop` asks you to select a task. It does not stop all work.
+
+Telegram and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use Otto's private forms.
+
 ## Statuses
 
 | Status            | Meaning                                                               |
@@ -72,11 +94,11 @@ stateDiagram-v2
   needs --> Stopped: you move on
 ```
 
-A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed or stopped task stays **Needs you** until you continue that work. Tell Otto to stop a task and it closes the card as **Stopped**.
+A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed task shows **Failed**. A stopped task shows **Stopped**. Reply to the task to continue the same saved session.
 
-## Tasks only report
+## Task status and permission
 
-A card is a view of the work. Apart from **Schedule task**, it doesn't schedule anything, grant any permission or post to chat. Otto's planned check-ins are ordinary [schedules](/use/schedules/), and every action still goes through the [trust check](/trust/approvals/).
+A card is a view of the work. It does not grant permission or schedule a check. **Schedule task** creates an ordinary [schedule](/use/schedules/). Every outside action still goes through the [trust check](/trust/approvals/).
 
 To change a task, tell Otto in [chat](/use/chat/).
 

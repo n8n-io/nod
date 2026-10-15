@@ -1265,6 +1265,7 @@ async function outboxFixture(t: TestContext) {
     messageId: string,
     chat: string,
     replyToMessageId?: string,
+    text = `Fixture request ${messageId}`,
   ) => {
     incoming.push({
       channelId: 'telegram',
@@ -1272,7 +1273,7 @@ async function outboxFixture(t: TestContext) {
       senderId,
       messageId,
       threadId: chat,
-      text: `Fixture request ${messageId}`,
+      text,
       replyToMessageId,
       sentAt: new Date(Date.now() - 60_000 + 1000 * sequence++),
     });
@@ -1361,6 +1362,57 @@ test(
         attempts,
       );
       assert.equal(posts.length, 5);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'Telegram task commands keep native reply targets, send receipts once and do not start a model turn',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const anchor = randomUUID();
+    const calls: Array<{ command: string; target?: string; hasReply?: boolean }> = [];
+    let commits = 0;
+    const channels = await create({
+      taskCommand: async (_client, command, target, hasReply) => {
+        calls.push({ command, target, hasReply });
+        return {
+          threadId,
+          replies: [{ text: 'Fixture task status', replyToMessageId: target }],
+          afterCommit: async () => {
+            assert.equal(
+              (await pool.query("SELECT state FROM channel_inbox WHERE text='/stop'")).rows[0]
+                .state,
+              'submitted',
+            );
+            commits++;
+          },
+        };
+      },
+    });
+    try {
+      receive('111', 'initial', 'chat-a');
+      await channels.drain();
+      await reply((await turnOf('initial')).turn_id, 'Task started', anchor, 0);
+      await channels.drain();
+      receive('111', 'stop-task', 'chat-a', 'provider-1-file', '/stop');
+      await channels.drain();
+      assert.deepEqual(calls, [{ command: 'stop', target: anchor, hasReply: true }]);
+      assert.equal((await turnOf('stop-task')).turn_id, null);
+      assert.equal(posts.at(-1)!.replyToMessageId, 'provider-1');
+      assert.equal(commits, 1);
+      await channels.drain();
+      assert.equal(commits, 1);
+      receive('222', 'foreign-stop', 'chat-a', 'provider-1', '/stop');
+      await channels.drain();
+      assert.deepEqual(calls.at(-1), { command: 'stop', target: undefined, hasReply: true });
+      receive('111', 'list-tasks', 'chat-a', undefined, '/tasks@fixture_bot');
+      await channels.drain();
+      assert.deepEqual(calls.at(-1), { command: 'tasks', target: undefined, hasReply: false });
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 1);
     } finally {
       await channels.close();
     }

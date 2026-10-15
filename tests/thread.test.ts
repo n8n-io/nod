@@ -306,6 +306,21 @@ test(
       },
       runTurn: async (context) => {
         runs.push(context);
+        if (context.prompt === 'background-task-finish-fixture') {
+          const task = (await context.task!({
+            action: 'start',
+            title: 'Background fixture',
+            doneWhen: 'Fixture checked',
+            now: 'Checking',
+          })) as Task;
+          await context.task!({
+            action: 'finish',
+            id: task.id,
+            status: 'done',
+            result: 'Fixture checked',
+          });
+          return { status: 'succeeded' };
+        }
         if (context.prompt === 'dispatch-tasks-fixture') {
           if (!context.taskContext) {
             for (const title of ['Task A', 'Task B'])
@@ -1616,6 +1631,36 @@ test(
             assert.equal(new Set(workers.map((run) => run.sessionId)).size, 2);
             assert.ok(workers.every((run) => run.sessionId !== started.threadId));
             assert.equal(new Set(workers.map((run) => run.workspacePath)).size, 1);
+            const command = async (
+              action: 'tasks' | 'status' | 'stop',
+              replyId?: string,
+              hasReply = Boolean(replyId),
+            ) => {
+              const result = await transaction(
+                (client) => tasks.chatCommand(client, action, replyId, hasReply),
+                db.pool,
+              );
+              await result.afterCommit?.();
+              return result;
+            };
+            assert.ok(
+              (await command('tasks')).replies.some(
+                (reply) => reply.text.includes('Task A') && reply.replyToMessageId === a.messageId,
+              ),
+            );
+            const taskStatus = await command('status', a.messageId!);
+            assert.equal(taskStatus.replies[0].replyToMessageId, a.messageId);
+            const statusMessageId = randomUUID();
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,$2,$3,'assistant',$4,$5)",
+              [statusMessageId, ownerId, started.threadId, taskStatus.replies[0].text, a.messageId],
+            );
+            assert.equal(
+              (await command('status', statusMessageId)).replies[0].replyToMessageId,
+              a.messageId,
+            );
+            await command('stop', randomUUID(), true);
+            assert.ok(workers.every((worker) => !worker.signal.aborted));
             const chat = await userMessages.submit('A small separate question');
             await waitFor(settled(chat.turnId));
             assert.equal(
@@ -1646,6 +1691,10 @@ test(
               ),
             );
             assert.equal((await request('POST', `/api/tasks/${a.id}/stop`)).statusCode, 200);
+            assert.equal(
+              (await command('status', a.messageId!)).replies[0].text.startsWith('Stopped'),
+              true,
+            );
             await waitFor(() => workerA.signal.aborted);
             const workerB = workers.find((run) => run.taskContext!.id === b.id)!;
             assert.equal(workerB.signal.aborted, false);
@@ -1668,10 +1717,27 @@ test(
               runs.find((run) => run.turnId === continued.turnId)!.sessionId,
               workerB.sessionId,
             );
-            await thread.stopThread();
+            await command('stop', b.messageId!);
             assert.equal(
               (await tasks.read()).find((task) => task.id === b.id)!.status,
               'cancelled',
+            );
+            const background = await thread.enqueueTurn('background-task-finish-fixture', {
+              source: 'event',
+            });
+            await waitFor(settled(background));
+            const adopted = (await tasks.read()).find(
+              (task) => task.title === 'Background fixture',
+            )!;
+            assert.equal(adopted.status, 'done');
+            assert.equal(runs.find((run) => run.turnId === background)!.sessionId, background);
+            await db.pool.query('UPDATE tasks SET message_id=NULL WHERE id=$1', [adopted.id]);
+            await tasks.initialize();
+            const migrated = (await tasks.read()).find((task) => task.id === adopted.id)!;
+            assert.ok(migrated.messageId);
+            assert.equal(
+              (await command('status', migrated.messageId!)).replies[0].replyToMessageId,
+              migrated.messageId,
             );
           } finally {
             releaseA();

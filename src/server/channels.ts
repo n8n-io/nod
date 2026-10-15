@@ -17,6 +17,7 @@ import { loopbackHost } from '../shared/loopback.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
+const taskCommand = /^\/(tasks|status|stop)(?:@[A-Za-z0-9_]+)?$/i;
 
 interface ChannelOptions {
   admission?: WorkAdmission;
@@ -57,6 +58,16 @@ interface ChannelOptions {
     threadId: string | null,
     link: string | null,
   ) => Promise<{ text: string; attachments: Artifact[] }>;
+  taskCommand?: (
+    client: PoolClient,
+    command: 'tasks' | 'status' | 'stop',
+    replyToMessageId?: string,
+    hasReply?: boolean,
+  ) => Promise<{
+    threadId: string;
+    replies: Array<{ text: string; replyToMessageId?: string }>;
+    afterCommit?: () => Promise<void>;
+  }>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -198,6 +209,30 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let drainRequested = false;
   let lastError: string | null = null;
 
+  async function saveReply(
+    client: PoolClient,
+    sourceId: string,
+    threadId: string | null,
+    reply: { text: string; attachments?: Artifact[]; replyToMessageId?: string },
+  ) {
+    const replyId = randomUUID();
+    await client.query(
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments,reply_to_message_id) VALUES($1,$2,'assistant',$3,$4,$5,$6)",
+      [
+        replyId,
+        ownerId,
+        reply.text,
+        threadId,
+        JSON.stringify(reply.attachments ?? []),
+        reply.replyToMessageId ?? null,
+      ],
+    );
+    await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
+      replyId,
+      sourceId,
+    ]);
+  }
+
   async function replyWithoutTurn(
     client: PoolClient,
     inbox: ChannelIdentity & {
@@ -238,15 +273,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           ])
         ).rows[0]?.id ?? null);
     const reply = await compose(thread);
-    const replyId = randomUUID();
-    await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'assistant',$3,$4,$5)",
-      [replyId, ownerId, reply.text, thread, JSON.stringify(reply.attachments ?? [])],
-    );
-    await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
-      replyId,
-      inbox.sourceId,
-    ]);
+    await saveReply(client, inbox.sourceId, thread, reply);
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
   }
 
@@ -440,10 +467,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           )
         ).rows[0]?.message_id as string | undefined)
       : undefined;
+    const command =
+      pending.provider === 'telegram' && options.taskCommand
+        ? (taskCommand.exec(pending.text.trim())?.[1]?.toLowerCase() as
+            'tasks' | 'status' | 'stop' | undefined)
+        : undefined;
     const answer =
-      pending.provider_reply_id && !replyToMessageId
+      command || (pending.provider_reply_id && !replyToMessageId)
         ? undefined
         : await options.answer?.(pending.text, channel, replyToMessageId).catch(() => undefined);
+    let afterCommit: (() => Promise<void>) | undefined;
     const submitted = await transaction(async (client) => {
       const result = await client.query<InboxRow>(
         "SELECT * FROM channel_inbox WHERE state='pending' AND source_id=$1 AND owner_id=$2 FOR UPDATE SKIP LOCKED",
@@ -457,6 +490,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           [row.source_id, ownerId],
         );
         return false;
+      }
+      if (command) {
+        const reply = await options.taskCommand!(
+          client,
+          command,
+          replyToMessageId,
+          Boolean(row.provider_reply_id),
+        );
+        for (const message of reply.replies)
+          await saveReply(client, row.source_id, reply.threadId, message);
+        await client.query(
+          "UPDATE channel_inbox SET state='submitted',channel=$3 WHERE source_id=$1 AND owner_id=$2",
+          [row.source_id, ownerId, channel],
+        );
+        afterCommit = reply.afterCommit;
+        return true;
       }
       const messageId = row.message_id ?? randomUUID();
       const turnId = await options.submit(
@@ -475,6 +524,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       return true;
     }, pool);
     if (submitted === undefined) return false;
+    await afterCommit?.();
     if (submitted) options.refresh?.();
     return true;
   }
