@@ -50,12 +50,13 @@ The workspace and browser have separate networks, no access to your home folder,
 
 The app download is small. On first launch, Otto downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
 
-- Otto checks the archive size and SHA-256 before it extracts anything, then checks every extracted file.
+- Otto checks the archive size and SHA-256 before it extracts anything.
 - On a Mac, before it installs, Otto checks free space for the extracted files plus 512 MiB, and the archive size when it downloads.
-- On a Mac, verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only.
-- An app update reuses the runtime when it hasn't changed. Old versions stay on disk; Otto doesn't clean them up yet.
+- On a Mac, Otto checks every extracted file. Verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only. Old versions stay on disk; Otto doesn't clean them up yet.
+- On Windows, Otto imports the pack into its WSL distribution, then deletes the archive.
+- An app update reuses the runtime when it hasn't changed.
 
-If a download isn't available, you can import the matching `Otto-Runtime-darwin-<arch>-<id>.tar.gz` from the release page by hand.
+If a download isn't available, you can import the matching `Otto-Runtime-darwin-<arch>-<id>.tar.gz` from the release page by hand. On Windows, put `Otto-Runtime-win32-x64.tar.gz` from the same release next to the installer and run it again.
 
 ## Access and keys
 
@@ -110,7 +111,7 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
-On a Mac, Otto downloads the new app and, when it changed, the new runtime pack before it offers the restart. On Windows, it downloads the new installer and runtime pack, or reuses the installed pack when it hasn't changed. The restart runs the installer in the background and opens Otto again.
+Otto downloads the new app or installer and, when it changed, the new runtime pack before it offers the restart. On Windows, the restart runs the installer in the background and opens Otto again.
 
 Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
 
@@ -123,7 +124,7 @@ Otto keeps its profile, credentials and container volumes. A runtime update repl
 | System  | Windows 11 x64 with hardware virtualization                                                  |
 | WSL     | WSL 2 with default localhost forwarding or mirrored networking. Otto offers **Install WSL**. |
 | Disk    | At least 20 GB free                                                                          |
-| Signing | Unsigned. Check both files against `SHA256SUMS` before you install.                          |
+| Signing | Unsigned. Check the installer against `SHA256SUMS` before you install.                       |
 
 Inside Otto's distribution, drive mounts and Windows process access are turned off. Closing the window keeps Otto in the tray. **Quit Otto** stops only its own distribution.
 

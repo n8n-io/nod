@@ -25,11 +25,11 @@ flowchart TD
 
 Each release is named **Otto v0.x.x** and links these installers:
 
-| Platform          | Installer                                                           | Updates   |
-| ----------------- | ------------------------------------------------------------------- | --------- |
-| Mac Apple silicon | `Otto-arm64.dmg`                                                    | Automatic |
-| Mac Intel         | `Otto-x64.dmg`                                                      | Automatic |
-| Windows x64       | `Otto-Setup-x64.exe` with `Otto-Runtime-win32-x64.tar.gz` (preview) | Automatic |
+| Platform          | Installer                      | Updates   |
+| ----------------- | ------------------------------ | --------- |
+| Mac Apple silicon | `Otto-arm64.dmg`               | Automatic |
+| Mac Intel         | `Otto-x64.dmg`                 | Automatic |
+| Windows x64       | `Otto-Setup-x64.exe` (preview) | Automatic |
 
 Mac ZIP files, runtime packs, checksums, the public certificate and update metadata stay on the same release as supporting assets.
 
@@ -127,7 +127,7 @@ Drafts are never offered to the installer or the updater.
 
 Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or ChatGPT plan. They copy Otto to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
 
-On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex` in PowerShell. To install by hand, they download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder, keep the runtime pack compressed, then run the installer. After that, Otto updates itself.
+On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/otto/install-windows | iex` in PowerShell, or download and run `Otto-Setup-x64.exe`. The first start downloads the runtime, unless `Otto-Runtime-win32-x64.tar.gz` sits next to the installer. After that, Otto updates itself.
 
 | Situation                       | What to know                                                                                                                                                                                       |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

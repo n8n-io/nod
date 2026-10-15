@@ -30,11 +30,6 @@ Function .onInit
     SetErrorLevel 1
     Abort
   ${EndIf}
-  IfFileExists "$EXEDIR\Otto-Runtime-win32-x64.tar.gz" runtime_found
-    MessageBox MB_ICONSTOP "Extract both download files into one folder, then run this installer again." /SD IDOK
-    SetErrorLevel 1
-    Abort
-  runtime_found:
 FunctionEnd
 
 Function CheckInstallDirectory
@@ -74,14 +69,14 @@ Section "Otto"
   directory_marked:
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   File /r "${APP_DIR}\*"
-  SetOutPath "$INSTDIR\resources\engine\windows-runtime"
-  CopyFiles /SILENT "$EXEDIR\Otto-Runtime-win32-x64.tar.gz" "$INSTDIR\resources\engine\windows-runtime\guest.tar.gz"
-  IfErrors 0 runtime_copied
-    MessageBox MB_ICONSTOP "Otto could not copy its runtime. Check free disk space, then run this installer again." /SD IDOK
-    SetErrorLevel 1
-    Abort
+  IfFileExists "$EXEDIR\Otto-Runtime-win32-x64.tar.gz" 0 runtime_copied
+    ClearErrors
+    CopyFiles /SILENT "$EXEDIR\Otto-Runtime-win32-x64.tar.gz" "$INSTDIR\resources\engine\windows-runtime\guest.tar.gz"
+    IfErrors 0 runtime_copied
+      MessageBox MB_ICONSTOP "Otto could not copy its runtime. Check free disk space, then run this installer again." /SD IDOK
+      SetErrorLevel 1
+      Abort
   runtime_copied:
-  SetOutPath "$INSTDIR"
   CreateDirectory "$SMPROGRAMS\Otto"
   CreateShortcut "$SMPROGRAMS\Otto\Otto.lnk" "$INSTDIR\Otto.exe"
   CreateShortcut "$SMPROGRAMS\Otto\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
