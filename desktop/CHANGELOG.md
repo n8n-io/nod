@@ -2,6 +2,8 @@
 
 ## 0.1.13 - 2026-10-15
 
+Mac builds are now signed with n8n's Developer ID and notarized by Apple, so macOS opens them without **Open Anyway**. Otto 0.1.12 and earlier can't update to this version on its own: download it and replace Otto in Applications once, or run the Terminal installer. Your data is kept.
+
 ### Features
 
 - **desktop:** Sign and notarize Mac builds with n8n's Developer ID. [#274](https://github.com/n8n-io/otto/pull/274) (ecfb68e)
