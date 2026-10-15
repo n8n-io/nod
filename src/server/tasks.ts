@@ -350,7 +350,8 @@ export function createTasks(options: {
           ? await client.query(
               `UPDATE tasks SET now_text=COALESCE($3,now_text),steps=COALESCE($4,steps),step_index=COALESCE($5,step_index),
            waiting_for=COALESCE($6,waiting_for),next_check=COALESCE($7,next_check),updated_at=now()
-           WHERE id=$1 AND owner_id=$2 AND state='open'`,
+           WHERE id=$1 AND owner_id=$2 AND state='open'
+             AND COALESCE($5,step_index)<GREATEST(jsonb_array_length(COALESCE($4,steps)),1)`,
               [
                 id,
                 ownerId,
@@ -367,7 +368,9 @@ export function createTasks(options: {
               [id, ownerId, request.status, request.result],
             );
       if (!updated.rowCount)
-        throw failure('The task is closed or has an owner update to read before it can finish.');
+        throw failure(
+          'The task is closed, its step index is out of range, or it has an owner update to read.',
+        );
     }
     return (await read(client, { id, closed: true }))[0];
   }

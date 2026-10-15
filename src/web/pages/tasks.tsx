@@ -101,43 +101,46 @@ export function TaskCard({
       className="task-preview"
       data-status={task.status}
       aria-labelledby={headingId}
+      tabIndex={-1}
       data-message-id={onReply ? task.messageId : undefined}
     >
-      <button
-        type="button"
-        className="task-preview-head"
-        aria-expanded={expanded}
-        aria-controls={`${headingId}-body`}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span className="task-preview-top">
-          <span className="task-preview-title" id={headingId}>
-            {task.title}
-          </span>
-          <span className="task-status" data-status={task.status}>
-            <Icon
-              size={16}
-              aria-hidden="true"
-              className={task.status === 'working' ? 'spin' : undefined}
-            />
-            {taskLabels[task.status]}
-          </span>
-          {!steps.length && chevron}
-        </span>
-        <span className="task-preview-line">{line}</span>
-        {steps.length > 0 && (
-          <span className="task-preview-foot">
-            <span className="task-steps-bar" aria-hidden="true">
-              {steps.map((_, index) => (
-                <i key={index} data-state={state(index)} />
-              ))}
+      <h2 className="task-preview-heading">
+        <button
+          type="button"
+          className="task-preview-head"
+          aria-expanded={expanded}
+          aria-controls={`${headingId}-body`}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span className="task-preview-top">
+            <span className="task-preview-title" id={headingId}>
+              {task.title}
             </span>
-            <span className="task-preview-count">
-              {completed} of {steps.length} steps {chevron}
+            <span className="task-status" data-status={task.status}>
+              <Icon
+                size={16}
+                aria-hidden="true"
+                className={task.status === 'working' ? 'spin' : undefined}
+              />
+              {taskLabels[task.status]}
             </span>
+            {!steps.length && chevron}
           </span>
-        )}
-      </button>
+          <span className="task-preview-line">{line}</span>
+          {steps.length > 0 && (
+            <span className="task-preview-foot">
+              <span className="task-steps-bar" aria-hidden="true">
+                {steps.map((_, index) => (
+                  <i key={index} data-state={state(index)} />
+                ))}
+              </span>
+              <span className="task-preview-count">
+                {completed} of {steps.length} steps {chevron}
+              </span>
+            </span>
+          )}
+        </button>
+      </h2>
       <div className="task-preview-body" id={`${headingId}-body`} hidden={!expanded}>
         {!onReply && task.status === 'needs_you' && task.question && (
           <div className="task-preview-question">

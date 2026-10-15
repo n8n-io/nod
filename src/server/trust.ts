@@ -51,7 +51,8 @@ export function createTrust(options: {
       await pool.query<{ text: string }>(
         `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
          AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
-         AND ($5::uuid IS NULL OR id=(SELECT reply_to_message_id FROM messages WHERE id=$4 AND owner_id=$1) OR turn_id IN (SELECT u.id FROM turns u WHERE u.owner_id=$1 AND to_jsonb(u)->>'task_id'=$5::text))
+         AND (($5::uuid IS NULL AND turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=messages.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL))
+           OR ($5::uuid IS NOT NULL AND (id=(SELECT reply_to_message_id FROM messages WHERE id=$4 AND owner_id=$1) OR turn_id IN (SELECT u.id FROM turns u WHERE u.owner_id=$1 AND to_jsonb(u)->>'task_id'=$5::text))))
          ORDER BY created_at DESC,id DESC LIMIT 1`,
         [ownerId, threadId, latest.created_at, latest.id, taskId],
       )

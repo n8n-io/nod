@@ -200,6 +200,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
   CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC)`);
   await pool.query(
+    `UPDATE messages m SET delivered_channel=i.channel FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+    WHERE m.id=o.message_id AND m.owner_id=$1 AND i.owner_id=$1 AND m.turn_id IS NULL AND m.delivered_channel IS NULL AND o.state='sent'`,
+    [ownerId],
+  );
+  await pool.query(
     "UPDATE channel_outbox o SET state='uncertain',reason='interrupted_send',updated_at=now() FROM channel_inbox i WHERE o.source_id=i.source_id AND i.owner_id=$1 AND o.state='sending'",
     [ownerId],
   );
@@ -654,8 +659,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         ...(attachments ? { attachments } : {}),
       });
       await pool.query(
-        "UPDATE channel_outbox SET state='sent',provider_message_id=$2,provider_message_ids=$3,updated_at=now() WHERE message_id=$1",
-        [row.message_id, sent.id, sent.ids ?? [sent.id]],
+        `WITH sent AS (UPDATE channel_outbox SET state='sent',provider_message_id=$2,provider_message_ids=$3,updated_at=now() WHERE message_id=$1 RETURNING message_id)
+         UPDATE messages m SET delivered_channel=$4 FROM sent WHERE m.id=sent.message_id AND m.owner_id=$5 AND m.turn_id IS NULL`,
+        [row.message_id, sent.id, sent.ids ?? [sent.id], conversationChannel(row), ownerId],
       );
     } catch (cause) {
       logFailure('channel_send_failed', cause);

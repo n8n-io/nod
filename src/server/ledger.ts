@@ -25,6 +25,7 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
   const id: string = row.source_id ?? '';
   const first = (text: string | null) => text?.trim().split('\n')[0]?.slice(0, 120);
   if (row.source === 'user') return { source: 'chat', title: first(row.text) || 'Your message' };
+  if (row.source === 'task') return { source: 'task', title: first(row.text) || 'Task work' };
   if (row.source === 'schedule')
     return { source: 'schedule', title: first(row.schedule) || 'Scheduled task' };
   if (row.source === 'resume')

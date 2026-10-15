@@ -520,6 +520,25 @@ test(
             return { status: 'succeeded' };
           }
           if (context.prompt === 'task-start-fixture') {
+            await assert.rejects(
+              report({
+                action: 'update',
+                id: context.taskContext!.id,
+                steps: ['Read', 'Check'],
+                stepIndex: 2,
+              }),
+              /step index/,
+            );
+            await report({
+              action: 'update',
+              id: context.taskContext!.id,
+              steps: ['Read', 'Check'],
+              stepIndex: 1,
+            });
+            await assert.rejects(
+              report({ action: 'update', id: context.taskContext!.id, steps: ['Check'] }),
+              /step index/,
+            );
             await report({
               action: 'update',
               id: context.taskContext!.id,

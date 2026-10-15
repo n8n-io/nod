@@ -15,6 +15,7 @@ import {
 const day = 86_400_000;
 const sources: Record<TrustSource, { icon: typeof Zap; label: string }> = {
   chat: { icon: MessageCircle, label: '' },
+  task: { icon: MessageCircle, label: 'Task' },
   schedule: { icon: CalendarClock, label: 'Schedule' },
   event: { icon: Zap, label: '' },
   check: { icon: ScanSearch, label: 'Activity check' },

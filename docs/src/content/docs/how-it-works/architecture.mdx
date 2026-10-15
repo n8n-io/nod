@@ -31,7 +31,7 @@ flowchart TD
 
 The `tasks` table is the task ledger. It owns the goal, completion condition, session link, source message, progress, update revision and result. `turns`, `messages` and `turn_events` retain execution, owner input and activity. The UI reads these records. A model-written file is not a second task ledger.
 
-Each task works in `tasks/<task ID>/` in the same sandbox workspace. Its `drafts/` and `outputs/` folders hold files. `shared/` holds common files. These folders organize work; they are not separate security boundaries. Each session has its own saved transcript and browser. Owner memory and private transcripts stay outside the sandbox.
+Each task works in `tasks/<task ID>/` in the same sandbox workspace. Its `drafts/` and `outputs/` folders hold files. `shared/` holds common files. These folders organize work; they are not separate security boundaries. Chat and background sessions each have a saved transcript and browser. Delegate subagents use temporary in-memory sessions and their own browsers. Owner memory and private transcripts stay outside the sandbox.
 
 Shared storage does not update an active model context. The server delivers each addressed owner message to the selected task sessions. A revision records delivery at a model boundary. A task cannot finish while an owner update remains queued. Sessions load current owner memory and task state when they start or continue. Shared reports and files provide information, not permission.
 

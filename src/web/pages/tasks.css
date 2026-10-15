@@ -138,6 +138,10 @@
   outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
+.task-preview-heading {
+  margin: 0;
+  font: inherit;
+}
 .task-preview-top {
   display: flex;
   align-items: center;
@@ -304,7 +308,8 @@
   .tasks-page .task-preview-body {
     padding: 16px;
   }
-  .task-preview-actions .button {
+  .task-preview-actions .button,
+  .tasks-page .saved-plan-footer .button {
     min-height: 40px;
   }
 }

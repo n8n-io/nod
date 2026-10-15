@@ -22,7 +22,7 @@ The checker is your selected model at its fastest setting. It checks every app a
 | A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat |
 | The action and its arguments as Otto sends them                                 | Other people's words as yours            |
 
-For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
+For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
 
 Only your words carry authority. A web page or email can't argue for an action, because the checker never reads it.
 
@@ -62,6 +62,7 @@ Reply yes to go ahead, no to skip it, or tell me what to change.
 ```
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
+- A later status message in the same reply channel blocks a bare yes. A status in another channel does not block it. On web, a message that arrived after your displayed view does not replace the question you saw. Reply directly to the question to select it.
 - The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
 - A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and Otto treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.

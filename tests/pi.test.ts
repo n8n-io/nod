@@ -1732,6 +1732,7 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
   );
   assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
   assert.equal(existsSync(join(directory, 'rewrite-completed')), false);
+  await assert.rejects(run('bash', { command: 'sleep 2', timeout: 1 }), /timed out/);
 });
 
 // Runtime: credential guard in observations, one active turn, stop and shutdown drain.
@@ -1897,7 +1898,7 @@ test('Telegram task progress replies to its task and does not repeat its finishe
       turnId: randomUUID(),
       sessionId: id,
       background: true,
-      channel: 'telegram:fixture',
+      channel: 'telegram',
       taskContext: {
         id,
         title: 'Fixture',

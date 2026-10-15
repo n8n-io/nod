@@ -234,8 +234,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
             `if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]${invocationWrapper.test(command) ? ' && [ "$otto_rewrite" = "rtk $otto_command" ]' : ''}; then otto_command=$otto_rewrite; fi`,
           ]
         : []),
-      'start=$(date +%s)',
-      `timeout -k 5 ${seconds} bash -c "$otto_command" > ${quote(file)} 2>&1 < /dev/null`,
+      `timeout -k 5 ${seconds} bash -c 'bash -c "$1" > "$2" 2>&1 < /dev/null; code=$?; printf "%s" "$code" > "$3"; exit "$code"' otto "$otto_command" ${quote(file)} ${quote(`${file}.exit`)}`,
       'code=$?',
       `size=$(($(wc -c < ${quote(file)})))`,
       `if [ "$size" -gt ${streamBytes} ]; then`,
@@ -244,7 +243,8 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       `  tail -c ${streamBytes / 2} ${quote(file)}`,
       `  printf '\\n\\n[Complete output (%s bytes): %s]\\n' "$size" ${quote(file)}`,
       `else cat -- ${quote(file)}; rm -f -- ${quote(file)}; fi`,
-      `if [ "$code" -eq 124 ] && [ $(($(date +%s) - start)) -ge ${seconds} ]; then printf %s ${quote(marker)}; fi`,
+      `if [ "$code" -eq 124 ] && [ ! -f ${quote(`${file}.exit`)} ]; then printf %s ${quote(marker)}; fi`,
+      `rm -f -- ${quote(`${file}.exit`)}`,
       'exit $code',
     ].join('\n');
     const chunks: Buffer[] = [];

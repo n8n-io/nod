@@ -1,4 +1,4 @@
-export type TrustSource = 'chat' | 'schedule' | 'event' | 'check' | 'resume';
+export type TrustSource = 'chat' | 'task' | 'schedule' | 'event' | 'check' | 'resume';
 
 export interface TrustEntry {
   id: string;

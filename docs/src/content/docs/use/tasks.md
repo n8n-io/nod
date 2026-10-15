@@ -30,7 +30,7 @@ Otto starts a saved task session for independent work with a goal and a completi
 | **Next check** | When Otto will look again                                   |
 | **Done when**  | What finished looks like                                    |
 
-The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and a segmented step bar. Select the preview to open its steps, goal and controls in place. Select it again to close the details. Inside the details, select **Show activity** to inspect tool and helper activity. This view does not show private model reasoning.
+The same compact task preview appears in chat and on the Tasks page. It shows the title, status, current activity and, when steps are available, a segmented step bar. Select the preview to open its available steps and controls in place. Select it again to close the details. Inside the details, select **Show activity** to inspect tool and helper activity. This view does not show private model reasoning.
 
 ![Two compact task previews in chat, one Working and one Needs you.](../../../assets/screens/task-sessions-chat.png)
 

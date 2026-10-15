@@ -90,6 +90,7 @@ export async function initializeDatabase() {
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
     DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema=current_schema() AND table_name='turns' AND column_name='handoff_browser_id') THEN

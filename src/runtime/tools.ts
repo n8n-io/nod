@@ -388,7 +388,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now} starts an independent session from chat. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} closes your task after you verify doneWhen. list returns open tasks. reply {ids} sends the exact current owner message to those tasks. stop {id} stops one task. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
+    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now} starts an independent session from chat. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those tasks. stop {id} stops one task from chat. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(

@@ -412,7 +412,12 @@ export function createAgentRuntime(dependencies: {
             return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
           },
         }));
-      const system = systemPrompt(workspace, dependencies.skills, context.taskContext);
+      const system = systemPrompt(
+        workspace,
+        dependencies.skills,
+        context.taskContext,
+        context.background,
+      );
       const task = context.task;
       const shared = {
         context: {
@@ -422,7 +427,7 @@ export function createAgentRuntime(dependencies: {
                 const result = await task(input);
                 const action = (input as { action?: string }).action;
                 if (
-                  context.channel?.startsWith('telegram:') &&
+                  context.channel === 'telegram' &&
                   (action === 'update' || action === 'finish') &&
                   result &&
                   typeof result === 'object' &&
