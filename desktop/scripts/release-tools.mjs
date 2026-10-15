@@ -3,6 +3,7 @@ import { createHash, X509Certificate } from 'node:crypto';
 import { mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { runtimePlatform } from './runtime-inputs.mjs';
 
@@ -406,7 +407,15 @@ export async function notarize(artifact, configuration, evidencePath) {
 }
 
 export async function staple(path) {
-  await run('/usr/bin/xcrun', ['stapler', 'staple', path]);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await run('/usr/bin/xcrun', ['stapler', 'staple', path]);
+      break;
+    } catch (error) {
+      if (attempt === 6) throw error;
+      await delay(30_000);
+    }
+  }
   await run('/usr/bin/xcrun', ['stapler', 'validate', path]);
 }
 
