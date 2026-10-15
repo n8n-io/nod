@@ -175,6 +175,10 @@ test(
         id: 'fixture',
         configured: true,
         curate: async ({ task, input }) => {
+          if (task === 'review' && 'purpose' in input && input.purpose === 'confirmation_review')
+            return { valid: true };
+          if (task === 'review' && 'purpose' in input)
+            return { text: 'Synthetic channel guidance.' };
           if (task !== 'review' || !('reply' in input)) return undefined;
           replies.push(input);
           return { answer: input.reply === 'sure, go ahead' ? 'yes' : 'other' };

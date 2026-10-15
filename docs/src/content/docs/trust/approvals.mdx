@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. The checker runs reads and drafts, and anything else only when your words ask for it. Otherwise Otto asks you.
+Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
 The same checker decides when Otto changes its own schedules or notification settings. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
 
@@ -26,6 +26,8 @@ Only your words carry authority. A web page or email can't argue for an action, 
 
 ## What runs directly
 
+Limits in your task request or a schedule's instructions override these defaults, including for reads and drafts. Background work Otto starts uses the defaults below.
+
 | Kind of work                                      | Reads and drafts | Anything else                                 |
 | ------------------------------------------------- | ---------------- | --------------------------------------------- |
 | A conversation with you                           | Run              | Run if your messages ask for it               |
@@ -34,35 +36,28 @@ Only your words carry authority. A web page or email can't argue for an action, 
 
 ```mermaid
 flowchart TD
-  action[App action] --> check{{Checker: a read, a draft,<br/>or what you asked for?}}
+  action[App action] --> check{{Checker: allowed without<br/>your confirmation?}}
   check -- yes --> run[Run it]:::go
   check -- no --> ask[Ask you]:::accent
 ```
 
-If the checker can't answer, for example without a model provider key, Otto asks you. The checker always sees the whole request, however long.
+If the checker can't answer, Otto requires confirmation. If the model also can't compose that confirmation, the action stays blocked. The checker always sees the whole request, however long.
 
 ## The confirmation
 
-The question shows the action, the account that will run it, every field of the request in full and why Otto is asking.
+The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Otto is asking, preserving the material facts in your conversation language. There are no language-specific confirmation templates or yes/no word lists.
 
-```text title="Example confirmation"
-Gmail: send email?
+Before showing it, a separate model call checks the question against those frozen facts without seeing the conversation. Both model calls receive a sanitized copy of the request, with secret-keyed values and private links redacted. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. An unsupported claim, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
 
-Account: Gmail · ada@example.com
+Your recent messages and explicitly stated remembered preferences guide presentation only. An explicit output-language request applies to that output, and a short reply keeps the established conversation language. Quoted material, account names, region and time zone don't select the language. After a reset, your new messages and any remembered preference guide it again.
 
-Recipient email: sam@example.net
-
-Subject: Q3 figures
-
-Why I'm asking: I could not confirm that you asked for exactly this.
-
-Reply yes to go ahead, no to skip it, or tell me what to change.
-```
+Generating a question doesn't approve anything. The server checks the task again after generation, then saves the question and exact arguments together. Stop, cancellation, invalid model output or an unavailable model can't produce a late approval. The model never chooses the account or changes the saved arguments while writing the question.
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
 - The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
 - A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and Otto treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
+- Schedule edits and cancellations apply only to the reviewed version and need a fresh review if the schedule changes.
 - Within one task, including any subagents it starts, Otto asks one question at a time. While it waits for your answer, app actions that task started after the question don't run, and Otto can try them again after you answer. Separate tasks, such as two scheduled runs, can each wait on their own question.
 
 ```mermaid
@@ -90,11 +85,11 @@ It checks connected-app actions, Otto's own changes and [sign-ins](/trust/vault/
 
 ## Where this is enforced
 
-| Part                    | Source                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Trust check and checker | [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts)                             |
-| Confirmation text       | [`src/server/action-presentation.ts`](https://github.com/n8n-io/otto/blob/main/src/server/action-presentation.ts) |
-| Confirmations, run once | [`src/server/approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)                     |
+| Part                    | Source                                                                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| Trust check and checker | [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts)                 |
+| Confirmation text       | [`src/server/communication.ts`](https://github.com/n8n-io/otto/blob/main/src/server/communication.ts) |
+| Confirmations, run once | [`src/server/approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)         |
 
 ## Related resources
 

@@ -71,10 +71,10 @@ import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals } from './approvals.ts';
-import { appActionConfirmation } from './action-presentation.ts';
+import { createCommunication } from './communication.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
-import { memoryDigest, memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
+import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
 import {
@@ -107,7 +107,7 @@ import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
 import { createErrorRedactor } from './redaction.ts';
 import { createLedger } from './ledger.ts';
-import { usageDigest, usageFileName, usagePdf } from './usage-report.ts';
+import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
@@ -523,6 +523,10 @@ async function initializeApplication(
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)
     : curator;
+  const review = (instructions: string, input: object, signal?: AbortSignal) =>
+    onboardingCurator.configured
+      ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
+      : Promise.resolve(undefined);
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
     skills: createSkillLibrary(
@@ -543,6 +547,20 @@ async function initializeApplication(
     memoryStore = objects;
   }
   const memory = createMemoryService({ pool, ownerId, store: memoryStore });
+  const communication = createCommunication({
+    pool,
+    ownerId,
+    review,
+    preferences: async () =>
+      (await memory.load()).entries
+        .filter(
+          (entry) =>
+            entry.area === 'preferences' &&
+            entry.origin === 'stated' &&
+            (!entry.expires || entry.expires >= new Date().toISOString().slice(0, 10)),
+        )
+        .map((entry) => entry.text),
+  });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
     analytics: captureAnalytics,
@@ -652,6 +670,7 @@ async function initializeApplication(
   });
   const chatVerification = await createChatVerification(pool, {
     ownerId,
+    present: communication.present,
     keyStore: adapters.keyStore,
     submitCode: vault.submitChatCode,
     submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
@@ -681,14 +700,22 @@ async function initializeApplication(
                     })
                   ).value;
                 })(),
-    async (action, args) => {
+    async (action, args, expectedRevision) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
         return;
-      if (action.startsWith('OTTO_'))
-        await personal.validateReview(action.slice('OTTO_'.length), args);
-      else await integrations.prepare(ownerId, action, args);
+      if (action.startsWith('OTTO_')) {
+        if (
+          ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action) &&
+          expectedRevision === undefined
+        )
+          throw Object.assign(new Error('This schedule needs a fresh approval.'), {
+            statusCode: 409,
+          });
+        await personal.validateReview(action.slice('OTTO_'.length), args, expectedRevision);
+      } else await integrations.prepare(ownerId, action, args);
     },
     (reply) => trust.answer(reply),
+    communication.describe,
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
@@ -780,7 +807,7 @@ async function initializeApplication(
     const access = await vaultAccess.authorize(turn, target);
     if (access.ok) return { reason: access.reason };
     const result = await approvals.request(turn, 'OTTO_vault_allow', access.args, {
-      question: access.question,
+      details: access.details,
     });
     if (result && typeof result === 'object' && 'requiresConfirmation' in result)
       return { question: String(result.question) };
@@ -789,10 +816,7 @@ async function initializeApplication(
   const trust = createTrust({
     pool,
     ownerId,
-    review: async (instructions, input) =>
-      onboardingCurator.configured
-        ? onboardingCurator.curate({ task: 'review', instructions, input })
-        : undefined,
+    review,
   });
   vaultAccess = await createVaultAccess(pool, {
     ownerId,
@@ -801,6 +825,7 @@ async function initializeApplication(
   });
   payments = await createPayments(pool, {
     ownerId,
+    present: (turn, input) => communication.present(turn.threadId, input),
     uses: vault.uses,
     local: runtimeMode === 'local',
     inOtto: trust.inOtto,
@@ -820,6 +845,7 @@ async function initializeApplication(
     await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
     await startThreadWorkers({
+      present: communication.present,
       analytics: captureAnalytics,
       observeTurn: conversationAnalytics.observe,
       consumers,
@@ -841,7 +867,19 @@ async function initializeApplication(
       },
       startTurn: tasks.inherit,
       turnFinished: (turn, outcome) => void onboardingSuggestions.afterTurn(turn, outcome),
-      connections: integrations.manageConnections,
+      connections: async (...args) => {
+        const result = await integrations.manageConnections(...args);
+        if (!('url' in result) || !('name' in result) || typeof result.name !== 'string')
+          return result;
+        const turn = args[2];
+        if (!turn) throw new Error('The connection needs an active conversation.');
+        const message = await communication.present(turn.threadId, {
+          kind: 'connection',
+          app: result.name,
+          next: 'connect_account_then_continue',
+        });
+        return { ...result, message };
+      },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
         if (!target) return browserConnections.request(request, turn, signal, launch);
@@ -869,15 +907,46 @@ async function initializeApplication(
           ].includes(action)
         ) {
           const input = await personal.validateReview(action, args);
-          if (action === 'schedule_cancel') {
-            const schedule = await personal.getSchedule(String(input.id));
-            if (!schedule.enabled) return schedule;
-          }
+          const schedule =
+            action === 'schedule_cancel' || action === 'schedule_update'
+              ? await personal.getSchedule(String(input.id))
+              : undefined;
+          if (action === 'schedule_cancel' && schedule && !schedule.enabled) return schedule;
           const verdict = await trust.check(turn, `OTTO_${action}`, input);
           return approvals.request(turn, `OTTO_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
             admit,
+            expectedRevision: schedule?.revision,
+            validate: schedule
+              ? async (client) => {
+                  const current = (
+                    await client.query(
+                      'SELECT revision FROM schedules WHERE id=$1 AND owner_id=$2 FOR SHARE',
+                      [schedule.id, ownerId],
+                    )
+                  ).rows[0];
+                  if (current?.revision !== schedule.revision)
+                    throw Object.assign(
+                      new Error('The schedule changed. Review it before asking again.'),
+                      { statusCode: 409 },
+                    );
+                }
+              : undefined,
+            details: {
+              ...(verdict.confirm ? { reason: verdict.reason } : {}),
+              ...(schedule
+                ? {
+                    schedule: {
+                      title: schedule.title,
+                      prompt: schedule.prompt,
+                      cron: schedule.cron,
+                      runAt: schedule.runAt,
+                      timeZone: schedule.timeZone,
+                    },
+                  }
+                : {}),
+            },
           });
         }
         await admit?.(false);
@@ -890,9 +959,9 @@ async function initializeApplication(
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       paymentSetting: async (turn, input) => {
-        const { args, question } = await payments.requestSetting(turn, input);
+        const { args, details } = await payments.requestSetting(turn, input);
         if (!args.doItForMe) return payments.setting(turn, args, true);
-        const result = await approvals.request(turn, 'OTTO_payment_setting', args, { question });
+        const result = await approvals.request(turn, 'OTTO_payment_setting', args, { details });
         if (result && typeof result === 'object' && 'requiresConfirmation' in result)
           return { [appConfirmation]: String(result.question) };
         return String(result);
@@ -900,12 +969,12 @@ async function initializeApplication(
       requestPayment: async (turn, input, show) => {
         const result = await payments.request(turn, input);
         await show(result.image);
-        if (!result.paymentId) return { question: result.question, url: result.url };
+        if (result.paymentId === undefined) return { question: result.question, url: result.url };
         const confirmation = await approvals.request(
           turn,
           'OTTO_payment_approve',
           { paymentId: result.paymentId },
-          { question: result.question },
+          { details: result.details },
         );
         if (
           confirmation &&
@@ -986,19 +1055,19 @@ async function initializeApplication(
           );
           const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
           const result = await approvals.request(turn, action, prepared, {
-            question: appActionConfirmation(
-              action,
-              prepared,
-              verdict.reason,
-              account &&
-                [
-                  account.name,
-                  account.accountEmail ?? account.accountName,
-                  path && `${path.kind} ${path.endpoint}`,
-                ]
-                  .filter(Boolean)
-                  .join(' · '),
-            ),
+            signal: options.signal,
+            details: {
+              reason: verdict.reason,
+              ...(account
+                ? {
+                    account: {
+                      name: account.name,
+                      identity: account.accountEmail ?? account.accountName,
+                      ...(path ? { method: path.kind, endpoint: path.endpoint } : {}),
+                    },
+                  }
+                : {}),
+            },
           });
           return result && typeof result === 'object' && 'requiresConfirmation' in result
             ? { [appConfirmation]: result.question }
@@ -1136,13 +1205,14 @@ async function initializeApplication(
     channels = await createChannels(pool, {
       admission,
       ownerId,
+      present: communication.present,
       appOrigin: runtimeMode === 'tenant' ? publicOrigin : undefined,
       resolveAttachments: artifacts.readThreadArtifacts,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       activeThread: (client) => activeThread(client),
-      commandReply: async (command, client, threadId, link) => {
+      commandReply: async (command, client, threadId) => {
         const now = new Date();
         if (command === 'usage') {
           const report = await ledger.report();
@@ -1156,7 +1226,17 @@ async function initializeApplication(
               )
             : null;
           return {
-            text: usageDigest(report, link),
+            text: '',
+            presentation: {
+              kind: 'command',
+              command,
+              data: {
+                week: report.view.week,
+                month: report.view.month,
+                limit: report.view.limit,
+                timeZone: report.timeZone,
+              },
+            },
             attachments: file ? [file] : [],
           };
         }
@@ -1170,7 +1250,11 @@ async function initializeApplication(
               client,
             )
           : null;
-        return { text: memoryDigest(view, link), attachments: file ? [file] : [] };
+        return {
+          text: '',
+          presentation: { kind: 'command', command: 'memory', data: view },
+          attachments: file ? [file] : [],
+        };
       },
       refresh,
       subscribe(listener) {

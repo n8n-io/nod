@@ -1214,13 +1214,14 @@ test(
   },
 );
 
-async function outboxFixture(t: TestContext) {
+async function outboxFixture(t: TestContext, max?: number) {
   const schema = `test_channel_outbox_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
     options: `-c search_path=${schema}`,
+    ...(max ? { max, connectionTimeoutMillis: 1000 } : {}),
   });
   t.after(async () => {
     await pool.end();
@@ -1253,14 +1254,19 @@ async function outboxFixture(t: TestContext) {
     },
     close: async () => {},
   };
-  const receive = (senderId: string, messageId: string, chat: string) => {
+  const receive = (
+    senderId: string,
+    messageId: string,
+    chat: string,
+    text = `Fixture request ${messageId}`,
+  ) => {
     incoming.push({
       channelId: 'telegram',
       accountId: 'bot',
       senderId,
       messageId,
       threadId: chat,
-      text: `Fixture request ${messageId}`,
+      text,
       sentAt: new Date(Date.now() - 60_000 + 1000 * sequence++),
     });
   };
@@ -1293,7 +1299,7 @@ async function outboxFixture(t: TestContext) {
       },
       ...extra,
     });
-  return { pool, threadId, posts, receive, turnOf, reply, create };
+  return { pool, admin, schema, threadId, posts, receive, turnOf, reply, create, transport };
 }
 
 test(
@@ -1351,6 +1357,673 @@ test(
     } finally {
       await channels.close();
     }
+  },
+);
+
+test(
+  'channel event presentation runs after its receipt commits with one database connection',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, posts, receive, create } = await outboxFixture(t, 1);
+    let presentations = 0;
+    let failPresentation = false;
+    const channels = await create({
+      present: async (_thread, input) => {
+        await pool.query('SELECT 1');
+        presentations++;
+        if (input.kind === 'command') {
+          assert.equal(input.attachments, 'none');
+          assert.deepEqual(input.data, { count: 2 });
+        }
+        if (failPresentation) throw new Error('Synthetic presenter unavailable');
+        return input.kind === 'paired' ? 'Ligação estabelecida.' : 'Usa a aplicação Otto.';
+      },
+      commandReply: async (command) => ({
+        text: '',
+        attachments: [],
+        presentation: { kind: 'command', command, data: { count: 2 } },
+      }),
+      acceptVerification: async () => {
+        throw Object.assign(new Error('Synthetic refused code'), { statusCode: 409 });
+      },
+    });
+    const pair = async (messageId: string) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const notify = await channels.announcePairing(
+          {
+            senderId: '111',
+            accountId: 'bot',
+            messageId,
+            threadId: 'chat-a1',
+            sentAt: new Date().toISOString(),
+          },
+          client,
+        );
+        await client.query('COMMIT');
+        return notify;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    };
+    try {
+      const notify = await pair('pair-1');
+      assert.equal(presentations, 0);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM channel_inbox')).rows[0].n, 1);
+      notify();
+      await channels.drain();
+      assert.equal(presentations, 1);
+      assert.equal(posts.length, 1);
+      assert.equal((await pool.query('SELECT text FROM messages')).rows[0].text, posts[0].text);
+      (await pair('pair-1'))();
+      await channels.drain();
+      assert.equal(presentations, 1);
+      assert.equal(posts.length, 1);
+      failPresentation = true;
+      (await pair('pair-2'))();
+      await channels.drain();
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM channel_inbox')).rows[0].n, 2);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT count(*)::int AS n FROM channel_outbox WHERE state='blocked' AND reason='presentation_unavailable'",
+          )
+        ).rows[0].n,
+        1,
+      );
+      assert.equal(posts.length, 1);
+      failPresentation = false;
+      receive('111', 'refused-code', 'chat-a1', '111111');
+      await channels.drain();
+      assert.equal(posts.length, 2);
+      receive('111', 'memory-command', 'chat-a1', '/memory');
+      await channels.drain();
+      assert.equal(posts.length, 3);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM turns')).rows[0].n, 0);
+      assert.doesNotMatch(
+        JSON.stringify((await pool.query('SELECT text FROM messages')).rows),
+        /111111/,
+      );
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'outbox presentation failures and revocation never send private URLs or replay a claimed reply',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const inputs: unknown[] = [];
+    let startGeneration!: () => void;
+    let releaseGeneration!: () => void;
+    const generationStarted = new Promise<void>((resolve) => {
+      startGeneration = resolve;
+    });
+    const generationReleased = new Promise<void>((resolve) => {
+      releaseGeneration = resolve;
+    });
+    let response = 'generated';
+    const channels = await create({
+      appOrigin: 'https://otto.example',
+      present: async (thread, input) => {
+        assert.equal(thread, threadId);
+        inputs.push(input);
+        assert.doesNotMatch(JSON.stringify(input), /private-token|credential-request/);
+        if (response === 'failure') throw new Error('Synthetic presentation failure');
+        if (response === 'hold') {
+          startGeneration();
+          await generationReleased;
+        }
+        return response === 'unsafe'
+          ? '/credentials/credential-request'
+          : 'Continua na aplicação Otto.';
+      },
+    });
+    const state = async (id: string) =>
+      (await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [id]))
+        .rows[0];
+    try {
+      receive('111', 'a1', 'chat-a1');
+      await channels.drain();
+      const { turn_id: turnId } = await turnOf('a1');
+      await reply(turnId, 'Resposta pronta.', randomUUID(), 0);
+      await channels.drain();
+      assert.equal(inputs.length, 0);
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'Resposta pronta.' }]);
+      const privateReply = '[Continua](/credentials/private-token)';
+      const accepted = randomUUID();
+      await reply(turnId, privateReply, accepted, 1);
+      await channels.drain();
+      assert.equal((await state(accepted)).state, 'sent');
+      assert.equal(posts.at(-1)!.text, 'Continua na aplicação Otto.');
+      for (const outcome of ['failure', 'unsafe']) {
+        response = outcome;
+        const blocked = randomUUID();
+        await reply(turnId, privateReply, blocked, 2);
+        await channels.drain();
+        assert.deepEqual(await state(blocked), {
+          state: 'blocked',
+          reason: 'presentation_unavailable',
+        });
+        const generationCount: number = inputs.length;
+        await channels.drain();
+        assert.equal(inputs.length, generationCount);
+        assert.equal(posts.length, 2);
+      }
+      response = 'hold';
+      const revoked = randomUUID();
+      await reply(turnId, privateReply, revoked, 3);
+      const draining = channels.drain();
+      await generationStarted;
+      const replacement = channels.replaceTransport({
+        channels: [],
+        receive: async () => ({ status: 200, body: {} }),
+        post: async () => {
+          throw new Error('Revoked channel cannot send');
+        },
+        close: async () => {},
+      });
+      releaseGeneration();
+      await Promise.all([draining, replacement]);
+      assert.deepEqual(await state(revoked), {
+        state: 'blocked',
+        reason: 'channel_access_changed',
+      });
+      assert.equal(posts.length, 2);
+      assert.doesNotMatch(JSON.stringify(posts), /private-token|credential-request/);
+    } finally {
+      releaseGeneration();
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'reset during ordinary channel presentation blocks the obsolete reply',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    let startGeneration!: () => void;
+    let releaseGeneration!: () => void;
+    const generationStarted = new Promise<void>((resolve) => {
+      startGeneration = resolve;
+    });
+    const generationReleased = new Promise<void>((resolve) => {
+      releaseGeneration = resolve;
+    });
+    let generations = 0;
+    const channels = await create({
+      present: async () => {
+        generations++;
+        startGeneration();
+        await generationReleased;
+        return 'Continua na aplicação Otto.';
+      },
+    });
+    try {
+      receive('111', 'before-reset', 'chat-before-reset');
+      await channels.drain();
+      const messageId = randomUUID();
+      await reply(
+        (await turnOf('before-reset')).turn_id,
+        '[Continua](/credentials/private-token)',
+        messageId,
+        0,
+      );
+      const draining = channels.drain();
+      await generationStarted;
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+      releaseGeneration();
+      await draining;
+      assert.deepEqual(posts, []);
+      assert.deepEqual(
+        (
+          await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
+            messageId,
+          ])
+        ).rows[0],
+        { state: 'blocked', reason: 'thread_changed' },
+      );
+      await channels.drain();
+      assert.equal(generations, 1);
+      assert.deepEqual(posts, []);
+    } finally {
+      releaseGeneration();
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'interrupted send validation remains preparing and recovers without a provider attempt',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, admin, schema, posts, receive, turnOf, reply, create } = await outboxFixture(
+      t,
+      1,
+    );
+    let startValidation = () => {};
+    let releaseValidation = () => {};
+    const validationStarted = new Promise<void>((resolve) => {
+      startValidation = resolve;
+    });
+    const validationReleased = new Promise<void>((resolve) => {
+      releaseValidation = resolve;
+    });
+    const original = await create();
+    const instances = [original];
+    let draining: Promise<void> | undefined;
+    try {
+      receive('111', 'validation', 'chat-validation');
+      await original.drain();
+      const messageId = randomUUID();
+      await reply((await turnOf('validation')).turn_id, 'Prepared reply', messageId, 0);
+      const client = await pool.connect();
+      const query = client.query;
+      let held = false;
+      t.mock.method(client, 'query', (...args: unknown[]) => {
+        if (
+          held ||
+          typeof args[0] !== 'string' ||
+          !args[0].startsWith('SELECT 1 FROM messages m JOIN channel_outbox o')
+        )
+          return Reflect.apply(query, client, args);
+        held = true;
+        startValidation();
+        const interrupted = validationReleased.then(() => {
+          throw new Error('Synthetic interrupted validation');
+        });
+        const callback = args.at(-1);
+        if (typeof callback === 'function') {
+          void interrupted.catch((cause) => callback(cause));
+          return;
+        }
+        return interrupted;
+      });
+      client.release();
+      const state = async () =>
+        (
+          await admin.query(
+            `SELECT state,reason FROM ${schema}.channel_outbox WHERE message_id=$1`,
+            [messageId],
+          )
+        ).rows[0];
+      draining = original.drain();
+      await validationStarted;
+      assert.deepEqual(await state(), { state: 'preparing', reason: null });
+      assert.deepEqual(posts, []);
+      releaseValidation();
+      await draining;
+      assert.deepEqual(await state(), { state: 'preparing', reason: null });
+      await original.close();
+      const recovered = await create();
+      instances.push(recovered);
+      await recovered.drain();
+      await recovered.drain();
+      assert.deepEqual(await state(), { state: 'sent', reason: null });
+      assert.deepEqual(posts, [{ threadId: 'chat-validation', text: 'Prepared reply' }]);
+    } finally {
+      releaseValidation();
+      await draining;
+      await Promise.all(instances.map((instance) => instance.close()));
+    }
+  },
+);
+
+test(
+  'a send claim commits before a concurrent reset can archive its thread',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, admin, schema, threadId, posts, receive, turnOf, reply, create } =
+      await outboxFixture(t, 1);
+    let startCommit = () => {};
+    let releaseCommit = () => {};
+    const commitStarted = new Promise<void>((resolve) => {
+      startCommit = resolve;
+    });
+    const commitReleased = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const channels = await create();
+    const resetter = await admin.connect();
+    const resetPid = (await resetter.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    let draining: Promise<void> | undefined;
+    let resetting: Promise<unknown> | undefined;
+    try {
+      receive('111', 'commit', 'chat-commit');
+      await channels.drain();
+      const messageId = randomUUID();
+      await reply((await turnOf('commit')).turn_id, 'Prepared reply', messageId, 0);
+      const client = await pool.connect();
+      const query = client.query;
+      let sending = false;
+      t.mock.method(client, 'query', (...args: unknown[]) => {
+        if (
+          typeof args[0] === 'string' &&
+          args[0].startsWith("UPDATE channel_outbox o SET state='sending'")
+        )
+          sending = true;
+        if (args[0] !== 'COMMIT' || !sending) return Reflect.apply(query, client, args);
+        sending = false;
+        startCommit();
+        return commitReleased.then(() => Reflect.apply(query, client, args));
+      });
+      client.release();
+      draining = channels.drain();
+      await commitStarted;
+      assert.deepEqual(posts, []);
+      let resetComplete = false;
+      resetting = resetter
+        .query(`UPDATE ${schema}.threads SET archived_at=now() WHERE id=$1`, [threadId])
+        .then(() => {
+          resetComplete = true;
+        });
+      let waiting = false;
+      for (let attempt = 0; attempt < 200 && !resetComplete; attempt++) {
+        waiting = (
+          await admin.query(
+            'SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted) AS waiting',
+            [resetPid],
+          )
+        ).rows[0].waiting;
+        if (waiting) break;
+        await sleep(10);
+      }
+      assert.equal(resetComplete, false);
+      assert.equal(waiting, true);
+      releaseCommit();
+      await Promise.all([draining, resetting]);
+      assert.equal(resetComplete, true);
+      assert.deepEqual(posts, [{ threadId: 'chat-commit', text: 'Prepared reply' }]);
+      await channels.drain();
+      assert.equal(posts.length, 1);
+    } finally {
+      releaseCommit();
+      await Promise.all([draining, resetting]);
+      resetter.release();
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'restart delivers a persisted presentation without calling an unavailable model again',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    for (const kind of ['verification_refused', 'command'] as const)
+      await t.test(kind, async (t) => {
+        const { pool, posts, receive, turnOf, reply, create, transport } = await outboxFixture(
+          t,
+          1,
+        );
+        const fileId = randomUUID();
+        let generations = 0;
+        const configured = {
+          transport: {
+            ...transport,
+            channels: transport.channels.map((channel) => ({
+              ...channel,
+              supportsAttachments: true,
+            })),
+            post: async (input: Parameters<MessagingTransport['post']>[0]) => {
+              assert.equal(input.attachments?.length ?? 0, kind === 'command' ? 1 : 0);
+              return transport.post(input);
+            },
+          },
+          resolveAttachments: async () => [
+            {
+              name: 'fixture.txt',
+              mimeType: 'text/plain',
+              size: 7,
+              read: async () => Buffer.from('fixture'),
+            },
+          ],
+          present: async () => {
+            generations++;
+            if (generations > 1) throw new Error('Synthetic unavailable model after restart');
+            return 'Persisted model response';
+          },
+        };
+        const original = await create(configured);
+        const instances = [original];
+        try {
+          receive('111', 'prepared', 'chat-prepared');
+          await original.drain();
+          const messageId = randomUUID();
+          await reply((await turnOf('prepared')).turn_id, '', messageId, 0);
+          if (kind === 'command')
+            await pool.query('UPDATE messages SET attachments=$2 WHERE id=$1', [
+              messageId,
+              JSON.stringify([{ id: fileId }]),
+            ]);
+          await pool.query(
+            'INSERT INTO channel_outbox(message_id,source_id,presentation) VALUES($1,$2,$3)',
+            [
+              messageId,
+              'channel:telegram:bot:prepared',
+              JSON.stringify(kind === 'command' ? { kind, command: 'memory', data: {} } : { kind }),
+            ],
+          );
+          const client = await pool.connect();
+          const query = client.query;
+          let interrupted = false;
+          t.mock.method(client, 'query', (...args: unknown[]) => {
+            if (
+              !interrupted &&
+              typeof args[0] === 'string' &&
+              args[0].startsWith("UPDATE channel_outbox o SET state='sending'")
+            ) {
+              interrupted = true;
+              throw new Error('Synthetic interruption after presentation commit');
+            }
+            return Reflect.apply(query, client, args);
+          });
+          client.release();
+          await original.drain();
+          assert.equal(interrupted, true);
+          assert.deepEqual(posts, []);
+          assert.equal(generations, 1);
+          assert.deepEqual(
+            (
+              await pool.query(
+                'SELECT o.state,m.text FROM channel_outbox o JOIN messages m ON m.id=o.message_id WHERE m.id=$1',
+                [messageId],
+              )
+            ).rows[0],
+            { state: 'preparing', text: 'Persisted model response' },
+          );
+          await original.close();
+          const recovered = await create(configured);
+          instances.push(recovered);
+          await recovered.drain();
+          await recovered.drain();
+          assert.deepEqual(posts, [
+            { threadId: 'chat-prepared', text: 'Persisted model response' },
+          ]);
+          assert.equal(generations, 1);
+          assert.equal(
+            (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [messageId]))
+              .rows[0].state,
+            'sent',
+          );
+        } finally {
+          await Promise.all(instances.map((instance) => instance.close()));
+        }
+      });
+  },
+);
+
+test(
+  'restart reclaims presentation without replaying an interrupted provider send',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    const { pool, posts, receive, turnOf, reply, create, transport } = await outboxFixture(t, 1);
+    let startPresentation = () => {};
+    let releasePresentation = () => {};
+    const presentationStarted = new Promise<void>((resolve) => {
+      startPresentation = resolve;
+    });
+    const presentationReleased = new Promise<void>((resolve) => {
+      releasePresentation = resolve;
+    });
+    let startSend = () => {};
+    let releaseSend = () => {};
+    const sendStarted = new Promise<void>((resolve) => {
+      startSend = resolve;
+    });
+    const sendReleased = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const instances: Awaited<ReturnType<typeof create>>[] = [];
+    const original = await create({
+      present: async () => {
+        await pool.query('SELECT 1');
+        startPresentation();
+        await presentationReleased;
+        return 'Stale prepared reply';
+      },
+    });
+    instances.push(original);
+    const state = async (id: string) =>
+      (await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [id]))
+        .rows[0];
+    try {
+      receive('111', 'restart', 'chat-restart');
+      await original.drain();
+      const { turn_id: turnId } = await turnOf('restart');
+      const preparedReply = randomUUID();
+      await reply(turnId, '', preparedReply, 0);
+      await pool.query(
+        'INSERT INTO channel_outbox(message_id,source_id,presentation) VALUES($1,$2,$3)',
+        [
+          preparedReply,
+          'channel:telegram:bot:restart',
+          JSON.stringify({ kind: 'verification_refused' }),
+        ],
+      );
+      const preparing = original.drain();
+      await presentationStarted;
+      assert.deepEqual(await state(preparedReply), { state: 'preparing', reason: null });
+      assert.deepEqual(posts, []);
+      const restarted = await create({ present: async () => 'Current prepared reply' });
+      instances.push(restarted);
+      await restarted.drain();
+      releasePresentation();
+      await preparing;
+      assert.deepEqual(posts, [{ threadId: 'chat-restart', text: 'Current prepared reply' }]);
+      assert.deepEqual(await state(preparedReply), { state: 'sent', reason: null });
+      assert.equal(
+        (await pool.query('SELECT text FROM messages WHERE id=$1', [preparedReply])).rows[0].text,
+        'Current prepared reply',
+      );
+      await restarted.replaceTransport({
+        ...transport,
+        post: async (input) => {
+          const result = await transport.post(input);
+          startSend();
+          await sendReleased;
+          return result;
+        },
+      });
+      const interruptedReply = randomUUID();
+      await reply(turnId, 'Provider send started', interruptedReply, 1);
+      const sending = restarted.drain();
+      await sendStarted;
+      assert.deepEqual(await state(interruptedReply), { state: 'sending', reason: null });
+      const recovered = await create();
+      instances.push(recovered);
+      await recovered.drain();
+      releaseSend();
+      await sending;
+      await Promise.all(instances.map((instance) => instance.drain()));
+      assert.deepEqual(await state(interruptedReply), {
+        state: 'uncertain',
+        reason: 'interrupted_send',
+      });
+      assert.deepEqual(posts, [
+        { threadId: 'chat-restart', text: 'Current prepared reply' },
+        { threadId: 'chat-restart', text: 'Provider send started' },
+      ]);
+    } finally {
+      releasePresentation();
+      releaseSend();
+      await Promise.all(instances.map((instance) => instance.close()));
+    }
+  },
+);
+
+test(
+  'reset and revocation during the send transition prevent a provider attempt',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15000 },
+  async (t) => {
+    for (const change of ['reset', 'replace'])
+      await t.test(change, async (t) => {
+        const { pool, threadId, posts, receive, turnOf, reply, create, transport } =
+          await outboxFixture(t);
+        const channels = await create();
+        const blocker = await pool.connect();
+        const lockId = (randomBytes(4).readUInt32BE(0) % 2147483646) + 1;
+        try {
+          receive('111', 'transition', 'chat-transition');
+          await channels.drain();
+          const messageId = randomUUID();
+          await reply((await turnOf('transition')).turn_id, 'Prepared reply', messageId, 0);
+          await pool.query(`CREATE FUNCTION hold_send_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              IF NEW.state='sending' AND OLD.state='preparing' THEN
+                PERFORM pg_advisory_xact_lock(${lockId});
+              END IF;
+              RETURN NEW;
+            END $$;
+            CREATE TRIGGER hold_send_transition BEFORE UPDATE ON channel_outbox
+              FOR EACH ROW EXECUTE FUNCTION hold_send_transition()`);
+          await blocker.query('SELECT pg_advisory_lock($1)', [lockId]);
+          const draining = channels.drain();
+          let waiting = false;
+          for (let attempt = 0; attempt < 200; attempt++) {
+            waiting = (
+              await pool.query(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1::oid AND NOT granted) AS waiting",
+                [lockId],
+              )
+            ).rows[0].waiting;
+            if (waiting) break;
+            await sleep(10);
+          }
+          assert.equal(waiting, true);
+          const changed =
+            change === 'reset'
+              ? pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId])
+              : channels.replaceTransport({ ...transport, channels: [] });
+          if (change === 'reset') await changed;
+          await blocker.query('SELECT pg_advisory_unlock($1)', [lockId]);
+          await Promise.all([draining, changed]);
+          assert.deepEqual(posts, []);
+          assert.deepEqual(
+            (
+              await pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
+                messageId,
+              ])
+            ).rows[0],
+            {
+              state: 'blocked',
+              reason: change === 'reset' ? 'thread_changed' : 'channel_access_changed',
+            },
+          );
+          await channels.drain();
+          assert.deepEqual(posts, []);
+        } finally {
+          await blocker.query('SELECT pg_advisory_unlock($1)', [lockId]);
+          blocker.release();
+          await channels.close();
+        }
+      });
   },
 );
 
@@ -1516,6 +2189,11 @@ for (const username of ['fixture_owner', undefined])
       });
       channels = await createChannels(pool, {
         ownerId: 'local-development',
+        present: async (thread, input) => {
+          assert.equal(thread, threadId);
+          assert.deepEqual(input, { kind: 'paired', channel: 'telegram' });
+          return 'Ligação estabelecida.';
+        },
         transport: createChatSdkTransport(pool, await settings.environment()),
         subscribe: () => () => {},
         intervalMs: 600000,
@@ -1831,10 +2509,32 @@ test(
       releaseResolve = resolve;
     });
     const app = Fastify();
+    const presentations: unknown[] = [];
+    const attachmentNotice = 'Ficheiro disponível na aplicação.';
+    const pendingNotice = 'O ficheiro está disponível no Otto.';
+    let presentationOutcome = 'success';
+    let markPresentationStarted = () => {};
+    let releasePresentation = () => {};
+    const presentationStarted = new Promise<void>((resolve) => {
+      markPresentationStarted = resolve;
+    });
+    const presentationReleased = new Promise<void>((resolve) => {
+      releasePresentation = resolve;
+    });
     const channels = await createChannels(pool, {
       ownerId,
       appOrigin: 'https://otto.example',
       transport: createChatSdkTransport(pool, telegramEnvironment),
+      present: async (_threadId, input) => {
+        presentations.push(input);
+        if (input.kind === 'delivery' && input.attachments === 'pending') return pendingNotice;
+        if (presentationOutcome === 'failure') throw new Error('Fixture presentation failure');
+        if (presentationOutcome === 'hold') {
+          markPresentationStarted();
+          await presentationReleased;
+        }
+        return attachmentNotice;
+      },
       resolveAttachments: async (threadId, ids) => {
         if (holdResolve) {
           markResolveStarted();
@@ -1959,10 +2659,55 @@ test(
       const partial = await addReply(turnId, [image, document]);
       await channels.drain();
       assert.equal((await state(partial)).state, 'sent');
-      assert.deepEqual(texts.slice(-2), ['Here is the file.', 'Open Otto to get result.txt.']);
+      assert.deepEqual(texts.slice(-2), [pendingNotice, attachmentNotice]);
+      assert.deepEqual(presentations.at(-1), {
+        kind: 'delivery',
+        text: '',
+        attachments: 'in_otto',
+        secureAction: false,
+        files: ['result.txt'],
+      });
       const partialCount = sent.length;
       await channels.drain();
       assert.equal(sent.length, partialCount);
+      presentationOutcome = 'failure';
+      const unavailableNotice = await addReply(turnId, [document], 'I attached the file.');
+      const beforeNoticeFailure = texts.length;
+      await channels.drain();
+      assert.deepEqual(await state(unavailableNotice), { state: 'sent', reason: null });
+      assert.deepEqual(texts.slice(beforeNoticeFailure), [pendingNotice]);
+      assert.deepEqual(presentations.at(-2), {
+        kind: 'delivery',
+        text: 'I attached the file.',
+        attachments: 'pending',
+        secureAction: false,
+      });
+      const noReceipt = await addReply(turnId, [document], '');
+      const beforeNoReceipt = texts.length;
+      await channels.drain();
+      assert.deepEqual(await state(noReceipt), {
+        state: 'uncertain',
+        reason: 'send_not_confirmed',
+      });
+      assert.equal(texts.length, beforeNoReceipt);
+      const unconfirmedAttempts = sent.length;
+      await channels.drain();
+      assert.equal(sent.length, unconfirmedAttempts);
+      presentationOutcome = 'success';
+      const noticeOnly = await addReply(turnId, [document], '');
+      await channels.drain();
+      assert.deepEqual(await state(noticeOnly), { state: 'sent', reason: null });
+      assert.deepEqual(texts.slice(beforeNoReceipt), [attachmentNotice]);
+      assert.ok(
+        (
+          await pool.query('SELECT provider_message_id FROM channel_outbox WHERE message_id=$1', [
+            noticeOnly,
+          ])
+        ).rows[0].provider_message_id,
+      );
+      const failedCount = sent.length;
+      await channels.drain();
+      assert.equal(sent.length, failedCount);
       failDocument = false;
 
       const anotherThread = randomUUID();
@@ -1975,8 +2720,14 @@ test(
       const foreign = await addReply(turnId, [image]);
       await channels.drain();
       assert.deepEqual(await state(foreign), { state: 'sent', reason: null });
-      assert.match(texts.at(-1)!, /available in Otto/);
-      assert.equal(sent.length, partialCount);
+      assert.equal(texts.at(-1), attachmentNotice);
+      assert.deepEqual(presentations.at(-1), {
+        kind: 'delivery',
+        text: 'Here is the file.',
+        attachments: 'in_otto',
+        secureAction: false,
+      });
+      assert.equal(sent.length, failedCount);
       await pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [image.id, ownerId]);
 
       const outside = join(dataRoot, `media-fixture-${randomUUID()}`);
@@ -1999,7 +2750,7 @@ test(
       await channels.drain();
       assert.equal((await state(forged)).state, 'sent');
       assert.doesNotMatch(texts.at(-1)!, /localhost/);
-      assert.equal(sent.length, partialCount);
+      assert.equal(sent.length, failedCount);
       holdResolve = true;
       const changedAccount = await addReply(turnId, [image]);
       const pending = channels.drain();
@@ -2029,15 +2780,35 @@ test(
         state: 'blocked',
         reason: 'channel_access_changed',
       });
-      assert.equal(sent.length, partialCount);
+      assert.equal(sent.length, failedCount);
       const localOnly = await addReply(turnId, [image], '');
       await channels.drain();
       assert.equal((await state(localOnly)).state, 'sent');
       assert.match(fallback[0], /https:\/\/otto\.example\/api\/artifacts\//);
       assert.match(fallback[0], /screenshot\.png/);
       assert.doesNotMatch(fallback[0], /Attachments are available in Otto/);
+
+      await channels.replaceTransport(createChatSdkTransport(pool, telegramEnvironment));
+      holdResolve = false;
+      failDocument = true;
+      presentationOutcome = 'hold';
+      const staleNotice = await addReply(turnId, [document]);
+      const beforeReset = texts.length;
+      const pendingPresentation = channels.drain();
+      await presentationStarted;
+      await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
+      releasePresentation();
+      await pendingPresentation;
+      assert.deepEqual(texts.slice(beforeReset), [pendingNotice]);
+      assert.deepEqual(await state(staleNotice), { state: 'sent', reason: null });
+      const deliveredBeforeReset = sent.length;
+      const generatedBeforeReset = presentations.length;
+      await channels.drain();
+      assert.equal(sent.length, deliveredBeforeReset);
+      assert.equal(presentations.length, generatedBeforeReset);
     } finally {
       releaseResolve();
+      releasePresentation();
       await app.close();
       await Promise.all(filePaths.map((path) => rm(path, { force: true })));
       await pool.end();

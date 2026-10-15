@@ -419,10 +419,16 @@ export function createChatSdkTransport(
             },
           );
       }
-      if (unsent.length)
-        await thread
-          .post({ markdown: `Open Otto to get ${unsent.map((file) => file.name).join(', ')}.` })
-          .catch(() => {});
+      if (unsent.length) {
+        const notice = await input
+          .attachmentFailure?.(unsent.map((file) => file.name))
+          .catch(() => undefined);
+        for (const part of chunks(notice ?? '')) {
+          const sent = await thread.post({ markdown: part }).catch(() => undefined);
+          id ||= sent?.id ?? '';
+        }
+      }
+      if (!id) throw new Error('Channel delivery was not confirmed.');
       return { id };
     },
     async close() {

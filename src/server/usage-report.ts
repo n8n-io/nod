@@ -36,17 +36,6 @@ function month({ view, timeZone, locale }: UsageReport) {
   return `${spent} On track for ${dollars(view.month.forecastUsd)}${over}.`;
 }
 
-export function usageDigest(report: UsageReport, link: string | null) {
-  return [
-    summary(report.view),
-    month(report),
-    report.view.month.unpriced ? 'Some usage has no price, so it isn’t counted.' : '',
-    `The PDF lists this month’s runs.${link ? ` Open Trust: ${link}` : ''}`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
-}
-
 export function usageFileName(exported: Date) {
   return `otto-usage-${exported.toISOString().slice(0, 10)}.pdf`;
 }

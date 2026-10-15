@@ -5,7 +5,7 @@ import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { vaultInvitation } from './communication.ts';
+import { actionLink, vaultInvitation } from './communication.ts';
 import type { Turn } from './turn.ts';
 
 export const personalActions = [
@@ -480,9 +480,8 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       );
     return bytes;
   };
-  const link = async (url: unknown, text: (url: string) => string) => {
-    if (typeof url !== 'string') throw new Error('The sign-in link is unavailable.');
-    await pause('question', text(url));
+  const link = async (url: unknown, text: unknown) => {
+    await pause('question', actionLink(url, text));
     return 'Waiting for the user to sign in.';
   };
   return [
@@ -580,9 +579,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       const result = await context.requestPayment(p);
       if (appConfirmation in result)
         return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
-      await turn.invite(
-        result.url ? `${result.question} [Approve payment](${result.url})` : result.question,
-      );
+      await turn.invite(result.url ? actionLink(result.url, result.question) : result.question);
       await pause('credentials', undefined, { post: false });
       return 'Waiting for private payment approval.';
     }),
@@ -650,18 +647,15 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
         p.connectionId,
       );
       if (p.action === 'list' || p.action === 'discover') return result;
-      const { name, url, accounts } = result as {
+      const { name, url, accounts, message } = result as {
         name?: unknown;
         url?: unknown;
         accounts?: unknown;
+        message?: unknown;
       };
       if (accounts) return { status: 'already_connected', accounts };
       if (typeof name !== 'string') throw new Error('The app did not provide a sign-in link.');
-      return link(
-        url,
-        (url) =>
-          `I need access to your ${name} account for this task. [Connect ${name}](${url}) and I will continue here.`,
-      );
+      return link(url, message);
     }),
     bind(toolDefinitions.manage_personal_context, async (p) => {
       if (p.action !== 'schedule_record_observation')

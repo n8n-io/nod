@@ -119,10 +119,15 @@ test(
       resume: thread.resumeAfterCredentials,
       retry: thread.retryCredentials,
     });
-    const approvals = await createApprovals(async () => {
-      executed++;
-      return {};
-    });
+    const approvals = await createApprovals(
+      async () => {
+        executed++;
+        return {};
+      },
+      undefined,
+      undefined,
+      async () => 'Synthetic saved action confirmation.',
+    );
     const accounts = createAccountStore(db.pool);
     await accounts.initialize();
     const userMessages = thread.createUserMessageService({ confirmAction: approvals.chat });
@@ -276,8 +281,13 @@ test(
     let taskHold = Promise.resolve();
 
     let limitReached = false;
+    const interruptedText = 'Synthetic interrupted turn.';
+    let beforeRuntimeFailure = async (_context: RuntimeContext) => {};
+    let presentInterruption: NonNullable<ThreadDependencies['present']> = async () =>
+      interruptedText;
     const dependencies: ThreadDependencies = {
       analytics: captureAnalytics,
+      present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
       executeConfirmation: async (turnId) => {
         beforeRuntimeRuns.set(turnId, analytics.currentRun(ownerId)?.id);
@@ -466,10 +476,12 @@ test(
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
         workspaceListings.set(context.prompt, await readdir(context.workspacePath));
-        if (context.prompt === 'runtime-failure')
+        if (context.prompt === 'runtime-failure') {
+          await beforeRuntimeFailure(context);
           throw Object.assign(new Error('Synthetic runtime failure for private-fixture'), {
             code: 'E_SYNTHETIC',
           });
+        }
         if (context.prompt === 'screenshot-during-stop') {
           await context.publishScreenshot!(new Uint8Array([1, 2, 3]), 'atomic.png');
           return { status: 'succeeded' };
@@ -836,7 +848,7 @@ test(
               )
             ).rows;
           assert.deepEqual(await interruptedReplies(foreground), [
-            { text: thread.interruptedMessage, thread_id: threadId },
+            { text: interruptedText, thread_id: threadId },
           ]);
           assert.deepEqual(await interruptedReplies(background), []);
           assert.equal(
@@ -1723,13 +1735,143 @@ test(
               [failed.threadId, failed.turnId],
             )
           ).rows.map((message) => message.text);
-          assert.deepEqual(messages, [thread.interruptedMessage]);
+          assert.deepEqual(messages, [interruptedText]);
           assert.equal(
             (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows[0].count,
             before + 1,
           );
           assert.equal(runs.filter((context) => context.prompt === 'runtime-failure').length, 1);
           await waitFor(settledThread);
+        },
+      );
+
+      await t.test(
+        'interruption recovery finishes before presentation and ignores missing or stale text',
+        async (t) => {
+          const logged = t.mock.method(console, 'error', () => {});
+          try {
+            for (const mode of [
+              'offline',
+              'invalid',
+              'stale',
+              'advanced',
+              'background',
+              'queued',
+              'consumed',
+              'resume',
+              'resume-advanced',
+              'long',
+            ]) {
+              let presented = 0;
+              let advanced: Awaited<ReturnType<typeof thread.submitUserMessage>> | undefined;
+              const completeText = mode === 'long' ? interruptedText.repeat(1000) : interruptedText;
+              const before = runs.filter((context) => context.prompt === 'runtime-failure').length;
+              beforeRuntimeFailure = async (context) => {
+                if (mode !== 'queued' && mode !== 'consumed') return;
+                advanced = await thread.submitUserMessage('New request before the runtime fails.');
+                if (mode === 'consumed')
+                  assert.deepEqual(
+                    (await context.takeMessages!()).map(({ id }) => id),
+                    [advanced.messageId],
+                  );
+              };
+              presentInterruption = async (presentedThread, input) => {
+                presented++;
+                assert.deepEqual(input, { kind: 'interrupted' });
+                await transaction(async (client) => {
+                  assert.equal((await thread.lockThread(client)).id, presentedThread);
+                  const failed = (
+                    await client.query(
+                      "SELECT id,status FROM turns WHERE thread_id=$1 AND prompt='runtime-failure' ORDER BY created_at DESC,id DESC LIMIT 1",
+                      [presentedThread],
+                    )
+                  ).rows[0];
+                  assert.equal(failed.status, 'failed');
+                  if (mode === 'stale')
+                    await client.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
+                      failed.id,
+                    ]);
+                  if (mode === 'background') {
+                    const background = randomUUID();
+                    await client.query(
+                      "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Synthetic background update','succeeded',true)",
+                      [background, ownerId, presentedThread],
+                    );
+                    await client.query(
+                      "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Synthetic independent update')",
+                      [randomUUID(), ownerId, presentedThread, background],
+                    );
+                  }
+                }, db.pool);
+                if (mode === 'offline') throw new Error('Synthetic model failure.');
+                if (mode === 'advanced')
+                  advanced = await thread.submitUserMessage(
+                    'New request during interruption presentation.',
+                  );
+                return mode === 'invalid' ? ' ' : completeText;
+              };
+              let failed: { threadId: string; turnId: string };
+              if (mode.startsWith('resume')) {
+                const parent = await thread.submitUserMessage('Synthetic parent request.');
+                await waitFor(settled(parent.turnId));
+                if (mode === 'resume-advanced') {
+                  advanced = await thread.submitUserMessage(
+                    'New request before an older task resumes.',
+                  );
+                  await waitFor(settled(advanced.turnId));
+                }
+                failed = {
+                  threadId: parent.threadId,
+                  turnId: await thread.enqueueTurn('runtime-failure', {
+                    source: 'resume',
+                    sessionId: parent.threadId,
+                    parentTurnId: parent.turnId,
+                  }),
+                };
+              } else failed = await thread.submitUserMessage('runtime-failure');
+              await waitFor(() =>
+                logged.mock.calls.some((call) => String(call.arguments[0]).includes(failed.turnId)),
+              );
+              assert.equal(presented, 1);
+              assert.equal(
+                await turnStatus(failed.turnId),
+                mode === 'stale' ? 'cancelled' : 'failed',
+              );
+              assert.deepEqual(
+                (
+                  await db.pool.query(
+                    "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'",
+                    [failed.turnId],
+                  )
+                ).rows.map((row) => row.text),
+                ['long', 'background', 'consumed', 'resume'].includes(mode) ? [completeText] : [],
+              );
+              if (advanced) {
+                const advancedTurnId = advanced.turnId;
+                await waitFor(settled(advancedTurnId));
+                assert.equal(
+                  runs.filter((context) => context.turnId === advancedTurnId).length,
+                  mode === 'consumed' ? 0 : 1,
+                );
+              }
+              assert.equal(
+                runs.filter((context) => context.prompt === 'runtime-failure').length,
+                before + 1,
+              );
+              assert.equal(
+                (
+                  await db.pool.query(
+                    "SELECT id FROM turns WHERE source='resume' AND parent_turn_id=$1",
+                    [failed.turnId],
+                  )
+                ).rowCount,
+                0,
+              );
+            }
+          } finally {
+            presentInterruption = async () => interruptedText;
+            beforeRuntimeFailure = async () => {};
+          }
         },
       );
 

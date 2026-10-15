@@ -5,6 +5,21 @@ function plain(value: string) {
     .trim();
 }
 
+export function actionLink(url: unknown, message: unknown) {
+  if (typeof url !== 'string' || typeof message !== 'string' || !plain(message))
+    throw new Error('The action invitation is unavailable.');
+  const destination = new URL(url, 'https://otto.invalid');
+  if (
+    !['http:', 'https:'].includes(destination.protocol) ||
+    destination.username ||
+    destination.password ||
+    /[\s<>\\]/.test(url) ||
+    url.startsWith('//')
+  )
+    throw new Error('The action link is unavailable.');
+  return `[${plain(message)}](<${url}>)`;
+}
+
 export function vaultInvitation(
   origin: string,
   url: string | undefined,

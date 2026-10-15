@@ -106,37 +106,3 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
     ...(view.notes.length ? [] : ['Nothing yet.']),
   ].join('\n\n')}\n`;
 }
-
-export function memoryDigest(view: MemoryView, link: string | null, limit = 3800) {
-  const lines = ['**What Otto remembers about you**'];
-  for (const { status, label } of statuses) {
-    const notes = view.notes.filter((entry) => entry.status === status);
-    if (notes.length)
-      lines.push(
-        '',
-        `**${label}** (${notes.length})`,
-        ...notes.map((entry) => `• ${text(entry.text)}`),
-      );
-  }
-  if (!view.notes.length) lines.push('', 'Nothing yet.');
-  const footer = [
-    '',
-    ...(view.archive.length ? [`Let go: ${view.archive.length}`] : []),
-    link
-      ? `See, change or export everything: ${link}`
-      : 'Open Memory in Otto to see, change or export everything.',
-  ].join('\n');
-  const body: string[] = [];
-  let used = footer.length;
-  for (const [index, line] of lines.entries()) {
-    if (used + line.length + 1 > limit) {
-      body.push(
-        `…and ${lines.slice(index).filter((rest) => rest && !rest.startsWith('**')).length} more`,
-      );
-      break;
-    }
-    body.push(line);
-    used += line.length + 1;
-  }
-  return `${body.join('\n')}\n${footer}`;
-}

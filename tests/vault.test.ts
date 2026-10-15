@@ -3169,6 +3169,13 @@ test(
       let elsewhere: string | undefined;
       let captureFails = false;
       let failFill = false;
+      let presentationFailure = false;
+      let presentedText = 'Synthetic private payment step.';
+      let duringPresentation = async () => {};
+      const presentations: Array<{
+        turn: { threadId: string; turnId: string };
+        input: Record<string, unknown>;
+      }> = [];
       let duringFill = async () => {};
       const make = (local: boolean) =>
         createPayments(pool, {
@@ -3176,6 +3183,13 @@ test(
           uses: vault.uses,
           local,
           inOtto: async () => inOtto,
+          present: async (turn, input) => {
+            if (presentationFailure) throw new Error('Synthetic payment presentation failure.');
+            presentations.push(structuredClone({ turn, input }));
+            await duringPresentation();
+            input.amount = '0.01';
+            return presentedText;
+          },
           page: async () => ({ origin: new URL(url).origin, url }),
           destinations: async () => {
             const origin = new URL(url).origin;
@@ -3283,6 +3297,24 @@ test(
       ])
         await assert.rejects(payments.request(turn, invalid));
       assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      presentationFailure = true;
+      await assert.rejects(payments.request(turn, order), /Synthetic payment presentation failure/);
+      presentationFailure = false;
+      assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      assert.equal(fills.length, 0);
+      assert.equal(recorded.length, 0);
+      presentedText = '   ';
+      await assert.rejects(payments.request(turn, order), /valid question/);
+      presentedText = 'Synthetic private payment step.';
+      duringPresentation = async () => {
+        await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
+      };
+      await assert.rejects(payments.request(turn, order), /no longer active/);
+      duringPresentation = async () => {};
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
+      assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
+      assert.equal(fills.length, 0);
+      assert.equal(recorded.length, 0);
       const parallel = { threadId: turn.threadId, turnId: randomUUID() };
       await pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,background) VALUES($1,'local-development',$2,true)",
@@ -3312,10 +3344,22 @@ test(
       ]);
       assert.equal(first.paymentId, undefined);
       assert.deepEqual([...first.image], [255, 216, 255]);
-      assert.equal(
-        first.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
-      );
+      assert.deepEqual(presentations.at(-1), {
+        turn,
+        input: {
+          kind: 'payment',
+          origin: shop,
+          amount: '43.20',
+          amountMinor: 4320,
+          currency: 'EUR',
+          card: { brand: 'Visa', last4: '4242' },
+          destinations: [shop],
+          keepCode: false,
+          requires: 'security_code',
+        },
+      });
+      assert.equal(first.details.amount, '43.20');
+      assert.equal(first.question, presentedText);
       assert.equal(
         (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
         'unavailable',
@@ -3368,16 +3412,18 @@ test(
         /keeps its security code at the next/,
       );
       const keep = await payments.request(turn, order);
-      assert.match(keep.question, /Otto will keep it, so next time a yes is enough\.$/);
+      assert.equal(keep.details.keepCode, true);
+      assert.equal(presentations.at(-1)?.input.keepCode, true);
       assert.equal(await reply('737'), 'submitted');
       assert.equal((await studio()).doItForMe, true);
 
       elsewhere = 'https://pay.fixture.test';
+      const presented = presentations.length;
       const yes = await payments.request(turn, order);
-      assert.equal(
-        yes.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Card details go to pay.fixture.test.',
-      );
+      assert.equal(yes.question, undefined);
+      assert.equal(presentations.length, presented);
+      assert.deepEqual(yes.details.destinations, ['https://pay.fixture.test', shop]);
+      assert.equal(yes.details.requires, 'approval');
       assert.ok(yes.paymentId);
       assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, true);
       assert.equal(fills.at(-1)?.card.securityCode, '737');
@@ -3428,9 +3474,13 @@ test(
 
       await save('Travel card', '5555 5555 5555 4444');
       await assert.rejects(payments.request(turn, order), /Ask the owner which card/);
-      assert.match(
-        (await payments.request(turn, { ...order, card: 'travel' })).question,
-        /••4444\?/,
+      assert.equal(
+        (
+          (await payments.request(turn, { ...order, card: 'travel' })).details.card as {
+            last4: string;
+          }
+        ).last4,
+        '4444',
       );
       const yen = await payments.request(turn, {
         ...order,
@@ -3438,7 +3488,9 @@ test(
         amount: '1200',
         currency: 'JPY',
       });
-      assert.match(yen.question, /^Pay ¥1,200 at shop\.fixture\.test with Visa ••4242\?/);
+      assert.equal(yen.details.amountMinor, 1200);
+      assert.equal(yen.details.amount, '1200');
+      assert.equal(yen.details.currency, 'JPY');
       await assert.rejects(payments.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
       await assert.rejects(payments.request(turn, { ...order, currency: 'ZZZ' }));
       await assert.rejects(payments.request(turn, { ...order, fields: { number: '@e4' } }));
@@ -3772,6 +3824,10 @@ test(
             )
           ).rows,
         ),
+        /4242424242424242|737|1234/,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(presentations.map((item) => item.input)),
         /4242424242424242|737|1234/,
       );
     } finally {

@@ -30,7 +30,7 @@ type Row = {
 
 export type VaultAccessVerdict =
   | { ok: true; reason: VaultActivityReason }
-  | { ok: false; question: string; args: Record<string, unknown> };
+  | { ok: false; details: Record<string, unknown>; args: Record<string, unknown> };
 
 const cursor = z.object({ at: z.iso.datetime(), id: z.uuid() });
 
@@ -193,16 +193,15 @@ export async function createVaultAccess(
     if (!verdict.confirm)
       return { ok: true, reason: work.source === 'schedule' ? 'schedule' : 'asked' };
     await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
-    const site = host(origin);
     return {
       ok: false,
       args,
-      question:
-        target.kind === 'session'
-          ? `Use your saved session on ${site}?`
-          : target.account
-            ? `Sign in to ${site} as ${target.account}?`
-            : `Sign in to ${site}?`,
+      details: {
+        kind: target.kind,
+        origin,
+        ...(target.account ? { account: target.account } : {}),
+        reason: verdict.reason,
+      },
     };
   }
 

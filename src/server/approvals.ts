@@ -4,13 +4,20 @@ import { pool } from './db.ts';
 import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
 import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
-import { actionConfirmation } from './action-presentation.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
+  expectedRevision?: number;
+}
+
+export interface ApprovalDescription {
+  turn: TurnRef;
+  action: string;
+  args: Record<string, unknown>;
+  details?: Record<string, unknown>;
 }
 
 export interface ChatConfirmationInput {
@@ -109,8 +116,13 @@ export async function createApprovals(
     args: Record<string, unknown>,
     context: ApprovalExecutionContext,
   ) => Promise<unknown>,
-  preflight?: (action: string, args: Record<string, unknown>) => Promise<void>,
+  preflight?: (
+    action: string,
+    args: Record<string, unknown>,
+    expectedRevision?: number,
+  ) => Promise<void>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
+  describe?: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string>,
 ) {
   await pool.query(`CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
@@ -122,6 +134,7 @@ export async function createApprovals(
     result jsonb
   );
     ALTER TABLE approvals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS expected_revision integer,
       DROP COLUMN IF EXISTS expires_at, DROP COLUMN IF EXISTS confirmation_reply_id;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
@@ -136,6 +149,9 @@ export async function createApprovals(
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
         sourceMessageId: approval.source_message_id,
+        ...(approval.expected_revision !== null && approval.expected_revision !== undefined
+          ? { expectedRevision: approval.expected_revision }
+          : {}),
       });
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(
@@ -163,17 +179,25 @@ export async function createApprovals(
     args: Record<string, unknown>,
     options: {
       allowed?: boolean;
-      question?: string;
+      details?: Record<string, unknown>;
+      signal?: AbortSignal;
       sourceMessageId?: string | null;
       admit?: (asks: boolean) => Promise<void>;
+      validate?: (client: PoolClient) => Promise<void>;
+      expectedRevision?: number;
     } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded) throw new Error('The action has no arguments to save.');
     const snapshot = JSON.parse(encoded) as Record<string, unknown>;
+    const details = options.details ? JSON.stringify(options.details) : undefined;
+    turn = { ...turn };
     const allowed = options.allowed === true;
+    const expectedRevision = options.expectedRevision;
+    options.signal?.throwIfAborted();
     await options.admit?.(!allowed);
-    const proposal = await withTurnLock(turn.turnId, async (client) => {
+    const inspect = async (client: PoolClient) => {
+      options.signal?.throwIfAborted();
       const current = await turnRow(client, turn.turnId);
       if (!current || current.thread_id !== turn.threadId)
         throw conflict('This turn is no longer running.');
@@ -192,17 +216,13 @@ export async function createApprovals(
         if (!steering) throw new Error('This action needs a direct request from the user.');
       }
       const background = !steering && ['event', 'schedule'].includes(origin.source);
-      let authorInstruction: string;
       let authorMessageId: string | null;
       if (steering) {
-        authorInstruction = steering.text;
         authorMessageId = steering.id;
       } else if (origin.source === 'event') {
-        authorInstruction = '';
         authorMessageId = null;
       } else if (origin.source === 'schedule') {
         const grant = await scheduleAuthority(client, origin.id);
-        authorInstruction = grant?.authority_instruction ?? '';
         authorMessageId = grant?.authority_source_message_id ?? null;
       } else {
         const author =
@@ -215,10 +235,8 @@ export async function createApprovals(
               ).rows[0]
             : undefined;
         if (!author) throw new Error('This action needs a direct request from the user.');
-        authorInstruction = author.text;
         authorMessageId = author.id;
       }
-      await preflight?.(action, snapshot);
       if (background)
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
           `approvals:${ownerId}:${turn.threadId}`,
@@ -239,6 +257,7 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
+      await preflight?.(action, snapshot, expectedRevision);
       if (
         !allowed &&
         (
@@ -257,8 +276,9 @@ export async function createApprovals(
              JOIN messages m ON m.id=a.confirmation_message_id AND m.owner_id=a.owner_id AND m.thread_id=a.thread_id AND m.role='assistant'
              WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.action=$3 AND a.args=$4::jsonb
                AND a.status='pending' AND u.status IN ('running','waiting') AND u.channel=$5
+               AND a.expected_revision IS NOT DISTINCT FROM $6::integer
              ORDER BY a.id LIMIT 1`,
-            [ownerId, turn.threadId, action, snapshot, current.channel],
+            [ownerId, turn.threadId, action, snapshot, current.channel, expectedRevision ?? null],
           )
         ).rows[0];
         if (pending)
@@ -268,24 +288,35 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      const direct = allowed;
-      const id = randomUUID();
-      let targetTitle: string | undefined;
-      if (!direct && typeof snapshot.id === 'string') {
-        const table = ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action)
-          ? 'schedules'
-          : undefined;
-        if (table)
-          targetTitle = (
-            await client.query(`SELECT title FROM ${table} WHERE id=$1 AND owner_id=$2`, [
-              snapshot.id,
-              ownerId,
-            ])
-          ).rows[0]?.title;
+      return { authorMessageId };
+    };
+    let question: string | undefined;
+    if (!allowed) {
+      const existing = await withTurnLock(turn.turnId, inspect);
+      if ('cached' in existing) {
+        if (existing.cached) return existing.result;
+        return { requiresConfirmation: true, question: existing.question };
       }
-      const question = direct
-        ? undefined
-        : (options.question ?? actionConfirmation(action, snapshot, targetTitle));
+      if (!describe) throw new Error('The confirmation model is unavailable.');
+      question = await describe(
+        {
+          turn: { ...turn },
+          action,
+          args: JSON.parse(encoded),
+          ...(details ? { details: JSON.parse(details) } : {}),
+        },
+        options.signal,
+      );
+      options.signal?.throwIfAborted();
+      if (typeof question !== 'string' || !question.trim())
+        throw new Error('The confirmation model did not produce a valid question.');
+    }
+    const proposal = await withTurnLock(turn.turnId, async (client) => {
+      const inspected = await inspect(client);
+      if ('cached' in inspected) return inspected;
+      await options.validate?.(client);
+      options.signal?.throwIfAborted();
+      const id = randomUUID();
       const messageId = question ? randomUUID() : null;
       if (messageId)
         await client.query(
@@ -294,7 +325,7 @@ export async function createApprovals(
         );
       const approval = (
         await client.query(
-          'INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,execution_turn_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',
+          'INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,execution_turn_id,expected_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *',
           [
             id,
             ownerId,
@@ -302,13 +333,15 @@ export async function createApprovals(
             turn.turnId,
             action,
             snapshot,
-            direct ? 'executing' : 'pending',
-            authorMessageId,
+            allowed ? 'executing' : 'pending',
+            inspected.authorMessageId,
             messageId,
-            direct ? turn.turnId : null,
+            allowed ? turn.turnId : null,
+            expectedRevision ?? null,
           ],
         )
       ).rows[0];
+      options.signal?.throwIfAborted();
       return { cached: false as const, approval, question };
     });
     if (proposal.cached) return proposal.result;
@@ -387,7 +420,8 @@ export async function createApprovals(
       return undefined;
     }
     if (!active) return undefined;
-    if (approved) await preflight?.(approval.action, approval.args);
+    if (approved)
+      await preflight?.(approval.action, approval.args, approval.expected_revision ?? undefined);
     const prompt = approved
       ? 'The user confirmed the exact saved action. The trusted worker must execute that snapshot once before continuing. Do not substitute an action or execute it yourself.'
       : 'The user declined the saved action. Do not execute it or ask for it again. Continue only other already-authorized work, or finish quietly.';
@@ -433,7 +467,7 @@ export async function createApprovals(
         )
       ).rows[0];
       if (!selected) return undefined;
-      await preflight?.(selected.action, selected.args);
+      await preflight?.(selected.action, selected.args, selected.expected_revision ?? undefined);
       signal.throwIfAborted();
       await client.query("UPDATE approvals SET status='executing' WHERE id=$1", [selected.id]);
       return selected;
