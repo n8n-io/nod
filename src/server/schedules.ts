@@ -101,6 +101,7 @@ interface ScheduleJob {
 interface ScheduleProvenance {
   turnId?: string;
   sourceMessageId: string | null;
+  expectedRevision?: number;
 }
 
 interface RunRow {
@@ -127,6 +128,22 @@ function invalid(message: string) {
 function preview(text: string) {
   const value = Array.from(text.replace(/\s+/g, ' ').trim());
   return value.length > 160 ? `${value.slice(0, 159).join('').trimEnd()}…` : value.join('');
+}
+
+function scheduleAnalytics(row: ScheduleRow) {
+  const [minute, hour, day, month, weekday] = row.cron?.trim().split(/\s+/) ?? [];
+  const numeric = (value: string | undefined) => value !== undefined && /^\d+$/.test(value);
+  let cadence: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom' = 'custom';
+  if (row.kind === 'once') cadence = 'once';
+  else if (numeric(minute) && month === '*') {
+    if (hour === '*' && day === '*' && weekday === '*') cadence = 'hourly';
+    else if (numeric(hour)) {
+      if (day === '*' && weekday === '*') cadence = 'daily';
+      else if (day === '*' && numeric(weekday)) cadence = 'weekly';
+      else if (numeric(day) && weekday === '*') cadence = 'monthly';
+    }
+  }
+  return { schedule_kind: row.kind, cadence };
 }
 
 function runValue(row: RunRow): ScheduleRun {
@@ -520,10 +537,19 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return row;
   }
 
-  async function validateUpdate(id: string, raw: unknown) {
+  function assertRevision(previous: ScheduleRow, expectedRevision?: number) {
+    if (expectedRevision !== undefined && previous.revision !== expectedRevision)
+      throw Object.assign(new Error('The schedule changed. Review it before asking again.'), {
+        statusCode: 409,
+      });
+  }
+
+  async function validateUpdate(id: string, raw: unknown, expectedRevision?: number) {
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    updateValue(await read(id), input);
+    const previous = await read(id);
+    assertRevision(previous, expectedRevision);
+    updateValue(previous, input);
     return input;
   }
 
@@ -637,7 +663,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'create' },
+      properties: { operation: 'create', ...scheduleAnalytics(row) },
     });
     return value(row);
   }
@@ -654,6 +680,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         )
       ).rows[0];
       if (!previous) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
+      assertRevision(previous, provenance?.expectedRevision);
       const next = updateValue(previous, input);
       const authorized =
         input.prompt === undefined
@@ -696,14 +723,14 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'update' },
+      properties: { operation: 'update', ...scheduleAnalytics(row) },
     });
     return value(row);
   }
 
   async function remove(id: string) {
     z.uuid().parse(id);
-    await transaction(async (client) => {
+    const row = await transaction(async (client) => {
       const row = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -713,11 +740,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
       await cancelPending(client, row);
       await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
+      return row;
     });
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'delete' },
+      properties: { operation: 'delete', ...scheduleAnalytics(row) },
     });
     return { ok: true };
   }

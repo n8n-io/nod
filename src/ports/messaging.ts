@@ -68,6 +68,7 @@ export interface MessagingTransport {
     text: string;
     attachments?: MessagingAttachment[];
     replyToMessageId?: string;
+    attachmentFailure?: (names: string[]) => Promise<string | undefined>;
   }): Promise<{ id: string; ids?: string[] }>;
   close(): Promise<void>;
 }

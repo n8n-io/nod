@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
+import { runAnalyticsEval } from './analytics.ts';
 import { cards, comparisonChart } from './chart.ts';
 import { storyCard, type StoryNotes } from './story.ts';
 import { renderImages } from './images.ts';
@@ -25,6 +26,8 @@ export const help = `Otto capability evals
     doctor [--fix]             check Docker, images, database and keys; --fix sets up what is missing
     run [--tier pr|full|live]  run the suite and print the pass rate, trust profile and what went wrong
     list                       show every scenario
+    analytics --model <provider/name>   evaluate the product analytics classifier on synthetic cases
+                               (--repeat 3, --scenario a,b, --label name, --out directory)
 
   Compare
     models <a> <b> [...]       run the same suite on several models, compare them and draw a chart
@@ -189,6 +192,24 @@ export async function main(args: Args) {
         (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
       )
         process.exitCode = 1;
+      return;
+    }
+    case 'analytics': {
+      const model = text(args, 'model');
+      if (!model)
+        throw new Error(
+          'Analytics evaluation requires --model <provider/name>. It calls a live model.',
+        );
+      const result = await runAnalyticsEval({
+        model: parseModel(model, await loadEnvironment()),
+        root,
+        label: text(args, 'label'),
+        repeat: whole(args, 'repeat', 3),
+        caseIds: text(args, 'scenario')?.split(','),
+      });
+      console.log(JSON.stringify(result.summary, null, 2));
+      console.log(`Saved ${join(result.directory, 'results.json')}`);
+      if (!result.summary.scored) process.exitCode = 1;
       return;
     }
     case 'gate': {

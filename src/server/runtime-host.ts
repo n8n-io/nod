@@ -18,6 +18,10 @@ import { loopbackHost } from '../shared/loopback.ts';
 const forwardedEnvironment = [
   'OTTO_PUBLIC_URL',
   'OTTO_RELEASE',
+  'OTTO_FEEDBACK_ENABLED',
+  'OTTO_FEEDBACK_URL',
+  'OTTO_FEEDBACK_TOKEN',
+  'OTTO_FEEDBACK_RECEIPT_URL_PREFIX',
   'COMPUTER_PROVIDER',
   'OTTO_COMPUTER_CONTROL_URL',
   'E2B_API_KEY',
@@ -180,7 +184,7 @@ export function createTenantRuntimeHost(options: {
       const environment: Record<string, string> = {};
       for (const key of forwardedEnvironment) {
         const value = options.operatorEnvironment[key];
-        if (value) environment[key] = value;
+        if (value !== undefined) environment[key] = value;
       }
       if (webhookUrl) environment.OTTO_COMPOSIO_WEBHOOK_URL = webhookUrl;
       if (options.operatorEnvironment.COMPOSIO_WEBHOOK_SECRET)

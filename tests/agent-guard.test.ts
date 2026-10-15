@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
 import { createAgentSession } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
@@ -686,28 +688,59 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
   assert.match(readAfterPause, /^<untrusted_tool_result source="fetch_content">/);
 });
 
-test('reconnecting an app forwards the saved account and pauses at its sign-in link', async () => {
+test('reconnecting an app forwards the saved account and pauses only at a valid sign-in link', async () => {
   const connectionId = randomUUID();
-  const calls: unknown[][] = [];
-  const result = await fixture(
-    async (tools) => {
-      await call(tools, 'manage_apps', {
-        action: 'connect',
-        service: 'gmail',
-        connectionId,
-      });
-    },
-    {
-      connections: async (...args) => {
-        calls.push(args);
-        return { name: 'Gmail', url: '/apps/connect/fixture' };
+  for (const url of [
+    '/apps/connect/fixture',
+    'https://connect.example.test/oauth/account(personal)?next=/mail/(all)',
+    'https://connect.example.test/oauth/account)?next=(mail',
+  ]) {
+    const calls: unknown[][] = [];
+    const result = await fixture(
+      async (tools) => {
+        await call(tools, 'manage_apps', {
+          action: 'connect',
+          service: 'gmail',
+          connectionId,
+        });
       },
-    },
-  );
-  assert.deepEqual(calls, [['connect', 'gmail', undefined, undefined, undefined, connectionId]]);
-  assert.equal(result.result.status, 'waiting_user');
-  assert.equal(result.replies.length, 1);
-  assert.match(result.replies[0]!, /\[Connect Gmail\]\(\/apps\/connect\/fixture\)/);
+      {
+        connections: async (...args) => {
+          calls.push(args);
+          return { name: 'Gmail', url, message: 'Ligar Gmail\n\npara continuar.' };
+        },
+      },
+    );
+    assert.deepEqual(calls, [['connect', 'gmail', undefined, undefined, undefined, connectionId]]);
+    assert.equal(result.result.status, 'waiting_user');
+    assert.equal(result.replies.length, 1);
+    const invitation = unified().use(remarkParse).parse(result.replies[0]!);
+    assert.equal(
+      invitation.children
+        .find((node) => node.type === 'paragraph')
+        ?.children.find((node) => node.type === 'link')?.url,
+      url,
+    );
+  }
+  for (const url of [
+    'javascript:alert(1)',
+    'https://user:password@example.test/connect',
+    '//example.test/connect',
+    'https://example.test/connect\\other',
+    'https://example.test/connect> [other](https://elsewhere.test)',
+    'https://example.test/connect\nnext',
+  ]) {
+    const result = await fixture(
+      async (tools) => {
+        await assert.rejects(
+          call(tools, 'manage_apps', { action: 'connect', service: 'gmail', connectionId }),
+          /unavailable/,
+        );
+      },
+      { connections: async () => ({ name: 'Gmail', url, message: 'Continue to Gmail.' }) },
+    );
+    assert.deepEqual(result.replies, []);
+  }
 });
 
 test('sign-in method questions remain available without requesting credential values', async () => {
@@ -960,6 +993,23 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   );
   assert.equal(coded.result.status, 'waiting_credentials');
   assert.ok(JSON.stringify(coded.replies).includes(question));
+  const linked = await fixture(
+    async (tools) => {
+      await call(tools, 'pay', input);
+    },
+    {
+      requestPayment: async () => ({
+        question: 'Confirmar [a compra]?\n\nVisa ••4242, 43,20 EUR.',
+        url: '/payments/synthetic-(payment)',
+      }),
+    },
+  );
+  const document = unified().use(remarkParse).parse(linked.replies.join('\n'));
+  const paragraph = document.children.find((node) => node.type === 'paragraph');
+  assert.equal(
+    paragraph?.children.find((node) => node.type === 'link')?.url,
+    '/payments/synthetic-(payment)',
+  );
 });
 
 test('long tool errors reach the model as a preview and a workspace file', async () => {

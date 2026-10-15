@@ -28,6 +28,7 @@ import { createPreferencesStore, defaultPreferences } from '../src/server/prefer
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { withServiceAnalytics } from '../src/server/analytics-connections.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
@@ -118,10 +119,15 @@ test(
       resume: thread.resumeAfterCredentials,
       retry: thread.retryCredentials,
     });
-    const approvals = await createApprovals(async () => {
-      executed++;
-      return {};
-    });
+    const approvals = await createApprovals(
+      async () => {
+        executed++;
+        return {};
+      },
+      undefined,
+      undefined,
+      async () => 'Synthetic saved action confirmation.',
+    );
     const accounts = createAccountStore(db.pool);
     await accounts.initialize();
     const userMessages = thread.createUserMessageService({
@@ -225,6 +231,15 @@ test(
     const readConnectedApps = async () => structuredClone(currentApps);
 
     const runs: RuntimeContext[] = [];
+    const beforeRuntimeRuns = new Map<string, string | undefined>();
+    const runtimeRuns = new Map<string, string | undefined>();
+    let observeServices = false;
+    const service = () =>
+      withServiceAnalytics(
+        captureAnalytics,
+        { app: 'gmail', connection_method: 'managed_app' },
+        async () => ({}),
+      );
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<
       string,
@@ -259,8 +274,19 @@ test(
     let taskHold = Promise.resolve();
 
     let limitReached = false;
+    const interruptedText = 'Synthetic interrupted turn.';
+    let beforeRuntimeFailure = async (_context: RuntimeContext) => {};
+    let presentInterruption: NonNullable<ThreadDependencies['present']> = async () =>
+      interruptedText;
     const dependencies: ThreadDependencies = {
       analytics: captureAnalytics,
+      present: (...input) => presentInterruption(...input),
+      observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
+      executeConfirmation: async (turnId) => {
+        beforeRuntimeRuns.set(turnId, analytics.currentRun(ownerId)?.id);
+        if (observeServices) await service();
+        return undefined;
+      },
       connectedApps: readConnectedApps,
       spendingLimitReached: async () => limitReached,
       speech: {
@@ -306,6 +332,7 @@ test(
       },
       runTurn: async (context) => {
         runs.push(context);
+        runtimeRuns.set(context.turnId, analytics.currentRun(ownerId)?.id);
         if (context.prompt === 'background-task-finish-fixture') {
           const task = (await context.task!({
             action: 'start',
@@ -364,6 +391,7 @@ test(
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
+          if (observeServices) await service();
           return { status: 'succeeded' };
         }
         if (context.prompt === 'background-research-fixture') {
@@ -494,10 +522,12 @@ test(
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
         workspaceListings.set(context.prompt, await readdir(context.workspacePath));
-        if (context.prompt === 'runtime-failure')
+        if (context.prompt === 'runtime-failure') {
+          await beforeRuntimeFailure(context);
           throw Object.assign(new Error('Synthetic runtime failure for private-fixture'), {
             code: 'E_SYNTHETIC',
           });
+        }
         if (context.prompt === 'screenshot-during-stop') {
           await context.publishScreenshot!(new Uint8Array([1, 2, 3]), 'atomic.png');
           return { status: 'succeeded' };
@@ -592,6 +622,10 @@ test(
           await context.waitForUser!('Which account should I use?');
           return { status: 'waiting_user' };
         }
+        if (context.prompt === 'ask-approval')
+          return { status: 'waiting_user', waitingFor: 'approval' };
+        if (context.prompt === 'ask-credentials')
+          return { status: 'waiting_credentials', waitingFor: 'credentials' };
         await context.reply(`done: ${context.prompt}`);
         return { status: 'succeeded' };
       },
@@ -858,7 +892,7 @@ test(
 
       await t.test(
         'worker start interrupts running turns once without retrying them and drains queued turns',
-        async () => {
+        async (t) => {
           const missingJob = await thread.enqueueTurn('recovery-fixture', {
             source: 'schedule',
             sourceId: 'recovery-fixture',
@@ -868,10 +902,32 @@ test(
           ]);
           const foreground = randomUUID();
           const background = randomUUID();
+          const savedTask = randomUUID();
+          const taskTurn = randomUUID();
+          const anchor = randomUUID();
+          t.after(async () => {
+            await db.pool.query('UPDATE turns SET task_id=NULL WHERE task_id=$1', [savedTask]);
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [savedTask]);
+            await db.pool.query('DELETE FROM messages WHERE reply_to_message_id=$1', [anchor]);
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [anchor]);
+          });
           await db.pool.query(
             "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,started_at) VALUES($1,'local-development',$3,'user','Do not repeat','running',false,now()),($2,'local-development',$3,'schedule','Do not repeat quietly','running',true,now())",
             [foreground, background, threadId],
           );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant','Saved task fixture')",
+            [anchor, ownerId, threadId],
+          );
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background,started_at) VALUES($1,$2,$3,$4,'task','Do not repeat the saved task','running',true,now())",
+            [taskTurn, ownerId, threadId, savedTask],
+          );
+          await db.pool.query(
+            "INSERT INTO tasks(id,owner_id,turn_id,session_id,message_id,title,done_when,now_text) VALUES($1,$2,$3,$1,$4,'Restart fixture','Checked','Checking')",
+            [savedTask, ownerId, taskTurn, anchor],
+          );
+          await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [savedTask, taskTurn]);
           await thread.startThreadWorkers(dependencies);
           await waitFor(async () => (await turnStatus(missingJob)) === 'succeeded');
           await waitFor(
@@ -883,7 +939,7 @@ test(
                 )
               ).rowCount === 0,
           );
-          for (const id of [foreground, background]) {
+          for (const id of [foreground, background, taskTurn]) {
             assert.equal(await turnStatus(id), 'failed');
             assert.equal(Boolean(ran(id)), false);
           }
@@ -895,9 +951,21 @@ test(
               )
             ).rows;
           assert.deepEqual(await interruptedReplies(foreground), [
-            { text: thread.interruptedMessage, thread_id: threadId },
+            { text: interruptedText, thread_id: threadId },
           ]);
           assert.deepEqual(await interruptedReplies(background), []);
+          assert.deepEqual(await interruptedReplies(taskTurn), [
+            { text: interruptedText, thread_id: threadId },
+          ]);
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT reply_to_message_id FROM messages WHERE turn_id=$1 AND role='assistant'",
+                [taskTurn],
+              )
+            ).rows[0].reply_to_message_id,
+            anchor,
+          );
           assert.equal(
             (
               await db.pool.query(
@@ -974,6 +1042,7 @@ test(
         'each session runs one turn at a time while sessions run in parallel',
         async () => {
           await waitFor(settledThread);
+          observeServices = true;
           const threadId = (await thread.activeThread(db.pool)).id;
           let release = () => {};
           const gate = new Promise<void>((resolve) => {
@@ -1024,6 +1093,23 @@ test(
           assert.equal(ran(first)?.sessionId, first);
           assert.equal(ran(next)?.sessionId, first);
           assert.equal(ran(other)?.sessionId, other);
+          observeServices = false;
+          const ids = [first, next, other].map((id) => runtimeRuns.get(id));
+          assert.ok(ids.every(Boolean));
+          assert.equal(new Set(ids).size, 3);
+          for (const id of [first, next, other]) {
+            assert.equal(beforeRuntimeRuns.get(id), runtimeRuns.get(id));
+            assert.notEqual(runtimeRuns.get(id), id);
+            const captured = analyticsEvents.filter(
+              (event) => event.properties.run_id === runtimeRuns.get(id),
+            );
+            assert.equal(captured.filter((event) => event.event === 'otto_service_used').length, 2);
+            assert.equal(captured.filter((event) => event.event === 'otto_turn_started').length, 1);
+            assert.equal(
+              captured.filter((event) => event.event === 'otto_turn_completed').length,
+              1,
+            );
+          }
         },
       );
 
@@ -1548,6 +1634,14 @@ test(
         ).rows[0];
         assert.deepEqual(row, { status: 'waiting', waiting_reason: 'question' });
         assert.equal(
+          analyticsEvents.find(
+            (event) =>
+              event.event === 'otto_turn_completed' &&
+              event.properties.run_id === runtimeRuns.get(question.turnId),
+          )!.properties.waiting_reason,
+          'question',
+        );
+        assert.equal(
           (
             await db.pool.query(
               "SELECT count(*)::int AS count FROM messages WHERE turn_id=$1 AND role='assistant' AND text='Which account should I use?'",
@@ -1556,6 +1650,29 @@ test(
           ).rows[0].count,
           1,
         );
+        for (const reason of ['approval', 'credentials'] as const) {
+          await waitFor(settledThread);
+          const waiting = await thread.submitUserMessage(`ask-${reason}`, [], { channel: 'web' });
+          await waitFor(settled(waiting.turnId));
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT status,waiting_reason FROM turns WHERE id=$1', [
+                waiting.turnId,
+              ])
+            ).rows[0],
+            { status: 'waiting', waiting_reason: reason },
+          );
+          const captured = analyticsEvents.find(
+            (event) =>
+              event.event === 'otto_turn_completed' &&
+              event.properties.run_id === runtimeRuns.get(waiting.turnId),
+          )!;
+          assert.equal(captured.properties.waiting_reason, reason);
+          assert.equal(
+            captured.properties.outcome,
+            reason === 'credentials' ? 'waiting_credentials' : 'waiting_user',
+          );
+        }
         await waitFor(settledThread);
         const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
         await waitFor(settled(answer.turnId));
@@ -1909,13 +2026,143 @@ test(
               [failed.threadId, failed.turnId],
             )
           ).rows.map((message) => message.text);
-          assert.deepEqual(messages, [thread.interruptedMessage]);
+          assert.deepEqual(messages, [interruptedText]);
           assert.equal(
             (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows[0].count,
             before + 1,
           );
           assert.equal(runs.filter((context) => context.prompt === 'runtime-failure').length, 1);
           await waitFor(settledThread);
+        },
+      );
+
+      await t.test(
+        'interruption recovery finishes before presentation and ignores missing or stale text',
+        async (t) => {
+          const logged = t.mock.method(console, 'error', () => {});
+          try {
+            for (const mode of [
+              'offline',
+              'invalid',
+              'stale',
+              'advanced',
+              'background',
+              'queued',
+              'consumed',
+              'resume',
+              'resume-advanced',
+              'long',
+            ]) {
+              let presented = 0;
+              let advanced: Awaited<ReturnType<typeof thread.submitUserMessage>> | undefined;
+              const completeText = mode === 'long' ? interruptedText.repeat(1000) : interruptedText;
+              const before = runs.filter((context) => context.prompt === 'runtime-failure').length;
+              beforeRuntimeFailure = async (context) => {
+                if (mode !== 'queued' && mode !== 'consumed') return;
+                advanced = await thread.submitUserMessage('New request before the runtime fails.');
+                if (mode === 'consumed')
+                  assert.deepEqual(
+                    (await context.takeMessages!()).map(({ id }) => id),
+                    [advanced.messageId],
+                  );
+              };
+              presentInterruption = async (presentedThread, input) => {
+                presented++;
+                assert.deepEqual(input, { kind: 'interrupted' });
+                await transaction(async (client) => {
+                  assert.equal((await thread.lockThread(client)).id, presentedThread);
+                  const failed = (
+                    await client.query(
+                      "SELECT id,status FROM turns WHERE thread_id=$1 AND prompt='runtime-failure' ORDER BY created_at DESC,id DESC LIMIT 1",
+                      [presentedThread],
+                    )
+                  ).rows[0];
+                  assert.equal(failed.status, 'failed');
+                  if (mode === 'stale')
+                    await client.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
+                      failed.id,
+                    ]);
+                  if (mode === 'background') {
+                    const background = randomUUID();
+                    await client.query(
+                      "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Synthetic background update','succeeded',true)",
+                      [background, ownerId, presentedThread],
+                    );
+                    await client.query(
+                      "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Synthetic independent update')",
+                      [randomUUID(), ownerId, presentedThread, background],
+                    );
+                  }
+                }, db.pool);
+                if (mode === 'offline') throw new Error('Synthetic model failure.');
+                if (mode === 'advanced')
+                  advanced = await thread.submitUserMessage(
+                    'New request during interruption presentation.',
+                  );
+                return mode === 'invalid' ? ' ' : completeText;
+              };
+              let failed: { threadId: string; turnId: string };
+              if (mode.startsWith('resume')) {
+                const parent = await thread.submitUserMessage('Synthetic parent request.');
+                await waitFor(settled(parent.turnId));
+                if (mode === 'resume-advanced') {
+                  advanced = await thread.submitUserMessage(
+                    'New request before an older task resumes.',
+                  );
+                  await waitFor(settled(advanced.turnId));
+                }
+                failed = {
+                  threadId: parent.threadId,
+                  turnId: await thread.enqueueTurn('runtime-failure', {
+                    source: 'resume',
+                    sessionId: parent.threadId,
+                    parentTurnId: parent.turnId,
+                  }),
+                };
+              } else failed = await thread.submitUserMessage('runtime-failure');
+              await waitFor(() =>
+                logged.mock.calls.some((call) => String(call.arguments[0]).includes(failed.turnId)),
+              );
+              assert.equal(presented, 1);
+              assert.equal(
+                await turnStatus(failed.turnId),
+                mode === 'stale' ? 'cancelled' : 'failed',
+              );
+              assert.deepEqual(
+                (
+                  await db.pool.query(
+                    "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'",
+                    [failed.turnId],
+                  )
+                ).rows.map((row) => row.text),
+                ['long', 'background', 'consumed', 'resume'].includes(mode) ? [completeText] : [],
+              );
+              if (advanced) {
+                const advancedTurnId = advanced.turnId;
+                await waitFor(settled(advancedTurnId));
+                assert.equal(
+                  runs.filter((context) => context.turnId === advancedTurnId).length,
+                  mode === 'consumed' ? 0 : 1,
+                );
+              }
+              assert.equal(
+                runs.filter((context) => context.prompt === 'runtime-failure').length,
+                before + 1,
+              );
+              assert.equal(
+                (
+                  await db.pool.query(
+                    "SELECT id FROM turns WHERE source='resume' AND parent_turn_id=$1",
+                    [failed.turnId],
+                  )
+                ).rowCount,
+                0,
+              );
+            }
+          } finally {
+            presentInterruption = async () => interruptedText;
+            beforeRuntimeFailure = async () => {};
+          }
         },
       );
 
@@ -3017,7 +3264,12 @@ test(
               'duration_ms',
               'environment',
               'outcome',
+              'queue_duration_ms',
+              'run_id',
               'source',
+              ...(['waiting_user', 'waiting_credentials'].includes(String(event.properties.outcome))
+                ? ['waiting_reason']
+                : []),
             ]);
             assert.ok(Number(event.properties.duration_ms) >= 0);
           }
@@ -3681,7 +3933,7 @@ test(
   },
 );
 
-async function feedbackFixture(t: TestContext) {
+async function feedbackFixture(t: TestContext, enabled = true) {
   const schema = `test_feedback_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -3707,6 +3959,7 @@ async function feedbackFixture(t: TestContext) {
   };
   const accepted = new Map<string, { payloadHash: string; receipt: FeedbackReceipt }>();
   const delivery = createN8nFeedback({
+    enabled,
     url: 'https://feedback.example.test/intake',
     request: async (_url, options) => {
       assert.equal(options?.redirect, 'error');
@@ -3865,6 +4118,9 @@ test(
     const f = await feedbackFixture(t);
     const first = await f.open();
     const second = await f.open();
+    const context = await first.app.inject({ url: '/api/feedback/context' });
+    assert.equal(context.json().enabled, true);
+    assert.equal(context.json().recipient, 'feedback.example.test');
     const snapshotResponse = await first.app.inject({
       method: 'POST',
       url: '/api/feedback/report',
@@ -4368,6 +4624,30 @@ test(
   },
 );
 
+test(
+  'disabled feedback exposes no recipient and never submits or reconciles outbound',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t, false);
+    const { app, ownerId } = await f.open();
+    const context = (await app.inject({ url: '/api/feedback/context' })).json();
+    assert.equal(context.enabled, false);
+    assert.equal(context.recipient, null);
+    const input = f.submission();
+    const response = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(response.statusCode, 503);
+    await f.pool.query(
+      `INSERT INTO feedback_submissions(owner_id,id,request_hash,payload_hash,status,created_at)
+       VALUES($1,$2,$3,$3,'unknown',now()-interval '1 hour')`,
+      [ownerId, input.submissionId, 'a'.repeat(64)],
+    );
+    const receipt = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(receipt.json().status, 'unknown');
+    assert.equal(f.state.envelopes.length, 0);
+    assert.equal(f.state.statusRequests.length, 0);
+  },
+);
+
 test('feedback intake accepts only matching Linear receipts and never retries a failed or redirected request', async (t) => {
   const input: FeedbackEnvelope = {
     schemaVersion: 1,
@@ -4450,6 +4730,99 @@ test('feedback intake accepts only matching Linear receipts and never retries a 
     request: async () => Response.json(valid),
   });
   assert.deepEqual(await delivery.submit(input), valid);
+  await t.test(
+    'custom intake accepts only receipts inside its approved issue collection',
+    async () => {
+      let issueUrl: unknown = 'https://issues.example.test/projects/otto/issues/ABC-123';
+      const requests: unknown[] = [];
+      const custom = createN8nFeedback({
+        url: 'https://feedback.example.test/intake',
+        receiptUrlPrefix: 'https://issues.example.test/projects/otto/issues/',
+        token: 'synthetic-feedback-token',
+        request: async (url, options) => {
+          assert.equal(String(url), 'https://feedback.example.test/intake');
+          assert.equal(
+            new Headers(options?.headers).get('x-otto-feedback-token'),
+            'synthetic-feedback-token',
+          );
+          requests.push(JSON.parse(String(options?.body)));
+          return Response.json({ ...valid, issueUrl });
+        },
+      });
+      assert.equal(custom.recipient, 'feedback.example.test');
+      assert.deepEqual(await custom.submit(input), { ...valid, issueUrl });
+      assert.deepEqual(await custom.status(input.submissionId, input.payloadHash), {
+        ...valid,
+        issueUrl,
+      });
+      assert.deepEqual(requests, [
+        input,
+        { action: 'status', submissionId: input.submissionId, payloadHash: input.payloadHash },
+      ]);
+      for (const invalid of [
+        'https://issues.example.test/projects/otto/issues',
+        'https://issues.example.test/projects/otto/issues/',
+        'https://issues.example.test/projects/otto/issues-foreign/ABC-123',
+        'https://issues.example.test/projects/other/issues/ABC-123',
+        'https://issues.example.test.foreign.test/projects/otto/issues/ABC-123',
+        'https://issues.example.test:444/projects/otto/issues/ABC-123',
+        'https://linear.app/n8n/issue/LAB-123',
+        'http://issues.example.test/projects/otto/issues/ABC-123',
+        'https://name:secret@issues.example.test/projects/otto/issues/ABC-123',
+        'https://issues.example.test/projects/otto/issues/ABC-123?token=synthetic',
+        'https://issues.example.test/projects/otto/issues/ABC-123#private',
+        'https://issues.example.test/projects/otto/issues/../issues/ABC-123',
+        'https://issues.example.test/projects/otto/issues/%2e%2e/issues/ABC-123',
+        'https://issues.example.test/projects/otto/issues/ABC-123%2fsecret',
+        'https://issues.example.test/projects/otto/issues/ABC-123%5Csecret',
+        'https://issues.example.test/projects/otto/issues/ABC-123%252fsecret',
+        'https://issues.example.test/projects/otto/issues/ABC-123\\secret',
+        ['https://issues.example.test/projects/otto/issues/ABC-123'],
+      ]) {
+        issueUrl = invalid;
+        assert.deepEqual(await custom.submit(input), {
+          submissionId: input.submissionId,
+          status: 'unknown',
+        });
+      }
+      const disabled = createN8nFeedback({
+        enabled: false,
+        url: 'invalid disabled configuration',
+        receiptUrlPrefix: 'invalid disabled configuration',
+        request: async () => {
+          throw new Error('Disabled feedback made an outbound request.');
+        },
+      });
+      assert.equal(disabled.configured, false);
+      assert.equal(disabled.recipient, null);
+      assert.equal((await disabled.submit(input)).status, 'rejected');
+      assert.equal(
+        (await disabled.status(input.submissionId, input.payloadHash)).status,
+        'rejected',
+      );
+      for (const invalid of [
+        'http://issues.example.test/issues/',
+        'https://issues.example.test/',
+        'https://issues.example.test/issues',
+        'https://name:secret@issues.example.test/issues/',
+        'https://issues.example.test/issues/?token=synthetic',
+        'https://issues.example.test/issues/#private',
+        'https://issues.example.test/private/../issues/',
+        'https://issues.example.test/%2e%2e/issues/',
+        'https://issues.example.test/issues%2f',
+        'https://issues.example.test/issues%5c',
+        'https://issues.example.test/issues%252f',
+        'https://issues.example.test/issues\\private',
+        'https://issues.example.test/issues%broken',
+      ])
+        assert.throws(() =>
+          createN8nFeedback({
+            url: 'https://feedback.example.test/intake',
+            receiptUrlPrefix: invalid,
+          }),
+        );
+    },
+  );
   await t.test(
     'delivery preserves bounded explanations without trusting malformed messages',
     async () => {
@@ -5039,3 +5412,1145 @@ test('feedback context reads macOS computer names and falls back without reading
     assert.equal(execute.mock.callCount(), 3);
   }
 });
+
+async function conversationAnalyticsFixture(t: TestContext) {
+  const schema = `test_analytics_${randomUUID().replaceAll('-', '')}`;
+  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new pg.Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    options: `-c search_path=${schema}`,
+  });
+  await pool.query(`
+    CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
+    CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),
+      session_id uuid NOT NULL,source text NOT NULL,source_id text,prompt text NOT NULL,channel text NOT NULL,
+      status text NOT NULL,created_at timestamptz NOT NULL,finished_at timestamptz);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),
+      turn_id uuid NOT NULL REFERENCES turns(id),role text NOT NULL,text text NOT NULL,created_at timestamptz NOT NULL)
+  `);
+  const { createConversationAnalytics } = await import('../src/server/conversation-analytics.ts');
+  const ownerId = randomUUID();
+  const threadId = randomUUID();
+  const events: Parameters<ProductAnalytics['capture']>[0][] = [];
+  let allowed = true;
+  let revision: string | undefined;
+  let remoteRevision: string | undefined;
+  const analytics = await createAnalytics({
+    deployment: 'hosted',
+    environment: 'development',
+    dataRoot: '/unused',
+    provider: {
+      get consentRevision() {
+        return revision;
+      },
+      permitted: async () => {
+        revision = remoteRevision;
+        return allowed;
+      },
+      capture: (event, signal) => {
+        assert.equal(signal.aborted, false);
+        events.push(event);
+      },
+      shutdown: async () => {},
+    },
+  });
+  const processors: ReturnType<typeof createConversationAnalytics>[] = [];
+  t.after(async () => {
+    await Promise.all(processors.map((processor) => processor.close()));
+    await analytics.shutdown();
+    await pool.end();
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  });
+  await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, ownerId]);
+  return {
+    pool,
+    ownerId,
+    threadId,
+    events,
+    analytics,
+    authorize(value: boolean, nextRevision = remoteRevision) {
+      allowed = value;
+      remoteRevision = nextRevision;
+    },
+    async processor(curate: MemoryCurator['curate'], owner = ownerId, secrets: string[] = []) {
+      const processor = createConversationAnalytics({
+        pool,
+        ownerId: owner,
+        analytics,
+        curator: { id: 'synthetic', configured: true, curate },
+        secrets,
+      });
+      processors.push(processor);
+      await processor.initialize();
+      return processor;
+    },
+    async turn(
+      options: {
+        owner?: string;
+        thread?: string;
+        session?: string;
+        source?: string;
+        sourceId?: string;
+        prompt?: string;
+        reply?: string;
+        channel?: string;
+        at?: number;
+        finished?: number | null;
+      } = {},
+    ) {
+      const id = randomUUID();
+      const messageId = randomUUID();
+      const replyId = randomUUID();
+      const owner = options.owner ?? ownerId;
+      const thread = options.thread ?? threadId;
+      const at = new Date(options.at ?? Date.parse('2026-10-14T12:00:00.000Z'));
+      const finished =
+        options.finished === null ? null : new Date(options.finished ?? at.getTime() + 2_000);
+      const prompt = options.prompt ?? 'Find synthetic public bicycle specifications';
+      await pool.query(
+        'INSERT INTO turns(id,owner_id,thread_id,session_id,source,source_id,prompt,channel,status,created_at,finished_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+        [
+          id,
+          owner,
+          thread,
+          options.session ?? thread,
+          options.source ?? 'user',
+          options.sourceId ?? null,
+          prompt,
+          options.channel ?? 'web',
+          finished ? 'succeeded' : 'running',
+          at,
+          finished,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,created_at) VALUES($1,$2,$3,$4,'user',$5,$6),($7,$2,$3,$4,'assistant',$8,$9)",
+        [
+          messageId,
+          owner,
+          thread,
+          id,
+          prompt,
+          at,
+          replyId,
+          options.reply ?? 'Synthetic result',
+          finished ?? at,
+        ],
+      );
+      return { id, messageId, replyId, at, finished };
+    },
+  };
+}
+
+test(
+  'conversation analytics redacts before truncating and preserves structured requests',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    for (const structured of [false, true]) {
+      await t.test(
+        structured ? 'JSON request' : 'credential across the input boundary',
+        async (t) => {
+          const f = await conversationAnalyticsFixture(t);
+          f.analytics.setUsageData(f.ownerId, true);
+          const secret = 'syntheticboundarycredential';
+          const prompt = structured
+            ? JSON.stringify({ request: 'Translate the audio transcript', language: 'French' })
+            : 'x'.repeat(1190) + secret;
+          const turn = await f.turn({ prompt });
+          let input: { messages: Array<{ role: string; text: string }> } | undefined;
+          const processor = await f.processor(
+            async (request) => {
+              input = request.input as typeof input;
+              return {
+                tasks: [
+                  {
+                    task_id: null,
+                    request_message_id: turn.messageId,
+                    task_type: 'translation',
+                    task_action: 'translate',
+                    task_subject: 'audio',
+                    task_activities: ['translate:audio'],
+                    outcome: 'active',
+                  },
+                ],
+                frustration: null,
+              };
+            },
+            f.ownerId,
+            [secret],
+          );
+          processor.start(turn.id)();
+          await processor.drain();
+          const text = input?.messages.find((message) => message.role === 'user')?.text;
+          if (structured) assert.deepEqual(JSON.parse(text!), JSON.parse(prompt));
+          else {
+            assert.equal(text, 'x'.repeat(1190) + '[redacted]');
+            assert.ok(!JSON.stringify(input).includes(secret.slice(0, 10)));
+          }
+          assert.equal(
+            f.events.find((event) => event.event === 'otto_task_started')?.properties.task_type,
+            'translation',
+          );
+        },
+      );
+    }
+  },
+);
+
+test(
+  'conversation analytics preserves compound task identity, activities and original timing across turns and restarts',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const first = await f.turn({
+      prompt: 'Research synthetic bicycle specifications and send me a summary email',
+    });
+    const initialActivities = ['send:email', 'find:web', 'summarize:web'];
+    let calls = 0;
+    const initial = await f.processor(async ({ task, input }) => {
+      calls++;
+      assert.equal(task, 'analytics');
+      assert.deepEqual((input as { tasks: unknown[] }).tasks, []);
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: first.messageId,
+            task_type: 'communication',
+            task_action: 'send',
+            task_subject: 'email',
+            task_activities: initialActivities,
+            outcome: 'waiting',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    const finish = initial.start(first.id);
+    finish();
+    finish();
+    await initial.drain();
+    assert.equal(calls, 1);
+    const started = f.events.filter((event) => event.event === 'otto_task_started');
+    const updated = f.events.filter((event) => event.event === 'otto_task_updated');
+    assert.equal(started.length, 1);
+    assert.equal(updated.length, 1);
+    assert.equal(started[0].timestamp?.toISOString(), first.at.toISOString());
+    assert.equal(updated[0].timestamp?.toISOString(), first.finished!.toISOString());
+    assert.equal(updated[0].properties.elapsed_ms, 2_000);
+    assert.equal(updated[0].properties.completion_evidence, 'none');
+    for (const event of [...started, ...updated]) {
+      assert.equal(event.properties.task_action, 'send');
+      assert.equal(event.properties.task_subject, 'email');
+      assert.deepEqual(event.properties.task_activities, initialActivities);
+    }
+    assert.ok(started[0].uuid);
+    const taskId = started[0].properties.task_id;
+    await initial.close();
+    const second = await f.turn({
+      source: 'resume',
+      channel: 'telegram:synthetic',
+      prompt: 'Compare their weight in the summary before sending it',
+      at: first.at.getTime() + 5_000,
+    });
+    const third = await f.turn({
+      channel: 'whatsapp:synthetic',
+      at: first.at.getTime() + 9_000,
+      prompt: 'Make that summary email more concise',
+    });
+    const resumed = await f.processor(async ({ input }) => {
+      const editing = (
+        input as { messages: Array<{ id: string; current: boolean }> }
+      ).messages.some((message) => message.current && message.id === third.messageId);
+      const known = (
+        input as {
+          tasks: Array<{
+            id: string;
+            request: string;
+            task_action: string;
+            task_subject: string;
+            task_activities: string[];
+            outcome: string;
+          }>;
+        }
+      ).tasks;
+      assert.equal(known.length, 1);
+      assert.equal(known[0].id, taskId);
+      assert.equal(known[0].task_action, 'send');
+      assert.equal(known[0].task_subject, 'email');
+      assert.deepEqual(
+        known[0].task_activities,
+        known[0].outcome === 'completed'
+          ? [...initialActivities, 'compare:web']
+          : initialActivities,
+      );
+      return {
+        tasks: [
+          {
+            task_id: taskId,
+            request_message_id: null,
+            task_type: 'unknown',
+            task_action: 'unknown',
+            task_subject: 'unknown',
+            task_activities: ['unknown:unknown', editing ? 'edit:email' : 'compare:web'],
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    resumed.start(second.id)();
+    await resumed.drain();
+    const completed = f.events.filter((event) => event.event === 'otto_task_updated').at(-1)!;
+    assert.equal(completed.properties.task_id, taskId);
+    assert.equal(completed.properties.task_type, 'communication');
+    assert.equal(completed.properties.task_action, 'send');
+    assert.equal(completed.properties.task_subject, 'email');
+    assert.deepEqual(completed.properties.task_activities, [...initialActivities, 'compare:web']);
+    assert.equal(completed.properties.source, 'user');
+    assert.equal(completed.properties.channel, 'web');
+    assert.equal(completed.properties.turn_count, 2);
+    assert.equal(completed.properties.elapsed_ms, 7_000);
+    assert.equal(completed.properties.completion_evidence, 'inferred');
+    assert.equal(completed.timestamp?.toISOString(), second.finished!.toISOString());
+    resumed.start(third.id)();
+    await resumed.drain();
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_updated').length, 2);
+    const stored = (await f.pool.query('SELECT * FROM analytics_tasks')).rows;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].turn_count, 2);
+    assert.equal(stored[0].task_action, 'send');
+    assert.equal(stored[0].task_subject, 'email');
+    assert.deepEqual(stored[0].task_activities, [
+      ...initialActivities,
+      'compare:web',
+      'edit:email',
+    ]);
+    assert.equal(stored[0].requested_at.toISOString(), first.at.toISOString());
+    assert.equal(stored[0].outcome, 'completed');
+    assert.equal(stored[0].updated_at.toISOString(), second.finished!.toISOString());
+    const linked = f.events.filter((event) => event.event === 'otto_task_linked');
+    assert.equal(linked.length, 3);
+    assert.ok(linked.every((event) => event.properties.task_id === taskId));
+    assert.deepEqual(linked.at(-1)!.properties.task_activities, [
+      ...initialActivities,
+      'compare:web',
+      'edit:email',
+    ]);
+    assert.equal(linked.at(-1)!.properties.source, 'user');
+    assert.equal(linked.at(-1)!.properties.channel, 'web');
+    assert.equal(linked.at(-1)!.timestamp?.toISOString(), third.finished!.toISOString());
+    assert.deepEqual(
+      f.events
+        .filter((event) => event.event === 'otto_task_analysis')
+        .map((event) => event.properties.task_count),
+      [1, 1, 1],
+    );
+    assert.deepEqual(
+      f.events
+        .filter((event) => event.event === 'otto_task_analysis')
+        .map((event) => event.properties.unknown_label_count),
+      [0, 5, 5],
+    );
+    const exported = JSON.stringify(f.events);
+    for (const privateValue of [
+      first.id,
+      first.messageId,
+      f.threadId,
+      'bicycle specifications',
+      'Synthetic result',
+    ])
+      assert.ok(!exported.includes(privateValue), privateValue);
+  },
+);
+
+test(
+  'conversation analytics links service runs to tasks without duplicating attempts or losing ambiguous coverage',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const first = await f.turn({ prompt: 'Compare synthetic bicycles and draft a synthetic note' });
+    const second = await f.turn({
+      session: randomUUID(),
+      prompt: 'Hello',
+      at: first.at.getTime() + 5_000,
+    });
+    const third = await f.turn({ prompt: 'Thanks', at: first.at.getTime() + 10_000 });
+    let taskId: string | undefined;
+    const processor = await f.processor(async ({ input }) => {
+      const current = (
+        input as { messages: Array<{ id: string; current: boolean }> }
+      ).messages.filter((message) => message.current);
+      if (current.some((message) => message.id === first.messageId))
+        return {
+          tasks: ['research', 'communication'].map((task_type) => ({
+            task_id: null,
+            request_message_id: first.messageId,
+            task_type,
+            task_action: task_type === 'research' ? 'compare' : 'draft',
+            task_subject: task_type === 'research' ? 'web' : 'message',
+            task_activities:
+              task_type === 'research' ? ['find:web', 'compare:web'] : ['draft:message'],
+            outcome: 'completed',
+          })),
+          frustration: null,
+        };
+      return {
+        tasks: current.some((message) => message.id === third.messageId)
+          ? [
+              {
+                task_id: taskId,
+                request_message_id: null,
+                task_type: 'communication',
+                task_action: 'send',
+                task_subject: 'email',
+                task_activities: ['find:email', 'send:email'],
+                outcome: 'completed',
+              },
+            ]
+          : [],
+        frustration: null,
+      };
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = (operation: () => Promise<unknown>) =>
+      withServiceAnalytics(
+        f.analytics.forOwner(f.ownerId),
+        { app: 'gmail', connection_method: 'managed_app' },
+        operation,
+      );
+    const firstRun = processor.observe(first.id, async () => {
+      await service(async () => {
+        await gate;
+        return 'Synthetic private result';
+      });
+    });
+    await processor.observe(second.id, async () => {
+      await service(async () => ({}));
+    });
+    release();
+    await firstRun;
+    await processor.drain();
+    const services = f.events.filter((event) => event.event === 'otto_service_used');
+    assert.equal(services.length, 2);
+    assert.equal(new Set(services.map((event) => event.properties.run_id)).size, 2);
+    const links = f.events.filter((event) => event.event === 'otto_task_linked');
+    assert.equal(links.length, 2);
+    assert.deepEqual(
+      links.map((event) => [
+        event.properties.task_type,
+        event.properties.task_action,
+        event.properties.task_subject,
+        event.properties.task_activities,
+      ]),
+      [
+        ['research', 'compare', 'web', ['compare:web', 'find:web']],
+        ['communication', 'draft', 'message', ['draft:message']],
+      ],
+    );
+    assert.equal(links[0].properties.run_id, links[1].properties.run_id);
+    const linkedRun = links[0].properties.run_id;
+    assert.ok(services.some((event) => event.properties.run_id === linkedRun));
+    const health = f.events.filter((event) => event.event === 'otto_task_analysis');
+    assert.deepEqual(
+      health.map((event) => event.properties.task_count),
+      [0, 2],
+    );
+    assert.equal(health[1].properties.run_id, linkedRun);
+    assert.notEqual(health[0].properties.run_id, linkedRun);
+    taskId = String(
+      links.find((event) => event.properties.task_type === 'research')!.properties.task_id,
+    );
+    await processor.observe(third.id, async () => {});
+    await processor.drain();
+    const lastLink = f.events.filter((event) => event.event === 'otto_task_linked').at(-1)!;
+    assert.equal(lastLink.properties.task_id, taskId);
+    assert.equal(lastLink.properties.task_type, 'research');
+    assert.equal(lastLink.properties.task_action, 'compare');
+    assert.equal(lastLink.properties.task_subject, 'web');
+    assert.deepEqual(lastLink.properties.task_activities, [
+      'compare:web',
+      'find:web',
+      'find:email',
+      'send:email',
+    ]);
+    assert.deepEqual(
+      (await f.pool.query('SELECT task_activities FROM analytics_tasks WHERE id=$1', [taskId]))
+        .rows[0].task_activities,
+      ['compare:web', 'find:web', 'find:email', 'send:email'],
+    );
+    assert.notEqual(lastLink.properties.run_id, linkedRun);
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_updated').length, 2);
+    assert.equal(
+      f.events.filter((event) => event.event === 'otto_task_analysis').at(-1)!.properties
+        .task_count,
+      1,
+    );
+    const exported = JSON.stringify(f.events);
+    for (const privateValue of [
+      first.id,
+      first.messageId,
+      second.id,
+      f.threadId,
+      'Synthetic private result',
+    ])
+      assert.ok(!exported.includes(privateValue));
+  },
+);
+
+test(
+  'conversation analytics fences owners, sessions, archived threads and non-user background work',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const foreignOwner = randomUUID();
+    const foreignThread = randomUUID();
+    const archivedThread = randomUUID();
+    await f.pool.query(
+      'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,NULL),($3,$4,now())',
+      [foreignThread, foreignOwner, archivedThread, f.ownerId],
+    );
+    const chat = await f.turn({ prompt: 'Synthetic private chat request' });
+    const cases = [
+      await f.turn({
+        owner: foreignOwner,
+        thread: foreignThread,
+        prompt: 'Synthetic foreign owner',
+      }),
+      await f.turn({ thread: archivedThread, prompt: 'Synthetic archived content' }),
+      await f.turn({ source: 'event', prompt: 'Synthetic unsolicited event' }),
+      await f.turn({ sourceId: 'onboarding:synthetic', prompt: 'Synthetic onboarding' }),
+      await f.turn({ finished: null, prompt: 'Synthetic unfinished content' }),
+    ];
+    const scheduled = await f.turn({
+      session: randomUUID(),
+      source: 'schedule',
+      prompt: 'Synthetic scheduled research',
+    });
+    const seen: object[] = [];
+    const processor = await f.processor(async ({ input }) => {
+      seen.push(input);
+      const value = input as { source: string; tasks: unknown[]; scheduled_request?: string };
+      assert.deepEqual(value.tasks, []);
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: value.source === 'schedule' ? null : chat.messageId,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    for (const turn of [chat, ...cases, scheduled]) {
+      processor.start(turn.id)();
+      await processor.drain();
+    }
+    assert.equal(seen.length, 2);
+    const scheduledInput = JSON.stringify(seen[1]);
+    assert.ok(scheduledInput.includes('Synthetic scheduled research'));
+    for (const omitted of [
+      'Synthetic private chat',
+      'Synthetic foreign owner',
+      'Synthetic archived content',
+      'Synthetic unsolicited event',
+      'Synthetic onboarding',
+      'Synthetic unfinished',
+    ])
+      assert.ok(!scheduledInput.includes(omitted), omitted);
+    const stored = (await f.pool.query('SELECT * FROM analytics_tasks')).rows;
+    assert.equal(stored.length, 2);
+    assert.ok(stored.every((row) => row.owner_id === f.ownerId));
+    assert.equal(new Set(stored.map((row) => row.session_id)).size, 2);
+    assert.equal(
+      f.events.filter(
+        (event) => event.event === 'otto_task_started' && event.properties.source === 'schedule',
+      ).length,
+      1,
+    );
+    const pending = await f.turn({ session: randomUUID() });
+    const archivedDuringAnalysis = await f.processor(async () => {
+      await f.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [f.threadId]);
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: pending.messageId,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    const captured = f.events.length;
+    archivedDuringAnalysis.start(pending.id)();
+    await archivedDuringAnalysis.drain();
+    assert.equal(f.events.length, captured);
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
+      2,
+    );
+    assert.equal(
+      (
+        await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns WHERE turn_id=$1', [
+          pending.id,
+        ])
+      ).rows[0].n,
+      0,
+    );
+  },
+);
+
+test(
+  'conversation analytics rejects hostile classifier fields and requires distinct owned frustration evidence',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    let answer: unknown;
+    let classificationInput: unknown;
+    const processor = await f.processor(async ({ input }) => {
+      classificationInput = input;
+      return answer;
+    });
+    const seed = await f.turn();
+    const task = (messageId: string) => ({
+      task_id: null,
+      request_message_id: messageId,
+      task_type: 'research',
+      task_action: 'find',
+      task_subject: 'web',
+      task_activities: ['find:web'],
+      outcome: 'active',
+    });
+    answer = { tasks: [task(seed.messageId)], frustration: null };
+    processor.start(seed.id)();
+    await processor.drain();
+    const taskId = f.events.find((event) => event.event === 'otto_task_started')!.properties
+      .task_id;
+    const baseTime = seed.at.getTime();
+    const invalid: Array<(turn: Awaited<ReturnType<typeof f.turn>>) => unknown> = [
+      (turn) => ({
+        tasks: [task(turn.messageId)],
+        frustration: null,
+        summary: 'Synthetic forbidden summary',
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), quote: 'Synthetic forbidden quote' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_type: 'Synthetic private category' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_action: 'Send to synthetic@example.test' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_subject: 'Synthetic private document title' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_type: 'cedar_acquisition' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_action: 'ada_linden' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_subject: 'cedar_acquisition' }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: ['find:web', 'find:ada_linden'] }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [],
+        frustration: {
+          signal: 'explicit_complaint',
+          reason: 'output_quality',
+          task_type: 'cedar_acquisition',
+          message_ids: [turn.messageId],
+        },
+      }),
+      (turn) => ({
+        tasks: [
+          { ...task(turn.messageId), task_activities: ['find:web', 'send:synthetic@example.test'] },
+        ],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: ['find:web', 'summarize'] }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: ['find:web', 'find:web'] }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: ['summarize:web'] }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: [] }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [{ ...task(turn.messageId), task_activities: undefined }],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [
+          {
+            ...task(turn.messageId),
+            task_activities: [
+              'find:web',
+              'summarize:web',
+              'analyze:web',
+              'compare:web',
+              'draft:email',
+              'send:email',
+              'create:document',
+              'edit:document',
+              'organize:file',
+            ],
+          },
+        ],
+        frustration: null,
+      }),
+      () => ({ tasks: [{ ...task(seed.messageId), task_id: randomUUID() }], frustration: null }),
+      () => ({ tasks: [task(randomUUID())], frustration: null }),
+      (turn) => ({ tasks: [task(turn.replyId)], frustration: null }),
+      () => ({ tasks: [task(seed.messageId)], frustration: null }),
+      () => ({ tasks: [{ ...task(randomUUID()), task_id: taskId }], frustration: null }),
+      () => ({ tasks: [{ ...task(seed.messageId), task_id: taskId }], frustration: null }),
+      () => ({
+        tasks: [
+          { ...task(seed.messageId), task_id: taskId, request_message_id: null },
+          { ...task(seed.messageId), task_id: taskId, request_message_id: null },
+        ],
+        frustration: null,
+      }),
+      (turn) => ({
+        tasks: [],
+        frustration: {
+          signal: 'repeated_request',
+          reason: 'ignored_instruction',
+          task_type: 'research',
+          message_ids: [turn.messageId, turn.messageId],
+        },
+      }),
+      () => ({
+        tasks: [],
+        frustration: {
+          signal: 'explicit_complaint',
+          reason: 'output_quality',
+          task_type: 'research',
+          message_ids: [seed.messageId],
+        },
+      }),
+      (turn) => ({
+        tasks: [],
+        frustration: {
+          signal: 'repeated_correction',
+          reason: 'output_quality',
+          task_type: 'research',
+          message_ids: [turn.messageId, randomUUID()],
+        },
+      }),
+    ];
+    for (const [index, classify] of invalid.entries()) {
+      const turn = await f.turn({ at: baseTime + (index + 1) * 5_000 });
+      answer = classify(turn);
+      const before = f.events.length;
+      const finish = processor.start(turn.id);
+      finish();
+      finish();
+      await processor.drain();
+      assert.deepEqual(
+        f.events.slice(before).map((event) => [event.event, event.properties.outcome]),
+        [['otto_task_analysis', 'invalid']],
+        `invalid classifier case ${index}`,
+      );
+      assert.equal(
+        (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+        1,
+      );
+    }
+    const correction = await f.turn({
+      at: baseTime + (invalid.length + 1) * 5_000,
+      prompt: 'The synthetic result is still incorrect; please fix it',
+    });
+    answer = {
+      tasks: [
+        {
+          task_id: taskId,
+          request_message_id: null,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          outcome: 'active',
+        },
+      ],
+      frustration: {
+        signal: 'repeated_correction',
+        reason: 'output_quality',
+        task_type: 'research',
+        message_ids: [seed.messageId, correction.messageId],
+      },
+    };
+    processor.start(correction.id)();
+    await processor.drain();
+    const frustration = f.events.filter((event) => event.event === 'otto_frustration_signal');
+    assert.equal(frustration.length, 1);
+    assert.equal(frustration[0].properties.signal, 'repeated_correction');
+    assert.ok(!JSON.stringify(frustration).includes(correction.messageId));
+    assert.ok(!JSON.stringify(frustration).includes(seed.messageId));
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
+      1,
+    );
+    await f.pool.query(
+      'UPDATE analytics_tasks SET task_type=$1,task_action=$2,task_subject=$3,task_activities=$4 WHERE id=$5',
+      ['cedar_acquisition', 'ada_linden', 'cedar_acquisition', ['find:ada_linden'], taskId],
+    );
+    const corrupt = await f.turn({ at: baseTime + (invalid.length + 2) * 5_000 });
+    answer = {
+      tasks: [{ ...task(corrupt.messageId), task_id: taskId, request_message_id: null }],
+      frustration: null,
+    };
+    const before = f.events.length;
+    processor.start(corrupt.id)();
+    await processor.drain();
+    assert.deepEqual((classificationInput as { tasks: unknown[] }).tasks, []);
+    assert.deepEqual(
+      f.events.slice(before).map((event) => [event.event, event.properties.outcome]),
+      [['otto_task_analysis', 'invalid']],
+    );
+    for (const privateLabel of ['cedar_acquisition', 'ada_linden']) {
+      assert.ok(!JSON.stringify(f.events).includes(privateLabel));
+      assert.ok(!JSON.stringify(classificationInput).includes(privateLabel));
+    }
+  },
+);
+
+test(
+  'conversation analytics reports queue overflow without classifying dropped turns',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const releases: (() => void)[] = [];
+    const gate = () => {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      releases.push(release);
+      return { promise, release };
+    };
+    t.after(() => {
+      for (const release of releases) release();
+    });
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    let classification = gate();
+    let entered = gate();
+    let overflow = gate();
+    let overflowEntered = gate();
+    let overflowReported = gate();
+    const overflowIds = new Set<string>();
+    let overflowReads = 0;
+    const capture = f.analytics.capture.bind(f.analytics);
+    t.mock.method(f.analytics, 'capture', (...args: Parameters<typeof capture>) => {
+      capture(...args);
+      if (args[1].event === 'otto_task_analysis' && args[1].properties.outcome === 'queue_full')
+        overflowReported.release();
+    });
+    const query = f.pool.query.bind(f.pool);
+    t.mock.method(f.pool, 'query', async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith('SELECT u.* FROM turns') && overflowIds.has(String(values?.[0]))) {
+        overflowReads++;
+        overflowEntered.release();
+        await overflow.promise;
+      }
+      return query(sql, values);
+    });
+    let calls = 0;
+    const processor = await f.processor(async () => {
+      calls++;
+      entered.release();
+      await classification.promise;
+      return { tasks: [], frustration: null };
+    });
+    const at = Date.now();
+    for (let episode = 0; episode < 3; episode++) {
+      classification = gate();
+      entered = gate();
+      overflow = gate();
+      overflowEntered = gate();
+      overflowReported = gate();
+      const turns = await Promise.all(
+        Array.from({ length: 64 }, (_, index) =>
+          f.turn({ at: at + (episode * 64 + index) * 5_000 }),
+        ),
+      );
+      for (const turn of turns.slice(32)) overflowIds.add(turn.id);
+      for (const turn of turns) processor.start(turn.id)();
+      await Promise.all([entered.promise, overflowEntered.promise]);
+      assert.equal(calls, episode * 32 + 1);
+      assert.equal(overflowReads, episode + 1);
+      if (episode === 2) {
+        f.analytics.setUsageData(f.ownerId, false);
+        f.analytics.setUsageData(f.ownerId, true);
+      }
+      overflow.release();
+      if (episode < 2) {
+        await overflowReported.promise;
+        await delay(0);
+        for (const turn of turns.slice(32)) processor.start(turn.id)();
+        await delay(0);
+        assert.equal(overflowReads, episode + 1);
+      }
+      classification.release();
+      await processor.drain();
+      const health = f.events.filter((event) => event.event === 'otto_task_analysis');
+      assert.equal(
+        health.filter((event) => event.properties.outcome === 'analyzed').length,
+        Math.min(episode + 1, 2) * 32,
+      );
+      const dropped = health.filter((event) => event.properties.outcome === 'queue_full');
+      assert.equal(dropped.length, Math.min(episode + 1, 2));
+      assert.ok(dropped.every((event) => event.properties.source === 'user'));
+      assert.ok(turns.every((turn) => !JSON.stringify(dropped).includes(turn.id)));
+      assert.equal(
+        (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+        episode === 2 ? 0 : (episode + 1) * 32,
+      );
+    }
+    assert.equal(calls, 65);
+  },
+);
+
+test(
+  'conversation analytics discards pending classification across revocation and never analyzes earlier consent history',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    let calls = 0;
+    let classify: MemoryCurator['curate'] = async () => {
+      throw new Error('Unexpected classifier invocation');
+    };
+    const processor = await f.processor((...args) => {
+      calls++;
+      return classify(...args);
+    });
+    const unconsented = await f.turn({ prompt: 'Synthetic never-consented request' });
+    processor.start(unconsented.id)();
+    await processor.drain();
+    assert.equal(calls, 0);
+    f.analytics.setUsageData(f.ownerId, true);
+    const pending = await f.turn({
+      prompt: 'Synthetic revoked request',
+      at: unconsented.at.getTime() + 5_000,
+    });
+    let enter!: (signal: AbortSignal | undefined) => void;
+    let release!: (result: unknown) => void;
+    const entered = new Promise<AbortSignal | undefined>((resolve) => {
+      enter = resolve;
+    });
+    const pendingResult = new Promise<unknown>((resolve) => {
+      release = resolve;
+    });
+    classify = async (_request, signal) => {
+      enter(signal);
+      return pendingResult;
+    };
+    processor.start(pending.id)();
+    const signal = await entered;
+    f.analytics.setUsageData(f.ownerId, false);
+    f.analytics.setUsageData(f.ownerId, true);
+    assert.equal(signal?.aborted, true);
+    release({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: pending.messageId,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          outcome: 'completed',
+        },
+      ],
+      frustration: null,
+    });
+    await processor.drain();
+    assert.equal(f.events.length, 0);
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
+      0,
+    );
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+      0,
+    );
+    const current = await f.turn({
+      prompt: 'Synthetic newly consented request',
+      at: pending.at.getTime() + 5_000,
+    });
+    classify = async ({ input }) => {
+      const encoded = JSON.stringify(input);
+      assert.ok(!encoded.includes('Synthetic never-consented'));
+      assert.ok(!encoded.includes('Synthetic revoked'));
+      assert.deepEqual((input as { tasks: unknown[] }).tasks, []);
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: current.messageId,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            outcome: 'active',
+          },
+        ],
+        frustration: null,
+      };
+    };
+    processor.start(current.id)();
+    await processor.drain();
+    assert.equal(calls, 2);
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    f.authorize(false);
+    const denied = await f.turn({ at: current.at.getTime() + 5_000 });
+    const before = f.events.length;
+    processor.start(denied.id)();
+    await processor.drain();
+    assert.equal(calls, 2);
+    assert.equal(f.events.length, before);
+    f.analytics.setUsageData(f.ownerId, false);
+    await processor.close();
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
+      0,
+    );
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+      0,
+    );
+  },
+);
+
+test(
+  'conversation analytics drops old hosted consent revisions during analysis and after restart',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.authorize(true, '1');
+    f.analytics.setUsageData(f.ownerId, true);
+    assert.equal(await f.analytics.permitted(f.ownerId), false);
+    const first = await f.turn({ prompt: 'Synthetic earlier consent request' });
+    const initial = await f.processor(async () => ({
+      tasks: [
+        {
+          task_id: null,
+          request_message_id: first.messageId,
+          task_type: 'research',
+          task_action: 'find',
+          task_subject: 'web',
+          task_activities: ['find:web'],
+          outcome: 'waiting',
+        },
+      ],
+      frustration: null,
+    }));
+    initial.start(first.id)();
+    await initial.drain();
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    await initial.close();
+    f.authorize(true, '3');
+    assert.equal(await f.analytics.permitted(f.ownerId), false);
+    const second = await f.turn({ at: first.at.getTime() + 5_000 });
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resumed = await f.processor(async ({ input }) => {
+      const context = input as { tasks: unknown[]; messages: Array<{ id: string }> };
+      assert.deepEqual(context.tasks, []);
+      assert.ok(!context.messages.some((message) => message.id === first.messageId));
+      enter();
+      await pending;
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: second.messageId,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
+      0,
+    );
+    assert.equal(
+      (await f.pool.query('SELECT revision FROM analytics_consent')).rows[0].revision,
+      '3',
+    );
+    const before = f.events.length;
+    const oldSignal = f.analytics.consent(f.ownerId).signal;
+    resumed.start(second.id)();
+    await entered;
+    f.authorize(true, '5');
+    release();
+    await resumed.drain();
+    assert.equal(oldSignal.aborted, true);
+    assert.equal(f.events.length, before);
+    await resumed.close();
+    assert.equal(
+      (await f.pool.query('SELECT revision FROM analytics_consent')).rows[0].revision,
+      '5',
+    );
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
+      0,
+    );
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
+      0,
+    );
+  },
+);

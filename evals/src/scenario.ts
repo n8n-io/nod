@@ -49,6 +49,7 @@ export interface Answer {
 export interface UserScript {
   answers?: Answer[];
   approve?: boolean | ((action: string, args: unknown) => boolean);
+  approvalReplies?: string[];
   secrets?: string[] | ((question: string, world: any) => string | undefined);
   persona?: string;
 }

@@ -67,7 +67,7 @@ export function createPiMemoryCurator(options: {
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
     },
-    async curate({ instructions, input }, signal, report) {
+    async curate({ task, instructions, input }, signal, report) {
       signal?.throwIfAborted();
       if (options.resolve) loaded = undefined;
       loaded ??= load().catch((error) => {
@@ -83,8 +83,11 @@ export function createPiMemoryCurator(options: {
             messages: [{ role: 'user', content: JSON.stringify(input), timestamp: Date.now() }],
           },
           {
-            signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
-            maxTokens: 8192,
+            signal: AbortSignal.any([
+              AbortSignal.timeout(task === 'analytics' ? 20_000 : 45_000),
+              ...(signal ? [signal] : []),
+            ]),
+            maxTokens: task === 'analytics' ? 2048 : 8192,
             reasoning: effort === 'off' ? undefined : effort,
           },
         );
@@ -108,7 +111,9 @@ export function createPiMemoryCurator(options: {
       let reply = await complete();
       for (
         let attempt = 0;
-        attempt < 2 && reply.stopReason === 'error' && !signal?.aborted;
+        attempt < (task === 'analytics' ? 0 : 2) &&
+        reply.stopReason === 'error' &&
+        !signal?.aborted;
         attempt++
       )
         reply = await complete();

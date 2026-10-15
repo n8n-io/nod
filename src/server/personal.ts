@@ -58,6 +58,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function validateReview(
     action: string,
     args: Record<string, unknown>,
+    expectedRevision?: number,
   ): Promise<Record<string, unknown>> {
     function changed<T extends Record<string, unknown>>(input: T) {
       if (!Object.keys(input).length)
@@ -69,11 +70,11 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     if (action === 'schedule_update') {
       const { id: rawId, ...raw } = args;
       const id = z.uuid().parse(rawId);
-      return { id, ...(await schedules.validateUpdate(id, raw)) };
+      return { id, ...(await schedules.validateUpdate(id, raw, expectedRevision)) };
     }
     if (action === 'schedule_cancel') {
       const input = z.object({ id: z.uuid() }).strict().parse(args);
-      await schedules.validateUpdate(input.id, { enabled: false });
+      await schedules.validateUpdate(input.id, { enabled: false }, expectedRevision);
       return input;
     }
     throw Object.assign(new Error('This personal-data action is not available for review.'), {
@@ -84,7 +85,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function manage(
     action: string,
     args: Record<string, unknown>,
-    provenance?: { sourceMessageId: string | null; turnId?: string },
+    provenance?: { sourceMessageId: string | null; turnId?: string; expectedRevision?: number },
   ) {
     if (action === 'notification_preferences_get') return preferences.get();
     if (action === 'notification_preferences_update') {

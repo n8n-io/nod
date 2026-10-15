@@ -1005,7 +1005,7 @@ test('the onboarding interview sends answers only as data, caps the reply and sa
   assert.equal(turn.statusCode, 200);
   assert.deepEqual(turn.json(), {
     ack: 'A synthetic studio, noted.',
-    question: 'What can I take off your plate? Or tell me anything else on your mind.',
+    question: (reply as { question: string }).question,
   });
   assert.equal(requests[0].task, 'interview');
   assert.doesNotMatch(requests[0].instructions, /synthetic studio|Ignore all/);

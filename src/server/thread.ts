@@ -6,6 +6,7 @@ import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
+import { turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId, runtimeMode } from './config.ts';
 import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
@@ -76,6 +77,8 @@ type ConfirmAction = {
 
 export interface ThreadDependencies {
   analytics?: CaptureAnalytics;
+  present?: (threadId: string, input: { kind: 'interrupted' }) => Promise<string>;
+  observeTurn?: (turnId: string, operation: () => Promise<void>) => Promise<void>;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
   writeArtifact?: (
@@ -666,9 +669,6 @@ export async function initializeThreads() {
   await boss.createQueue(queue);
 }
 
-export const interruptedMessage =
-  'I was interrupted before I finished. Check anything I may have started outside before asking me to redo it, or say continue and I’ll pick up where I left off.';
-
 async function finishTurn(
   client: PoolClient,
   turnId: string,
@@ -708,16 +708,31 @@ function describeFailure(error: unknown) {
   return [...fields, ...frames].join(' | ');
 }
 
-async function interruptTurn(turnId: string) {
-  return transaction(async (client) => {
-    await lockThread(client);
+async function interruptTurn(turnId: string, present: ThreadDependencies['present']) {
+  const turn = await transaction(async (client) => {
+    const thread = await lockThread(client);
     const turn = (
-      await client.query(
-        "SELECT thread_id,background,to_jsonb(turns)->>'task_id' AS task_id FROM turns WHERE id=$1 AND owner_id=$2 AND status='running' FOR UPDATE",
-        [turnId, ownerId],
+      await client.query<{
+        thread_id: string;
+        background: boolean;
+        task_id: string | null;
+        latest_user_message_id: string | null;
+      }>(
+        `${turnChainSql()}, origin AS (
+          SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
+          ORDER BY u.created_at,u.id LIMIT 1
+        ) SELECT u.thread_id,u.background,to_jsonb(u)->>'task_id' AS task_id,
+         (SELECT m.id FROM messages m LEFT JOIN turns author ON author.id=m.turn_id AND author.owner_id=m.owner_id
+          WHERE m.owner_id=$2 AND m.thread_id=u.thread_id AND m.role='user'
+            AND (m.turn_id IN (SELECT id FROM chain)
+              OR (author.created_at,author.id)<(SELECT created_at,id FROM origin)
+              OR (author.id IS NULL AND m.created_at<(SELECT created_at FROM origin)))
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS latest_user_message_id
+         FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
+        [turnId, ownerId, thread.id],
       )
     ).rows[0];
-    if (!turn) return false;
+    if (!turn) return;
     await finishTurn(client, turnId, 'failed', { error: 'Interrupted.' });
     const task = turn.task_id
       ? (
@@ -727,16 +742,40 @@ async function interruptTurn(turnId: string) {
           ])
         ).rows[0]
       : undefined;
-    if (!turn.background || task)
+    return { ...turn, taskMessageId: task?.message_id as string | undefined };
+  }, pool);
+  if (!turn) return false;
+  if (turn.background && !turn.taskMessageId) return true;
+  const message = await present?.(turn.thread_id, { kind: 'interrupted' }).catch(() => undefined);
+  if (typeof message !== 'string' || !message.trim()) return true;
+  await transaction(async (client) => {
+    if ((await lockThread(client)).id !== turn.thread_id) return;
+    const current = await client.query(
+      `SELECT u.id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
+       AND status='failed' AND error='Interrupted.'
+       AND (($6::uuid IS NULL AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3 AND role='user'
+            ORDER BY created_at DESC,id DESC LIMIT 1) IS NOT DISTINCT FROM $5::uuid)
+         OR ($6::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))))
+       AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
+      [
+        turnId,
+        ownerId,
+        turn.thread_id,
+        `failure:${turnId}`,
+        turn.latest_user_message_id,
+        turn.task_id,
+      ],
+    );
+    if (current.rowCount)
       await insertAssistantMessage(
         client,
-        { threadId: turn.thread_id, turnId, taskMessageId: task?.message_id },
-        interruptedMessage,
+        { threadId: turn.thread_id, turnId, taskMessageId: turn.taskMessageId },
+        message.trim(),
         [],
         `failure:${turnId}`,
       );
-    return true;
   }, pool);
+  return true;
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -744,7 +783,7 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
     "SELECT id FROM turns WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
-  for (const turn of interrupted.rows) await interruptTurn(turn.id);
+  for (const turn of interrupted.rows) await interruptTurn(turn.id, dependencies.present);
   await sendDrain(undefined, (await activeThread()).id);
   const start = () =>
     boss.work<{ threadId: string }>(
@@ -832,7 +871,8 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
   for (const turn of await claimTurns(threadId)) {
-    const work = executeTurn(turn, dependencies)
+    const execute = () => executeTurn(turn, dependencies);
+    const work = (dependencies.observeTurn ? dependencies.observeTurn(turn.id, execute) : execute())
       .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
       .then(() => drainNext(threadId))
       .finally(refresh);
@@ -948,6 +988,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   };
   let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
     'failed';
+  let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
@@ -1281,6 +1322,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       if (!signal.aborted) throw error;
     });
     outcome = signal.aborted ? 'cancelled' : result.status;
+    if (outcome === 'waiting_credentials') waitingReason = 'credentials';
+    else if (outcome === 'waiting_user') waitingReason = result.waitingFor ?? 'question';
   } catch (error) {
     if (stopping) {
       outcome = 'interrupted';
@@ -1291,7 +1334,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
       );
-    else if (await interruptTurn(turnId))
+    else if (await interruptTurn(turnId, dependencies.present))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     dependencies.analytics?.({
@@ -1300,6 +1343,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ...analyticsProperties,
         outcome,
         duration_ms: Math.max(0, Date.now() - startedAt),
+        queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
+        ...(waitingReason ? { waiting_reason: waitingReason } : {}),
       },
     });
     running.delete(turnId);

@@ -204,8 +204,11 @@ export function createDiscoveredTransport(
       const disposition = response.headers.get('content-disposition') ?? '';
       const content = new TextDecoder().decode(bytes);
       if (!response.ok)
-        throw new Error(
-          `The remote API request failed (${response.status}): ${content.slice(0, 4000)}`,
+        throw Object.assign(
+          new Error(
+            `The remote API request failed (${response.status}): ${content.slice(0, 4000)}`,
+          ),
+          { status: response.status },
         );
       let parsed: unknown;
       try {

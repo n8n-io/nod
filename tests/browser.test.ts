@@ -4020,6 +4020,52 @@ test('chat request isolates a stale reply and attachments and restores failure b
   }
 });
 
+test('chat surfaces an unavailable private submission without restoring or retrying its code', async () => {
+  for (const kind of ['otp', 'payment'] as const) {
+    const state = requestedChatState();
+    const turnId = state.messages[0].turnId!;
+    state.verificationRequests = [{ id: randomUUID(), turnId, kind }];
+    const text = kind === 'payment' ? '737' : '582674';
+    const requestedMessage = { id: randomUUID(), text };
+    let submitted = 0;
+    const chat = () =>
+      createElement(Chat, {
+        ownerId: 'synthetic-feedback-owner',
+        state,
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+        requestedMessage,
+      });
+    const view = await handoffView(async (path, options) => {
+      if (path === '/api/apps') return Response.json([]);
+      assert.equal(path, '/api/messages');
+      submitted++;
+      const input = JSON.parse(String(options?.body));
+      return Response.json({
+        threadId: state.threadId,
+        turnId,
+        messageId: input.clientMessageId,
+        messageText: 'Synthetic masked private receipt.',
+        verificationStatus: 'unavailable',
+      });
+    }, chat());
+    try {
+      assert.equal(submitted, 1);
+      assert.ok(view.dom.window.document.querySelector('[role="alert"]'));
+      assert.equal(
+        view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor.getMarkdown(),
+        '',
+      );
+      assert.equal(view.dom.window.document.body.textContent!.includes(text), false);
+      await view.render(chat());
+      assert.equal(submitted, 1);
+    } finally {
+      await view.close();
+    }
+  }
+});
+
 test('chat restores rejected numeric prose but clears rejected private codes', async () => {
   for (const text of ['call 911', '737']) {
     const state = requestedChatState();
@@ -5014,7 +5060,7 @@ test('native Settings and feedback preserve the active credential form', async (
           capabilities: { developer: true },
         });
         if (path === '/api/feedback/context') return Response.json({
-          enabled: true, appVersion: null, appRelease: null, appModified: null, source: 'local-web', development: false, computerName: null, platform: null,
+          enabled: true, recipient: 'collector.example.com', appVersion: null, appRelease: null, appModified: null, source: 'local-web', development: false, computerName: null, platform: null,
         });
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
@@ -5408,6 +5454,7 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       const requests = [];
       const reports = [];
       const submissions = [];
+      let feedbackEnabled = true;
       const snapshot = {
         id: crypto.randomUUID(),
         content: JSON.stringify({ messages: ['Synthetic redacted conversation'], trace: ['Synthetic tool result'] }, null, 2),
@@ -5416,7 +5463,7 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       globalThis.fetch = async (path, options) => {
         requests.push(path);
         if (path === '/api/feedback/context') return Response.json({
-          enabled: true, appVersion: null, appRelease: 'synthetic-runtime-commit', appModified: true, source: 'local-web', development: true, computerName: null, platform: null,
+          enabled: feedbackEnabled, recipient: feedbackEnabled ? 'collector.example.com' : null, appVersion: null, appRelease: 'synthetic-runtime-commit', appModified: true, source: 'local-web', development: true, computerName: null, platform: null,
         });
         if (path === '/api/feedback/report') return new Promise(resolve => reports.push({ resolve, signal: options.signal }));
         if (path === '/api/feedback') {
@@ -5466,6 +5513,8 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         for (let attempt = 0; attempt < 100 && document.querySelector('.feedback-editor')?.getAttribute('contenteditable') !== 'true'; attempt++)
           await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
         const restoredEditor = document.querySelector('.feedback-editor').editor;
+        assert.ok(document.querySelector('p.feedback-send-notice')?.textContent.includes('collector.example.com'));
+        assert.equal(document.body.textContent.includes('Otto team'), false);
         assert.equal(restoredEditor.isEmpty, true);
         assert.equal(restoredEditor.state.doc.firstChild.type.name, 'orderedList');
         assert.equal(document.querySelector('.feedback-form button[type="submit"]').disabled, true);
@@ -5523,6 +5572,8 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         await act(async () => document.querySelector('[data-open]').click());
         assert.equal(document.querySelector('.feedback-editor').editor.getMarkdown(), 'Synthetic **feedback**Synthetic pasted text');
         assert.equal(document.querySelectorAll('.feedback-thumbnail-item').length, 3);
+        assert.ok(document.querySelector('p.feedback-send-notice')?.textContent.includes('collector.example.com'));
+        assert.equal(document.body.textContent.includes('Otto team'), false);
         await submitForm();
         for (let attempt = 0; submissions.length < 1 && attempt < 50; attempt++)
           await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
@@ -5608,6 +5659,17 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         assert.equal(reports.length, reportCount);
         assert.equal(submissions.at(-1).category, 'other');
         assert.equal(submissions.at(-1).reportId, null);
+        feedbackEnabled = false;
+        await act(async () => document.querySelector('[data-open]').click());
+        const reportToggle = document.querySelector('.feedback-diagnostics input[type="checkbox"]');
+        if (reportToggle.checked) await act(async () => reportToggle.click());
+        await writeFeedback('Synthetic feedback must stay on this device');
+        assert.equal(document.querySelector('p.feedback-send-notice'), null);
+        assert.equal(document.querySelector('.feedback-form button[type="submit"]').disabled, true);
+        const disabledCount = submissions.length;
+        await submitForm();
+        await act(async () => document.querySelector('.feedback-editor').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true })));
+        assert.equal(submissions.length, disabledCount);
       } finally {
         await act(async () => root.unmount());
         dom.window.close();

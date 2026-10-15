@@ -57,6 +57,12 @@ test(
     const ids: string[] = [];
     const asked = new Set<string>();
     const cleared = new Set<string>();
+    const descriptions: Array<Record<string, any>> = [];
+    const confirmationText = 'Proceed with the saved synthetic action?';
+    let confirmationValid = true;
+    let confirmationReviews = 0;
+    let beforeConfirmation = async () => {};
+    const executedApps: string[] = [];
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -131,7 +137,18 @@ test(
         },
         computer: fakeComputer(),
         workspace: fakeWorkspace(),
-        integrations: integrationFixture.provider,
+        integrations: {
+          ...integrationFixture.provider,
+          createSession: async (...args) => {
+            const session = await integrationFixture.provider.createSession(...args);
+            const execute = session.execute.bind(session);
+            session.execute = async (...input) => {
+              executedApps.push(input[0]);
+              return execute(...input);
+            };
+            return session;
+          },
+        },
         speech: {
           id: 'fixture',
           configured: false,
@@ -146,8 +163,17 @@ test(
         onboardingCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, input }) =>
-            task === 'review' && 'reply' in input
+          curate: async ({ task, input }) => {
+            if ('purpose' in input && input.purpose === 'confirmation') {
+              descriptions.push(input);
+              await beforeConfirmation();
+              return { text: confirmationText };
+            }
+            if ('purpose' in input && input.purpose === 'confirmation_review') {
+              confirmationReviews++;
+              return { valid: confirmationValid };
+            }
+            return task === 'review' && 'reply' in input
               ? {
                   answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
                 }
@@ -165,7 +191,8 @@ test(
                         ),
                       ),
                   }
-                : undefined,
+                : undefined;
+          },
         },
       },
       { channels: false },
@@ -300,6 +327,272 @@ test(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(held))[0].status, 'declined');
           assert.equal(sends(), 0);
+        },
+      );
+
+      await t.test(
+        'a rejected generated confirmation cannot create an approval or send an email',
+        async () => {
+          const before = confirmationReviews;
+          const writes = integrationFixture.writes.length;
+          const text = `Synthetic rejected confirmation ${randomUUID()}`;
+          plans.set(text, {
+            tool: 'apps',
+            action: 'GMAIL_SEND_EMAIL',
+            args: {
+              recipient_email: 'blocked@example.test',
+              subject: 'Synthetic reviewed email',
+              body: 'Synthetic body awaiting confirmation.',
+            },
+          });
+          confirmationValid = false;
+          try {
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            ids.push(response.json().threadId as string);
+            await waitFor(turn, 'failed|succeeded|waiting');
+            assert.equal(confirmationReviews, before + 1);
+            assert.deepEqual(await approvalsFor(turn), []);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text=$2",
+                  [turn, confirmationText],
+                )
+              ).rowCount,
+              0,
+            );
+            assert.equal(integrationFixture.writes.length, writes);
+          } finally {
+            confirmationValid = true;
+          }
+        },
+      );
+
+      await t.test(
+        'a schedule changed during confirmation generation cannot save a stale approval',
+        async () => {
+          const schedule = await reminder();
+          const text = `Synthetic stale schedule confirmation ${randomUUID()}`;
+          plans.set(text, { action: 'schedule_cancel', args: { id: schedule.id } });
+          beforeConfirmation = async () => {
+            const changed = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              title: 'A different synthetic reminder',
+              prompt: 'Review a different synthetic checklist.',
+            });
+            assert.equal(changed.statusCode, 200, changed.body);
+          };
+          try {
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            await waitFor(turn, 'failed|succeeded|waiting');
+            assert.deepEqual(await approvalsFor(turn), []);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text=$2",
+                  [turn, confirmationText],
+                )
+              ).rowCount,
+              0,
+            );
+            const current = (
+              await pool.query('SELECT title,enabled FROM schedules WHERE id=$1', [schedule.id])
+            ).rows[0];
+            assert.equal(current.title, 'A different synthetic reminder');
+            assert.equal(current.enabled, true);
+          } finally {
+            beforeConfirmation = async () => {};
+          }
+        },
+      );
+
+      await t.test(
+        'schedule confirmations cannot mutate a revision edited after the question was saved',
+        async () => {
+          for (const action of ['schedule_cancel', 'schedule_update']) {
+            const schedule = await reminder();
+            const args = {
+              id: schedule.id,
+              ...(action === 'schedule_update' ? { title: 'The proposed synthetic title' } : {}),
+            };
+            const turn = await propose(action, args);
+            const [approval] = await approvalsFor(turn);
+            assert.equal(approval.expected_revision, 0);
+            const changed = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              title: 'A newer synthetic reminder',
+              prompt: 'Review the newer synthetic checklist.',
+            });
+            assert.equal(changed.statusCode, 200, changed.body);
+            const saved = (
+              await pool.query('SELECT * FROM schedules WHERE id=$1 AND owner_id=$2', [
+                schedule.id,
+                ownerId,
+              ])
+            ).rows[0];
+            const job = (
+              await pool.query(`SELECT * FROM ${bossSchema}.job WHERE id=$1`, [saved.job_id])
+            ).rows[0];
+            const response = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: approval.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(response.statusCode, 409, response.body);
+            assert.equal((await approvalsFor(turn))[0].status, 'pending');
+            assert.deepEqual(
+              (await pool.query('SELECT * FROM schedules WHERE id=$1', [schedule.id])).rows[0],
+              saved,
+            );
+            assert.deepEqual(
+              (await pool.query(`SELECT * FROM ${bossSchema}.job WHERE id=$1`, [saved.job_id]))
+                .rows[0],
+              job,
+            );
+            assert.deepEqual(approval.args, args);
+            assert.deepEqual(descriptions.at(-1)?.data.args, args);
+            const fresh = await propose(action, args);
+            const [reviewed] = await approvalsFor(fresh);
+            assert.equal(reviewed.expected_revision, saved.revision);
+            const confirmed = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: reviewed.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(confirmed.statusCode, 200, confirmed.body);
+            await waitFor(confirmed.json().turnId, 'succeeded');
+            assert.equal((await approvalsFor(fresh))[0].status, 'completed');
+            const applied = (
+              await pool.query('SELECT revision,title,enabled FROM schedules WHERE id=$1', [
+                schedule.id,
+              ])
+            ).rows[0];
+            assert.equal(applied.revision, saved.revision + 1);
+            assert.equal(applied.enabled, action !== 'schedule_cancel');
+            assert.equal(applied.title, args.title ?? saved.title);
+          }
+        },
+      );
+
+      await t.test(
+        'legacy schedule approvals without a saved revision cannot execute',
+        async () => {
+          const schedule = await reminder();
+          const turn = await propose('schedule_cancel', { id: schedule.id });
+          const [approval] = await approvalsFor(turn);
+          await pool.query('UPDATE approvals SET expected_revision=NULL WHERE id=$1', [
+            approval.id,
+          ]);
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(response.statusCode, 409, response.body);
+          assert.equal((await approvalsFor(turn))[0].status, 'pending');
+          assert.deepEqual(
+            (
+              await pool.query('SELECT revision,enabled,job_id FROM schedules WHERE id=$1', [
+                schedule.id,
+              ])
+            ).rows[0],
+            { revision: 0, enabled: true, job_id: schedule.jobId },
+          );
+        },
+      );
+
+      await t.test(
+        'schedule execution rechecks the saved revision after waiting for its row lock',
+        async () => {
+          const schedule = await reminder();
+          const turn = await propose('schedule_cancel', { id: schedule.id });
+          const [approval] = await approvalsFor(turn);
+          const job = (
+            await pool.query(`SELECT * FROM ${bossSchema}.job WHERE id=$1`, [schedule.jobId])
+          ).rows[0];
+          const editor = await pool.connect();
+          let execution: string | undefined;
+          try {
+            await editor.query('BEGIN');
+            await editor.query('SELECT id FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
+              schedule.id,
+              ownerId,
+            ]);
+            const response = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: approval.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(response.statusCode, 200, response.body);
+            execution = response.json().turnId as string;
+            for (let attempt = 0; attempt < 300; attempt++) {
+              if ((await approvalsFor(turn))[0].status === 'executing') break;
+              await delay(20);
+            }
+            assert.equal((await approvalsFor(turn))[0].status, 'executing');
+            await editor.query(
+              'UPDATE schedules SET title=$3,revision=revision+1 WHERE id=$1 AND owner_id=$2',
+              [schedule.id, ownerId, 'Concurrently edited synthetic reminder'],
+            );
+            await editor.query('COMMIT');
+            await waitFor(execution, 'failed');
+            assert.equal((await approvalsFor(turn))[0].status, 'uncertain');
+            assert.deepEqual(
+              (
+                await pool.query('SELECT title,enabled,job_id FROM schedules WHERE id=$1', [
+                  schedule.id,
+                ])
+              ).rows[0],
+              {
+                title: 'Concurrently edited synthetic reminder',
+                enabled: true,
+                job_id: schedule.jobId,
+              },
+            );
+            assert.deepEqual(
+              (await pool.query(`SELECT * FROM ${bossSchema}.job WHERE id=$1`, [schedule.jobId]))
+                .rows[0],
+              job,
+            );
+          } finally {
+            await editor.query('ROLLBACK');
+            editor.release();
+            if (execution) await waitFor(execution, 'failed|succeeded');
+          }
+        },
+      );
+
+      await t.test(
+        'an explicit confirmation request can hold a read until the bound approval is accepted',
+        async () => {
+          const before = executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length;
+          const turn = await propose(
+            'GMAIL_FETCH_EMAILS',
+            { query: 'in:inbox' },
+            'apps',
+            'Ask before reading my synthetic inbox.',
+          );
+          const [pending] = await approvalsFor(turn);
+          assert.equal(pending.status, 'pending');
+          assert.equal(pending.action, 'GMAIL_FETCH_EMAILS');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
+            before,
+          );
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: pending.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          await waitFor(response.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
+            before + 1,
+          );
         },
       );
 
@@ -571,7 +864,9 @@ test(
             "INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone) VALUES($1,$2,'Review Northstar','Synthetic review','0 9 * * 1','UTC')",
             [schedule.id, ownerId],
           );
-          const id = await pendingPlan('schedule_cancel', { id: schedule.id });
+          const id = await propose('schedule_cancel', { id: schedule.id });
+          assert.equal(descriptions.at(-1)?.data.details.schedule.title, 'Review Northstar');
+          assert.equal(descriptions.at(-1)?.data.details.schedule.prompt, 'Synthetic review');
           const [approval] = await approvalsFor(id);
           await pool.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [
             schedule.id,

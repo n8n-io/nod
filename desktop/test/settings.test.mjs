@@ -613,6 +613,7 @@ async function runningDesktop(
   request,
   {
     allowStart = false,
+    environment = {},
     platform = 'darwin',
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
@@ -634,6 +635,7 @@ async function runningDesktop(
       setName() {},
       setPath() {},
       getPath: () => dirname(storage.path),
+      getVersion: () => '0.0.0-test',
       requestSingleInstanceLock: () => false,
       getLoginItemSettings: () => ({ openAtLogin }),
       setLoginItemSettings: (value) => {
@@ -641,7 +643,7 @@ async function runningDesktop(
       },
       quit() {},
     },
-    process: { platform, argv: [], env: {} },
+    process: { platform, argv: [], env: environment },
     ipcMain: ipc,
     dialog: { showMessageBox: async (options) => prompt(options) },
     shell: { showItemInFolder: reveal },
@@ -687,7 +689,9 @@ async function runningDesktop(
     utilityProcess: {
       fork(_file, _args, options) {
         assert.ok(allowStart, 'The healthy engine must not restart.');
+        assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
+        child.environment = options.env;
         child.port = options.env.PORT;
         child.stdout = { resume() {} };
         child.stderr = new EventEmitter();
@@ -946,7 +950,7 @@ test('an engine crash retires every stale chat window before recovery opens the 
       assert.equal(new URL(url).pathname, '/api/health');
       return Response.json({ ok: true });
     },
-    { allowStart: true },
+    { allowStart: true, environment: { OTTO_FEEDBACK_URL: '' } },
   );
   f.crash();
   assert.equal((await f.prepare()).phase, 'ready');
@@ -965,6 +969,10 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(current.isDestroyed(), false);
   assert.equal(current.url, new URL(requests.at(-1)).origin);
   assert.equal(f.children.length, 2);
+  for (const child of f.children) {
+    assert.equal(child.environment.OTTO_FEEDBACK_URL, '');
+    assert.equal(child.environment.OTTO_FEEDBACK_ENABLED, 'false');
+  }
 });
 
 test('a settings restart asks before stopping work and Later keeps the healthy chat and pending settings', async (t) => {

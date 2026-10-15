@@ -14,6 +14,28 @@ const secretAssignment = new RegExp(
 const tokenShapes = String.raw`\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{12,}|(?:AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|glpat-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b|-----BEGIN [^-]*PRIVATE KEY-----`;
 export const secretToken = new RegExp(tokenShapes);
 
+export function redactSecretText(value: string): string {
+  return value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, hidden)
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=:-]+/gi, hidden)
+    .replace(
+      /\b(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)\s*:\s*[^\r\n]+/gi,
+      hidden,
+    )
+    .replace(new RegExp(tokenShapes, 'g'), hidden)
+    .replace(
+      /((?:https?:\/\/[^\s/"'<>]+)?\/(?:vault|credentials|approvals)\/)[^\s"'<>]+/gi,
+      '$1[redacted]',
+    )
+    .replace(
+      /([?&#](?:access_token|refresh_token|id_token|token|code|state|key|api_key|secret|password|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential)=)[^\s&"'<>]*/gi,
+      '$1[redacted]',
+    )
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(secretAssignment, '$1[redacted]')
+    .replace(/\bdata:[^,\s]+;base64,[A-Za-z0-9+/=]+/g, '[binary omitted]');
+}
+
 function compileRedactor(
   secrets: string[] = [],
   limits: { string?: number; payload?: number; minimumSecretLength?: number } = {},
@@ -28,25 +50,7 @@ function compileRedactor(
     .map((value) => value.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&'));
   const secretPattern = secretVariants.length ? new RegExp(secretVariants.join('|'), 'g') : null;
   function text(value: string): string {
-    return (secretPattern ? value.replace(secretPattern, hidden) : value)
-      .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, hidden)
-      .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=:-]+/gi, hidden)
-      .replace(
-        /\b(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)\s*:\s*[^\r\n]+/gi,
-        hidden,
-      )
-      .replace(new RegExp(tokenShapes, 'g'), hidden)
-      .replace(
-        /((?:https?:\/\/[^\s/"'<>]+)?\/(?:vault|credentials|approvals)\/)[^\s"'<>]+/gi,
-        '$1[redacted]',
-      )
-      .replace(
-        /([?&#](?:access_token|refresh_token|id_token|token|code|state|key|api_key|secret|password|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential)=)[^\s&"'<>]*/gi,
-        '$1[redacted]',
-      )
-      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
-      .replace(secretAssignment, '$1[redacted]')
-      .replace(/\bdata:[^,\s]+;base64,[A-Za-z0-9+/=]+/g, '[binary omitted]');
+    return redactSecretText(secretPattern ? value.replace(secretPattern, hidden) : value);
   }
   return function redact(value: unknown): unknown {
     let nodes = 0;
@@ -179,7 +183,13 @@ export function createErrorRedactor(secrets: string[]) {
 }
 
 export function withoutSecretKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withoutSecretKeys);
+  if (Array.isArray(value)) {
+    const namedSecret =
+      typeof value[0] === 'string' && secretKey.test(value[0].replace(/[^a-z0-9]/gi, ''));
+    return value.map((entry, index) =>
+      namedSecret && index === 1 ? hidden : withoutSecretKeys(entry),
+    );
+  }
   if (!value || typeof value !== 'object') return value;
   const namedSecret =
     'name' in value &&

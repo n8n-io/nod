@@ -322,7 +322,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                   </Button>
                 </form>
                 {keyError && (
-                  <p role="alert" className="ob-email-error">
+                  <p role="alert" className="ob-email-error" data-analytics-private>
                     {keyError}
                   </p>
                 )}
@@ -335,7 +335,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
               <div className="ob-email-saved">
                 {status?.editable ? (
                   <>
-                    <span className="ob-mono">
+                    <span className="ob-mono" data-analytics-private>
                       Key saved{status.suffix ? ` · ••••${status.suffix}` : ''}
                     </span>
                     <button type="button" className="ob-email-change" onClick={change}>
@@ -412,7 +412,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
               </p>
             )}
             {error && (
-              <p role="alert" className="ob-email-error">
+              <p role="alert" className="ob-email-error" data-analytics-private>
                 {error}
               </p>
             )}

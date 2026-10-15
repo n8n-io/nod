@@ -1,7 +1,7 @@
 export const posthogConfig = {
   key: 'phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV',
   host: 'https://eu.i.posthog.com',
-  schemaVersion: 'otto_v2',
+  schemaVersion: 'otto_v3',
 } as const;
 
 export interface AnalyticsConfiguration {
@@ -9,4 +9,5 @@ export interface AnalyticsConfiguration {
   distinctId: string | null;
   deployment: 'local' | 'hosted';
   environment: 'development' | 'production';
+  appVersion?: string;
 }

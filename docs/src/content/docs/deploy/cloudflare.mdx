@@ -104,7 +104,7 @@ Replacing it invalidates tenant credentials and encrypted data. Store it like a 
 
 Write your notice to `public/privacy-notice.md` and set `OTTO_PRIVACY_NOTICE_FILE=dist/web/privacy-notice.md`. Otto serves it at `/privacy`, and an unreadable or invalid file stops startup. Check `/privacy` while signed out, then set it as the Google OAuth privacy policy URL before you invite anyone.
 
-Analytics are on by default for `production` only, and each user still has to opt in. Set `OTTO_ANALYTICS_ENABLED=false` to turn them off, or `true` to inspect a development deployment. Describe them in your notice. See [Analytics and recordings](/deploy/analytics/).
+Analytics are on by default for `production` only, and each user still has to opt in. They go to the Otto team's n8n-owned EU PostHog project. Set `OTTO_ANALYTICS_ENABLED=false` to turn them off, or `true` to inspect a development deployment. Set `OTTO_FEEDBACK_ENABLED=false` in the same `GATEWAY_ENV` to disable feedback submissions and status checks for all tenants. Custom feedback collectors use `OTTO_FEEDBACK_URL`, `OTTO_FEEDBACK_RECEIPT_URL_PREFIX` and, if needed, `OTTO_FEEDBACK_TOKEN`. See [Analytics and recordings](/deploy/analytics/) and [feedback configuration](/deploy/configuration/#analytics-and-feedback). Describe the enabled recipients in your privacy notice.
 
 ## Create storage
 

@@ -92,8 +92,8 @@ export function FeedbackDiagnostics({
       </div>
       <p className="feedback-diagnostics-disclosure">
         {included
-          ? 'Shares recent chat, actions and their results with the Otto team.'
-          : 'Optional context for the Otto team.'}
+          ? 'Includes recent chat, actions and their results with your feedback.'
+          : 'Optional context to help investigate your feedback.'}
       </p>
       {included && error && (
         <div className="feedback-diagnostics-error" role="alert">

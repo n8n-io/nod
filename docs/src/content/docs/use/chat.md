@@ -9,6 +9,8 @@ Chat is where you give Otto work, answer its questions and get the results.
 
 Otto keeps one ongoing conversation with you. The desktop app, the web app, Telegram and WhatsApp all add to that same conversation, so Otto remembers what you said in any of them.
 
+Otto follows your conversation language, including questions, confirmations and connection instructions. You can request another language at any point. Asking for an email or document in a different language applies to that output; a short acknowledgement keeps the conversation's language. Region, date format and time zone are separate preferences.
+
 ## Send a message
 
 Type in the message box and press Enter. Press Shift+Enter for a new line.
@@ -43,7 +45,9 @@ To stop Otto, select **Stop** next to the send button.
 
 Stop ends the work that's running, including background runs, and cancels queued messages and open questions. It doesn't cancel your schedules. It can't undo something that already happened, such as an email that was already sent.
 
-Otto never repeats a task on its own. If a task fails or Otto restarts in the middle of one, it tells you. Check what happened, then say "continue" if you want it to carry on.
+Otto never repeats a task on its own. If Otto restarts during a task, it marks the task as interrupted. For work in the main chat, it explains what needs checking when the model is available.
+
+If Otto may have sent or changed something, verify the result yourself or ask Otto to inspect it before continuing. Don't make a new attempt while the result is unclear.
 
 ## Choose the model
 

@@ -56,6 +56,8 @@ Complete reports can be Markdown documents. Otto sends the file and a short resu
 
 Select the file to read the document in Otto. Select **Download** to save it. Press **Escape** to close the preview.
 
+Otto previews Markdown files up to 4 MB. For a larger file, select **Download**.
+
 ![A task result open as a Markdown document with headings, a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
 
 A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
