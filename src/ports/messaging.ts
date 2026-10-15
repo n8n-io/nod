@@ -22,6 +22,7 @@ export interface InboundMessage {
   messageId: string;
   threadId: string;
   text: string;
+  replyToMessageId?: string;
   sentAt: Date;
 }
 
@@ -66,6 +67,7 @@ export interface MessagingTransport {
     threadId: string;
     text: string;
     attachments?: MessagingAttachment[];
-  }): Promise<{ id: string }>;
+    replyToMessageId?: string;
+  }): Promise<{ id: string; ids?: string[] }>;
   close(): Promise<void>;
 }

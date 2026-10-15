@@ -7,7 +7,7 @@ sidebar:
 
 This page explains how Otto turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, and every schedule fire and app event is another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat is one, each saved task has one, and every schedule fire and app event starts another. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -19,12 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/otto/blob/m
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Session                |
-| ---------- | ------------------------------------------------------------------------------------------ | ---------------------- |
-| `user`     | A message from you                                                                         | The chat               |
-| `schedule` | A schedule firing                                                                          | A new session          |
-| `event`    | A connected-app event, a check of an app without events, or a reaction to an Otto message  | A new session          |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked |
+| `source`   | Created by                                                                                 | Session                                   |
+| ---------- | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| `user`     | A message from you                                                                         | The chat, or the task selected by a reply |
+| `task`     | Chat dispatch or an addressed owner update                                                 | The saved task session                    |
+| `schedule` | A schedule firing                                                                          | A new session                             |
+| `event`    | A connected-app event, a check of an app without events, or a reaction to an Otto message  | A new session                             |
+| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                    |
 
 Creating a turn also queues a `thread-drain` job in the same transaction.
 
@@ -66,11 +67,11 @@ stateDiagram-v2
 
 The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace. Images reach the model with the message when the model reads images and they fit the [image limits](/how-it-works/agent-runtime/); others stay workspace files marked as not shown. A reply carries the message it answers. Those messages move to the running turn, and their own turns close.
 
-A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Background turns never take queued messages.
+A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Task turns also take addressed updates from their own channel and session. Event and schedule turns do not take queued messages. Each task update has a revision. The server records the revision when it delivers the input at a model boundary. A queued revision does not mean the model has applied it. Task completion refuses an unread update.
 
 ## Waiting and resuming
 
-A question, an approval, or a credential request ends the turn as `waiting`. A reply to the question continues its session. Unrelated messages continue the chat. A reply to a background question returns to that background session.
+A question, an approval, or a credential request ends the turn as `waiting`. A reply to any task message continues its saved session. This includes a question, a file or a completed result. A reply to another waiting question continues the session that asked. Unrelated messages continue the chat. A reply to a background question returns to that background session.
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
 
@@ -100,9 +101,21 @@ sequenceDiagram
 
 When the next chat turn resumes its Pi session, it receives the messages other sessions sent since the previous chat turn started. All sessions share the workspace, so files one writes are there for the others.
 
+## Saved tasks
+
+The main chat uses `task start` for work with an independent goal. In one transaction, the server saves a task record, posts its first message and queues its first turn. The task ID keys its saved session. Short requests stay in the main chat.
+
+The task uses `task update` for progress and planned steps. It uses `task finish` only after it checks the completion condition. A successful turn alone does not close the task. Questions, approvals and secure forms use the existing wait and resume path.
+
+The server routes explicit replies before the coordinator runs. The coordinator can use `task reply` to forward the exact current owner message to selected tasks. It cannot replace that message with model-written instructions. The source message and revision stay in the database. Task sessions cannot send owner updates to other tasks.
+
+Task reports are replies to the task's first message. Telegram and WhatsApp retain native reply links. Every text part and file message maps back to the internal message. A reply to any of those parts can select the correct task or confirmation. A task's final reply goes straight to chat. Complete documents use the existing file delivery path.
+
+The task card reads the ledger and runtime events. Steps are declared plans. Activity shows tool and helper events, not private reasoning. Stop on a card cancels only that task session and its helpers. Late writes are refused by the existing turn fence. An outside action that started before Stop can still finish. Interrupted actions are not retried.
+
 ## Subagents
 
-`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Otto's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The model then puts the answers together, such as comparing three shops.
+`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Otto's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The parent then uses the answers, such as to compare three shops. Helpers do not create saved tasks or control the task ledger.
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.

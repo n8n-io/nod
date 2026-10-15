@@ -35,6 +35,7 @@ const parentTools = new Set([
   'ask_user',
   'send_message',
   'manage_apps',
+  'task',
 ]);
 const parallelTools = new Set([
   'delegate',
@@ -162,6 +163,7 @@ export function createAgentRuntime(dependencies: {
     activeTurns.set(context.turnId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
 
+    let taskResult = '';
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -235,7 +237,7 @@ export function createAgentRuntime(dependencies: {
       const name = `${randomUUID()}-error.txt`;
       try {
         await dependencies.workspace.writeArtifact(threadId, name, Buffer.from(text), signal);
-        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${name}. Read it there.`;
+        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${context.taskContext ? `/workspace/${threadId}/${name}` : name}. Read it there.`;
       } catch {
         return text.slice(0, inlineChars);
       }
@@ -334,7 +336,17 @@ export function createAgentRuntime(dependencies: {
     try {
       signal.throwIfAborted();
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
-      const workspace = dependencies.workspace.open(context);
+      const rootWorkspace = dependencies.workspace.open(context);
+      let workspace = rootWorkspace;
+      if (context.taskContext) {
+        const path = `${rootWorkspace.path}/tasks/${context.taskContext.id}`;
+        const created = await rootWorkspace.exec(
+          `mkdir -p '${path}/drafts' '${path}/outputs' '${rootWorkspace.path}/shared'`,
+          { signal },
+        );
+        if (created.exitCode) throw new Error('The task folder could not be created.');
+        workspace = { ...rootWorkspace, path };
+      }
       const browser: Computer = {
         ...computer,
         act: (id, action, actionSignal) =>
@@ -397,7 +409,7 @@ export function createAgentRuntime(dependencies: {
             return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
           },
         }));
-      const system = systemPrompt(workspace, dependencies.skills);
+      const system = systemPrompt(workspace, dependencies.skills, context.taskContext);
       const shared = {
         context: {
           ...context,
@@ -567,7 +579,10 @@ export function createAgentRuntime(dependencies: {
             );
           }
           if (event.type === 'error') modelFailed = true;
-          if (event.type === 'final') modelFailed = modelIncomplete = false;
+          if (event.type === 'final') {
+            modelFailed = modelIncomplete = false;
+            if (context.taskContext) taskResult = event.text;
+          }
           if (stopped || context.background) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();
@@ -591,7 +606,14 @@ export function createAgentRuntime(dependencies: {
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
       waitingForUser = status !== 'succeeded';
       completed = true;
-      return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
+      return {
+        status,
+        ...(context.taskContext && taskResult && taskResult.trim() !== lastReply
+          ? { result: taskResult }
+          : {}),
+        ...(waitingFor ? { waitingFor } : {}),
+        ...(question ? { question } : {}),
+      };
     } finally {
       stopped = true;
       completeStream();

@@ -7,7 +7,7 @@ sidebar:
 
 The **Tasks** page shows what Otto is working on, what's scheduled and what's done.
 
-Otto adds a card when a request takes more than a few steps, or when you hand it work that continues later, such as chasing a reply. Quick answers don't get a card.
+Otto starts a saved task session for independent work with a goal and a completion condition. The main chat stays available while the task runs. Quick questions stay in chat. There is no fixed limit of three tasks.
 
 ## Three views
 
@@ -30,21 +30,31 @@ Otto adds a card when a request takes more than a few steps, or when you hand it
 | **Next check** | When Otto will look again                                   |
 | **Done when**  | What finished looks like                                    |
 
-Otto keeps the card current itself as it works, and a follow-up step, such as finishing a sign-in, continues the same card.
+The same task card appears in chat and on the Tasks page. It shows planned steps and current activity. Select **Show activity** to inspect tool and helper activity. This view does not show private model reasoning.
+
+Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. Otto can send that message to one or more tasks when your intent is clear. If the target is unclear, Otto asks.
+
+An owner update has a revision. **Owner update queued** means the task has not received it at an execution boundary. An outside action that has already started can still finish. Other tasks continue while one task waits for your answer.
+
+Select **Stop** on a card to stop that task and its helpers. Other tasks continue. The main Stop control stops active work and closes all open tasks. Reset also closes the old thread's open tasks.
+
+Complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
 A finished card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/).
 
 ## Statuses
 
-| Status            | Meaning                                                                     |
-| ----------------- | --------------------------------------------------------------------------- |
-| **Working**       | Otto is on it right now.                                                    |
-| **Needs you**     | Otto asked you something, or the task failed or was stopped. Reply in chat. |
-| **Waiting**       | Otto is waiting on someone else.                                            |
-| **Checking back** | Otto has a check planned for later.                                         |
-| **Stalled**       | Nothing is planned next. Tell Otto to keep going or stop.                   |
-| **Done**          | Finished, with the result on the card.                                      |
-| **Stopped**       | Closed before it finished.                                                  |
+| Status            | Meaning                                                               |
+| ----------------- | --------------------------------------------------------------------- |
+| **Queued**        | The task is waiting for its session to run.                           |
+| **Failed**        | The run failed. Reply to its message to continue.                     |
+| **Working**       | Otto is on it right now.                                              |
+| **Needs you**     | Otto asked you a question or needs an approval. Reply to its message. |
+| **Waiting**       | Otto is waiting on someone else.                                      |
+| **Checking back** | Otto has a check planned for later.                                   |
+| **Stalled**       | Nothing is planned next. Tell Otto to keep going or stop.             |
+| **Done**          | Finished, with the result on the card.                                |
+| **Stopped**       | Closed before it finished.                                            |
 
 ```mermaid
 stateDiagram-v2

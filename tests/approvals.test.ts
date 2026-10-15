@@ -371,7 +371,10 @@ test(
           }),
       });
       approvals = checked(approved);
-      messages = thread.createUserMessageService({ confirmAction: approvals.chat });
+      messages = thread.createUserMessageService({
+        confirmAction: approvals.chat,
+        taskReply: (client, threadId, messageId) => tasks.resolveReply(client, threadId, messageId),
+      });
       personal.registerRoutes(app);
       const tasks = createTasks({ pool: db.pool, ownerId });
       await tasks.initialize();
@@ -765,6 +768,66 @@ test(
           assert.equal(seen?.[0], origin);
           assert.equal(seen?.at(-1), 'Synthetic aside 5');
           await finish(turn.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
+        'saved task authority excludes owner instructions addressed to other work',
+        async () => {
+          const parent = await begin('Read my fixture flight dates.');
+          const source = (await row(parent.turnId)).message_id;
+          const assigned = await tasks.execute(
+            parent,
+            { action: 'start', title: 'Flight dates', doneWhen: 'Dates checked', now: 'Reading' },
+            source,
+          );
+          assert.ok('id' in assigned);
+          const task = assigned as { id: string; messageId: string };
+          await finish(parent.turnId, 'succeeded');
+          const worker = (
+            await db.pool.query("SELECT id FROM turns WHERE task_id=$1 AND source='task'", [
+              task.id,
+            ])
+          ).rows[0].id;
+          const turn = await running(worker);
+          await tasks.inherit(turn);
+          await finish(
+            (await begin('Send the separate hotel request to hotel@example.test.')).turnId,
+            'succeeded',
+          );
+          await trust.check(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          assert.deepEqual(
+            reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text),
+            ['Read my fixture flight dates.'],
+          );
+          const oldApproval = await propose(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          const update = await messages.submit('Use the new fixture flight dates.', [], {
+            replyToMessageId: task.messageId,
+          });
+          await finish(worker);
+          const continued = await running(update.turnId);
+          await tasks.inherit(continued);
+          assert.equal(await confirm(oldApproval, true), undefined);
+          await trust.check(continued, 'GMAIL_FETCH_EMAILS', {});
+          const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.deepEqual(words, [
+            'Read my fixture flight dates.',
+            'Use the new fixture flight dates.',
+          ]);
+          await tasks.execute(
+            continued,
+            { action: 'finish', id: task.id, status: 'done', result: 'Dates checked' },
+            update.messageId,
+          );
+          await finish(update.turnId, 'succeeded');
+          const chat = await begin('Summarise the fixture tasks.');
+          await trust.check(chat, 'GMAIL_FETCH_EMAILS', {});
+          const chatWords = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(chatWords.includes('Read my fixture flight dates.'), false);
+          assert.equal(chatWords.includes('Use the new fixture flight dates.'), false);
+          await finish(chat.turnId, 'succeeded');
+          await db.pool.query('UPDATE turns SET task_id=NULL WHERE task_id=$1', [task.id]);
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
         },
       );
 

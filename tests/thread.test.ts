@@ -124,7 +124,10 @@ test(
     });
     const accounts = createAccountStore(db.pool);
     await accounts.initialize();
-    const userMessages = thread.createUserMessageService({ confirmAction: approvals.chat });
+    const userMessages = thread.createUserMessageService({
+      confirmAction: approvals.chat,
+      taskReply: (client, threadId, messageId) => tasks.resolveReply(client, threadId, messageId),
+    });
     const discarded: string[] = [];
     const planInputs: Array<{ owner: string; input: object }> = [];
     let planAnswer: (owner: string) => unknown = () => null;
@@ -286,8 +289,9 @@ test(
       manage: async () => {
         throw new Error('Unused fixture');
       },
-      task: (turn, input) =>
-        thread.withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input)),
+      taskContext: tasks.context,
+      taskLedger: tasks.read,
+      task: tasks.execute,
       startTurn: tasks.inherit,
       artifacts: {
         ...localArtifacts,
@@ -302,6 +306,46 @@ test(
       },
       runTurn: async (context) => {
         runs.push(context);
+        if (context.prompt === 'dispatch-tasks-fixture') {
+          if (!context.taskContext) {
+            for (const title of ['Task A', 'Task B'])
+              await context.task!({
+                action: 'start',
+                title,
+                doneWhen: 'The fixture output is checked',
+                now: 'Starting',
+                steps: ['Read', 'Check'],
+              });
+          } else {
+            await context.emit('tool_start', 'Read fixture input');
+            await Promise.race([
+              sessionGates.get(context.taskContext.title),
+              new Promise<void>((resolve) =>
+                context.signal.addEventListener('abort', () => resolve(), { once: true }),
+              ),
+            ]);
+            if (context.signal.aborted) return { status: 'succeeded' };
+            await context.takeMessages!();
+            await context.task!({
+              action: 'finish',
+              id: context.taskContext.id,
+              status: 'done',
+              result: 'Fixture checked',
+            });
+            return { status: 'succeeded', result: `${context.taskContext.title} checked` };
+          }
+          return { status: 'succeeded' };
+        }
+        if (context.prompt === 'forward-task-update-fixture') {
+          const ledger = await tasks.read();
+          await context.task!({
+            action: 'reply',
+            ids: ledger
+              .filter((task) => ['Task A', 'Task B'].includes(task.title))
+              .map((task) => task.id),
+          });
+          return { status: 'succeeded' };
+        }
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
@@ -446,7 +490,7 @@ test(
         if (context.prompt === 'release-retry') failRelease = 1;
         if (context.prompt.startsWith('task-')) {
           const report = (input: Record<string, unknown>) => context.task!(input);
-          if (context.prompt === 'task-start-fixture') {
+          if (context.prompt === 'task-start-fixture' && !context.taskContext) {
             await report({
               action: 'start',
               title: 'Plumber quotes',
@@ -460,6 +504,19 @@ test(
             });
             return { status: 'succeeded' };
           }
+          if (context.prompt === 'task-start-fixture') {
+            await report({
+              action: 'update',
+              id: context.taskContext!.id,
+              now: 'Asked two plumbers for quotes',
+              waitingFor: [
+                { who: 'Rui', via: 'email' },
+                { who: 'Ana', via: 'email' },
+              ],
+              nextCheck: new Date(Date.now() + 3_600_000).toISOString(),
+            });
+            return { status: 'succeeded' };
+          }
           const { tasks } = (await report({ action: 'list' })) as { tasks: Task[] };
           const id = tasks.find((task) => task.title === 'Plumber quotes')!.id;
           if (context.prompt === 'task-foreign-fixture') {
@@ -467,7 +524,10 @@ test(
               await db.pool.query("SELECT id FROM tasks WHERE owner_id='task-other-owner'")
             ).rows[0].id;
             assert.equal(tasks.length, 1);
-            await assert.rejects(report({ action: 'update', id: foreign, now: 'x' }), /not open/);
+            await assert.rejects(
+              report({ action: 'update', id: foreign, now: 'x' }),
+              /Only the task session/,
+            );
             return { status: 'succeeded' };
           }
           if (context.prompt === 'task-hold-fixture') {
@@ -1523,14 +1583,117 @@ test(
       );
 
       await t.test(
-        'a task card shows what Pi reported and the state of the turn that last reported it',
+        'independent tasks keep chat free, receive owner updates and stop separately',
+        async () => {
+          let releaseA!: () => void;
+          let releaseB!: () => void;
+          sessionGates.set(
+            'Task A',
+            new Promise<void>((resolve) => {
+              releaseA = resolve;
+            }),
+          );
+          sessionGates.set(
+            'Task B',
+            new Promise<void>((resolve) => {
+              releaseB = resolve;
+            }),
+          );
+          const started = await userMessages.submit('dispatch-tasks-fixture');
+          try {
+            await waitFor(
+              () =>
+                runs.filter((run) => run.prompt === 'dispatch-tasks-fixture' && run.taskContext)
+                  .length === 2,
+            );
+            await waitFor(settled(started.turnId));
+            const ledger = await tasks.read();
+            const a = ledger.find((task) => task.title === 'Task A')!;
+            const b = ledger.find((task) => task.title === 'Task B')!;
+            const workers = runs.filter(
+              (run) => run.prompt === 'dispatch-tasks-fixture' && run.taskContext,
+            );
+            assert.equal(new Set(workers.map((run) => run.sessionId)).size, 2);
+            assert.ok(workers.every((run) => run.sessionId !== started.threadId));
+            assert.equal(new Set(workers.map((run) => run.workspacePath)).size, 1);
+            const chat = await userMessages.submit('A small separate question');
+            await waitFor(settled(chat.turnId));
+            assert.equal(
+              runs.find((run) => run.turnId === chat.turnId)!.sessionId,
+              started.threadId,
+            );
+            const update = await userMessages.submit('forward-task-update-fixture');
+            await waitFor(settled(update.turnId));
+            for (const task of (await tasks.read()).filter((task) =>
+              [a.id, b.id].includes(task.id),
+            )) {
+              assert.equal(task.revision, 2);
+              assert.equal(task.appliedRevision, 1);
+            }
+            const workerA = workers.find((run) => run.taskContext!.id === a.id)!;
+            const received = await workerA.takeMessages!();
+            assert.equal(received[0].text, 'forward-task-update-fixture');
+            assert.equal(
+              (await db.pool.query('SELECT turn_id FROM tasks WHERE id=$1', [a.id])).rows[0]
+                .turn_id,
+              workerA.turnId,
+            );
+            assert.equal((await tasks.read()).find((task) => task.id === a.id)!.appliedRevision, 2);
+            const detail = (await request('GET', `/api/tasks/${a.id}`)).json();
+            assert.ok(
+              detail.events.some(
+                (event: { summary: string }) => event.summary === 'Read fixture input',
+              ),
+            );
+            assert.equal((await request('POST', `/api/tasks/${a.id}/stop`)).statusCode, 200);
+            await waitFor(() => workerA.signal.aborted);
+            const workerB = workers.find((run) => run.taskContext!.id === b.id)!;
+            assert.equal(workerB.signal.aborted, false);
+            await assert.rejects(workerA.reply('Must not write after Stop'));
+            releaseB();
+            await waitFor(settled(workerB.turnId));
+            assert.equal((await tasks.read()).find((task) => task.id === b.id)!.status, 'done');
+            const result = (
+              await db.pool.query(
+                'SELECT id,reply_to_message_id FROM messages WHERE turn_id=$1 AND text=$2',
+                [workerB.turnId, 'Task B checked'],
+              )
+            ).rows[0];
+            assert.equal(result.reply_to_message_id, b.messageId);
+            const continued = await userMessages.submit('Continue from the result', [], {
+              replyToMessageId: result.id,
+            });
+            await waitFor(settled(continued.turnId));
+            assert.equal(
+              runs.find((run) => run.turnId === continued.turnId)!.sessionId,
+              workerB.sessionId,
+            );
+            await thread.stopThread();
+            assert.equal(
+              (await tasks.read()).find((task) => task.id === b.id)!.status,
+              'cancelled',
+            );
+          } finally {
+            releaseA();
+            releaseB();
+          }
+        },
+      );
+
+      await t.test(
+        'a saved task keeps progress, questions and results in its own session',
         async (t) => {
           t.mock.method(console, 'error', () => {});
           const card = async () =>
             (await request('GET', '/api/tasks'))
               .json()
               .find((item: Task) => item.title === 'Plumber quotes') as Task;
-          const idle = () => waitFor(settledThread);
+          const idle = async () => {
+            await waitFor(settledThread);
+            await waitFor(async () => !['queued', 'working'].includes((await card()).status));
+          };
+          const taskReply = async (text: string) =>
+            userMessages.submit(text, [], { replyToMessageId: (await card()).messageId! });
           await db.pool.query(
             "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,'task-other-owner','Plumber quotes','Foreign','Foreign step')",
             [randomUUID()],
@@ -1563,7 +1726,7 @@ test(
           taskHold = new Promise((resolve) => {
             releaseHold = resolve;
           });
-          const held = await thread.submitUserMessage('task-hold-fixture');
+          const held = await taskReply('task-hold-fixture');
           await waitFor(async () => (await card()).now === 'Reading Rui’s reply');
           assert.equal((await card()).status, 'working');
           releaseHold();
@@ -1571,7 +1734,7 @@ test(
           await idle();
           assert.equal((await card()).status, 'waiting');
 
-          const asked = await thread.submitUserMessage('task-ask-fixture');
+          const asked = await taskReply('task-ask-fixture');
           await waitFor(settled(asked.turnId));
           await idle();
           current = await card();
@@ -1590,22 +1753,22 @@ test(
               .task_id,
             current.id,
           );
-          const answer = await thread.submitUserMessage('Yes, book Rui');
+          const answer = await taskReply('Yes, book Rui');
           await waitFor(settled(answer.turnId));
           await idle();
           current = await card();
           assert.equal(current.status, 'scheduled');
           assert.equal(current.question, null);
 
-          const failed = await thread.submitUserMessage('task-fail-fixture');
+          const failed = await taskReply('task-fail-fixture');
           await waitFor(settled(failed.turnId));
           await idle();
           current = await card();
-          assert.equal(current.status, 'needs_you');
+          assert.equal(current.status, 'failed');
           assert.equal(current.question, null);
           assert.equal(runs.filter((context) => context.prompt === 'task-fail-fixture').length, 1);
 
-          const finished = await thread.submitUserMessage('task-finish-fixture');
+          const finished = await taskReply('task-finish-fixture');
           await waitFor(settled(finished.turnId));
           await idle();
           current = await card();

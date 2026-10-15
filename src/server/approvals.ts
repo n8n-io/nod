@@ -33,6 +33,7 @@ export type ChatConfirmationResult =
 type TurnRow = {
   id: string;
   thread_id: string;
+  task_id: string | null;
   source: string;
   parent_turn_id: string | null;
   message_id: string | null;
@@ -48,7 +49,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      'SELECT id,thread_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
+      "SELECT id,thread_id,to_jsonb(turns)->>'task_id' AS task_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2",
       [turnId, ownerId],
     )
   ).rows[0];
@@ -89,9 +90,18 @@ export async function turnOrigin(turnId: string) {
     const chain = current && (await turnChain(client, current));
     const origin = chain?.at(-1);
     if (!chain || !origin) return undefined;
+    const task = current.task_id
+      ? (
+          await client.query('SELECT source_message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
+            current.task_id,
+            ownerId,
+          ])
+        ).rows[0]
+      : undefined;
     return {
+      taskId: current.task_id,
       source: origin.source,
-      messageId: origin.source === 'user' ? origin.message_id : null,
+      messageId: origin.source === 'user' ? (task?.source_message_id ?? origin.message_id) : null,
       channel: current.channel,
       scheduleInstruction:
         origin.source === 'schedule'

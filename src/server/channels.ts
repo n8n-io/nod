@@ -37,8 +37,13 @@ interface ChannelOptions {
     channel: string,
     messageId: string,
     answer?: ChatConfirmationInput['answer'],
+    replyToMessageId?: string,
   ) => Promise<string>;
-  answer?: (text: string, channel: string) => Promise<ChatConfirmationInput['answer']>;
+  answer?: (
+    text: string,
+    channel: string,
+    replyToMessageId?: string,
+  ) => Promise<ChatConfirmationInput['answer']>;
   subscribe: (listener: () => void) => () => void;
   refresh?: () => void;
   intervalMs?: number;
@@ -60,6 +65,7 @@ interface ChannelIdentity {
 }
 interface InboxRow extends ChannelIdentity {
   source_id: string;
+  provider_reply_id: string | null;
   text: string;
   message_id: string | null;
 }
@@ -70,6 +76,7 @@ interface OutboxRow extends ChannelIdentity {
   thread_id: string;
   text: string;
   attachments: unknown[];
+  reply_to_message_id: string | null;
 }
 const messageSchema = z.object({
   channelId: z.string().regex(/^[a-z][a-z0-9_-]{0,50}$/),
@@ -79,6 +86,7 @@ const messageSchema = z.object({
   threadId: z.string().min(1),
   text: z.string().trim().min(1),
   sentAt: z.date(),
+  replyToMessageId: z.string().min(1).optional(),
 });
 
 function conversationChannel(row: ChannelIdentity) {
@@ -173,6 +181,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     state text NOT NULL DEFAULT 'pending', provider_message_id text, reason text,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   );
+  ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS provider_reply_id text;
+  ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}';
+  UPDATE channel_outbox SET provider_message_ids=ARRAY[provider_message_id] WHERE provider_message_id IS NOT NULL AND cardinality(provider_message_ids)=0;
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
@@ -252,7 +263,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   async function accept(message: InboundMessage, channelId: string) {
     const parsed = messageSchema.safeParse(message);
     if (!parsed.success || parsed.data.channelId !== channelId) return;
-    const { accountId, senderId, messageId, threadId, text, sentAt } = parsed.data;
+    const { accountId, senderId, messageId, threadId, text, sentAt, replyToMessageId } =
+      parsed.data;
     const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
     if (closed || replacing || !permitted(identity) || sentAt.getTime() > Date.now() + 300000)
       return;
@@ -274,8 +286,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
         await database.query(
-          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(source_id) DO NOTHING`,
+          `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel,provider_reply_id)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(source_id) DO NOTHING`,
           [
             sourceId,
             channelId,
@@ -289,6 +301,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             verification?.turnId ?? null,
             ownerId,
             conversationChannel(identity),
+            replyToMessageId ?? null,
           ],
         );
         if (closed || replacing || !permitted(identity))
@@ -410,7 +423,27 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (!pending) return false;
     const channel = conversationChannel(pending);
     if (closed || replacing) return false;
-    const answer = await options.answer?.(pending.text, channel).catch(() => undefined);
+    const replyToMessageId = pending.provider_reply_id
+      ? ((
+          await pool.query(
+            `SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+       WHERE i.owner_id=$1 AND i.provider=$2 AND i.account_id=$3 AND i.sender_id=$4 AND i.thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$5)
+         AND $6=ANY(o.provider_message_ids) AND o.state='sent' LIMIT 1`,
+            [
+              ownerId,
+              pending.provider,
+              pending.account_id,
+              pending.sender_id,
+              pending.source_id,
+              pending.provider_reply_id,
+            ],
+          )
+        ).rows[0]?.message_id as string | undefined)
+      : undefined;
+    const answer =
+      pending.provider_reply_id && !replyToMessageId
+        ? undefined
+        : await options.answer?.(pending.text, channel, replyToMessageId).catch(() => undefined);
     const submitted = await transaction(async (client) => {
       const result = await client.query<InboxRow>(
         "SELECT * FROM channel_inbox WHERE state='pending' AND source_id=$1 AND owner_id=$2 FOR UPDATE SKIP LOCKED",
@@ -433,6 +466,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         channel,
         messageId,
         answer,
+        replyToMessageId,
       );
       await client.query(
         "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
@@ -467,7 +501,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
         SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
       ) RETURNING message_id,source_id
-    ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments
+    ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,m.reply_to_message_id
       FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
       [ownerId],
     );
@@ -539,7 +573,24 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       return true;
     }
     try {
+      const target = row.reply_to_message_id
+        ? ((
+            await pool.query(
+              `SELECT o.provider_message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+         WHERE o.message_id=$1 AND o.state='sent' AND i.owner_id=$2 AND i.provider=$3 AND i.account_id=$4 AND i.sender_id=$5 AND i.thread_id=$6`,
+              [
+                row.reply_to_message_id,
+                ownerId,
+                row.provider,
+                row.account_id,
+                row.sender_id,
+                row.thread_id,
+              ],
+            )
+          ).rows[0]?.provider_message_id as string | undefined)
+        : undefined;
       const sent = await transport.post({
+        ...(target ? { replyToMessageId: target } : {}),
         channelId: row.provider,
         accountId: row.account_id,
         threadId: row.thread_id,
@@ -553,8 +604,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         ...(attachments ? { attachments } : {}),
       });
       await pool.query(
-        "UPDATE channel_outbox SET state='sent',provider_message_id=$2,updated_at=now() WHERE message_id=$1",
-        [row.message_id, sent.id],
+        "UPDATE channel_outbox SET state='sent',provider_message_id=$2,provider_message_ids=$3,updated_at=now() WHERE message_id=$1",
+        [row.message_id, sent.id, sent.ids ?? [sent.id]],
       );
     } catch (cause) {
       logFailure('channel_send_failed', cause);

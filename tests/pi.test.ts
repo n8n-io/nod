@@ -1806,6 +1806,66 @@ function context(directory: string): RuntimeContext {
   };
 }
 
+test('saved tasks use their folder and return their final result without a coordinator turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-task-runtime-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const id = randomUUID();
+  const paths: string[] = [];
+  const commands: string[] = [];
+  const replies: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (options) => {
+        paths.push(options.workspace.path);
+        return {
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            options.onEvent({ type: 'final', text: 'The fixture output is checked.' });
+          },
+        };
+      },
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({
+      open: () => ({
+        path: '/workspace/fixture',
+        instructions: 'Fixture',
+        exec: async (command) => {
+          commands.push(command);
+          return { exitCode: 0 };
+        },
+      }),
+    }),
+  });
+  try {
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      sessionId: id,
+      background: true,
+      taskContext: {
+        id,
+        title: 'Fixture task',
+        brief: 'Check the fixture',
+        doneWhen: 'Fixture output checked',
+        revision: 1,
+      },
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+    assert.equal(result.result, 'The fixture output is checked.');
+    assert.deepEqual(paths, [`/workspace/fixture/tasks/${id}`]);
+    assert.ok(commands.some((command) => command.includes(`/tasks/${id}/outputs`)));
+    assert.deepEqual(replies, []);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
 test('an attached photo reaches a model that reads images and is listed as omitted for one that does not', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-images-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

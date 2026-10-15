@@ -20,6 +20,10 @@ const telegramFileBytes = 50 * 1024 * 1024;
 const telegramTextLimit = 3500;
 const telegramMessage = z.object({
   message_id: z.number().int().nonnegative(),
+  reply_to_message: z
+    .object({ message_id: z.number().int().nonnegative() })
+    .passthrough()
+    .optional(),
   date: z.number().int().positive(),
   text: z.string().trim().min(1),
   from: z.object({
@@ -38,6 +42,7 @@ const whatsappMessage = z.object({
   id: z.string().min(1),
   from: z.string().regex(/^\d{7,15}$/),
   timestamp: z.string().regex(/^\d{1,12}$/),
+  context: z.object({ id: z.string().min(1) }).optional(),
   type: z.literal('text'),
   text: z.object({ body: z.string().trim().min(1) }),
 });
@@ -301,7 +306,15 @@ export function createChatSdkTransport(
           return accepted();
         const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
         if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
-        const message = telegram.parseMessage(parsed.data);
+        const { reply_to_message: replied, ...rawMessage } = parsed.data;
+        const message = telegram.parseMessage(rawMessage);
+        const replyId = replied
+          ? telegram.parseMessage({
+              message_id: replied.message_id,
+              chat: parsed.data.chat,
+              date: parsed.data.date,
+            }).id
+          : undefined;
         if (!env.TELEGRAM_ALLOWED_USER_ID) {
           const code = start?.[1];
           if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return accepted();
@@ -331,6 +344,7 @@ export function createChatSdkTransport(
             accountId: env.TELEGRAM_BOT_TOKEN!.split(':')[0],
             senderId: String(parsed.data.from.id),
             messageId: message.id,
+            replyToMessageId: replyId,
             threadId: message.threadId,
             text: message.text,
             sentAt: message.metadata.dateSent,
@@ -357,6 +371,7 @@ export function createChatSdkTransport(
                 accountId,
                 senderId: parsed.data.from,
                 messageId: message.id,
+                replyToMessageId: parsed.data.context?.id,
                 threadId: message.threadId,
                 text: message.text,
                 sentAt: message.metadata.dateSent,
@@ -382,16 +397,22 @@ export function createChatSdkTransport(
       const thread = bot.thread(input.threadId);
       const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
       let id = '';
+      const ids: string[] = [];
+      const post = (message: Parameters<typeof thread.reply>[1]) =>
+        input.replyToMessageId
+          ? thread.reply(input.replyToMessageId, message)
+          : thread.post(message);
       for (const part of input.channelId === 'telegram' ? chunks(input.text) : [input.text]) {
-        const sent = await thread.post({ markdown: part });
+        const sent = await post({ markdown: part });
         id ||= sent.id;
+        ids.push(sent.id);
       }
       for (const file of attachments) {
         if (unsent.includes(file)) continue;
         await file
           .read()
           .then((bytes) =>
-            thread.post({
+            post({
               markdown: '',
               attachments: [
                 {
@@ -413,17 +434,23 @@ export function createChatSdkTransport(
           .then(
             (sent) => {
               id ||= sent.id;
+              ids.push(sent.id);
             },
             () => {
               unsent.push(file);
             },
           );
       }
-      if (unsent.length)
-        await thread
-          .post({ markdown: `Open Otto to get ${unsent.map((file) => file.name).join(', ')}.` })
-          .catch(() => {});
-      return { id };
+      if (unsent.length) {
+        const fallback = await post({
+          markdown: `Open Otto to get ${unsent.map((file) => file.name).join(', ')}.`,
+        }).catch(() => undefined);
+        if (fallback) {
+          id ||= fallback.id;
+          ids.push(fallback.id);
+        }
+      }
+      return { id, ids };
     },
     async close() {
       if (!closed) {

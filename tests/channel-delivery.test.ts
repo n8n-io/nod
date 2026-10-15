@@ -555,7 +555,7 @@ test(
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1228,7 +1228,7 @@ async function outboxFixture(t: TestContext) {
     await admin.end();
   });
   const threadId = await createFixtureTables(pool, 'local-development');
-  const posts: { threadId: string; text: string }[] = [];
+  const posts: { threadId: string; text: string; replyToMessageId?: string }[] = [];
   let incoming: InboundMessage[] = [];
   let sequence = 0;
   const transport: MessagingTransport = {
@@ -1248,12 +1248,24 @@ async function outboxFixture(t: TestContext) {
     },
     receive: async () => ({ status: 200, body: {} }),
     post: async (input) => {
-      posts.push({ threadId: input.threadId, text: input.text });
-      return { id: `provider-${posts.length}` };
+      posts.push({
+        threadId: input.threadId,
+        text: input.text,
+        ...(input.replyToMessageId ? { replyToMessageId: input.replyToMessageId } : {}),
+      });
+      return {
+        id: `provider-${posts.length}`,
+        ids: [`provider-${posts.length}`, `provider-${posts.length}-file`],
+      };
     },
     close: async () => {},
   };
-  const receive = (senderId: string, messageId: string, chat: string) => {
+  const receive = (
+    senderId: string,
+    messageId: string,
+    chat: string,
+    replyToMessageId?: string,
+  ) => {
     incoming.push({
       channelId: 'telegram',
       accountId: 'bot',
@@ -1261,6 +1273,7 @@ async function outboxFixture(t: TestContext) {
       messageId,
       threadId: chat,
       text: `Fixture request ${messageId}`,
+      replyToMessageId,
       sentAt: new Date(Date.now() - 60_000 + 1000 * sequence++),
     });
   };
@@ -1348,6 +1361,49 @@ test(
         attempts,
       );
       assert.equal(posts.length, 5);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'native replies to every delivered part keep the task target and refuse a foreign conversation',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const targets: Array<string | undefined> = [];
+    const channels = await create({
+      submit: async (_text, sourceId, client, channel, _messageId, _answer, replyToMessageId) => {
+        targets.push(replyToMessageId);
+        const id = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [id, threadId, sourceId, channel],
+        );
+        return id;
+      },
+    });
+    try {
+      receive('111', 'initial', 'chat-a');
+      await channels.drain();
+      const anchor = randomUUID();
+      await reply((await turnOf('initial')).turn_id, 'Task started', anchor, 0);
+      await channels.drain();
+      receive('111', 'file-reply', 'chat-a', 'provider-1-file');
+      await channels.drain();
+      assert.equal(targets.at(-1), anchor);
+      const result = randomUUID();
+      await reply((await turnOf('file-reply')).turn_id, 'Task result', result, 0);
+      await pool.query('UPDATE messages SET reply_to_message_id=$1 WHERE id=$2', [anchor, result]);
+      await channels.drain();
+      assert.equal(posts.at(-1)!.replyToMessageId, 'provider-1');
+      receive('222', 'foreign', 'chat-a', 'provider-1-file');
+      await channels.drain();
+      assert.equal(targets.at(-1), undefined);
+      receive('111', 'wrong-chat', 'chat-b', 'provider-1-file');
+      await channels.drain();
+      assert.equal(targets.at(-1), undefined);
     } finally {
       await channels.close();
     }

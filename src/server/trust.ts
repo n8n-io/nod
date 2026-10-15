@@ -22,18 +22,27 @@ export function createTrust(options: {
 }) {
   const { pool, ownerId } = options;
 
-  async function conversation(threadId: string, originMessageId: string | null) {
+  async function conversation(
+    threadId: string,
+    originMessageId: string | null,
+    taskId: string | null,
+  ) {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
         `WITH owner AS (SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
            AND (created_at>now()-interval '24 hours' OR id=$3)
+           AND (id=$3 OR ($4::uuid IS NULL AND NOT EXISTS (
+             SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
+               AND to_jsonb(u)->>'task_id' IS NOT NULL)) OR ($4::uuid IS NOT NULL AND EXISTS (
+             SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
+               AND to_jsonb(u)->>'task_id'=$4::text)))
            AND text<>'' AND text NOT IN (
              SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
              WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL))
          (SELECT * FROM owner WHERE created_at>now()-interval '24 hours' ORDER BY created_at DESC,id DESC LIMIT 5)
          UNION SELECT * FROM owner WHERE id=$3
          ORDER BY created_at DESC,id DESC`,
-        [ownerId, threadId, originMessageId],
+        [ownerId, threadId, originMessageId, taskId],
       )
     ).rows;
     const latest = users[0];
@@ -42,8 +51,9 @@ export function createTrust(options: {
       await pool.query<{ text: string }>(
         `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
          AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
+         AND ($5::uuid IS NULL OR id=(SELECT reply_to_message_id FROM messages WHERE id=$4 AND owner_id=$1) OR turn_id IN (SELECT u.id FROM turns u WHERE u.owner_id=$1 AND to_jsonb(u)->>'task_id'=$5::text))
          ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [ownerId, threadId, latest.created_at, latest.id],
+        [ownerId, threadId, latest.created_at, latest.id, taskId],
       )
     ).rows[0];
     return {
@@ -64,7 +74,7 @@ export function createTrust(options: {
     const instruction = origin.scheduleInstruction?.trim();
     const words =
       origin.source === 'user'
-        ? await conversation(turn.threadId, origin.messageId)
+        ? await conversation(turn.threadId, origin.messageId, origin.taskId)
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction }
           : undefined;

@@ -43,7 +43,7 @@ export interface Turn {
   id: string;
   handoffMessageId?: string | null;
   status: TurnStatus;
-  source: 'user' | 'schedule' | 'event' | 'resume';
+  source: 'user' | 'schedule' | 'event' | 'resume' | 'task';
   createdAt: string;
   finishedAt?: string | null;
   error?: string | null;
@@ -210,6 +210,7 @@ export interface Configuration {
   conversationResetEnabled: boolean;
 }
 export interface AppState {
+  tasks?: Task[];
   threadId: string;
   hasEarlierMessages?: boolean;
   verificationRequests?: VerificationRequest[];
@@ -229,7 +230,15 @@ export interface CurrentBrowser {
   lastActivityAt: string;
 }
 export type TaskStatus =
-  'working' | 'needs_you' | 'waiting' | 'scheduled' | 'stalled' | 'done' | 'cancelled';
+  | 'queued'
+  | 'working'
+  | 'needs_you'
+  | 'waiting'
+  | 'scheduled'
+  | 'stalled'
+  | 'failed'
+  | 'done'
+  | 'cancelled';
 export interface TaskWait {
   who: string;
   via: string;
@@ -247,6 +256,22 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+  messageId?: string | null;
+  steps?: string[];
+  stepIndex?: number;
+  revision?: number;
+  appliedRevision?: number;
+}
+export interface TaskDetail {
+  task: Task;
+  events: Array<{
+    id: string;
+    type: string;
+    summary: string;
+    runId: string | null;
+    parentRunId: string | null;
+    createdAt: string;
+  }>;
 }
 export interface Schedule {
   id: string;

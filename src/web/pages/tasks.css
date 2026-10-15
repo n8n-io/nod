@@ -112,3 +112,32 @@
     min-height: 40px;
   }
 }
+
+.task-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.task-steps,
+.task-activity {
+  margin: 0.75rem 0;
+  padding-left: 1.4rem;
+}
+.task-steps li,
+.task-activity li {
+  margin: 0.35rem 0;
+}
+.task-steps [aria-current='step'] {
+  font-weight: 600;
+}
+.task-activity {
+  max-height: 20rem;
+  overflow: auto;
+  font-size: 0.85rem;
+}
+.task-activity [data-helper='true'] {
+  padding-left: 0.75rem;
+}
+.messages > .task-card {
+  margin-left: 2.75rem;
+}

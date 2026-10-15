@@ -388,15 +388,22 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?} returns its id; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. The card only reports: it schedules nothing, grants no permission and is not a chat message.',
+    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now} starts an independent session from chat. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} closes your task after you verify doneWhen. list returns open tasks. reply {ids} sends the exact current owner message to those tasks. stop {id} stops one task. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
+      Type.Object(
+        { action: Type.Literal('reply'), ids: Type.Array(uuid, { minItems: 1 }) },
+        { additionalProperties: false },
+      ),
+      Type.Object({ action: Type.Literal('stop'), id: uuid }, { additionalProperties: false }),
       Type.Object(
         {
           action: Type.Literal('start'),
           title: Type.String({ minLength: 1 }),
           doneWhen: Type.String({ minLength: 1 }),
           now: taskNow,
+          brief: Type.Optional(Type.String({ minLength: 1 })),
+          steps: Type.Optional(Type.Array(taskNow)),
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
         },
@@ -407,6 +414,8 @@ export const toolDefinitions = {
           action: Type.Literal('update'),
           id: uuid,
           now: Type.Optional(taskNow),
+          steps: Type.Optional(Type.Array(taskNow)),
+          stepIndex: Type.Optional(Type.Integer({ minimum: 0 })),
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
         },

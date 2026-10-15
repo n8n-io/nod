@@ -10,16 +10,19 @@ import {
   LoaderCircle,
   MessageCircle,
 } from 'lucide-react';
-import type { Schedule, ScheduleRun, Task, TaskStatus } from '../../shared/contracts';
+import type { Schedule, ScheduleRun, Task, TaskDetail, TaskStatus } from '../../shared/contracts';
 import { PageTitle } from '../components/page-title';
 import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { desktopSettingsAvailable } from '../lib/desktop';
+import { post, errorMessage } from '../lib/api';
 import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
 const labels: Record<TaskStatus, string> = {
+  queued: 'Queued',
+  failed: 'Failed',
   working: 'Working',
   needs_you: 'Needs you',
   waiting: 'Waiting',
@@ -29,6 +32,8 @@ const labels: Record<TaskStatus, string> = {
   cancelled: 'Stopped',
 };
 const icons = {
+  queued: Clock,
+  failed: CircleAlert,
   working: LoaderCircle,
   needs_you: MessageCircle,
   waiting: Hourglass,
@@ -37,7 +42,15 @@ const icons = {
   done: CircleCheck,
   cancelled: CircleSlash,
 };
-const order: TaskStatus[] = ['needs_you', 'working', 'stalled', 'waiting', 'scheduled'];
+const order: TaskStatus[] = [
+  'needs_you',
+  'failed',
+  'working',
+  'queued',
+  'stalled',
+  'waiting',
+  'scheduled',
+];
 const views = ['current', 'scheduled', 'previous'] as const;
 const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
@@ -49,17 +62,50 @@ function headline(task: Task) {
       task.question ??
       'Something stopped this before it finished. Check what happened, then tell Otto to continue.'
     );
+  if (task.status === 'failed') return 'This task failed. Reply to continue, or stop the task.';
   if (task.status === 'stalled') return 'Nothing is planned next. Tell Otto to keep going or stop.';
   return task.now;
 }
 
-export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): void }) {
+function TaskActivity({ id }: { id: string }) {
+  const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
+  if (data.error) return <Notice>Could not load activity.</Notice>;
+  return (
+    <ol className="task-activity">
+      {data.data?.events.map((event) => (
+        <li key={event.id} data-helper={Boolean(event.parentRunId)}>
+          <span>
+            {event.parentRunId ? 'Helper · ' : ''}
+            {event.summary}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function TaskCard({
+  task,
+  onScheduled,
+  onReply,
+}: {
+  task: Task;
+  onScheduled?(): void;
+  onReply?(): void;
+}) {
   const headingId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState('');
   const format = useDateFormat();
   const Icon = icons[task.status];
   const when = (value: string) => formatDateTime(value, format, { weekday: true });
   return (
-    <article className="saved-plan task-card" aria-labelledby={headingId}>
+    <article
+      className="saved-plan task-card"
+      aria-labelledby={headingId}
+      data-message-id={onReply ? task.messageId : undefined}
+    >
       <div className="saved-plan-title">
         <h2 id={headingId}>{task.title}</h2>
         <span className="task-status" data-status={task.status}>
@@ -102,6 +148,56 @@ export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): vo
           )}
         </ul>
       )}
+      {Boolean(task.steps?.length) && (
+        <ol className="task-steps">
+          {task.steps!.map((step, index) => (
+            <li key={index} aria-current={index === task.stepIndex ? 'step' : undefined}>
+              {index < (task.stepIndex ?? 0) ? '✓ ' : ''}
+              {step}
+            </li>
+          ))}
+        </ol>
+      )}
+      {(task.revision ?? 0) > (task.appliedRevision ?? 0) && !closed(task) && (
+        <p className="saved-plan-meta">Owner update queued</p>
+      )}
+      <div className="task-controls">
+        {onReply && (
+          <Button variant="ghost" size="sm" onClick={onReply}>
+            Reply
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Hide activity' : 'Show activity'}
+        </Button>
+        {!closed(task) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={stopping}
+            onClick={async () => {
+              setStopping(true);
+              setError('');
+              try {
+                await post(`/api/tasks/${task.id}/stop`);
+              } catch (cause) {
+                setError(errorMessage(cause));
+              } finally {
+                setStopping(false);
+              }
+            }}
+          >
+            {stopping ? 'Stopping…' : 'Stop'}
+          </Button>
+        )}
+      </div>
+      {error && <Notice>{error}</Notice>}
+      {expanded && <TaskActivity id={task.id} />}
       {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
     </article>
   );

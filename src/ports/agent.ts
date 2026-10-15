@@ -81,9 +81,18 @@ export interface RuntimeContext {
     unseen?: boolean;
   }>;
   memory?: string;
+  taskContext?: {
+    id: string;
+    title: string;
+    brief: string;
+    doneWhen: string;
+    revision: number;
+    messageId?: string | null;
+  };
+  tasks?: import('../shared/contracts.ts').Task[];
   workspacePath: string;
   signal: AbortSignal;
-  attachments: Array<{ path: string; mimeType: string }>;
+  attachments: Array<{ path: string; mimeType: string; workspaceFile?: string }>;
   emit(type: string, summary: string, event?: ExecutionEvent): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(
@@ -151,6 +160,7 @@ export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
   waitingFor?: 'question' | 'approval' | 'credentials';
   question?: string;
+  result?: string;
 }
 export interface AgentImage {
   type: 'image';

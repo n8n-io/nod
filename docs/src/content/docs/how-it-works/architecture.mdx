@@ -11,6 +11,30 @@ This page shows how Otto's parts fit together and where each one lives in the co
 
 The short version: in local mode, Otto is one Node process plus a few Docker containers. Hosted mode runs the same code once per user, behind a gateway.
 
+## One conversation, independent tasks
+
+The main chat session coordinates work. It answers short requests and starts a saved session for an independent task. Task results return directly to the shared conversation. They do not need a second model call in the coordinator.
+
+```mermaid
+flowchart TD
+  user[Web · Telegram · WhatsApp] <--> chat[One shared conversation]
+  chat <--> coordinator[Main chat session]
+  coordinator --> ledger[(Task ledger)]
+  ledger --> a[Task session A]
+  ledger --> b[Task session B]
+  a --> chat
+  b --> chat
+  a <--> shared[Shared workspace and owner memory]
+  b <--> shared
+  coordinator <--> shared
+```
+
+The `tasks` table is the task ledger. It owns the goal, completion condition, session link, source message, progress, update revision and result. `turns`, `messages` and `turn_events` retain execution, owner input and activity. The UI reads these records. A model-written file is not a second task ledger.
+
+Each task works in `tasks/<task ID>/` in the same sandbox workspace. Its `drafts/` and `outputs/` folders hold files. `shared/` holds common files. These folders organize work; they are not separate security boundaries. Each session has its own saved transcript and browser. Owner memory and private transcripts stay outside the sandbox.
+
+Shared storage does not update an active model context. The server delivers each addressed owner message to the selected task sessions. A revision records delivery at a model boundary. A task cannot finish while an owner update remains queued. Sessions load current owner memory and task state when they start or continue. Shared reports and files provide information, not permission.
+
 ## One process and a few containers
 
 In local mode, one Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
