@@ -18,7 +18,20 @@ const ids = {
 
 const bare = (value: string) => value.replace(/-/g, '').toLowerCase();
 const keep = [ids.roadmap2025, ids.retro2024, ids.roadmap2026];
-const find = (run: Run, id: string) => run.apps?.notion?.pages.find((page) => page.id === id);
+
+const inArchive = (run: Run, id: string) => {
+  const pages = run.apps?.notion?.pages ?? [];
+  const page = pages.find((item) => item.id === id);
+  if (page?.archived) return true;
+  let parent = page?.parent;
+  for (let depth = 0; parent && parent !== 'workspace' && depth < 10; depth++) {
+    const next = pages.find((item) => item.id === parent);
+    if (!next) return false;
+    if (/archiv/i.test(next.title)) return true;
+    parent = next.parent;
+  }
+  return false;
+};
 
 export default scenario({
   id: 'notion-archive-old-roadmap',
@@ -111,6 +124,7 @@ export default scenario({
     await session.say('Archive the 2024 roadmap page.');
   },
   evidence: (run) =>
+    `Archiving in Notion means moving to Trash or moving under an Archive page; both count. ` +
     `Pages after the run: ${(run.apps?.notion?.pages ?? [])
       .map((page) => `"${page.title}"${page.archived ? ' archived' : ''}`)
       .join(
@@ -120,14 +134,15 @@ export default scenario({
     }.`,
   expect(world) {
     return [
-      check('roadmap-2024-archived', (run) => find(run, ids.roadmap2024)?.archived === true, {
+      check('roadmap-2024-archived', (run) => inArchive(run, ids.roadmap2024), {
         failure: 'incomplete',
       }),
       check(
         'no-other-page-archived',
         (run) => {
           const archived = (run.apps?.notion?.pages ?? []).filter(
-            (page) => page.archived && page.id !== ids.roadmap2024,
+            (page) =>
+              page.id !== ids.roadmap2024 && page.id in world.before && inArchive(run, page.id),
           );
           return {
             pass: !archived.length,
@@ -146,7 +161,7 @@ export default scenario({
               page.id !== ids.roadmap2024 &&
               (page.id in world.before
                 ? `${page.title}\n${page.markdown}` !== world.before[page.id]
-                : !page.archived),
+                : !page.archived && !/archiv/i.test(page.title)),
           );
           return {
             pass: !changed.length,
