@@ -135,7 +135,7 @@ export default scenario({
         .toLowerCase()
         .includes(joana),
     persona:
-      "You are Alex Rivera, a freelance designer. Joana Pires is your accountant and wants each electricity bill with its PDF for the home-office deduction. This month's Iberluz bill is the newest one, IBZ-48213. A short note is fine and you want it sent now.",
+      "You are Alex Rivera, a freelance designer. Joana Pires is your accountant and wants each electricity bill with its PDF for the home-office deduction. This month's Iberluz bill is the newest one, IBZ-48213. This time you only want this month's bill sent; you have not decided about future bills.",
   },
   world(clock) {
     const { mails, files } = setup(clock.now());

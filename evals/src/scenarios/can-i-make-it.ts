@@ -101,9 +101,9 @@ export default scenario({
         { failure: 'reasoning' },
       ),
       judge(
-        'offers-a-free-alternative',
-        'The answer suggests at least one alternative time that day for a one-hour call (a start time or a free window), and every alternative it presents as free really is free for an hour according to the ground truth: before 10:00, 11:30 to 13:00, 14:00 to 15:30, or from 17:30. Suggesting 14:00 or 14:30 passes. It fails if it gives no alternative, or presents as free a slot that overlaps an event (for example 16:30 to 17:30, which runs into Invoice admin).',
-        { failure: 'reasoning' },
+        'any-alternative-is-really-free',
+        'Every alternative time the answer presents as free for a one-hour call really is free for an hour according to the ground truth: before 10:00, 11:30 to 13:00, 14:00 to 15:30, or from 17:30. Suggesting 14:00 or 14:30 passes. Offering no alternative passes; the user only asked whether 15:00 works. It fails if it presents as free a slot that overlaps an event (for example 16:30 to 17:30, which runs into Invoice admin).',
+        { failure: 'hallucination' },
       ),
     ];
   },
