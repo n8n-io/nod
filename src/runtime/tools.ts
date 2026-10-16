@@ -520,19 +520,26 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   };
   let typedPage = '';
   let typed: string[] = [];
-  const observed = (step: { action: string; text?: string }, page: BrowserObservation) => {
+  let pressing = false;
+  const observed = (
+    step: { action: string; text?: string; key?: string },
+    page: BrowserObservation,
+  ) => {
     const key = pageKey(page.url);
-    const before = typedPage;
+    const same = typedPage === key || !typedPage;
     if (key !== typedPage) {
       typedPage = key;
       typed = [];
     }
-    if (
-      (before === key || !before) &&
-      ['fill', 'type', 'select'].includes(step.action) &&
-      step.text
-    )
+    const pressed =
+      step.action === 'press' && [...(step.key ?? '')].length === 1 ? step.key : undefined;
+    if (same && pressed)
+      typed = pressing
+        ? [...typed.slice(0, -1), `${typed.at(-1) ?? ''}${pressed}`.slice(0, 500)]
+        : [...typed, pressed].slice(-10);
+    else if (same && ['fill', 'type', 'select'].includes(step.action) && step.text)
       typed = [...typed, step.text.slice(0, 500)].slice(-10);
+    pressing = same && Boolean(pressed);
     return pageText(page);
   };
   const check = async (
@@ -548,7 +555,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       step.action === 'press' &&
       [...(step.key ?? '')].length === 1 &&
       step.key!.trim() &&
-      ['textbox', 'searchbox', 'combobox', 'spinbutton'].includes(page.controls?.[0]?.role ?? '')
+      ['textbox', 'searchbox', 'spinbutton'].includes(page.controls?.[0]?.role ?? '')
     )
       return {};
     const verdict = await context.browserStep({

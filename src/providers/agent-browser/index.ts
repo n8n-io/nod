@@ -1554,11 +1554,13 @@ export function createAgentBrowserComputer(options: {
       step.x !== undefined && step.y !== undefined ? { x: step.x, y: step.y } : step.points?.[0];
     const controls = await controlsOf(
       state,
-      step.selector
-        ? { selector: step.selector }
-        : point
-          ? { point }
-          : { focused: step.action === 'press' || step.action === 'type' },
+      step.action === 'press'
+        ? { focused: true }
+        : step.selector
+          ? { selector: step.selector }
+          : point
+            ? { point }
+            : { focused: step.action === 'type' },
     );
     if (step.action !== 'drag') return { controls };
     const drop = step.targetSelector

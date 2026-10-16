@@ -134,7 +134,7 @@ export function createCommunication(options: {
       signal?.throwIfAborted();
       if (!confirmationReview.safeParse(reviewed).success)
         throw new Error(
-          'Otto could not write an accurate confirmation for this action, so it did not run. Ask the user in chat to confirm exactly what you want to do, naming the site or app and what it would send or change, then try again with their answer.',
+          'Otto could not write an accurate confirmation for this action, so it did not run. Nothing was sent or changed.',
         );
     }
     return text;
