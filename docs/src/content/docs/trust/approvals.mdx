@@ -15,7 +15,7 @@ Background work, such as on a new email or a check of an app without events, has
 
 The checker is your selected model at its fastest setting. It checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
 
-Checking the confirmation question and reading your reply to it can use a decision model instead. See [Decision checks](/connect/models/#decision-checks).
+Reading your reply to a confirmation can use a decision model instead. See [Decision checks](/connect/models/#decision-checks).
 
 | It sees                                                                         | It never sees                                                               |
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -59,7 +59,7 @@ When the checker asks, the question names what the page shows, such as the amoun
 
 The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Otto is asking, preserving the material facts in your conversation language. There are no language-specific confirmation templates or yes/no word lists.
 
-Before showing it, a separate fact check compares the question with those frozen facts without seeing the conversation. It uses a decision model when one applies, otherwise your selected model. The writer and the fact check receive a sanitized copy of the request, with secret-keyed values and private links redacted. When sanitizing hides a value, both calls are told which fields are hidden, by name and never by value, and the question has to say that part of the action is not shown; a question that presents such an action as complete is rejected. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. An unsupported claim, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
+Before showing it, a separate fact check by your selected model compares the question with those frozen facts without seeing the conversation. The writer and the fact check receive a sanitized copy of the request, with secret-keyed values and private links redacted. When sanitizing hides a value, both calls are told which fields are hidden, by name and never by value, and the question has to say that part of the action is not shown; a question that presents such an action as complete is rejected. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. An unsupported claim, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
 
 Your recent messages and explicitly stated remembered preferences guide presentation only. An explicit output-language request applies to that output, and a short reply keeps the established conversation language. Quoted material, account names, region and time zone don't select the language. After a reset, your new messages and any remembered preference guide it again.
 
