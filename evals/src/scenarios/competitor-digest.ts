@@ -234,7 +234,11 @@ export default scenario({
             evidence: shared.join(', ') || 'no screenshot was shared with the user',
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'After the Monday run, the user received screenshots of both changed pages, the Automata pricing page and the Flowkite homepage, shared one by one or inside a file such as a ZIP or PDF whose contents the transcript shows.',
+        },
       ),
       judge(
         'weekly-message-names-both-real-changes',
