@@ -15,7 +15,7 @@ import { approvalLanguageCases } from './world/approval-language.ts';
 
 interface Case {
   id: string;
-  kind: 'run' | DecisionQuestion['name'];
+  kind: 'run' | 'answer' | 'valid';
   holdout: boolean;
   input: object;
   expected: string | boolean;

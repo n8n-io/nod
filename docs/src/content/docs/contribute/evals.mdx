@@ -119,7 +119,7 @@ git fetch origin main
 pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/main --repeat 3 --label decision-checks
 ```
 
-The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. Action permission always uses the selected model in production, so only the two LLM paths answer those cases unless the current revision gives that check a decision question. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
+The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. Action permission and confirmation facts always use the selected model in production, so only the two LLM paths answer those cases unless the current revision gives that check a decision question. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
 
 The 48 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
 
