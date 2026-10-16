@@ -296,7 +296,10 @@ export function createSession(options: {
     const at = Date.now();
     const generated = await options.simulator.followUp(
       user.persona,
-      userMessages[taskFrom]?.text ?? '',
+      userMessages
+        .slice(taskFrom)
+        .map((message) => message.text)
+        .join('\n'),
       text,
     );
     if (!generated) return false;
