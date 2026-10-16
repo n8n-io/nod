@@ -129,7 +129,10 @@ export function createCommunication(options: {
         },
       );
       signal?.throwIfAborted();
-      confirmationReview.parse(reviewed);
+      if (!confirmationReview.safeParse(reviewed).success)
+        throw new Error(
+          'Otto could not write an accurate confirmation for this action, so it did not run.',
+        );
     }
     return text;
   }

@@ -520,12 +520,14 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   };
   let typedPage = '';
   let typed: string[] = [];
+  let seen = '';
   const observed = (step: BrowserAction, page: BrowserObservation) => {
     const key = pageKey(page.url);
     if (key !== typedPage) {
       typedPage = key;
       typed = [];
     }
+    if (step.action !== 'evaluate') seen = page.text.slice(0, 20_000);
     if (['fill', 'type', 'select'].includes(step.action) && step.text)
       typed = [...typed, step.text.slice(0, 500)].slice(-10);
     return pageText(page);
@@ -542,7 +544,7 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     const verdict = await context.browserStep({
       step,
       page,
-      typed: pageKey(page.url) === typedPage ? typed : [],
+      ...(pageKey(page.url) === typedPage ? { typed, ...(seen ? { seen } : {}) } : { typed: [] }),
       subagent: Boolean(turn.execution.parentRunId),
     });
     signal.throwIfAborted();

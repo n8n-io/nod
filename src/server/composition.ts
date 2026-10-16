@@ -973,7 +973,10 @@ async function initializeApplication(
         if (request.subagent) return 'refused';
         const result = await approvals.request(turn, 'OTTO_browser', args, {
           signal,
-          details: { reason: verdict.reason },
+          details: {
+            reason: verdict.reason,
+            ...(request.seen ? { pageOttoSaw: request.seen } : {}),
+          },
         });
         return result && typeof result === 'object' && 'requiresConfirmation' in result
           ? { [appConfirmation]: String(result.question) }
