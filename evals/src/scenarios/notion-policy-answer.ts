@@ -151,7 +151,7 @@ export default scenario({
           (run.apps?.calls ?? []).some(
             (call) =>
               !call.error &&
-              /NOTION_(GET_PAGE_MARKDOWN|FETCH_BLOCK_CONTENTS)/.test(call.slug) &&
+              call.slug === 'notion-fetch' &&
               bare(JSON.stringify(call.args)).includes(bare(ids.handbook)),
           ),
         { required: false, aspect: 'process', failure: 'hallucination' },

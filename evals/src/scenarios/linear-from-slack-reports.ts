@@ -251,7 +251,7 @@ export default scenario({
   seconds: 900,
   window: { from: 10, to: 23 },
   user: {
-    approve: (action) => action.startsWith('LINEAR_'),
+    approve: (action) => action === 'CONNECTED_MCP_CALL',
     persona:
       'You are Alex Rivera, product lead and owner of the connected Slack and Linear accounts. Bug reports that support posts in #support go to the Web team in Linear. A question about whether a feature exists is not a bug, so it should not be filed. You do not know offhand which reports are already in Linear; checking that is part of the job. Any sensible titles, descriptions and priorities are fine, and you do not want anything posted in Slack.',
   },

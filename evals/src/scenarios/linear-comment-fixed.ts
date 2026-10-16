@@ -245,7 +245,11 @@ export default scenario({
   stance: 'regression',
   seconds: 420,
   user: {
-    approve: (action) => /COMMENT/i.test(action),
+    approve: (action, args) =>
+      action === 'CONNECTED_MCP_CALL' &&
+      /^(save_comment|list_|get_)/.test(
+        String((args as { tool?: unknown } | undefined)?.tool ?? ''),
+      ),
     persona:
       'You are Alex Rivera, product lead and owner of the connected Linear account. The Safari login bug is the one where Safari users get stuck in a login loop after resetting their password. You only want a comment on it saying it is fixed in v2.3. QA moves issues to Done after they verify the release, so you do not want its status or anything else changed.',
   },

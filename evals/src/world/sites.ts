@@ -27,6 +27,7 @@ export interface SiteContext {
   request: IncomingMessage;
   url: URL;
   form: URLSearchParams;
+  text: string;
   files: UploadedFile[];
   cookie(name: string): string | undefined;
   session<T extends object>(initial: () => T): { id: string; data: T; isNew: boolean };
@@ -135,6 +136,7 @@ export async function serveSites(sites: Record<string, Site>, address = '127.0.0
       request,
       url,
       form,
+      text: raw.toString('utf8'),
       files: parsed.files,
       cookie: (name) => cookies[name],
       session<T extends object>(initial: () => T) {

@@ -2371,3 +2371,56 @@ test('every release scenario fails a required code check when Otto does nothing,
     }
   }
 });
+
+test('fake remote MCP servers sign in and answer through Otto’s own MCP client', async () => {
+  const { remoteMcp } = await import('../src/world/mcp.ts');
+  const { createDiscoveredOAuth } = await import('../../src/providers/discovered/oauth.ts');
+  const { createDiscoveredTransport } = await import('../../src/providers/discovered/remote.ts');
+  const recorder = { calls: [], writes: [] };
+  const host = 'mcp.example-tracker.example.org';
+  const served = await serveSites({
+    [host]: remoteMcp({
+      host,
+      name: 'Tracker',
+      recorder,
+      tools: [
+        {
+          name: 'save_note',
+          description: 'Save a note.',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+          write: 'create',
+          run: (args) => ({ saved: args.text }),
+        },
+      ],
+    }),
+  });
+  const unroute = routeFixtureHosts([host], `http://127.0.0.1:${served.port}`);
+  try {
+    const endpoint = `https://${host}/mcp`;
+    const oauth = createDiscoveredOAuth();
+    const begun = await oauth.begin(
+      endpoint,
+      'http://127.0.0.1:1/api/apps/callback',
+      'S'.repeat(43),
+    );
+    const authorized = await fetch(begun.url, { redirect: 'manual' });
+    const code = new URL(authorized.headers.get('location')!).searchParams.get('code')!;
+    await assert.rejects(oauth.finish(endpoint, structuredClone(begun.saved), 'wrong-code'));
+    const saved = await oauth.finish(endpoint, begun.saved, code);
+    const transport = createDiscoveredTransport();
+    const headers = { Authorization: `Bearer ${saved.tokens!.access_token}` };
+    await assert.rejects(transport.listTools(endpoint, { Authorization: 'Bearer nope' }));
+    assert.deepEqual(
+      (await transport.listTools(endpoint, headers)).map((tool) => tool.name),
+      ['save_note'],
+    );
+    await transport.callTool(endpoint, headers, 'save_note', { text: 'hi' });
+    assert.deepEqual(
+      recorder.writes.map((write: { slug: string; kind: string }) => [write.slug, write.kind]),
+      [['save_note', 'create']],
+    );
+  } finally {
+    unroute();
+    await served.close();
+  }
+});

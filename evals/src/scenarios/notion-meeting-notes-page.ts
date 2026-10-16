@@ -70,7 +70,7 @@ export default scenario({
   stance: 'regression',
   seconds: 600,
   user: {
-    approve: (action) => action.startsWith('NOTION_'),
+    approve: (action) => action === 'CONNECTED_MCP_CALL',
     persona:
       'You are Alex Rivera, a freelance designer. Harborline Logistics is a client; Marta Silva is your contact there. Your meeting notes go in the Notion page called Meetings, one page per call. Any sensible title and layout is fine.',
   },

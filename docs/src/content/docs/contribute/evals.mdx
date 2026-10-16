@@ -30,11 +30,11 @@ flowchart TD
   grade --> judge[Independent judge<br/>for judgement calls]
 ```
 
-| Real                                                             | Fake                                                                                                               |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| The model, Pi, tools, turns, memory, schedules, approvals, Vault | Gmail, Calendar, Sheets, Drive, Docs, Slack, Notion and Linear, as stateful fakes behind the same port as Composio |
-| The workspace container, Chromium, downloads and uploads         | Websites with logins, codes, carts and bookings, served under made-up hostnames                                    |
-| The clock                                                        | The user: scripted answers and approvals, plus a model-voiced persona for other questions                          |
+| Real                                                             | Fake                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The model, Pi, tools, turns, memory, schedules, approvals, Vault | Gmail, Calendar, Sheets, Drive, Docs and Slack as stateful fakes behind the same port as Composio; Notion and Linear as fake MCP servers that Otto signs in to with OAuth |
+| The workspace container, Chromium, downloads and uploads         | Websites with logins, codes, carts and bookings, served under made-up hostnames                                                                                           |
+| The clock                                                        | The user: scripted answers and approvals, plus a model-voiced persona for other questions                                                                                 |
 
 Web search and page fetch (`web_search` and `fetch_content`) run on the server, so they reach the public web in every case.
 

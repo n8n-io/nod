@@ -50,7 +50,7 @@ export default scenario({
   stance: 'regression',
   seconds: 420,
   user: {
-    approve: (action) => action.startsWith('NOTION_'),
+    approve: (action) => action === 'CONNECTED_MCP_CALL',
     persona:
       'You are Alex Rivera. Your personal to-do list lives in the Notion database called To-do. Renewing your passport is a new task; the old passport photos task is done and separate. You want the new task added, nothing else changed.',
   },

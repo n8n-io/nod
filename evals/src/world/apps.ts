@@ -22,7 +22,9 @@ import {
 import { docs, drive } from './drive.ts';
 import { computeTab } from './formulas.ts';
 import { linear } from './linear.ts';
+import { remoteMcp } from './mcp.ts';
 import { notion } from './notion.ts';
+import type { Site } from './sites.ts';
 
 export type { Tool, WriteKind } from './app-kit.ts';
 
@@ -1622,8 +1624,6 @@ const services: Record<string, { service: IntegrationService; name: string }> = 
   GOOGLECALENDAR: { service: 'googlecalendar', name: 'Google Calendar' },
   GOOGLEDRIVE: { service: 'googledrive', name: 'Google Drive' },
   GOOGLEDOCS: { service: 'googledocs', name: 'Google Docs' },
-  NOTION: { service: 'notion', name: 'Notion' },
-  LINEAR: { service: 'linear', name: 'Linear' },
 };
 
 export interface AppsWorld {
@@ -1642,6 +1642,7 @@ export interface AppsWorld {
   notion?: ReturnType<typeof notion>;
   linear?: ReturnType<typeof linear>;
   uploads: Array<{ at: number; action: string; name: string; mimeType: string; bytes: Buffer }>;
+  remote: Array<{ service: IntegrationService; host: string; site: Site }>;
 }
 
 export function createApps(
@@ -1664,8 +1665,6 @@ export function createApps(
   add(parts.calendar?.tools);
   add(parts.drive?.tools);
   add(parts.docs?.tools);
-  add(parts.notion?.tools);
-  add(parts.linear?.tools);
   const accounts = new Map<
     string,
     { service: IntegrationService; ownerId: string; active: boolean }
@@ -1677,9 +1676,16 @@ export function createApps(
     callbacks: new Map(),
     connected: new Set(),
     uploads: [],
+    remote: [],
     services: [...byService.keys()],
     provider: undefined as never,
   };
+  for (const [service, host, name, tools] of [
+    ['notion', 'mcp.notion.com', 'Notion', parts.notion?.tools],
+    ['linear', 'mcp.linear.app', 'Linear', parts.linear?.tools],
+  ] as const)
+    if (tools)
+      world.remote.push({ service, host, site: remoteMcp({ host, name, tools, recorder: world }) });
   world.provider = {
     id: 'eval-apps',
     configured: true,

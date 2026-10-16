@@ -45,7 +45,9 @@ export default scenario({
   seconds: 420,
   user: {
     approve: (action, args) =>
-      !/UPDATE|ARCHIVE|APPEND|ADD_|CREATE|INSERT/.test(action) ||
+      !/update-page|create-pages|delete-pages|move-pages/.test(
+        String((args as { tool?: unknown } | undefined)?.tool ?? ''),
+      ) ||
       JSON.stringify(args ?? {})
         .replace(/-/g, '')
         .includes(ids.porto.replace(/-/g, '')),

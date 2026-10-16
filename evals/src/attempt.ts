@@ -73,11 +73,12 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   let taskStarted = started;
   const world = definition.world({ now: () => Date.now() });
   const address = await bindAddress();
-  const sites = await serveSites(world.sites ?? {}, address);
-  const unroute = routeFixtureHosts(
-    Object.keys(world.sites ?? {}),
-    `http://${address}:${sites.port}`,
-  );
+  const hosted = {
+    ...Object.fromEntries((world.apps?.remote ?? []).map((item) => [item.host, item.site])),
+    ...world.sites,
+  };
+  const sites = await serveSites(hosted, address);
+  const unroute = routeFixtureHosts(Object.keys(hosted), `http://${address}:${sites.port}`);
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
   const release = async () => {
@@ -100,7 +101,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
           { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' },
           {},
         ).provider,
-      siteHosts: Object.keys(world.sites ?? {}),
+      siteHosts: Object.keys(hosted),
       siteUpstreamPort: sites.port,
       hermetic: definition.tier !== 'live',
       environment,

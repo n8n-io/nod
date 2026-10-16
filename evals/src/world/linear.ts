@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { iso, list, num, obj, str, type Args, type Tool } from './app-kit.ts';
+import { iso, list, num, obj, str } from './app-kit.ts';
+import type { McpTool } from './mcp.ts';
 
 export interface LinearIssue {
   id?: string;
@@ -36,22 +37,20 @@ const workflow = [
   { name: 'Canceled', type: 'canceled' },
 ];
 const priorities = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
-const ignored = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'not',
-  'are',
-  'was',
-  'from',
-  'this',
-  'that',
-  'when',
-  'into',
-  'any',
-  'our',
-]);
+
+function after(value: unknown, now: number) {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  const duration =
+    /^-?P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/i.exec(text);
+  if (duration) {
+    const [, y, m, w, d, h, min] = duration.map((part) => Number(part ?? 0));
+    return now - ((y * 365 + m * 30 + w * 7 + d) * 86_400_000 + h * 3_600_000 + min * 60_000);
+  }
+  const at = Date.parse(text);
+  if (Number.isNaN(at)) throw new Error(`Invalid date or duration: ${text}`);
+  return at;
+}
 
 export function linear(
   owner: { name: string; email: string },
@@ -66,25 +65,14 @@ export function linear(
   const users = [owner, ...(seed.users ?? [])].map((user) => ({ ...user, id: randomUUID() }));
   const labels = (seed.labels ?? []).map((name) => ({ name, id: randomUUID() }));
   const projects = (seed.projects ?? []).map((project) => ({ ...project, id: randomUUID() }));
-  const notFound = (what: string, hint: string) => new Error(`Entity not found: ${what}. ${hint}`);
-  const team = (key: unknown) => {
-    const found = teams.find((item) => item.id === key);
-    if (!found) throw notFound('Team', 'Use a team id from LINEAR_LIST_LINEAR_TEAMS.');
-    return found;
-  };
-  const user = (key: unknown) => {
-    const found = users.find((item) => item.id === key);
-    if (!found) throw notFound('User', 'Use a user id from LINEAR_LIST_LINEAR_USERS.');
-    return found;
-  };
   const issues = (seed.issues ?? []).map((issue) => {
     const prefix = issue.identifier.split('-')[0];
-    const owningTeam = teams.find((item) => item.key === prefix);
-    if (!owningTeam) throw new Error(`Seed issue ${issue.identifier} has no team ${prefix}.`);
+    if (!teams.some((item) => item.key === prefix))
+      throw new Error(`Seed issue ${issue.identifier} has no team ${prefix}.`);
     return {
       ...issue,
       id: issue.id ?? randomUUID(),
-      team: owningTeam.key,
+      team: prefix,
       description: issue.description ?? '',
       priority: issue.priority ?? 0,
       labels: issue.labels ?? [],
@@ -95,297 +83,277 @@ export function linear(
     };
   });
   type Stored = (typeof issues)[number];
-  const issue = (key: unknown) => {
-    const text = String(key ?? '');
-    const found = issues.find(
-      (item) => item.id === text || item.identifier.toLowerCase() === text.toLowerCase(),
+  const fold = (value: unknown) =>
+    String(value ?? '')
+      .trim()
+      .toLowerCase();
+  const team = (value: unknown) => {
+    const found = teams.find((item) =>
+      [item.id, item.key, item.name].some((key) => fold(key) === fold(value)),
     );
-    if (!found || found.archived)
-      throw notFound('Issue', 'Use an issue id or identifier such as ENG-12.');
+    if (!found) throw new Error(`Team not found: ${value}`);
     return found;
   };
-  const stateOf = (item: Stored) =>
-    teams
-      .find((entry) => entry.key === item.team)!
-      .states.find((state) => state.name === item.state)!;
-  const userView = (email?: string) => {
-    const found = users.find((entry) => entry.email === email);
-    return found ? { id: found.id, name: found.name, email: found.email } : null;
+  const teamOf = (item: Stored) => teams.find((entry) => entry.key === item.team)!;
+  const state = (value: unknown, owning: (typeof teams)[number]) => {
+    const found =
+      owning.states.find(
+        (item) => fold(item.id) === fold(value) || fold(item.name) === fold(value),
+      ) ?? owning.states.find((item) => fold(item.type) === fold(value));
+    if (!found) throw new Error(`State not found in team ${owning.name}: ${value}`);
+    return found;
   };
-  const view = (item: Stored, full = false) => {
-    const owningTeam = teams.find((entry) => entry.key === item.team)!;
-    const project = projects.find((entry) => entry.name === item.project);
-    return {
-      id: item.id,
-      identifier: item.identifier,
-      title: item.title,
-      description: item.description,
-      priority: item.priority,
-      priorityLabel: priorities[item.priority] ?? 'No priority',
-      state: { id: stateOf(item).id, name: item.state, type: stateOf(item).type },
-      assignee: userView(item.assignee),
-      team: { id: owningTeam.id, key: owningTeam.key, name: owningTeam.name },
-      project: project ? { id: project.id, name: project.name } : null,
-      labels: {
-        nodes: item.labels.map((name) => ({
-          id: labels.find((entry) => entry.name === name)?.id,
-          name,
-        })),
-      },
-      dueDate: item.dueDate ?? null,
-      createdAt: iso(item.created),
-      updatedAt: iso(item.updated),
-      completedAt: item.completed ? iso(item.completed) : null,
-      url: `https://linear.app/acme/issue/${item.identifier}`,
-      ...(full
-        ? {
-            comments: {
-              nodes: item.comments.map((comment) => ({
-                body: comment.body,
-                user: userView(comment.user) ?? { name: comment.user },
-                createdAt: iso(comment.at),
-              })),
-            },
-          }
-        : {}),
-    };
+  const user = (value: unknown) => {
+    if (fold(value) === 'me') return users[0];
+    const matches = users.filter(
+      (item) =>
+        fold(item.id) === fold(value) ||
+        fold(item.email) === fold(value) ||
+        fold(item.name) === fold(value),
+    );
+    const partial = matches.length
+      ? matches
+      : users.filter((item) => fold(item.name).split(/\s+/)[0] === fold(value));
+    if (partial.length !== 1)
+      throw new Error(
+        partial.length
+          ? `Several users match ${value}; use an email or ID.`
+          : `User not found: ${value}`,
+      );
+    return partial[0];
   };
-  const page = (found: Stored[], args: Args, ranked = false) => {
-    const first = Math.min(Number(args.first ?? args.limit ?? 50), 250);
-    const offset = Number(args.after ?? 0) || 0;
-    const slice = (ranked ? found : found.sort((a, b) => b.updated - a.updated))
-      .slice(offset, offset + first)
-      .map((item) => view(item));
-    return {
-      issues: slice,
-      page_info: {
-        hasNextPage: offset + first < found.length,
-        endCursor: offset + first < found.length ? String(offset + first) : null,
-      },
-    };
+  const label = (value: unknown) => {
+    const found = labels.find(
+      (item) => fold(item.id) === fold(value) || fold(item.name) === fold(value),
+    );
+    if (!found) throw new Error(`Label not found: ${value}`);
+    return found.name;
   };
-  const apply = (item: Stored, args: Args) => {
-    const pick = (...keys: string[]) =>
-      keys.map((key) => args[key]).find((value) => value !== undefined);
-    const title = pick('title');
-    const description = pick('description');
-    const stateId = pick('stateId', 'state_id');
-    const assigneeId = pick('assigneeId', 'assignee_id');
-    const priority = pick('priority');
-    const labelIds = pick('labelIds', 'label_ids');
-    const dueDate = pick('dueDate', 'due_date');
-    const projectId = pick('projectId', 'project_id');
-    const owningTeam = teams.find((entry) => entry.key === item.team)!;
-    const next = { ...item };
-    if (title !== undefined) next.title = String(title);
-    if (description !== undefined) next.description = String(description);
-    if (stateId !== undefined) {
-      const state = owningTeam.states.find((entry) => entry.id === stateId);
-      if (!state)
-        throw notFound(
-          'WorkflowState',
-          "Use a state id of the issue's team from LINEAR_LIST_LINEAR_STATES.",
-        );
-      next.state = state.name;
-      next.completed = state.type === 'completed' ? now() : undefined;
+  const project = (value: unknown) => {
+    const found = projects.find(
+      (item) => fold(item.id) === fold(value) || fold(item.name) === fold(value),
+    );
+    if (!found) throw new Error(`Project not found: ${value}`);
+    return found;
+  };
+  const issue = (value: unknown) => {
+    const found = issues.find(
+      (item) => fold(item.id) === fold(value) || fold(item.identifier) === fold(value),
+    );
+    if (!found || found.archived) throw new Error(`Issue not found: ${value}`);
+    return found;
+  };
+  const stateOf = (item: Stored) => teamOf(item).states.find((entry) => entry.name === item.state)!;
+  const person = (email?: string) => users.find((entry) => entry.email === email);
+  const view = (item: Stored, full = false) => ({
+    id: item.identifier,
+    title: item.title,
+    ...(full ? { description: item.description } : {}),
+    priority: { value: item.priority, name: priorities[item.priority] ?? 'No priority' },
+    url: `https://linear.app/acme/issue/${item.identifier.toLowerCase()}`,
+    createdAt: iso(item.created),
+    updatedAt: iso(item.updated),
+    completedAt: item.completed ? iso(item.completed) : null,
+    dueDate: item.dueDate ?? null,
+    status: item.state,
+    statusType: stateOf(item).type,
+    labels: item.labels,
+    assignee: person(item.assignee)?.name ?? null,
+    assigneeId: person(item.assignee)?.id ?? null,
+    team: teamOf(item).name,
+    teamId: teamOf(item).id,
+    project: item.project ?? null,
+    projectId: projects.find((entry) => entry.name === item.project)?.id ?? null,
+    archivedAt: item.archived ? iso(item.updated) : null,
+  });
+  const page = <T>(found: T[], args: Record<string, any>) => {
+    const limit = Math.min(Number(args.limit ?? 50), 250);
+    const offset = Number(args.cursor ?? 0) || 0;
+    const items = found.slice(offset, offset + limit);
+    const more = offset + limit < found.length;
+    return { items, hasNextPage: more, ...(more ? { cursor: String(offset + limit) } : {}) };
+  };
+  const apply = (item: Stored, args: Record<string, any>) => {
+    const next = { ...item, labels: [...item.labels] };
+    let owning = teamOf(item);
+    if (args.team !== undefined && args.id !== undefined) {
+      owning = team(args.team);
+      next.team = owning.key;
     }
-    if (assigneeId !== undefined) next.assignee = assigneeId ? user(assigneeId).email : undefined;
-    if (priority !== undefined) {
-      const value = Number(priority);
+    if (args.title !== undefined) next.title = String(args.title);
+    if (args.description !== undefined) next.description = String(args.description);
+    if (args.state !== undefined) {
+      const found = state(args.state, owning);
+      next.state = found.name;
+      next.completed = found.type === 'completed' ? now() : undefined;
+    }
+    if (args.assignee !== undefined)
+      next.assignee = args.assignee === null ? undefined : user(args.assignee).email;
+    if (args.priority !== undefined) {
+      const value = Number(args.priority);
       if (!Number.isInteger(value) || value < 0 || value > 4)
         throw new Error('priority must be 0 (none), 1 (urgent), 2 (high), 3 (medium) or 4 (low).');
       next.priority = value;
     }
-    if (labelIds !== undefined)
-      next.labels = [labelIds].flat().map((labelId) => {
-        const label = labels.find((entry) => entry.id === labelId);
-        if (!label) throw notFound('IssueLabel', 'Use a label id from LINEAR_LIST_LINEAR_LABELS.');
-        return label.name;
-      });
-    if (dueDate !== undefined) next.dueDate = dueDate ? String(dueDate).slice(0, 10) : undefined;
-    if (projectId !== undefined) {
-      const project = projects.find((entry) => entry.id === projectId);
-      if (projectId && !project)
-        throw notFound('Project', 'Use a project id from LINEAR_LIST_LINEAR_PROJECTS.');
-      next.project = project?.name;
-    }
+    if (args.labels !== undefined) next.labels = [args.labels].flat().map(label);
+    for (const name of [args.addLabels ?? []].flat().map(label))
+      if (!next.labels.includes(name)) next.labels.push(name);
+    const removing = new Set([args.removeLabels ?? []].flat().map(label));
+    next.labels = next.labels.filter((name) => !removing.has(name));
+    if (args.dueDate !== undefined)
+      next.dueDate = args.dueDate === null ? undefined : String(args.dueDate).slice(0, 10);
+    if (args.project !== undefined)
+      next.project = args.project === null ? undefined : project(args.project).name;
     next.updated = now();
     Object.assign(item, next);
   };
-  const tools: Tool[] = [
+  const tools: McpTool[] = [
     {
-      slug: 'LINEAR_GET_CURRENT_USER',
-      description: 'Return the profile of the connected Linear user.',
-      inputSchema: obj({}),
-      run: () => ({ id: users[0].id, name: owner.name, email: owner.email }),
-    },
-    {
-      slug: 'LINEAR_LIST_LINEAR_TEAMS',
-      description: 'List teams with their ids, keys, members and projects.',
-      inputSchema: obj({}),
-      run: () => ({
-        teams: teams.map((entry) => ({
-          id: entry.id,
-          key: entry.key,
-          name: entry.name,
-          members: users.map((member) => ({ id: member.id, name: member.name })),
-          projects: projects
-            .filter((project) => project.team === entry.key)
-            .map((project) => ({ id: project.id, name: project.name })),
-        })),
-      }),
-    },
-    {
-      slug: 'LINEAR_LIST_LINEAR_USERS',
-      description: 'List workspace users with their ids, names and emails.',
-      inputSchema: obj({}),
-      run: () => ({
-        users: users.map((entry) => ({
-          id: entry.id,
-          name: entry.name,
-          email: entry.email,
-          active: true,
-        })),
-      }),
-    },
-    {
-      slug: 'LINEAR_LIST_LINEAR_STATES',
-      description: 'List the workflow states of a team.',
-      inputSchema: obj({ team_id: str('Team id.') }, ['team_id']),
-      run: (args) => ({
-        states: team(args.team_id).states.map((state) => ({
-          id: state.id,
-          name: state.name,
-          type: state.type,
-        })),
-      }),
-    },
-    {
-      slug: 'LINEAR_LIST_LINEAR_LABELS',
-      description: 'List issue labels.',
-      inputSchema: obj({ team_id: str('Team id, optional.') }),
-      run: () => ({ labels: labels.map((label) => ({ id: label.id, name: label.name })) }),
-    },
-    {
-      slug: 'LINEAR_LIST_LINEAR_PROJECTS',
-      description: 'List projects.',
-      inputSchema: obj({}),
-      run: () => ({
-        projects: projects.map((project) => ({
-          id: project.id,
-          name: project.name,
-          teams: [{ key: project.team }],
-        })),
-      }),
-    },
-    {
-      slug: 'LINEAR_LIST_LINEAR_ISSUES',
+      name: 'list_issues',
       description:
-        'List non-archived issues, newest update first, optionally filtered by project_id or assignee_id. Paginate with first and after.',
+        'List issues in the user\'s Linear workspace. For issues assigned to me, use "me" as the assignee. Use "null" for no assignee.',
       inputSchema: obj({
-        project_id: str('Project id.'),
-        assignee_id: str('User id.'),
-        first: num('Page size, up to 250.'),
-        after: str('Cursor from page_info.endCursor.'),
+        query: str('Search issue title or description.'),
+        team: str('Team name or ID'),
+        state: str('State type, name, or ID'),
+        assignee: str('User ID, name, email, or "me"'),
+        label: str('Label name or ID'),
+        project: str('Project name or ID'),
+        priority: num('0=None, 1=Urgent, 2=High, 3=Medium, 4=Low'),
+        updatedAt: str('Updated after: ISO-8601 date/duration (e.g., -P1D)'),
+        createdAt: str('Created after: ISO-8601 date/duration (e.g., -P1D)'),
+        includeArchived: { type: 'boolean', default: false },
+        orderBy: { type: 'string', enum: ['createdAt', 'updatedAt'], default: 'updatedAt' },
+        limit: num('Maximum number of results to return per page (default 50, max 250).'),
+        cursor: str(
+          'Omit for the first page. To continue, pass the previous cursor when hasNextPage is true',
+        ),
       }),
       run(args) {
-        const project = args.project_id
-          ? projects.find((entry) => entry.id === args.project_id)
-          : undefined;
-        if (args.project_id && !project)
-          throw notFound('Project', 'Use a project id from LINEAR_LIST_LINEAR_PROJECTS.');
-        const assignee = args.assignee_id ? user(args.assignee_id) : undefined;
-        return page(
-          issues.filter(
-            (item) =>
-              !item.archived &&
-              (!project || item.project === project.name) &&
-              (!assignee || item.assignee === assignee.email),
-          ),
-          args,
-        );
-      },
-    },
-    {
-      slug: 'LINEAR_LIST_ISSUES_BY_TEAM_ID',
-      description: 'List the non-archived issues of one team.',
-      inputSchema: obj(
-        { team_id: str('Team id.'), first: num('Page size.'), after: str('Cursor.') },
-        ['team_id'],
-      ),
-      run(args) {
-        const owningTeam = team(args.team_id);
-        return page(
-          issues.filter((item) => !item.archived && item.team === owningTeam.key),
-          args,
-        );
-      },
-    },
-    {
-      slug: 'LINEAR_SEARCH_ISSUES',
-      description: 'Full-text search across issue identifiers, titles and descriptions.',
-      inputSchema: obj({ query: str('Search text.'), first: num('Maximum results.') }, ['query']),
-      run(args) {
-        const terms = String(args.query)
-          .toLowerCase()
-          .split(/[^\p{L}\p{N}-]+/u)
-          .filter((term) => term.length > 2 && !ignored.has(term));
-        const scored = issues
-          .filter((item) => !item.archived)
-          .map((item) => {
-            const text = `${item.identifier} ${item.title} ${item.description}`.toLowerCase();
-            return { item, score: terms.filter((term) => text.includes(term)).length };
+        const owning = args.team ? team(args.team) : undefined;
+        const assignee =
+          args.assignee === undefined
+            ? undefined
+            : fold(args.assignee) === 'null' || args.assignee === null
+              ? null
+              : user(args.assignee);
+        const updated = after(args.updatedAt, now());
+        const created = after(args.createdAt, now());
+        const terms = fold(args.query).split(/\s+/).filter(Boolean);
+        const text = (item: Stored) => fold(`${item.identifier} ${item.title} ${item.description}`);
+        const every = issues.filter((item) => terms.every((term) => text(item).includes(term)));
+        const pool =
+          terms.length && !every.length
+            ? issues
+                .map((item) => ({
+                  item,
+                  score: terms.filter((term) => term.length > 2 && text(item).includes(term))
+                    .length,
+                }))
+                .filter((entry) => entry.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .map((entry) => entry.item)
+            : every;
+        const found = pool
+          .filter((item) => args.includeArchived || !item.archived)
+          .filter((item) => !owning || item.team === owning.key)
+          .filter((item) => {
+            if (!args.state) return true;
+            const wanted = fold(args.state);
+            const current = stateOf(item);
+            return [current.id, current.name, current.type].some((key) => fold(key) === wanted);
           })
-          .filter((entry) => entry.score > 0)
-          .sort((a, b) => b.score - a.score || b.item.updated - a.item.updated);
-        return page(
-          scored.map((entry) => entry.item),
-          args,
-          true,
-        );
+          .filter((item) =>
+            assignee === undefined
+              ? true
+              : assignee === null
+                ? !item.assignee
+                : item.assignee === assignee.email,
+          )
+          .filter((item) => !args.label || item.labels.includes(label(args.label)))
+          .filter((item) => !args.project || item.project === project(args.project).name)
+          .filter((item) => args.priority === undefined || item.priority === Number(args.priority))
+          .filter((item) => updated === undefined || item.updated >= updated)
+          .filter((item) => created === undefined || item.created >= created)
+          .sort((a, b) =>
+            terms.length && !every.length
+              ? 0
+              : args.orderBy === 'createdAt'
+                ? b.created - a.created
+                : b.updated - a.updated,
+          );
+        const result = page(found, args);
+        return {
+          issues: result.items.map((item) => view(item)),
+          hasNextPage: result.hasNextPage,
+          ...(result.cursor ? { cursor: result.cursor } : {}),
+        };
       },
     },
     {
-      slug: 'LINEAR_GET_LINEAR_ISSUE',
-      description: 'Get one issue with its comments, by id or identifier such as ENG-12.',
-      inputSchema: obj({ issue_id: str('Issue id or identifier.') }, ['issue_id']),
-      run: (args) => view(issue(args.issue_id ?? args.issueId), true),
+      name: 'get_issue',
+      description:
+        'Retrieve detailed information about an issue by ID or identifier (e.g., LIN-123).',
+      inputSchema: obj({ id: str('Issue ID or identifier (e.g., LIN-123)') }, ['id']),
+      run: (args) => view(issue(args.id), true),
     },
     {
-      slug: 'LINEAR_CREATE_LINEAR_ISSUE',
+      name: 'save_issue',
       description:
-        'Create an issue in a team. priority is 0 none, 1 urgent, 2 high, 3 medium, 4 low. due_date is YYYY-MM-DD.',
-      inputSchema: obj(
-        {
-          team_id: str('Team id.'),
-          title: str('Title.'),
-          description: str('Markdown description.'),
-          priority: num('0 to 4.'),
-          assignee_id: str('User id.'),
-          state_id: str('Workflow state id.'),
-          label_ids: list({ type: 'string' }, 'Label ids.'),
-          project_id: str('Project id.'),
-          due_date: str('YYYY-MM-DD.'),
+        'Create or update a Linear issue. If `id` is provided, updates the existing issue; otherwise creates a new one. When creating, `team` and `title` are required. Use `assignee` (not `assigneeId`); it accepts a user ID, name, email, or "me".',
+      inputSchema: obj({
+        id: str(
+          'Only for updating an existing issue. Pass the issue ID or identifier (e.g., LIN-123).',
+        ),
+        title: str('Issue title (required when creating)'),
+        description: str('Content as Markdown.'),
+        team: str('Team name or ID (required when creating)'),
+        state: str('State type, name, or ID'),
+        assignee: {
+          type: ['string', 'null'],
+          description: 'User ID, name, email, or "me". Null to remove',
         },
-        ['team_id', 'title'],
-      ),
-      write: 'create',
+        priority: num('0=None, 1=Urgent, 2=High, 3=Medium, 4=Low'),
+        labels: list({ type: 'string' }, 'Label names or IDs. Replaces the full label set.'),
+        addLabels: list({ type: 'string' }, 'Label names or IDs to add.'),
+        removeLabels: list({ type: 'string' }, 'Label names or IDs to remove.'),
+        dueDate: {
+          type: ['string', 'null'],
+          description: 'Due date (ISO format). On update, pass null to remove the due date',
+        },
+        project: { type: ['string', 'null'], description: 'Project name or ID. Null to remove' },
+      }),
+      write: (args) => (args.id ? 'update' : 'create'),
       run(args) {
-        const owningTeam = team(args.team_id);
+        if (args.id) {
+          const item = issue(args.id);
+          const before = structuredClone(item);
+          try {
+            apply(item, args);
+          } catch (error) {
+            Object.assign(item, before);
+            throw error;
+          }
+          return view(item, true);
+        }
+        if (!args.team) throw new Error('team is required when creating an issue.');
+        if (!String(args.title ?? '').trim())
+          throw new Error('title is required when creating an issue.');
+        const owning = team(args.team);
         const number =
           Math.max(
             0,
             ...issues
-              .filter((item) => item.team === owningTeam.key)
+              .filter((item) => item.team === owning.key)
               .map((item) => Number(item.identifier.split('-')[1]) || 0),
           ) + 1;
         const created: Stored = {
           id: randomUUID(),
-          identifier: `${owningTeam.key}-${number}`,
+          identifier: `${owning.key}-${number}`,
           title: '',
           description: '',
           state: 'Todo',
-          team: owningTeam.key,
+          team: owning.key,
           priority: 0,
           labels: [],
           created: now(),
@@ -394,64 +362,92 @@ export function linear(
           archived: false,
         };
         apply(created, args);
-        if (!created.title.trim()) throw new Error('title must not be empty.');
         issues.push(created);
-        return view(created);
+        return view(created, true);
       },
     },
     {
-      slug: 'LINEAR_UPDATE_ISSUE',
-      description:
-        'Update an issue by id or identifier. Provided fields overwrite: title, description, stateId, assigneeId, priority, labelIds, dueDate, projectId.',
+      name: 'list_comments',
+      description: 'List comments on a Linear issue.',
+      inputSchema: obj({ issueId: str('Issue ID or identifier (e.g., LIN-123)') }, ['issueId']),
+      run: (args) => ({
+        comments: issue(args.issueId).comments.map((comment) => ({
+          body: comment.body,
+          author: person(comment.user)?.name ?? comment.user,
+          createdAt: iso(comment.at),
+        })),
+      }),
+    },
+    {
+      name: 'save_comment',
+      description: 'Create a comment on a Linear issue. Pass `body` and `issueId`.',
       inputSchema: obj(
         {
-          issueId: str('Issue id or identifier.'),
-          title: str('Title.'),
-          description: str('Description.'),
-          stateId: str('Workflow state id.'),
-          assigneeId: str('User id.'),
-          priority: num('0 to 4.'),
-          labelIds: list({ type: 'string' }, 'Label ids, replacing the current ones.'),
-          dueDate: str('YYYY-MM-DD.'),
-          projectId: str('Project id.'),
+          body: str('Content as Markdown.'),
+          issueId: str('Issue ID or identifier (e.g., LIN-123)'),
         },
-        ['issueId'],
+        ['body'],
       ),
-      write: 'update',
-      run(args) {
-        const item = issue(args.issueId ?? args.issue_id);
-        apply(item, args);
-        return view(item);
-      },
-    },
-    {
-      slug: 'LINEAR_CREATE_LINEAR_COMMENT',
-      description: 'Post a comment on an issue.',
-      inputSchema: obj({ issueId: str('Issue id or identifier.'), body: str('Markdown body.') }, [
-        'issueId',
-        'body',
-      ]),
       write: 'post',
       run(args) {
-        const item = issue(args.issueId ?? args.issue_id);
+        const item = issue(args.issueId);
         const body = String(args.body ?? '').trim();
         if (!body) throw new Error('body must not be empty.');
         item.comments.push({ user: owner.email, body, at: now() });
         item.updated = now();
-        return { id: randomUUID(), body, issue: { id: item.id, identifier: item.identifier } };
+        return { id: randomUUID(), body, issue: item.identifier };
       },
     },
     {
-      slug: 'LINEAR_ARCHIVE_ISSUE',
-      description: 'Archive an issue, hiding it from active views.',
-      inputSchema: obj({ issue_id: str('Issue id or identifier.') }, ['issue_id']),
-      write: 'delete',
-      run(args) {
-        const item = issue(args.issue_id ?? args.issueId);
-        item.archived = true;
-        item.updated = now();
-        return { success: true, identifier: item.identifier };
-      },
+      name: 'list_issue_statuses',
+      description: 'List available issue statuses in a Linear team',
+      inputSchema: obj({ team: str('Team name or ID') }, ['team']),
+      run: (args) => team(args.team).states.map(({ id, name, type }) => ({ id, name, type })),
+    },
+    {
+      name: 'list_teams',
+      description: "List teams in the user's Linear workspace",
+      inputSchema: obj({ query: str('Search query') }),
+      run: (args) =>
+        teams
+          .filter(
+            (item) => !args.query || fold(`${item.key} ${item.name}`).includes(fold(args.query)),
+          )
+          .map(({ id, key, name }) => ({ id, key, name })),
+    },
+    {
+      name: 'list_users',
+      description: 'List workspace users with their IDs, names and emails.',
+      inputSchema: obj({ query: str('Match part of a name or email.') }),
+      run: (args) =>
+        users
+          .filter(
+            (item) => !args.query || fold(`${item.name} ${item.email}`).includes(fold(args.query)),
+          )
+          .map(({ id, name, email }) => ({ id, name, email, active: true })),
+    },
+    {
+      name: 'list_projects',
+      description: "List projects in the user's Linear workspace",
+      inputSchema: obj({ query: str('Search project name'), team: str('Team name or ID') }),
+      run: (args) =>
+        projects
+          .filter((item) => !args.query || fold(item.name).includes(fold(args.query)))
+          .filter((item) => !args.team || item.team === team(args.team).key)
+          .map(({ id, name, team: key }) => ({
+            id,
+            name,
+            team: teams.find((entry) => entry.key === key)?.name,
+          })),
+    },
+    {
+      name: 'list_issue_labels',
+      description: 'List available issue labels in a Linear workspace or team.',
+      inputSchema: obj({ name: str('Filter by name'), team: str('Team name or ID') }),
+      run: (args) =>
+        labels
+          .filter((item) => !args.name || fold(item.name).includes(fold(args.name)))
+          .map(({ id, name }) => ({ id, name })),
     },
   ];
   return { tools, issues, teams, users, labels, projects };

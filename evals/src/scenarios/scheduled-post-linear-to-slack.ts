@@ -159,6 +159,8 @@ export default scenario({
   user: {
     approve: (action, args) =>
       action.startsWith('OTTO_schedule') ||
+      (action === 'CONNECTED_MCP_CALL' &&
+        /^(list_|get_)/.test(String((args as { tool?: unknown } | undefined)?.tool ?? ''))) ||
       (action === 'SLACK_SEND_MESSAGE' &&
         [eng, '#eng', 'eng'].includes(String((args as { channel?: unknown })?.channel ?? ''))),
     persona:

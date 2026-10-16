@@ -274,7 +274,7 @@ export default scenario({
       (issue) =>
         issue.identifier in world.before && world.before[issue.identifier] !== shape(issue),
     );
-    const comments = run.writes.filter((write) => write.slug === 'LINEAR_CREATE_LINEAR_COMMENT');
+    const comments = run.writes.filter((write) => write.slug === 'save_comment');
     return `Issues created: ${created.map((issue) => `${issue.identifier} "${issue.title}"`).join('; ') || 'none'}.\nExisting issues changed: ${changed.map((issue) => issue.identifier).join(', ') || 'none'}.\nComments added: ${comments.map((write) => `${write.args.issueId ?? write.args.issue_id}: ${String(write.args.body).slice(0, 160)}`).join(' | ') || 'none'}.\nGround truth: WEB-118 "Password reset emails not delivered" (Todo, assigned to Marcus Webb) already covers this bug; its description says the reset email never arrives. WEB-109 (reset link expires too soon) and MOB-64 (reset screen crashes on Android) are different bugs. The correct outcome is no new issue and telling the user it is already WEB-118.`;
   },
   expect(world) {

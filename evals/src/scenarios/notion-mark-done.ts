@@ -44,7 +44,9 @@ export default scenario({
   seconds: 420,
   user: {
     approve: (action, args) =>
-      !/UPDATE|ARCHIVE/.test(action) ||
+      !/update-page|delete-pages|move-pages/.test(
+        String((args as { tool?: unknown } | undefined)?.tool ?? ''),
+      ) ||
       !JSON.stringify(args ?? {})
         .replace(/-/g, '')
         .includes(ids.review.replace(/-/g, '')),
