@@ -627,8 +627,19 @@ test(
             undefined,
             text,
           );
-          assert.equal((await approvalsFor(off))[0].status, 'pending');
+          const [held] = await approvalsFor(off);
+          assert.equal(held.status, 'pending');
           assert.equal((await memory()).saving, true);
+          const stopped = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: held.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(stopped.statusCode, 200, stopped.body);
+          await waitFor(stopped.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(off))[0].status, 'completed');
+          assert.equal((await memory()).saving, false);
+          await request('PATCH', '/api/memory', { saving: true });
         },
       );
 

@@ -764,22 +764,26 @@ async function initializeApplication(
               ? payments.approve(provenance, args)
               : action === 'OTTO_limits_update'
                 ? ledger.setLimits(args)
-                : action.startsWith('OTTO_')
-                  ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                  : (async () => {
-                      const result = await integrations.executeApproved(ownerId, action, args, {
-                        threadId: provenance.threadId,
-                        turnId: provenance.turnId,
-                      });
-                      await ledger.action(provenance.turnId, action);
-                      return (
-                        await saveIntegrationFiles(result, async (file) => {
-                          const name = `${randomUUID()}-${basename(file.name)}`;
-                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                          return name;
-                        })
-                      ).value;
-                    })(),
+                : action.startsWith('OTTO_memory_')
+                  ? withTurnLock(provenance.turnId, () =>
+                      personal.manage(action.slice('OTTO_'.length), args, provenance),
+                    )
+                  : action.startsWith('OTTO_')
+                    ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                    : (async () => {
+                        const result = await integrations.executeApproved(ownerId, action, args, {
+                          threadId: provenance.threadId,
+                          turnId: provenance.turnId,
+                        });
+                        await ledger.action(provenance.turnId, action);
+                        return (
+                          await saveIntegrationFiles(result, async (file) => {
+                            const name = `${randomUUID()}-${basename(file.name)}`;
+                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                            return name;
+                          })
+                        ).value;
+                      })(),
     async (action, args, expectedRevision) => {
       if (
         [
