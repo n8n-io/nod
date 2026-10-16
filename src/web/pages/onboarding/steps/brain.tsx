@@ -145,9 +145,9 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   ]);
 
   function pick(next: ModelProvider) {
-    if (next === provider && ready) return;
-    if (flow.signIn) void flow.cancel();
     models.setError('');
+    if (next === provider) return;
+    if (flow.signIn) void flow.cancel();
     setChoice(next);
     setMethod(null);
     setKey('');

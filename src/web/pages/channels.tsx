@@ -479,6 +479,11 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
         </div>
       </header>
       {(error || loadError) && !editing && <Notice>{error || loadError}</Notice>}
+      {loadError && !editing && (
+        <Button variant="outline" size="sm" disabled={loading || busy} onClick={() => void load()}>
+          {loading ? 'Retrying…' : 'Retry loading'}
+        </Button>
+      )}
       {data?.error && <Notice>{data.error}</Notice>}
       {settings && !settings.ready && (
         <Notice>
@@ -601,6 +606,16 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
                 }}
               />
               <div className="channel-wizard-actions">
+                {loadError && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={loading || busy || resuming}
+                    onClick={() => void load()}
+                  >
+                    {loading ? 'Retrying…' : 'Retry loading'}
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" disabled={busy || resuming} onClick={close}>
                   {telegramStatus.paired ? 'Done' : 'Close'}
                 </Button>

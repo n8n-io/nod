@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Send } from 'lucide-react';
 import type { StepProps } from '..';
 import { TelegramSetup } from '../../../components/telegram-setup';
+import { Button } from '../../../components/ui';
 import { telegramState, useChannelSettings } from '../../../hooks/use-channel-settings';
 import { channelSetupBody } from '../../../lib/secondary-pages';
 import { sessionStore } from '../../../lib/session';
@@ -15,8 +16,19 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
     sessionStore.subscribe,
     () => sessionStore.getSnapshot().session?.auth.mode === 'google',
   );
-  const { settings, telegram, error, setError, loadError, busy, pairingUrl, save, telegramAction } =
-    useChannelSettings({ watchTelegram: true });
+  const {
+    settings,
+    telegram,
+    error,
+    setError,
+    loadError,
+    loading,
+    busy,
+    pairingUrl,
+    load,
+    save,
+    telegramAction,
+  } = useChannelSettings({ watchTelegram: true });
   const state = telegramState(telegram);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [manual, setManual] = useState(false);
@@ -94,6 +106,16 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
             void action('user', { allowedUserId: fields.allowedUserId?.trim() });
           }}
         />
+        {loadError && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || busy}
+            onClick={() => void load()}
+          >
+            {loading ? 'Retrying…' : 'Retry loading'}
+          </Button>
+        )}
       </Rise>
       <Footer
         show={revealed >= 4}

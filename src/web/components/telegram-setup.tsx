@@ -75,11 +75,12 @@ export function TelegramSetup({
   const liveUrl = state.waiting ? pairingUrl : null;
   const steps = ['Create a bot', 'Paste the bot token', 'Open your bot', 'Confirm your account'];
   const setupError =
-    unavailable && !state.paired
+    error ||
+    (unavailable && !state.paired
       ? hosted
         ? 'Telegram setup is unavailable. Try again later.'
         : 'Set up the secure key store on this computer to connect Telegram.'
-      : error;
+      : '');
 
   function verify(event: React.FormEvent) {
     event.preventDefault();
@@ -144,7 +145,14 @@ export function TelegramSetup({
                         Send <code>/newbot</code>. Choose a name, then a username ending in{' '}
                         <code>bot</code>, such as <code>my_otto_bot</code>.
                       </p>
-                      <Button size="sm" data-telegram-token-step onClick={() => setHasToken(true)}>
+                      <Button
+                        size="sm"
+                        data-telegram-token-step
+                        onClick={() => {
+                          setTokenError('');
+                          setHasToken(true);
+                        }}
+                      >
                         I have my token
                       </Button>
                     </div>
@@ -214,7 +222,10 @@ export function TelegramSetup({
                           variant="ghost"
                           size="sm"
                           disabled={busy}
-                          onClick={() => setHasToken(false)}
+                          onClick={() => {
+                            setTokenError('');
+                            setHasToken(false);
+                          }}
                         >
                           Back
                         </Button>
