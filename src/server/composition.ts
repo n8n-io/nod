@@ -1102,24 +1102,17 @@ async function initializeApplication(
         }
         if (action === 'memory_forget' || action === 'memory_control') {
           const origin = await turnOrigin(turn.turnId);
-          const { input, note } = await personal.reviewMemory(action, args, {
+          const input = await personal.reviewMemory(action, args, {
             ...provenance,
             turnId: turn.turnId,
             ownerRooted: origin?.source === 'user',
           });
-          const verdict = await trust.check(
-            turn,
-            `OTTO_${action}`,
-            note ? { ...input, note } : input,
-          );
+          const verdict = await trust.check(turn, `OTTO_${action}`, input);
           return approvals.request(turn, `OTTO_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
             admit,
-            details: {
-              ...(verdict.confirm ? { reason: verdict.reason } : {}),
-              ...(note ? { note } : {}),
-            },
+            details: verdict.confirm ? { reason: verdict.reason } : {},
           });
         }
         await admit?.(false);

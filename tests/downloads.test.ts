@@ -170,10 +170,10 @@ test(
         try {
           assert.equal((await fetch(`${fixture.origin}/invoice.pdf`)).status, 403);
           for (const [id, input, control] of [
-            ['attachment', { selector: '#download', name: 'invoice.pdf' }, undefined],
-            ['inline-url', { url: `${fixture.origin}/inline.pdf`, name: 'invoice.pdf' }, undefined],
-            ['blob', { selector: '#blob', name: 'invoice.pdf' }, '#blob'],
-            ['blob-anchor', { selector: '#blob-anchor', name: 'invoice.pdf' }, '#blob-anchor'],
+            ['attachment', { selector: '#download', name: 'invoice.pdf' }, false],
+            ['inline-url', { url: `${fixture.origin}/inline.pdf`, name: 'invoice.pdf' }, false],
+            ['blob', { selector: '#blob', name: 'invoice.pdf' }, true],
+            ['blob-anchor', { selector: '#blob-anchor', name: 'invoice.pdf' }, true],
           ] as const) {
             await computer.act(id, { action: 'open', url: `${fixture.origin}/session` });
             const before = fixture.authenticatedDownloads();
@@ -185,9 +185,11 @@ test(
                   error.cause.code === 'browser_download_control',
               );
               assert.equal(fixture.authenticatedDownloads(), before);
-              await computer.act(id, { action: 'click', selector: control });
             }
-            const file = await computer.download!(id, control ? { name: input.name } : input);
+            const file = await computer.download!(
+              id,
+              control ? { ...input, expectOrigin: fixture.origin } : input,
+            );
             assert.equal(fixture.authenticatedDownloads(), before + 1);
             assert.deepEqual(file, {
               bytes: browserDownloadPdf,

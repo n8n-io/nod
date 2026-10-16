@@ -67,6 +67,7 @@ export const controlInput = z
     message: 'Choose whether to turn memory on, turn it off or clear it.',
   });
 export const forgetInput = z.object({ path }).strict();
+export const forgetReview = z.object({ path, note: z.string() }).strict();
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode });
 }
@@ -202,10 +203,16 @@ export function createMemoryService(options: {
     );
   }
 
-  async function forget(raw: unknown) {
+  function noteText(tree: Tree, target: string) {
+    return (locate(tree, target) ?? tree.archive.find((item) => pathOf(item) === target))?.text;
+  }
+
+  async function forget(raw: unknown, expected?: string) {
     const target = path.parse(raw);
     return edit(
       (tree) => {
+        if (expected !== undefined && noteText(tree, target) !== expected)
+          fail('The note changed. Review it before asking again.', 409);
         const entry = locate(tree, target);
         const archived = tree.archive.length;
         tree.archive = tree.archive.filter((item) => pathOf(item) !== target && item.by !== target);
@@ -439,6 +446,7 @@ export function createMemoryService(options: {
       return find((await load()).tree, input.query, input.area);
     },
     read: async (raw: unknown) => open((await load()).tree, readInput.parse(raw).path),
+    note: async (raw: unknown) => noteText((await load()).tree, path.parse(raw)),
   };
 }
 

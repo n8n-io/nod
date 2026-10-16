@@ -29,6 +29,8 @@ export const browserDownloadInput = z
       .min(1)
       .regex(/^[^/\\\u0000-\u001f\u007f]+$/)
       .optional(),
+    expectOrigin: z.string().min(1).max(2048).optional(),
+    expectUrl: z.string().min(1).max(8192).optional(),
   })
   .strict()
   .refine((input) => !(input.selector && input.url));

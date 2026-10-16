@@ -1157,6 +1157,7 @@ export function createAgentBrowserComputer(options: {
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
       let url = input.url;
+      let target: string | undefined;
       if (input.selector) {
         const href = await command(
           state,
@@ -1175,9 +1176,14 @@ export function createAgentBrowserComputer(options: {
           )
             url = new URL(href.value, current).href;
         }
-        if (!url) throw new BrowserActionError('browser_download_control');
+        if (!url) {
+          if (input.expectOrigin === undefined)
+            throw new BrowserActionError('browser_download_control');
+          await onTarget(state, input, signal);
+          target = selector(input.selector);
+        }
       }
-      if (!url) {
+      if (!url && !target) {
         const type = await evaluate(state, 'document.contentType', signal);
         if (type === 'application/pdf') url = current;
         else {
@@ -1221,11 +1227,12 @@ export function createAgentBrowserComputer(options: {
       }
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
-      const anchor = `otto-download-${randomUUID()}`;
+      const anchor = target ? undefined : `otto-download-${randomUUID()}`;
       try {
-        await evaluate(
-          state,
-          `(() => {
+        if (anchor)
+          await evaluate(
+            state,
+            `(() => {
             const anchor = document.createElement('a');
             anchor.id = ${JSON.stringify(anchor)};
             anchor.href = ${JSON.stringify(url)};
@@ -1233,11 +1240,15 @@ export function createAgentBrowserComputer(options: {
             anchor.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;background:white;color:black;padding:8px';
             document.documentElement.append(anchor);
           })()`,
-          signal,
-        );
+            signal,
+          );
         await command(
           state,
-          { action: 'download', selector: `#${anchor}`, path: resolve(directory, capture.file) },
+          {
+            action: 'download',
+            selector: target ?? `#${anchor}`,
+            path: resolve(directory, capture.file),
+          },
           { signal },
         );
         signal?.throwIfAborted();
@@ -1246,7 +1257,7 @@ export function createAgentBrowserComputer(options: {
         return result;
       } finally {
         try {
-          if (!state.closed && !state.closing)
+          if (anchor && !state.closed && !state.closing)
             await evaluate(state, `document.getElementById(${JSON.stringify(anchor)})?.remove()`);
         } finally {
           await capture.cleanup(state.closed);

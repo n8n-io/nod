@@ -639,11 +639,13 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
         } catch (error) {
           if (!(error instanceof BrowserActionError && error.code === 'browser_download_control'))
             throw error;
-          const step = { action: 'click' as const, selector: rest.selector };
-          const checked = await check(step);
+          const checked = await check({ action: 'click', selector: rest.selector });
           if ('output' in checked) return checked.output;
-          await computer.act(browserId, { ...step, ...checked }, signal);
-          file = await computer.download(browserId, { name }, signal);
+          file = await computer.download(
+            browserId,
+            { selector: rest.selector, name, ...checked },
+            signal,
+          );
         }
         signal.throwIfAborted();
         if (!file.bytes.length || file.bytes.length > fileBytes)

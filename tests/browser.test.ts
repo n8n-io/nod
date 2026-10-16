@@ -3240,6 +3240,10 @@ test('a checked browser step is described from its snapshot and runs only on tha
       computer.download('checked', { selector: '@e2' }),
       (error) => error instanceof BrowserActionError && error.code === 'browser_download_control',
     );
+    await assert.rejects(
+      computer.download('checked', { selector: '@e2', expectOrigin: 'https://2.2.2.2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
     assert.equal(
       commands.some((command) => command.action === 'download'),
       false,

@@ -160,7 +160,8 @@ test(
             return { text: 'Synthetic bank page', url: 'https://bank.example.test/transfer' };
           },
           download: async (_id, input) => {
-            if (input.selector) throw new BrowserActionError('browser_download_control');
+            if (input.selector && !input.expectOrigin)
+              throw new BrowserActionError('browser_download_control');
             return {
               bytes: Buffer.from('synthetic'),
               name: 'synthetic.pdf',
@@ -591,10 +592,24 @@ test(
           const path = saved.json().path as string;
           const listed = async () =>
             (await memory()).notes.some((note: { path: string }) => note.path === path);
+          const stale = await propose('memory_forget', { path });
+          const [asked] = await approvalsFor(stale);
+          assert.equal(asked.status, 'pending');
+          const edited = await request('PATCH', `/api/memory/notes/${path}`, {
+            text: 'Prefers synthetic jasmine tea.',
+          });
+          assert.equal(edited.statusCode, 200, edited.body);
+          const refused = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: asked.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(refused.statusCode, 409, refused.body);
+          assert.equal((await approvalsFor(stale))[0].status, 'pending');
+          assert.equal(await listed(), true);
           const forget = await propose('memory_forget', { path });
           const [approval] = await approvalsFor(forget);
           assert.equal(approval.status, 'pending');
-          assert.equal(await listed(), true);
           const confirmed = await request('POST', '/api/messages', {
             text: 'Yes',
             replyToMessageId: approval.confirmation_message_id,
