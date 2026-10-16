@@ -176,6 +176,7 @@ Return only JSON: {"verdicts":[{"id":"<criterion id>","reasoning":"<one or two s
 
 export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeVerdict[]> {
   if (!input.criteria.length) return [];
+  let last = '';
   const grade = async (criteria: JudgeInput['criteria']) => {
     const text = await llm.complete(
       judgePrompt,
@@ -184,8 +185,13 @@ export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeV
     );
     const parsed = parseJson(text);
     const verdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    if (!criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
+    const missing = criteria.filter(
+      (item) => !verdicts.some((verdict: any) => verdict.id === item.id),
+    );
+    if (missing.length) {
+      last = `missing ${missing.map((item) => item.id).join(', ')}; the reply began ${JSON.stringify(text.trim().slice(0, 160))}`;
       return undefined;
+    }
     return criteria.map((item): JudgeVerdict => {
       const verdict = verdicts.find((entry: any) => entry.id === item.id);
       const na = verdict.applicable === false;
@@ -210,5 +216,5 @@ export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeV
     }
     if (single.length === input.criteria.length) return single;
   }
-  throw new Error('The judge did not return a verdict for every criterion.');
+  throw new Error(`The judge did not return a verdict for every criterion (${last}).`);
 }

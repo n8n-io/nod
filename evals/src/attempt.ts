@@ -137,14 +137,22 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     ]
       .filter(Boolean)
       .join('\n\n');
-    const { checks, graderFault, judgeFault } = await grade({
-      definition,
-      world,
-      trace,
-      judge: judgeLlm,
-      truth,
-      skipJudges: Boolean(failure),
-    });
+    const scored = () =>
+      grade({
+        definition,
+        world,
+        trace,
+        judge: judgeLlm,
+        truth,
+        skipJudges: Boolean(failure),
+      });
+    let graded = await scored();
+    for (const wait of [20_000, 60_000]) {
+      if (!graded.judgeFault) break;
+      await new Promise((done) => setTimeout(done, wait));
+      graded = await scored();
+    }
+    const { checks, graderFault, judgeFault } = graded;
     const modelFault =
       trace.turns.at(-1)?.status !== 'succeeded' ? trace.modelErrors.at(-1) : undefined;
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
