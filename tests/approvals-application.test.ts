@@ -209,20 +209,11 @@ test(
                 answers: [{ name, type: 'refusal' }],
                 usage: { input_tokens: 1000 },
               });
-            let choice: string | boolean | undefined;
-            if (name === 'valid') {
-              choice = confirmationValid;
-            } else if (name === 'answer') {
-              choice =
-                ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)] ??
-                'other';
-            } else {
-              choice =
-                asked.has(input.userMessages?.at(-1)?.text ?? '') ||
-                cleared.has(String(input.action?.arguments?.recipient_email))
-                  ? 'requested'
-                  : 'ask';
-            }
+            const choice =
+              name === 'valid'
+                ? confirmationValid
+                : (({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)] ??
+                  'other');
             return Response.json({
               answers: [{ name, type: 'choice', choice }],
               usage: { input_tokens: 1000, cost: decisionCost },
@@ -958,12 +949,17 @@ test(
           const checked = decisionInputs.slice(before);
           assert.deepEqual(
             checked.map(({ name }) => name),
-            ['run', 'valid'],
+            ['valid'],
           );
-          assert.equal(checked[0].input.action.arguments.body, body);
-          assert.deepEqual(Object.keys(checked[1].input).sort(), ['data', 'purpose', 'text']);
-          assert.equal(checked[1].input.data.args.body, body);
-          assert.equal(checked[1].input.text, confirmationText);
+          assert.equal(fallbackChecks.length, fallback + 1);
+          assert.equal(
+            (fallbackChecks.at(-1) as { action: { arguments: { body: string } } }).action.arguments
+              .body,
+            body,
+          );
+          assert.deepEqual(Object.keys(checked[0].input).sort(), ['data', 'purpose', 'text']);
+          assert.equal(checked[0].input.data.args.body, body);
+          assert.equal(checked[0].input.text, confirmationText);
           const replyId = randomUUID();
           const accepted = await request('POST', '/api/messages', {
             text: 'Yes',
@@ -976,21 +972,20 @@ test(
           assert.equal((await approvalsFor(turn))[0].status, 'completed');
           assert.equal(integrationFixture.writes.length, writes + 1);
           assert.deepEqual(decisionInputs.at(-1), { name: 'answer', input: { reply: 'Yes' } });
-          assert.equal(fallbackChecks.length, fallback);
+          assert.equal(fallbackChecks.length, fallback + 1);
           const rows = (
             await pool.query(
               'SELECT id,turn_id,cost_usd,details FROM model_usage WHERE owner_id=$1 AND NOT(id=ANY($2::text[])) ORDER BY created_at,id',
               [ownerId, previousUsage],
             )
           ).rows;
-          assert.equal(rows.length, 3);
-          assert.equal(new Set(rows.map((row) => row.id)).size, 3);
+          assert.equal(rows.length, 2);
+          assert.equal(new Set(rows.map((row) => row.id)).size, 2);
           assert.equal(
             rows.find((row) => row.details.operation === 'approval_reply').turn_id,
             null,
           );
           assert.deepEqual(rows.map((row) => row.details.operation).sort(), [
-            'action_check',
             'approval_reply',
             'confirmation_check',
           ]);
@@ -1031,7 +1026,7 @@ test(
             await waitFor(declined.json().turnId, 'succeeded');
             assert.equal((await approvalsFor(held))[0].status, 'declined');
             assert.equal(decisionInputs.length, count);
-            assert.equal(fallbackChecks.length, fallback + 3);
+            assert.equal(fallbackChecks.length, fallback + 4);
           } finally {
             decisionsEnabled = true;
           }
@@ -1043,17 +1038,6 @@ test(
         async () => {
           const fallback = fallbackChecks.length;
           const writes = integrationFixture.writes.length;
-          refusedDecision = 'run';
-          try {
-            const turn = await propose(
-              'GMAIL_SEND_EMAIL',
-              { recipient_email: 'refused@example.test', body: 'Synthetic refusal.' },
-              'apps',
-            );
-            assert.equal((await approvalsFor(turn))[0].status, 'pending');
-          } finally {
-            refusedDecision = '';
-          }
           refusedDecision = 'valid';
           try {
             const text = `Synthetic refused fact check ${randomUUID()}`;
@@ -1073,7 +1057,7 @@ test(
             refusedDecision = '';
           }
           assert.equal(integrationFixture.writes.length, writes);
-          assert.equal(fallbackChecks.length, fallback);
+          assert.equal(fallbackChecks.length, fallback + 1);
         },
       );
 
@@ -1151,10 +1135,10 @@ test(
                 instructions: 'Apply policy.',
                 input: {},
                 question: {
-                  name: 'run',
+                  name: 'valid',
                   choices: [
-                    { value: true, description: 'Run.' },
-                    { value: false, description: 'Ask.' },
+                    { value: true, description: 'Accurate.' },
+                    { value: false, description: 'Inaccurate.' },
                   ],
                 },
               }),

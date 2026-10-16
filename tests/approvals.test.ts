@@ -718,16 +718,9 @@ test(
             confirm: true,
             reason: 'unrequested',
           });
-          for (const [category, confirm] of [
-            ['read', false],
-            ['requested', false],
-            ['blocked', true],
-            ['ask', true],
-            ['true', true],
-            ['unknown', true],
-          ] as const) {
-            aligned = category;
-            assert.equal((await trust.check(turn, 'GMAIL_FETCH_EMAILS', {})).confirm, confirm);
+          for (const loose of ['read', 'requested', 'true', 'yes']) {
+            aligned = loose;
+            assert.equal((await trust.check(turn, 'GMAIL_FETCH_EMAILS', {})).confirm, true);
           }
           aligned = false;
           await askFor(turn, email('stranger@example.test'));

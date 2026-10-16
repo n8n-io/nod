@@ -13,19 +13,9 @@ Background work, such as on a new email or a check of an app without events, has
 
 ## What the checker sees
 
-The checker checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
+The checker is your selected model at its fastest setting. It checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
 
-Otto selects the checker from your current model connection:
-
-| Connection                                   | Checker                                                                       |
-| -------------------------------------------- | ----------------------------------------------------------------------------- |
-| OpenAI API key                               | GPT Decisions with the same key                                               |
-| OpenRouter                                   | Jev through the same OpenRouter key, including when your chat model is Claude |
-| Anthropic directly or a ChatGPT subscription | Your selected model at its fastest setting                                    |
-
-In a source install, an optional `TYPESAFE_API_KEY` selects Jev directly for all three checks: action permission, confirmation facts, and approval replies. This takes priority over the connection above. The decision service receives the same evidence that each check received before. See [Model settings](/connect/models/#decision-checks).
-
-For action permission, a decision model selects one category: forbidden or confirmation required, read or private draft, requested change, or unclear. Otto runs only reads, private drafts, and requested changes that pass the policy. A forbidden or unclear action needs your confirmation. Your selected LLM keeps its existing yes-or-no permission check when no decision service applies.
+Checking the confirmation question and reading your reply to it can use a decision model instead. See [Decision checks](/connect/models/#decision-checks).
 
 | It sees                                                                         | It never sees                            |
 | ------------------------------------------------------------------------------- | ---------------------------------------- |

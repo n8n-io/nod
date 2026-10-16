@@ -6,6 +6,7 @@ import { turnOrigin } from './approvals.ts';
 export type TrustReason = 'background' | 'schedule' | 'unrequested';
 
 const checkInstructions = `You decide whether an AI assistant may run one action for its user now: an action in one of the user's connected apps, one step in the assistant's own web browser (OTTO_browser), a change to the assistant's own schedules, notification settings or spending limits for the user, or signing in to a website for the user (OTTO_sign_in, or OTTO_browser_session to open a saved signed-in browser).
+Reply with only JSON: {"run": true} or {"run": false}.
 run is false when the user's own words forbid the action or require confirmation before it, including reads and drafts. Otherwise, run is true for an action that only reads, or only prepares something for the user without sending, publishing, sharing or deleting anything, such as a draft.
 For any other action, run is true only when the user's own words ask for this kind of action on this target, and false when there are no user words, the target differs from what the user named, the user asked to be asked first, or it is unclear. A short "yes" counts when it answers the assistant message that proposed this action.
 A change to one of the assistant's own schedules may carry currentSchedule, the schedule as it stands now. The user's words must cover that schedule, not only the identifier being changed or cancelled.
@@ -19,7 +20,6 @@ answer is yes only when the user unconditionally approves the action as asked, i
 
 export function createTrust(options: { pool: Pool; ownerId: string; review: ModelReview }) {
   const { pool, ownerId } = options;
-  const readSteps = new Map<string, number>();
 
   async function conversation(
     threadId: string,
@@ -78,58 +78,16 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction }
           : undefined;
-    const input = { ...words, action: { name: action, arguments: args } };
-    const step = action === 'OTTO_browser' ? JSON.stringify([origin.source, input]) : undefined;
-    if (step && (readSteps.get(step) ?? 0) > Date.now()) return { confirm: false };
     const answer = await options
-      .review(checkInstructions, input, undefined, {
-        name: 'run',
-        instructions: `Classify the proposed action itself, not the action described in an instruction. Use the following rules in order.
-1. blocked: the owner's words forbid this proposed action or require confirmation before it. This rule also applies to reads and drafts.
-2. read: the proposed action only reads or prepares a private draft, or is an OTTO_browser step the policy says only reads or prepares, and rule 1 does not apply. No owner message is needed. Sign-in and saved browser session use are never read-only.
-3. requested: the owner's words request this kind of action on this target, and rule 1 does not apply. scheduledTaskInstruction contains the owner's instruction for the current scheduled run. An instruction to read or draft does not request sending.
-4. ask: none of the previous categories fits clearly.
-The following policy supplies the target and sign-in rules. Its true/false terminology means permission; return the category from the rules above.`,
-        choices: [
-          {
-            value: 'blocked',
-            description:
-              'The owner forbids this proposed action or requires confirmation before it. This includes reads and drafts.',
-          },
-          {
-            value: 'read',
-            description:
-              'The proposed action itself only reads or creates a private draft, or is a browser step that only reads or prepares, without an owner restriction. No owner words are required. Sign-in is excluded.',
-          },
-          {
-            value: 'requested',
-            description:
-              'The proposed action changes or sends exactly the kind of thing to the target requested by the owner message or scheduledTaskInstruction, without a requirement to ask first.',
-          },
-          {
-            value: 'ask',
-            description:
-              'The proposed action needs confirmation because its kind or target lacks a matching owner request, or it is unclear.',
-          },
-        ],
-      })
+      .review(checkInstructions, { ...words, action: { name: action, arguments: args } })
       .catch((error: unknown) => {
         console.error(
           `Trust check for ${action} failed (${error instanceof Error ? error.name : typeof error}); asking the owner.`,
         );
         return undefined;
       });
-    const run = answer && typeof answer === 'object' && (answer as { run?: unknown }).run;
-    if (run === true || run === 'read' || run === 'requested') {
-      if (step && run === 'read') {
-        const now = Date.now();
-        for (const [key, expiry] of readSteps) if (expiry <= now) readSteps.delete(key);
-        readSteps.delete(step);
-        readSteps.set(step, now + 10 * 60_000);
-        if (readSteps.size > 500) readSteps.delete(readSteps.keys().next().value!);
-      }
+    if (answer && typeof answer === 'object' && (answer as { run?: unknown }).run === true)
       return { confirm: false };
-    }
     return {
       confirm: true,
       reason:

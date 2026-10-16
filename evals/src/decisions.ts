@@ -15,7 +15,7 @@ import { approvalLanguageCases } from './world/approval-language.ts';
 
 interface Case {
   id: string;
-  kind: DecisionQuestion['name'];
+  kind: 'run' | DecisionQuestion['name'];
   holdout: boolean;
   input: object;
   expected: string | boolean;
@@ -296,7 +296,7 @@ function literal(node: ts.Node): unknown {
   throw new Error('Expected a literal value.');
 }
 
-function policy(source: string, variable: string, name: DecisionQuestion['name']) {
+function policy(source: string, variable: string, name: Case['kind']) {
   const file = ts.createSourceFile('policy.ts', source, ts.ScriptTarget.Latest, true);
   let instructions: string | undefined;
   let question: DecisionQuestion | undefined;
@@ -505,10 +505,9 @@ export async function runDecisionEval(options: {
     try {
       let instructions = selected.instructions;
       if (arm.endsWith('-llm')) {
-        if (arm !== 'main-llm') {
-          const question = selected.question!;
-          const values =
-            question.name === 'run' ? [true, false] : question.choices.map(({ value }) => value);
+        if (arm !== 'main-llm' && selected.question) {
+          const question = selected.question;
+          const values = question.choices.map(({ value }) => value);
           instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${values.map((value) => JSON.stringify(value)).join(', ')}.`;
         }
         output = await curator.curate(
@@ -597,7 +596,8 @@ export async function runDecisionEval(options: {
           const arm = arms[(index + offset) % arms.length];
           if (
             !blocked[arm] &&
-            !(arm === 'main-llm' && item.kind === 'valid' && !policies.main.valid)
+            !(arm === 'main-llm' && item.kind === 'valid' && !policies.main.valid) &&
+            (arm.endsWith('-llm') || policies.branch[item.kind].question)
           )
             await check(arm, item, attempt);
         }
