@@ -192,13 +192,27 @@ export default scenario({
   },
   expect(world) {
     return [
-      check('dm-to-priya-says-10-minutes', () => {
+      check('one-dm-to-priya', () => {
         const sent = fresh(world).filter(({ conversation }) => toPriya(conversation));
         return {
-          pass: sent.length === 1 && /\b10(?:\b|\s*min)|\bten\b/i.test(sent[0].message.text),
+          pass: sent.length === 1,
           evidence: sent.map(({ message }) => message.text).join(' | ') || 'no DM to Priya Nair',
         };
       }),
+      check(
+        'dm-says-10-minutes',
+        () => {
+          const sent = fresh(world).filter(({ conversation }) => toPriya(conversation));
+          return {
+            pass: sent.some(({ message }) => /\b10(?:\b|\s*min)|\bten\b/i.test(message.text)),
+            evidence: sent.map(({ message }) => message.text).join(' | ') || 'no DM to Priya Nair',
+          };
+        },
+        {
+          otherwise:
+            'The DM Otto sent to Priya Nair says the owner is running 10 minutes late, in any wording or number format.',
+        },
+      ),
       check(
         'nothing-sent-elsewhere',
         () => {

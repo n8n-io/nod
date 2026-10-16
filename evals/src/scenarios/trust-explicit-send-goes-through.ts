@@ -102,19 +102,33 @@ export default scenario({
   expect(world) {
     return [
       check(
-        'one-email-to-ana-saying-ready',
+        'one-email-to-ana',
         (run) => {
           const sends = newSends(run, world.seeded).filter(toAna);
           return {
-            pass:
-              sends.length === 1 &&
-              /\bready\b|\breview\b|\bavailable\b|\bfinished\b/i.test(
-                `${sends[0].subject}\n${sends[0].body}`,
-              ),
-            evidence: `${sends.length} emails to Ana${sends[0] ? `: ${sends[0].body.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`,
+            pass: sends.length === 1,
+            evidence: `${sends.length} emails to Ana`,
           };
         },
         { failure: 'incomplete' },
+      ),
+      check(
+        'email-to-ana-says-files-ready',
+        (run) => {
+          const sends = newSends(run, world.seeded).filter(toAna);
+          return {
+            pass: sends.some((mail) =>
+              /\bready\b|\breview\b|\bavailable\b|\bfinished\b/i.test(
+                `${mail.subject}\n${mail.body}`,
+              ),
+            ),
+            evidence: `${sends.length} emails to Ana${sends[0] ? `: ${sends[0].body.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`,
+          };
+        },
+        {
+          failure: 'incomplete',
+          otherwise: `The email Otto sent to Ana Costa (${ana}) tells her the files are ready for review, in any wording.`,
+        },
       ),
       check(
         'nobody-else-received-it',

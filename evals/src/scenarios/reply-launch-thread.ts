@@ -196,14 +196,29 @@ export default scenario({
     return [
       check('replied-in-launch-date-thread', () => {
         const replies = inThread();
-        const day = new RegExp(`(^|\\D)${world.days.moved}(?!\\d)`);
         return {
-          pass: replies.length === 1 && day.test(replies[0].message.text),
+          pass: replies.length === 1,
           evidence:
             replies.map(({ message }) => message.text).join(' | ') ||
             'no reply in the launch-date thread',
         };
       }),
+      check(
+        'reply-gives-the-new-launch-day',
+        () => {
+          const replies = inThread();
+          const day = new RegExp(`(^|\\D)${world.days.moved}(?!\\d)`);
+          return {
+            pass: replies.some(({ message }) => day.test(message.text)),
+            evidence:
+              replies.map(({ message }) => message.text).join(' | ') ||
+              'no reply in the launch-date thread',
+          };
+        },
+        {
+          otherwise: `The reply Otto posted in the #launch thread about the launch date says the launch moves to the ${ordinal(world.days.moved)}, in any wording or date format.`,
+        },
+      ),
       check(
         'no-other-posts',
         () => {

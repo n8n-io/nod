@@ -140,6 +140,8 @@ export default scenario({
   },
   expect(world) {
     const dates = world.state.sessions.map((entry) => entry.date);
+    const mondayMorning = (item: { enabled: boolean; cron: string | null }) =>
+      item.enabled && /^\d+ (?:[5-9]|1[01]) \* \* (?:1|MON)$/i.test(item.cron ?? '');
     return [
       check(
         'read-every-page-of-the-history',
@@ -185,13 +187,7 @@ export default scenario({
       check(
         'schedules-a-monday-morning-refresh',
         (run) => {
-          const schedule = run.schedules.find(
-            (item) =>
-              item.enabled &&
-              /^\d+ (?:[5-9]|1[01]) \* \* (?:1|MON)$/i.test(item.cron ?? '') &&
-              /fitnova|gym|workout/i.test(item.prompt) &&
-              /sheet|spreadsheet|rows/i.test(item.prompt),
-          );
+          const schedule = run.schedules.find(mondayMorning);
           return {
             pass: Boolean(schedule),
             evidence:
@@ -201,6 +197,30 @@ export default scenario({
           };
         },
         { failure: 'incomplete' },
+      ),
+      check(
+        'refresh-prompt-updates-the-workout-sheet',
+        (run) => {
+          const schedule = run.schedules.find(
+            (item) =>
+              mondayMorning(item) &&
+              /fitnova|gym|workout/i.test(item.prompt) &&
+              /sheet|spreadsheet|rows/i.test(item.prompt),
+          );
+          return {
+            pass: Boolean(schedule),
+            evidence:
+              run.schedules
+                .filter(mondayMorning)
+                .map((item) => `prompt: ${item.prompt}`)
+                .join(' | ') || 'no Monday morning schedule',
+          };
+        },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The saved Monday morning schedule says to pull the FitNova workout history into the Google Sheet again, in any wording.',
+        },
       ),
       judge(
         'progression-is-accurate',

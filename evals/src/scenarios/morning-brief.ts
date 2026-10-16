@@ -229,15 +229,33 @@ export default scenario({
         },
       ),
       check(
-        'scheduled-run-sends-one-message-without-an-acknowledgement',
+        'scheduled-run-sends-one-message',
         (run) => {
           const sent = run.replies.slice(marks().setup, marks().run);
           return {
-            pass: sent.length === 1 && !/^(on it|got it|sure|checking)/i.test(sent[0].trim()),
+            pass: sent.length === 1,
             evidence: `${sent.length} messages`,
           };
         },
         { aspect: 'process', failure: 'format' },
+      ),
+      check(
+        'scheduled-message-is-not-an-acknowledgement',
+        (run) => {
+          const sent = run.replies.slice(marks().setup, marks().run);
+          return {
+            pass:
+              sent.length > 0 &&
+              !sent.some((text) => /^(on it|got it|sure|checking)/i.test(text.trim())),
+            evidence: sent.map((text) => text.slice(0, 80)).join(' | ') || 'no message',
+          };
+        },
+        {
+          aspect: 'process',
+          failure: 'format',
+          otherwise:
+            'The scheduled run sends the brief itself, without an acknowledgement such as "On it" or "Checking" before or instead of it.',
+        },
       ),
       check(
         'no-extra-consent-or-clarification',

@@ -189,7 +189,7 @@ export default scenario({
         (run) => {
           const page = notes(run, world.seed);
           return {
-            pass: Boolean(page && /harborline/i.test(`${page.title}\n${page.markdown}`)),
+            pass: Boolean(page),
             evidence: page
               ? `"${page.title}"`
               : `new pages elsewhere: ${
@@ -200,6 +200,27 @@ export default scenario({
           };
         },
         { failure: 'incomplete' },
+      ),
+      check(
+        'page-names-harborline',
+        (run) => {
+          const page = notes(run, world.seed);
+          return {
+            pass: Boolean(page && /harborline/i.test(`${page.title}\n${page.markdown}`)),
+            evidence: page
+              ? `"${page.title}"`
+              : `new pages elsewhere: ${
+                  created(run, world.seed)
+                    .map((item) => `"${item.title}" under ${item.parent}`)
+                    .join(', ') || 'none'
+                }`,
+          };
+        },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The new page Otto created under Meetings says, in its title or notes, that the call was with Harborline, in any wording.',
+        },
       ),
       check(
         'notes-hold-budget',

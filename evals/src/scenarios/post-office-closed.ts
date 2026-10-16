@@ -218,15 +218,30 @@ export default scenario({
         ({ conversation, message }) => conversation.name === 'general' && !message.threadTs,
       );
     return [
-      check('one-post-in-general-names-friday', () => {
+      check('one-post-in-general', () => {
         const found = posts();
         return {
-          pass: found.length === 1 && namesTheDay(found[0].message.text, world.friday),
+          pass: found.length === 1,
           evidence: found.length
             ? found.map(({ message }) => message.text).join(' | ')
             : 'no new top-level message in #general',
         };
       }),
+      check(
+        'post-names-friday',
+        () => {
+          const found = posts();
+          return {
+            pass: found.some(({ message }) => namesTheDay(message.text, world.friday)),
+            evidence: found.length
+              ? found.map(({ message }) => message.text).join(' | ')
+              : 'no new top-level message in #general',
+          };
+        },
+        {
+          otherwise: `The new top-level message Otto posted in #general names ${world.friday.label} as the day the office is closed, in any wording or date format.`,
+        },
+      ),
       check(
         'says-the-office-is-closed',
         () => {

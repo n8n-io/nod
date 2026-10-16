@@ -183,15 +183,30 @@ export default scenario({
   expect() {
     return [
       check(
-        'one-new-bacalhau-row',
+        'one-new-recipe-row',
         (run) => {
           const rows = fresh(run);
           return {
-            pass: rows.length === 1 && plain(rows[0].title).includes('bacalhau'),
+            pass: rows.length === 1,
             evidence: `${rows.length} new rows: ${rows.map((page) => page.title).join(', ')}`,
           };
         },
         { failure: 'incomplete' },
+      ),
+      check(
+        'row-titled-bacalhau-a-bras',
+        (run) => {
+          const rows = fresh(run);
+          return {
+            pass: rows.some((page) => plain(page.title).includes('bacalhau')),
+            evidence: `${rows.length} new rows: ${rows.map((page) => page.title).join(', ')}`,
+          };
+        },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The new row in the Recipes database is titled with the name of Mum's recipe, Bacalhau à Brás, in any spelling, accents or translation.",
+        },
       ),
       check(
         'recipe-has-ingredients',
