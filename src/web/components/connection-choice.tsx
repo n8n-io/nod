@@ -72,7 +72,7 @@ export function useConnectionChoice(
   const active = useRef(false);
   const keyField = useRef<HTMLInputElement>(null);
   const savedKey = useRef<HTMLParagraphElement>(null);
-  const tiles = useRef<Partial<Record<Mode, HTMLButtonElement | null>>>({});
+  const tiles = useRef<Partial<Record<Mode, HTMLElement | null>>>({});
   const mode = choice ?? status?.mode;
   const checking = !apps.data && !apps.error;
   const linked = apps.data && [
@@ -433,11 +433,14 @@ export function ConnectionChoice({
     panel = (
       <div
         className="connection-managed"
+        tabIndex={onboarding ? -1 : undefined}
         ref={
           onboarding
             ? (node) => {
                 view.tiles.current.otto =
-                  node?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? null;
+                  node?.querySelector<HTMLButtonElement>(
+                    'button[data-connection-action]:not(:disabled)',
+                  ) ?? node;
               }
             : undefined
         }
@@ -474,6 +477,7 @@ export function ConnectionChoice({
                   </p>
                 )}
                 <Button
+                  data-connection-action
                   variant={onboarding ? 'default' : 'outline'}
                   disabled={confirmLocked}
                   aria-describedby={warning ? `${id}-warning` : undefined}
@@ -531,6 +535,7 @@ export function ConnectionChoice({
               </p>
             )}
             <Button
+              data-connection-action={status.managed.state !== 'unavailable' || undefined}
               variant={onboarding ? 'default' : 'outline'}
               disabled={locked || status.managed.state === 'unavailable'}
               onClick={view.signIn}
@@ -539,7 +544,12 @@ export function ConnectionChoice({
               Continue with Google
             </Button>
             {status.managed.state === 'unavailable' && (
-              <Button variant="ghost" disabled={locked} onClick={() => void reload()}>
+              <Button
+                data-connection-action
+                variant="ghost"
+                disabled={locked}
+                onClick={() => void reload()}
+              >
                 Try again
               </Button>
             )}
