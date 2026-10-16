@@ -235,6 +235,7 @@ test(
           account: (await service.sessions())[0]!.label,
           kind: 'session',
           itemId: connectionId,
+          sessionOrigin: 'https://example.test',
         },
       );
       assert.equal(

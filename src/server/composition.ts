@@ -20,6 +20,8 @@ import type { IntegrationProvider, IntegrationService } from '../ports/integrati
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
+import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
+import { createDecisionModel } from '../providers/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelAccountRegistry, ChannelSetupVerifier } from '../ports/channel-settings.ts';
@@ -70,7 +72,7 @@ import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
-import { createApprovals } from './approvals.ts';
+import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication } from './communication.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
@@ -165,6 +167,7 @@ export interface ApplicationAdapters {
   memoryCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
+  decisions?: DecisionModel;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
@@ -241,6 +244,18 @@ export function createDefaultAdapters(
       return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
     },
     configured: () => models.configured,
+  });
+  const decisions = createDecisionModel({
+    resolve: async () => {
+      if (env.TYPESAFE_API_KEY?.trim())
+        return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim() };
+      if (!models.configured) return;
+      const access = await models.resolve();
+      if (access.method === 'subscription' || access.provider === 'anthropic') return;
+      const credential = await access.read();
+      if (credential?.type !== 'api_key') throw new Error('The model connection is unavailable.');
+      return { provider: access.provider, key: credential.key };
+    },
   });
   const authConfigs: Partial<Record<IntegrationService, string>> = {
     gmail: env.COMPOSIO_GMAIL_AUTH_CONFIG_ID,
@@ -419,6 +434,7 @@ export function createDefaultAdapters(
     memoryCurator: modelCurator,
     analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
+    decisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(
         runtimeMode === 'tenant'
@@ -524,10 +540,19 @@ async function initializeApplication(
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)
     : curator;
-  const review = (instructions: string, input: object, signal?: AbortSignal) =>
-    onboardingCurator.configured
+  const decisions = adapters.decisions && ledger.decisions(adapters.decisions);
+  const review: ModelReview = async (instructions, input, signal, question) => {
+    if (question) {
+      const result = await decisions?.check({ instructions, input, question }, signal);
+      if (result !== undefined) return result;
+      const values =
+        question.name === 'run' ? [true, false] : question.choices.map(({ value }) => value);
+      instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${values.map((value) => JSON.stringify(value)).join(', ')}.`;
+    }
+    return onboardingCurator.configured
       ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
-      : Promise.resolve(undefined);
+      : undefined;
+  };
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
     skills: createSkillLibrary(
@@ -818,6 +843,7 @@ async function initializeApplication(
       kind: 'sign_in' | 'session' | 'form';
       account?: string;
       itemId?: string;
+      sessionOrigin?: string;
     },
   ): Promise<{ reason: VaultActivityReason } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);
@@ -943,7 +969,20 @@ async function initializeApplication(
               ? await personal.getSchedule(String(input.id))
               : undefined;
           if (action === 'schedule_cancel' && schedule && !schedule.enabled) return schedule;
-          const verdict = await trust.check(turn, `OTTO_${action}`, input);
+          const current = schedule
+            ? {
+                title: schedule.title,
+                prompt: schedule.prompt,
+                cron: schedule.cron,
+                runAt: schedule.runAt,
+                timeZone: schedule.timeZone,
+              }
+            : undefined;
+          const verdict = await trust.check(
+            turn,
+            `OTTO_${action}`,
+            current ? { ...input, currentSchedule: current } : input,
+          );
           return approvals.request(turn, `OTTO_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
@@ -966,24 +1005,19 @@ async function initializeApplication(
               : undefined,
             details: {
               ...(verdict.confirm ? { reason: verdict.reason } : {}),
-              ...(schedule
-                ? {
-                    schedule: {
-                      title: schedule.title,
-                      prompt: schedule.prompt,
-                      cron: schedule.cron,
-                      runAt: schedule.runAt,
-                      timeZone: schedule.timeZone,
-                    },
-                  }
-                : {}),
+              ...(current ? { schedule: current } : {}),
             },
           });
         }
         await admit?.(false);
         if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
+          const origin = await turnOrigin(turn.turnId);
           return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+            personal.manage(action, args, {
+              ...provenance,
+              turnId: turn.turnId,
+              ownerRooted: origin?.source === 'user',
+            }),
           );
         }
         if (action === 'usage_get') return ledger.read();

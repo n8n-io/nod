@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { runAnalyticsEval } from './analytics.ts';
+import { runDecisionEval } from './decisions.ts';
 import { cards, comparisonChart } from './chart.ts';
 import { storyCard, type StoryNotes } from './story.ts';
 import { renderImages } from './images.ts';
@@ -28,6 +29,8 @@ export const help = `Otto capability evals
     list                       show every scenario
     analytics --model <provider/name>   evaluate the product analytics classifier on synthetic cases
                                (--repeat 3, --scenario a,b, --label name, --out directory)
+    decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
+                               (--baseline main, --repeat 3, --label name, --out directory)
 
   Compare
     models <a> <b> [...]       run the same suite on several models, compare them and draw a chart
@@ -192,6 +195,19 @@ export async function main(args: Args) {
         (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
       )
         process.exitCode = 1;
+      return;
+    }
+    case 'decisions': {
+      const model = text(args, 'model');
+      if (!model) throw new Error('Decision evaluation requires --model <provider/name>.');
+      const result = await runDecisionEval({
+        model: parseModel(model, await loadEnvironment()),
+        baseline: text(args, 'baseline') ?? 'main',
+        root,
+        label: text(args, 'label') ?? new Date().toISOString().replace(/[:.]/g, '-'),
+        repeat: whole(args, 'repeat', 3),
+      });
+      console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'analytics': {

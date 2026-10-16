@@ -2,10 +2,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import type { Agent } from '../ports/agent.ts';
+import type { Agent, AgentSessionOptions } from '../ports/agent.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
+import type { DecisionModel } from '../ports/decisions.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -54,7 +55,7 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
 
 export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
   const activeTurn = new AsyncLocalStorage<string>();
-  const activeExecution = new AsyncLocalStorage<ExecutionScope>();
+  const activeExecution = new AsyncLocalStorage<AgentSessionOptions>();
   async function initialize() {
     await pool.query(`CREATE TABLE IF NOT EXISTS model_usage (
       id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
@@ -104,7 +105,10 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     }
   }
 
-  function record(usage: ProviderUsageEvent, execution = activeExecution.getStore()) {
+  function record(
+    usage: ProviderUsageEvent,
+    execution: ExecutionScope | undefined = activeExecution.getStore(),
+  ) {
     const { id, costUsd, turnId, ...details } = usage;
     const attributedTurn = execution?.turnId ?? turnId ?? activeTurn.getStore() ?? null;
     const values = [
@@ -190,6 +194,23 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
               ...value,
             });
             report?.(value);
+          });
+        } finally {
+          await flushUsage();
+        }
+      },
+    };
+  }
+
+  function decisions(base: DecisionModel): DecisionModel {
+    return {
+      async check(request, signal, report) {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        try {
+          return await base.check(request, signal, (usage) => {
+            record(usage);
+            activeExecution.getStore()?.onEvent({ type: 'provider_usage', usage });
+            report?.(usage);
           });
         } finally {
           await flushUsage();
@@ -404,6 +425,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     initialize,
     agent,
     curator,
+    decisions,
     action,
     limitReached,
     checkIn,

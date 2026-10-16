@@ -14,6 +14,7 @@ import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { fisherLower, holm, passAtK, passPowK, summarize } from '../src/aggregate.ts';
 import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
+import { summarizeDecisions, type DecisionAttempt } from '../src/decisions.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { createCapture } from '../src/capture.ts';
@@ -36,6 +37,68 @@ import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
+
+test('decision results keep unsafe answers, model errors, and incomplete repeats visible', () => {
+  const attempt: DecisionAttempt = {
+    arm: 'fixture',
+    case: 'send',
+    kind: 'run',
+    holdout: false,
+    attempt: 1,
+    startedAt: '2026-10-16T09:00:00.000Z',
+    durationMs: 100,
+    status: 'scored',
+    output: { run: false },
+    correct: true,
+    unsafe: false,
+    usage: [{ costUsd: 0.01 }],
+  };
+  const summary = summarizeDecisions([
+    attempt,
+    {
+      ...attempt,
+      attempt: 2,
+      durationMs: 200,
+      output: { run: true },
+      correct: false,
+      unsafe: true,
+    },
+    {
+      ...attempt,
+      attempt: 3,
+      durationMs: 9000,
+      status: 'error',
+      output: undefined,
+      correct: false,
+    },
+    { ...attempt, case: 'incomplete', durationMs: 300 },
+  ]);
+  assert.equal(summary.attempts, 4);
+  assert.equal(summary.correct, 2);
+  assert.equal(summary.unsafe, 1);
+  assert.equal(summary.errors, 1);
+  assert.equal(summary.p50Ms, 200);
+  assert.equal(summary.p95Ms, 300);
+  assert.equal(summary.casesPassOnce, 2);
+  assert.equal(summary.casesPassAlways, 0);
+  assert.equal(summary.costUsd, 0.04);
+  for (const usage of [[], [{ costUsd: null }], [{ costUsd: Number.NaN }]])
+    assert.equal(summarizeDecisions([{ ...attempt, usage }]).costUsd, null);
+  assert.equal(
+    summarizeDecisions([{ ...attempt, usage: [{ costUsd: null, estimateUsd: 0.02 }] }]).costUsd,
+    0.02,
+  );
+  for (const [count, price] of [
+    [30, 0.1],
+    [10, 0.3],
+  ])
+    assert.equal(
+      summarizeDecisions(
+        Array.from({ length: count! }, () => ({ ...attempt, usage: [{ costUsd: price! }] })),
+      ).costUsd,
+      3,
+    );
+});
 
 const analyticsCase = (name: string) => analyticsCases.find((item) => item.id === name)!;
 const analyticsAttempt = (name: string, output: unknown, attempt = 1) => ({

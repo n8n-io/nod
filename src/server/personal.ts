@@ -85,7 +85,12 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function manage(
     action: string,
     args: Record<string, unknown>,
-    provenance?: { sourceMessageId: string | null; turnId?: string; expectedRevision?: number },
+    provenance?: {
+      sourceMessageId: string | null;
+      turnId?: string;
+      expectedRevision?: number;
+      ownerRooted?: boolean;
+    },
   ) {
     if (action === 'notification_preferences_get') return preferences.get();
     if (action === 'notification_preferences_update') {
@@ -113,6 +118,8 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'memory_learn' || action === 'memory_control') {
       if (!memory) throw new Error('Memory is unavailable.');
+      if ((args as { clear?: unknown }).clear === true && !provenance?.ownerRooted)
+        throw new Error('Only a request from the owner can clear memory.');
       const source = {
         sourceMessageId: provenance?.sourceMessageId ?? null,
         turnId: z.uuid().parse(provenance?.turnId),
@@ -125,7 +132,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'memory_forget') {
       if (!memory) throw new Error('Memory is unavailable.');
-      if (!provenance?.sourceMessageId)
+      if (!provenance?.sourceMessageId || !provenance.ownerRooted)
         throw new Error('Only a request from the owner can forget a note.');
       return memory.forget(args.path);
     }

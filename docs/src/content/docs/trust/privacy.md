@@ -7,7 +7,7 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to the model provider and apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
+By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
 
 Feedback and usage analytics are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
@@ -27,7 +27,7 @@ For what Otto stores and how long it keeps it, see the [Security review guide](/
 ```mermaid
 flowchart LR
   otto[Otto on your computer]:::accent
-  otto -- prompts and results --> model[Model provider]
+  otto -- prompts and results --> model[Model and decision providers]
   otto -- app actions with Otto's connection --> managed["Otto hosted service (n8n)"]
   managed --> apps[Composio and<br/>your apps]
   otto -- direct app actions --> apps
@@ -40,12 +40,15 @@ flowchart LR
 | Goes to                                   | What                                                                                                                                                                                                                                                                                                                 |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected: your text from recent sent emails for writing style, plus inbox subjects and snippets for first tasks. Desktop and personal web installs can instead use the latest-message text from up to 40 recent inbox conversations for a setup summary |
+| Decision services                         | Recent task messages or a schedule instruction, proposed action arguments, confirmation facts, and approval replies. Each check receives its own input.                                                                                                                                                              |
 | Apps and services you connect             | The actions Otto runs in them                                                                                                                                                                                                                                                                                        |
 | Composio, if you connect apps through it  | Those app connections and the actions Otto sends, in n8n's project or in your own                                                                                                                                                                                                                                    |
 | Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                                                                                                                                                                                          |
 | Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                                                                                                                                                                     |
 | n8n                                       | App requests and results when you use Easy Connect, masked usage analytics if you opt in, and feedback when using the default collector                                                                                                                                                                              |
 | Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                                                                                                                                                                                 |
+
+OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
 
 Google sign-in for Easy Connect sends identity information to Google and n8n's connection service. That service stores your verified email, Google account identifier, installation admission, and expiring sign-in state. It discards Google's access and ID tokens after validation. Signing in doesn't grant access to Gmail. Removing proxy access doesn't delete provider accounts.
 

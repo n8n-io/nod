@@ -108,6 +108,83 @@ Repeated runs and equivalent paraphrased requests report label agreement and dis
 
 These are initial, reviewed synthetic cases, not a calibrated release gate. Run and review them manually before making claims about classifier quality. The ordinary eval unit tests only test the grader offline; they do not measure model quality.
 
+## Compare decision checks
+
+The `decisions` command compares the three [decision checks](/connect/models/#decision-checks) with a Git revision. It calls live models with synthetic inputs. It does not start Otto, use connected accounts, or run the proposed actions.
+
+Fetch the baseline before the run. Choose the chat model that the baseline uses.
+
+```sh title="Terminal"
+git fetch origin main
+pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/main --repeat 3 --label decision-checks
+```
+
+The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
+
+The 48 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
+
+Each case runs three times by default, with one warm-up request per model excluded from the score. Two workers rotate the model order. The run stops at an estimated $3. Unknown usage prices stop further requests and leave the total cost unknown; the report keeps the known subtotal. Requests already running can finish. A failed warm-up blocks that model; failed requests never count as correct. The baseline skips a check if that revision does not have it.
+
+Results go to `.local/capability-evals/decisions/<label>/`. The manifest saves commit IDs, exact prompts, choices, fixtures, and a fingerprint. The attempt log saves every answer, duration, and usage record. Existing labels cannot be replaced.
+
+The report shows correct answers, unsafe approvals, errors, median time, and the 95th percentile. It also shows cases that pass at least once and on every attempt. These are check-request times, including network time, not whole-task times. Read all disagreements before changing a safety rule. A small synthetic sample cannot establish production safety.
+
+### Initial experiment on 16 October 2026
+
+The baseline was fetched `origin/main` at `01912b89`. The candidate was `4c6f632c`. Both LLM paths used `gpt-6.1-sol` with low reasoning. The decision models were `gpt-6-luna` and `typesafe/jev-1.13`. The production prompts were unchanged during the experiment.
+
+The final dataset is version two. Three positive confirmation questions now quote the exact email body, subject, and recipient. Their earlier wording described sending a report when the action sent only a notification that the report was ready. The original attempts remain saved as an evaluator fault. An earlier run against a stale local `main` is also excluded.
+
+The final run made 480 scored requests: 40 cases, three attempts, and four model paths. Each model path also had one warm-up request.
+
+| Model path             | Correct answers | Median   | 95th percentile | Cases that passed all three attempts |
+| ---------------------- | --------------- | -------- | --------------- | ------------------------------------ |
+| Main LLM               | 120/120 (100%)  | 1,288 ms | 1,971 ms        | 40/40                                |
+| Branch LLM control     | 120/120 (100%)  | 1,338 ms | 1,903 ms        | 40/40                                |
+| GPT Decisions          | 117/120 (97.5%) | 241 ms   | 279 ms          | 39/40                                |
+| Jev through OpenRouter | 114/120 (95%)   | 272 ms   | 396 ms          | 38/40                                |
+
+GPT Decisions was 5.3 times faster at the median. Jev was 4.7 times faster. Accuracy was lower in this sample.
+
+| Check              | Main LLM | Branch LLM control | GPT Decisions | Jev   |
+| ------------------ | -------- | ------------------ | ------------- | ----- |
+| Action permission  | 48/48    | 48/48              | 45/48         | 42/48 |
+| Approval reply     | 36/36    | 36/36              | 36/36         | 36/36 |
+| Confirmation facts | 36/36    | 36/36              | 36/36         | 36/36 |
+
+Both decision models rejected the same authorized scheduled-send case on every attempt. Jev also rejected the background-read case on every attempt. These are unnecessary confirmations, not unsafe approvals. All four paths had zero unsafe approvals and zero API errors in this sample. All 15 holdout cases passed on every attempt for all four paths.
+
+The server supplied the owner's saved schedule instruction as `scheduledTaskInstruction`. The v2 policy did not state that field's authority. Version three makes it explicit and repeats the comparison. The v2 manifest keeps the original policy and failed answers as historical evidence.
+
+The evidence supports a speed gain for these checks. It does not support an accuracy gain for action permission. Approval replies and fact checks matched the LLM results. The action-permission gaps need review before a claim that decision models improve all three checks.
+
+The run used live model APIs with synthetic data. It did not measure whole-task delay, real app delivery, direct Jev, or a Claude or ChatGPT subscription baseline. The estimated cost, including warm-ups, was $0.18.
+
+The saved run label is `decision-checks-main-v2-2026-10-16`. Its fingerprint is `06c4131428ade9c5224ca31538863adb13d2e7529bd7431c2ce170d5d21b8ae2`. Keep the manifest and attempt log with the comparison.
+
+### Experiment after the fix on 16 October 2026
+
+The action check now asks the decision model for one of four categories: blocked, read, requested, or ask. Only read and requested permit the action. The policy and owner evidence stay the same. The selected LLM keeps its boolean result.
+
+Two earlier prompt changes caused unsafe approvals in diagnostic runs and were rejected. The four-category change passed the focused action run. The full comparison then used the same 40 cases and expected answers, plus eight new action holdouts. No expected answer changed.
+
+The new baseline was fetched `origin/main` at `a7dae354`. The candidate was `34145a7b`. Both LLM paths used `gpt-6.1-sol` with low reasoning. The decision models were unchanged. Version three made 576 scored requests: 48 cases, three attempts, and four model paths. Each path also had one excluded warm-up.
+
+| Model path             | Correct answers | Median   | 95th percentile | Cases that passed all three attempts |
+| ---------------------- | --------------- | -------- | --------------- | ------------------------------------ |
+| Main LLM               | 144/144 (100%)  | 1,481 ms | 2,152 ms        | 48/48                                |
+| Branch LLM control     | 144/144 (100%)  | 1,408 ms | 2,283 ms        | 48/48                                |
+| GPT Decisions          | 144/144 (100%)  | 250 ms   | 533 ms          | 48/48                                |
+| Jev through OpenRouter | 144/144 (100%)  | 282 ms   | 369 ms          | 48/48                                |
+
+Each path passed all 72 action checks, 36 approval-reply checks, and 36 confirmation-fact checks. All 23 holdout cases passed on every attempt. There were no unsafe approvals, malformed answers, or API errors.
+
+GPT Decisions was 5.9 times faster at the median than main. Jev was 5.3 times faster. Both matched main's accuracy in this sample. This fixes the observed failures; it does not establish an accuracy gain or production safety. Direct Jev still has only offline contract coverage.
+
+The estimated cost of all four paths, including warm-ups, was $0.30. The saved label is `decision-checks-categories-v3-2026-10-16`. Its fingerprint is `d9fa65bc84b2604f27f32adc000f258c14be26ea02728c8332280d0c7c12e2e1`.
+
+The [experiment evidence](https://github.com/n8n-io/otto/tree/main/docs/research/decision-checks-2026-10-16) contains both manifests, summary counts, and every request measurement. The CSV identifies warm-ups and keeps the native category answers. The manifests contain the full synthetic inputs and expected answers.
+
 ## Run evals in CI
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases.
