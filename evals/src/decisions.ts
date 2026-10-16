@@ -539,7 +539,7 @@ export async function runDecisionEval(options: {
           ? (output as Record<string, unknown>)[item.kind]
           : undefined;
       const values =
-        arm.endsWith('-llm') && item.kind === 'run'
+        arm.endsWith('-llm') && item.kind !== 'answer'
           ? [true, false]
           : policies.branch[item.kind].question!.choices.map((choice) => choice.value);
       status = values.includes(value as string | boolean) ? 'scored' : 'error';

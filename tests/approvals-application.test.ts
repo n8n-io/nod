@@ -1047,7 +1047,8 @@ test(
           });
           assert.equal(reply.statusCode, 200, reply.body);
           const next = reply.json().turnId;
-          if (next) await waitFor(next, 'failed|succeeded|waiting');
+          assert.ok(next);
+          await waitFor(next, 'failed|succeeded|waiting');
         } finally {
           refusedDecision = '';
         }
