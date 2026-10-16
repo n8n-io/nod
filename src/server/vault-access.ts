@@ -168,9 +168,11 @@ export async function createVaultAccess(
       kind: Kind;
       account?: string;
       itemId?: string;
+      sessionOrigin?: string;
     },
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
+    const sessionOrigin = target.sessionOrigin ? credentialOrigin(target.sessionOrigin) : undefined;
     const work = await turnOrigin(turn.turnId);
     if (!work) throw new Error('This turn is no longer running.');
     const chain = await root(turn);
@@ -180,6 +182,7 @@ export async function createVaultAccess(
       origin,
       kind: target.kind,
       ...(target.itemId ? { itemId: target.itemId } : {}),
+      ...(sessionOrigin ? { sessionOrigin } : {}),
     };
     if (await confirmed(chain, args)) return { ok: true, reason: 'allowed' };
     const verdict = await options.check(
@@ -188,6 +191,7 @@ export async function createVaultAccess(
       {
         website: origin,
         ...(target.account ? { account: target.account } : {}),
+        ...(sessionOrigin ? { savedSessionWebsite: sessionOrigin } : {}),
       },
     );
     if (!verdict.confirm)
@@ -200,6 +204,7 @@ export async function createVaultAccess(
         kind: target.kind,
         origin,
         ...(target.account ? { account: target.account } : {}),
+        ...(sessionOrigin ? { savedSessionWebsite: sessionOrigin } : {}),
         reason: verdict.reason,
       },
     };
@@ -211,6 +216,7 @@ export async function createVaultAccess(
         origin: z.string().max(2048),
         kind: z.enum(['sign_in', 'session', 'form']).optional(),
         itemId: z.string().max(100).optional(),
+        sessionOrigin: z.string().max(2048).optional(),
       })
       .strict()
       .parse(raw);

@@ -52,11 +52,11 @@ flowchart TD
 
 The memory tools are actions of Pi's `manage_personal_context` tool. Pi can save only the owner's own words: `memory_learn` stores the current owner message as it was written, with line breaks turned into spaces, up to 4,000 characters. It keeps the message ID as evidence.
 
-| Action           | What the server requires                                                                                    |
-| ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `memory_learn`   | The quote is the complete current owner message, word for word.                                             |
-| `memory_forget`  | A turn started by an owner message. It deletes the entry and its archived versions, without a confirmation. |
-| `memory_control` | The complete current owner message, quoted, asking to stop, resume or clear memory.                         |
+| Action           | What the server requires                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_learn`   | The quote is the complete current owner message, word for word.                                                                             |
+| `memory_forget`  | A turn started by an owner message. It deletes the entry and its archived versions, without a confirmation.                                 |
+| `memory_control` | The complete current owner message, quoted, asking to stop, resume or clear memory. Clearing also needs a turn started by an owner message. |
 
 So a fact from a web page, an email, a tool result or Otto's own reply can't be saved, and neither can a background or scheduled run, which has no owner message.
 

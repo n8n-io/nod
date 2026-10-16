@@ -28,6 +28,9 @@ import {
   removedCredential,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
+import { createDecisionModel, type DecisionConnection } from '../src/providers/decisions.ts';
+import type { DecisionQuestion } from '../src/ports/decisions.ts';
+import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { rootObject, toolDefinitions } from '../src/runtime/tools.ts';
@@ -1636,6 +1639,310 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   assert.equal(events.filter((value) => value === 'computer').length, 1);
   assert.equal(events.filter((value) => value === 'workspace').length, 1);
   await assert.rejects(runtime.runTurn(context(directory)), /stopped/);
+});
+
+test('decision providers preserve inputs, bind answers, and refuse failed requests without a retry', async (t) => {
+  const { createServer } = await import('node:http');
+  const calls: Array<{ path: string; authorization: string | undefined; body: any }> = [];
+  let reply: unknown;
+  let status = 200;
+  let redirect: string | undefined;
+  let invalidJson = false;
+  let hold = false;
+  let arrived = () => {};
+  const server = createServer(async (request, response) => {
+    let data = '';
+    for await (const chunk of request) data += chunk;
+    calls.push({
+      path: request.url!,
+      authorization: request.headers.authorization,
+      body: JSON.parse(data),
+    });
+    arrived();
+    if (hold) return;
+    response.writeHead(status, {
+      'content-type': 'application/json',
+      ...(redirect ? { location: redirect } : {}),
+    });
+    response.end(invalidJson ? 'Synthetic invalid JSON' : JSON.stringify(reply));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  const origin = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+  const urls: string[] = [];
+  const usage: ProviderUsageEvent[] = [];
+  let connection: DecisionConnection | undefined = { provider: 'openai', key: 'fixture-key' };
+  const model = createDecisionModel({
+    resolve: async () => connection,
+    fetch: async (url, options) => {
+      urls.push(String(url));
+      return fetch(`${origin}${new URL(String(url)).pathname}`, options);
+    },
+  });
+  const input = {
+    userMessages: [{ text: 'Ask before sending the synthetic report.' }],
+    action: {
+      name: 'CONNECTED_MCP_CALL',
+      arguments: { body: `${'x'.repeat(50_000)}final restriction` },
+    },
+  };
+  const question: DecisionQuestion = {
+    name: 'run',
+    choices: [
+      { value: true, description: 'Run.' },
+      { value: false, description: 'Ask.' },
+    ],
+  };
+  const check = (signal?: AbortSignal) =>
+    model.check({ instructions: 'Apply the owner policy.', input, question }, signal, (event) =>
+      usage.push(event),
+    );
+  const openai = (choice: unknown = false, name = 'run') => ({
+    model: 'gpt-6-luna',
+    answers: [{ type: 'choice', name, choice }],
+    usage: { input_tokens: 1000, output_tokens: 0 },
+  });
+  const jev = (choice = 'false') => ({
+    model: 'jev-1.13.0',
+    answers: { run: { type: 'choice', choice } },
+    usage: { input_tokens: 1000, output_tokens: 20 },
+  });
+  for (const provider of ['openai', 'openrouter', 'typesafe'] as const) {
+    connection = { provider, key: `fixture-${provider}-key` };
+    reply = provider === 'openai' ? openai() : jev();
+    assert.deepEqual(await check(), { run: false });
+    const sent = calls.at(-1)!;
+    assert.equal(sent.authorization, `Bearer fixture-${provider}-key`);
+    assert.deepEqual(provider === 'openai' ? JSON.parse(sent.body.input) : sent.body.state, input);
+    const supplied = provider === 'openai' ? sent.body.questions[0] : sent.body.questions.run;
+    assert.equal(supplied.instructions, 'Apply the owner policy.');
+    assert.equal(supplied.type, 'choice');
+    assert.deepEqual(
+      provider === 'openai'
+        ? supplied.choices.map((choice: any) => choice.value)
+        : Object.keys(supplied.criteria),
+      provider === 'openai' ? [true, false] : ['true', 'false'],
+    );
+    const recorded = usage.at(-1)!;
+    assert.equal(recorded.status, 'succeeded');
+    assert.equal(recorded.operation, 'action_check');
+    assert.equal(recorded.inputTokens, 1000);
+    assert.equal(recorded.costUsd, provider === 'openai' ? 0.0001 : 0.000042);
+    assert.equal(recorded.pricing, 'sdk_estimate');
+    assert.ok(recorded.durationMs >= 0);
+  }
+  assert.deepEqual(urls, [
+    'https://api.openai.com/v1/decisions',
+    'https://openrouter.ai/api/alpha/decisions',
+    'https://api.typesafe.ai/v1/systemone',
+  ]);
+  reply = jev();
+  await model.check({
+    instructions: 'Apply the owner policy.',
+    input,
+    question: { ...question, instructions: 'Classify the action first.' },
+  });
+  assert.equal(
+    calls.at(-1)!.body.questions.run.instructions,
+    'Classify the action first.\nApply the owner policy.',
+  );
+  for (const provider of ['openai', 'openrouter', 'typesafe'] as const) {
+    connection = { provider, key: 'fixture-key' };
+    for (const value of ['yes', 'no', 'other']) {
+      reply = {
+        ...openai(value, 'answer'),
+        answers:
+          provider === 'openai'
+            ? [{ type: 'choice', name: 'answer', choice: value }]
+            : { answer: { type: 'choice', choice: value } },
+      };
+      assert.deepEqual(
+        await model.check({
+          instructions: 'Classify the reply.',
+          input: { reply: 'Synthetic reply.' },
+          question: {
+            name: 'answer',
+            choices: ['yes', 'no', 'other'].map((value) => ({ value, description: value })),
+          },
+        }),
+        { answer: value },
+      );
+    }
+  }
+  connection = { provider: 'openrouter', key: 'fixture-key' };
+  reply = { ...jev('true'), usage: { input_tokens: 1000, cost: 0.00007 } };
+  assert.deepEqual(await check(), { run: true });
+  assert.equal(usage.at(-1)?.costUsd, 0.00007);
+  assert.equal(usage.at(-1)?.pricing, 'reported');
+  const before = calls.length;
+  connection = undefined;
+  assert.equal(await check(), undefined);
+  assert.equal(calls.length, before);
+  connection = { provider: 'openai', key: 'fixture-key' };
+  for (const invalid of [
+    openai('true'),
+    openai(true, 'different_question'),
+    openai('other'),
+    { ...openai(), answers: [] },
+    { ...openai(), answers: [...openai().answers, ...openai().answers] },
+    { ...openai(), answers: [{ type: 'refusal', name: 'run' }] },
+    { ...openai(), usage: { input_tokens: -1 } },
+    { answers: [{ type: 'choice', name: 'run', choice: true }] },
+  ]) {
+    reply = invalid;
+    const count = calls.length;
+    await assert.rejects(check(), /^Error: The decision service could not complete the check\.$/);
+    assert.equal(calls.length, count + 1);
+    assert.equal(usage.at(-1)?.status, 'failed');
+  }
+  for (const provider of ['openrouter', 'typesafe'] as const) {
+    connection = { provider, key: 'fixture-key' };
+    for (const answers of [
+      { valid: { type: 'choice', choice: 'true' } },
+      { run: { type: 'choice', choice: true } },
+      { run: { type: 'choice', choice: 'yes' } },
+      { run: { type: 'refusal' } },
+    ]) {
+      reply = { ...jev(), answers };
+      await assert.rejects(check(), /could not complete/);
+    }
+  }
+  reply = { secret: 'fixture-key private response body' };
+  for (const code of [401, 429, 503]) {
+    status = code;
+    const count = calls.length;
+    await assert.rejects(check(), /^Error: The decision service could not complete the check\.$/);
+    assert.equal(calls.length, count + 1);
+  }
+  status = 307;
+  redirect = `${origin}/stolen-key`;
+  const redirects = calls.length;
+  await assert.rejects(check(), /could not complete/);
+  assert.equal(calls.length, redirects + 1);
+  status = 200;
+  redirect = undefined;
+  invalidJson = true;
+  await assert.rejects(check(), /could not complete/);
+  invalidJson = false;
+  const cancelled = new AbortController();
+  cancelled.abort();
+  const count = calls.length;
+  await assert.rejects(check(cancelled.signal));
+  assert.equal(calls.length, count);
+  hold = true;
+  const waiting = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  const stop = new AbortController();
+  const stopped = assert.rejects(check(stop.signal), /could not complete/);
+  await waiting;
+  stop.abort();
+  await stopped;
+  assert.equal(usage.at(-1)?.status, 'cancelled');
+  assert.equal(new Set(usage.map(({ id }) => id)).size, usage.length);
+  assert.doesNotMatch(JSON.stringify(usage), /fixture-key|final restriction|userMessages/);
+});
+
+test('decision routing uses the selected connection and never sends subscription credentials', async (t) => {
+  const requests: Array<{ url: string; key: string | null }> = [];
+  t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+    requests.push({ url: String(url), key: new Headers(options?.headers).get('authorization') });
+    const openai = String(url).includes('api.openai.com');
+    return Response.json({
+      answers: openai
+        ? [{ type: 'choice', name: 'run', choice: false }]
+        : { run: { type: 'choice', choice: 'false' } },
+      usage: { input_tokens: 100 },
+    });
+  });
+  const { createDefaultAdapters } = await import('../src/server/composition.ts');
+  const adapters = createDefaultAdapters({
+    OTTO_FEEDBACK_ENABLED: 'false',
+    OTTO_VAULT_KEY: Buffer.alloc(32, 7).toString('base64'),
+  });
+  const models = adapters.models!;
+  let selected: {
+    provider: 'openai' | 'openrouter' | 'anthropic';
+    method: 'api_key' | 'oauth' | 'subscription';
+    key: string;
+  } = { provider: 'openai', method: 'api_key', key: 'fixture-owner-one-key' };
+  let reads = 0;
+  Object.defineProperty(models, 'configured', { get: () => true });
+  models.resolve = async () => {
+    const current = { ...selected };
+    return {
+      ...current,
+      definition: {
+        choice: {
+          id: 'fixture',
+          name: 'Fixture',
+          efforts: ['off'],
+          images: false,
+          contextWindow: 32_000,
+        },
+        spec: {},
+      },
+      effort: 'off',
+      read: async () => {
+        reads++;
+        return current.method === 'subscription'
+          ? {
+              type: 'oauth',
+              access: current.key,
+              refresh: 'fixture-refresh',
+              expires: Date.now() + 60_000,
+              accountId: 'fixture-owner',
+            }
+          : { type: 'api_key', key: current.key };
+      },
+    };
+  };
+  const question: DecisionQuestion = {
+    name: 'run',
+    choices: [
+      { value: true, description: 'Run.' },
+      { value: false, description: 'Ask.' },
+    ],
+  };
+  const check = () =>
+    adapters.decisions!.check({ instructions: 'Apply policy.', input: {}, question });
+  assert.deepEqual(await check(), { run: false });
+  selected = { provider: 'openrouter', method: 'oauth', key: 'fixture-owner-two-key' };
+  assert.deepEqual(await check(), { run: false });
+  selected = { provider: 'openai', method: 'api_key', key: 'fixture-rotated-key' };
+  assert.deepEqual(await check(), { run: false });
+  const count = reads;
+  for (const value of [
+    { provider: 'anthropic', method: 'api_key', key: 'fixture-anthropic-key' },
+    { provider: 'openai', method: 'subscription', key: 'fixture-subscription-token' },
+  ] as const) {
+    selected = value;
+    assert.equal(await check(), undefined);
+  }
+  assert.equal(reads, count);
+  assert.deepEqual(requests, [
+    { url: 'https://api.openai.com/v1/decisions', key: 'Bearer fixture-owner-one-key' },
+    { url: 'https://openrouter.ai/api/alpha/decisions', key: 'Bearer fixture-owner-two-key' },
+    { url: 'https://api.openai.com/v1/decisions', key: 'Bearer fixture-rotated-key' },
+  ]);
+  const overridden = createDefaultAdapters({
+    TYPESAFE_API_KEY: 'fixture-explicit-jev-key',
+    OTTO_FEEDBACK_ENABLED: 'false',
+  });
+  overridden.models!.resolve = async () => {
+    throw new Error('The override must not read another connection.');
+  };
+  assert.deepEqual(
+    await overridden.decisions!.check({ instructions: 'Apply policy.', input: {}, question }),
+    { run: false },
+  );
+  assert.deepEqual(requests.at(-1), {
+    url: 'https://api.typesafe.ai/v1/systemone',
+    key: 'Bearer fixture-explicit-jev-key',
+  });
 });
 
 test('codemode heldout output preserves UTF-8 bytes and fails closed through the guard', async (t) => {

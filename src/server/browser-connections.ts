@@ -371,9 +371,16 @@ export async function createBrowserConnections(
     });
   }
 
-  async function target(
-    raw: unknown,
-  ): Promise<{ origin: string; account: string; kind: 'session'; itemId: string } | undefined> {
+  async function target(raw: unknown): Promise<
+    | {
+        origin: string;
+        account: string;
+        kind: 'session';
+        itemId: string;
+        sessionOrigin?: string;
+      }
+    | undefined
+  > {
     const parsed = requestSchema.safeParse(raw);
     if (!parsed.success || parsed.data.action !== 'use') return undefined;
     let address: URL;
@@ -394,6 +401,7 @@ export async function createBrowserConnections(
           account: row.label,
           kind: 'session',
           itemId: parsed.data.connectionId,
+          ...(row.origin === address.origin ? {} : { sessionOrigin: row.origin }),
         }
       : undefined;
   }

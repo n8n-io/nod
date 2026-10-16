@@ -18,7 +18,7 @@ You can also ask Otto in chat to connect to a website and save the session.
 
 ## Use a session
 
-When a task needs the website, Otto opens the saved profile. It's the same permission check as a saved login: the server checks that your task needs this website and account, or Otto asks "Use your saved session on example.com?".
+When a task needs the website, Otto opens the saved profile. It's the same permission check as a saved login: the server checks that your task needs this website and account, or Otto asks "Use your saved session on example.com?". The check also considers the website the saved session belongs to, not only the page being opened; if a task needs a different site but not the saved-session website, Otto asks you first and shows both.
 
 Opening a profile doesn't prove it's still signed in, so Otto checks the page. If opening it lands on another website, such as a sign-in service, Vault shows **Sign-in needed** and a **Sign in again** button.
 

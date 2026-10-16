@@ -96,11 +96,13 @@ Private releases use the configured n8n download service for first-run downloads
 
 3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again to update the source and notes.
 
-4. Wait for CI on the merge commit. It builds and signs the three installers, then checks signing, runtime hashes, the Windows install and the downloaded installer bytes. It publishes one release only if every build and check passes. Then it fetches every installer, runtime pack and update through the n8n download service with the app's own update code, for both Macs and Windows. If any is unavailable, the release goes back to draft.
+4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. It publishes one release only if every build and check passes. When the n8n download service is configured, it fetches each installer, runtime pack and update through that service. This check uses the app's own update code for both Macs and Windows. If any download is unavailable, the release goes back to draft.
 
 </Steps>
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
+
+Pull requests and normal merges to `main` run source checks and tests without packaging desktop apps. Packaging and installer checks run only in **Build desktop release**.
 
 ## Inspect or recover a build
 

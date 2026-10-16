@@ -10,6 +10,7 @@ import type { AgentToolResult } from '../src/ports/agent.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import { createDecisionModel } from '../src/providers/decisions.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -45,7 +46,11 @@ test(
     >();
     const batches = new Map<
       string,
-      { subagents: boolean; calls: Array<{ action: string; args: Record<string, unknown> }> }
+      {
+        subagents: boolean;
+        sequential?: boolean;
+        calls: Array<{ action: string; args: Record<string, unknown> }>;
+      }
     >();
     const parts = new Map<string, { action: string; args: Record<string, unknown> }>();
     let partsWaiting = 0;
@@ -59,6 +64,11 @@ test(
     const confirmationText = 'Proceed with the saved synthetic action?';
     let confirmationValid = true;
     let beforeConfirmation = async () => {};
+    let decisionsEnabled = true;
+    let decisionCost: number | undefined;
+    let refusedDecision = '';
+    const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
+    const fallbackChecks: object[] = [];
     const executedApps: string[] = [];
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
@@ -94,6 +104,10 @@ test(
                       )
                     : undefined;
                 if (batch) {
+                  if (batch.sequential) {
+                    for (const call of batch.calls) await tool('apps').execute(call);
+                    return;
+                  }
                   await Promise.allSettled(
                     batch.calls.map((call, index) => {
                       if (!batch.subagents) return tool('apps').execute(call);
@@ -157,6 +171,39 @@ test(
         },
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
         model: { provider: 'fixture', name: 'fixture', configured: true },
+        decisions: createDecisionModel({
+          resolve: async () =>
+            decisionsEnabled ? { provider: 'openai', key: 'fixture-decision-key' } : undefined,
+          fetch: async (_url, options) => {
+            const body = JSON.parse(String(options?.body));
+            const name = body.questions[0].name as string;
+            const input = JSON.parse(body.input);
+            decisionInputs.push({ name, input });
+            if (name === refusedDecision)
+              return Response.json({
+                answers: [{ name, type: 'refusal' }],
+                usage: { input_tokens: 1000 },
+              });
+            let choice: string | boolean | undefined;
+            if (name === 'valid') {
+              choice = confirmationValid;
+            } else if (name === 'answer') {
+              choice =
+                ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)] ??
+                'other';
+            } else {
+              choice =
+                asked.has(input.userMessages?.at(-1)?.text ?? '') ||
+                cleared.has(String(input.action?.arguments?.recipient_email))
+                  ? 'requested'
+                  : 'ask';
+            }
+            return Response.json({
+              answers: [{ name, type: 'choice', choice }],
+              usage: { input_tokens: 1000, cost: decisionCost },
+            });
+          },
+        }),
         onboardingCurator: {
           id: 'fixture',
           configured: true,
@@ -165,8 +212,11 @@ test(
               await beforeConfirmation();
               return { text: confirmationText };
             }
-            if ('purpose' in input && input.purpose === 'confirmation_review')
+            if ('purpose' in input && input.purpose === 'confirmation_review') {
+              fallbackChecks.push(input);
               return { valid: confirmationValid };
+            }
+            if (task === 'review' && !('purpose' in input)) fallbackChecks.push(input);
             return task === 'review' && 'reply' in input
               ? {
                   answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
@@ -785,6 +835,238 @@ test(
           await waitFor(cancellation.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(background))[0].status, 'expired');
           await assertCancelled(schedule, cancellation.json().messageId);
+        },
+      );
+      await t.test(
+        'decision checks keep separate evidence, record usage once, and preserve the LLM path',
+        async () => {
+          const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
+          assert.equal(reset.statusCode, 200, reset.body);
+          const before = decisionInputs.length;
+          const fallback = fallbackChecks.length;
+          const writes = integrationFixture.writes.length;
+          const previousUsage = (
+            await pool.query('SELECT id FROM model_usage WHERE owner_id=$1', [ownerId])
+          ).rows.map((row) => row.id);
+          const body = `${'Synthetic report. '.repeat(3500)}Final owner condition.`;
+          const turn = await propose(
+            'GMAIL_SEND_EMAIL',
+            { recipient_email: 'decision@example.test', body },
+            'apps',
+          );
+          const [pending] = await approvalsFor(turn);
+          assert.equal(pending.status, 'pending');
+          assert.equal(integrationFixture.writes.length, writes);
+          const checked = decisionInputs.slice(before);
+          assert.deepEqual(
+            checked.map(({ name }) => name),
+            ['run', 'valid'],
+          );
+          assert.equal(checked[0].input.action.arguments.body, body);
+          assert.deepEqual(Object.keys(checked[1].input).sort(), ['data', 'purpose', 'text']);
+          assert.equal(checked[1].input.data.args.body, body);
+          assert.equal(checked[1].input.text, confirmationText);
+          const replyId = randomUUID();
+          const accepted = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: pending.confirmation_message_id,
+            clientMessageId: replyId,
+          });
+          assert.equal(accepted.statusCode, 200, accepted.body);
+          const resumed = accepted.json().turnId;
+          await waitFor(resumed, 'succeeded');
+          assert.equal((await approvalsFor(turn))[0].status, 'completed');
+          assert.equal(integrationFixture.writes.length, writes + 1);
+          assert.deepEqual(decisionInputs.at(-1), { name: 'answer', input: { reply: 'Yes' } });
+          assert.equal(fallbackChecks.length, fallback);
+          const rows = (
+            await pool.query(
+              'SELECT id,turn_id,cost_usd,details FROM model_usage WHERE owner_id=$1 AND NOT(id=ANY($2::text[])) ORDER BY created_at,id',
+              [ownerId, previousUsage],
+            )
+          ).rows;
+          assert.equal(rows.length, 3);
+          assert.equal(new Set(rows.map((row) => row.id)).size, 3);
+          assert.equal(
+            rows.find((row) => row.details.operation === 'approval_reply').turn_id,
+            null,
+          );
+          assert.deepEqual(rows.map((row) => row.details.operation).sort(), [
+            'action_check',
+            'approval_reply',
+            'confirmation_check',
+          ]);
+          assert.ok(
+            rows.every(
+              (row) =>
+                row.cost_usd === 0.0001 &&
+                row.details.inputTokens === 1000 &&
+                row.details.status === 'succeeded',
+            ),
+          );
+          assert.doesNotMatch(
+            JSON.stringify(rows),
+            /fixture-decision-key|Synthetic report|decision@example/,
+          );
+          await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: pending.confirmation_message_id,
+            clientMessageId: replyId,
+          });
+          assert.equal(integrationFixture.writes.length, writes + 1);
+          decisionsEnabled = false;
+          try {
+            const count = decisionInputs.length;
+            const held = await propose(
+              'GMAIL_SEND_EMAIL',
+              { recipient_email: 'fallback@example.test', body: 'Synthetic fallback.' },
+              'apps',
+            );
+            const [card] = await approvalsFor(held);
+            assert.equal(card.status, 'pending');
+            const declined = await request('POST', '/api/messages', {
+              text: 'No',
+              replyToMessageId: card.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(declined.statusCode, 200, declined.body);
+            await waitFor(declined.json().turnId, 'succeeded');
+            assert.equal((await approvalsFor(held))[0].status, 'declined');
+            assert.equal(decisionInputs.length, count);
+            assert.equal(fallbackChecks.length, fallback + 3);
+          } finally {
+            decisionsEnabled = true;
+          }
+        },
+      );
+
+      await t.test(
+        'decision refusals cannot grant permission or bypass confirmation review',
+        async () => {
+          const fallback = fallbackChecks.length;
+          const writes = integrationFixture.writes.length;
+          refusedDecision = 'run';
+          try {
+            const turn = await propose(
+              'GMAIL_SEND_EMAIL',
+              { recipient_email: 'refused@example.test', body: 'Synthetic refusal.' },
+              'apps',
+            );
+            assert.equal((await approvalsFor(turn))[0].status, 'pending');
+          } finally {
+            refusedDecision = '';
+          }
+          refusedDecision = 'valid';
+          try {
+            const text = `Synthetic refused fact check ${randomUUID()}`;
+            plans.set(text, {
+              tool: 'apps',
+              action: 'GMAIL_SEND_EMAIL',
+              args: {
+                recipient_email: 'refused@example.test',
+                body: 'Synthetic refused question.',
+              },
+            });
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            await waitFor(response.json().turnId, 'failed|succeeded');
+            assert.deepEqual(await approvalsFor(response.json().turnId), []);
+          } finally {
+            refusedDecision = '';
+          }
+          assert.equal(integrationFixture.writes.length, writes);
+          assert.equal(fallbackChecks.length, fallback);
+        },
+      );
+
+      await t.test('decision costs stop later tools at the task check-in', async () => {
+        const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
+        assert.equal(reset.statusCode, 200, reset.body);
+        const before = executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length;
+        const inputs = decisionInputs.length;
+        const text = `Read the synthetic inbox three times ${randomUUID()}`;
+        asked.add(text);
+        batches.set(text, {
+          subagents: false,
+          sequential: true,
+          calls: Array.from({ length: 3 }, () => ({
+            action: 'GMAIL_FETCH_EMAILS',
+            args: { max_results: 1 },
+          })),
+        });
+        await pool.query(
+          'INSERT INTO spending_limits(owner_id,task_usd) VALUES($1,1) ON CONFLICT(owner_id) DO UPDATE SET task_usd=excluded.task_usd',
+          [ownerId],
+        );
+        decisionCost = 0.6;
+        try {
+          const response = await request('POST', '/api/messages', { text });
+          assert.equal(response.statusCode, 200, response.body);
+          const turnId = response.json().turnId;
+          await waitFor(turnId, 'failed|succeeded');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
+            before + 2,
+          );
+          assert.equal(decisionInputs.length, inputs + 2);
+          const rows = (
+            await pool.query('SELECT cost_usd FROM model_usage WHERE turn_id=$1', [turnId])
+          ).rows;
+          assert.deepEqual(
+            rows.map((row) => row.cost_usd),
+            [0.6, 0.6],
+          );
+        } finally {
+          decisionCost = undefined;
+          await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
+        }
+      });
+
+      await t.test(
+        'the spending limit blocks decision requests before provider access',
+        async () => {
+          const { createLedger } = await import('../src/server/ledger.ts');
+          let calls = 0;
+          const checked = createLedger({ pool, ownerId }).decisions(
+            createDecisionModel({
+              resolve: async () => {
+                calls++;
+                return { provider: 'openai', key: 'fixture-unused-key' };
+              },
+              fetch: async () => {
+                throw new Error('Unexpected provider access.');
+              },
+            }),
+          );
+          const usageId = randomUUID();
+          await pool.query('INSERT INTO model_usage(id,owner_id,cost_usd) VALUES($1,$2,1)', [
+            usageId,
+            ownerId,
+          ]);
+          await pool.query(
+            'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,0.000001) ON CONFLICT(owner_id) DO UPDATE SET monthly_usd=excluded.monthly_usd',
+            [ownerId],
+          );
+          try {
+            await assert.rejects(
+              checked.check({
+                instructions: 'Apply policy.',
+                input: {},
+                question: {
+                  name: 'run',
+                  choices: [
+                    { value: true, description: 'Run.' },
+                    { value: false, description: 'Ask.' },
+                  ],
+                },
+              }),
+              /spending limit was reached/,
+            );
+            assert.equal(calls, 0);
+          } finally {
+            await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
+            await pool.query('DELETE FROM model_usage WHERE id=$1', [usageId]);
+          }
         },
       );
     } finally {

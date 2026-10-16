@@ -27,8 +27,6 @@ jobs:
       images: ${{ steps.scope.outputs.images }}
       network: ${{ steps.scope.outputs.network }}
       e2b: ${{ steps.scope.outputs.e2b }}
-      mac: ${{ steps.scope.outputs.mac }}
-      windows: ${{ steps.scope.outputs.windows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -293,18 +291,6 @@ jobs:
             process.stdout.write(image);
           ')"
           node deployment/e2b/validate-computer.mjs "$image"
-
-  mac-updates:
-    name: Mac update acceptance
-    needs: scope
-    if: needs.scope.outputs.mac == 'true'
-    uses: ./.github/workflows/desktop-updates.yml
-
-  windows-preview:
-    name: Windows build acceptance
-    needs: scope
-    if: needs.scope.outputs.windows == 'true'
-    uses: ./.github/workflows/windows-preview.yml
 
   secrets:
     name: Secret scanning

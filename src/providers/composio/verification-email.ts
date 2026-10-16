@@ -4,9 +4,33 @@ import { z } from 'zod';
 import { parse } from 'tldts';
 import type { VerificationEmail, VerificationEmailQuery } from '../../ports/integrations.ts';
 
+function withoutComments(value: string) {
+  let plain = '';
+  let depth = 0;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === '\\' && depth > 0) {
+      index++;
+      continue;
+    }
+    if (char === '(') {
+      depth++;
+      continue;
+    }
+    if (char === ')') {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth === 0) plain += char;
+  }
+  return plain;
+}
+
 export const mailbox = (value: string) => {
   if (/[,;\r\n]/.test(value)) return;
-  const address = (/<([^<>\s]+@[^<>\s]+)>/.exec(value)?.[1] ?? value).trim().toLowerCase();
+  const plain = withoutComments(value);
+  const bracketed = [...plain.matchAll(/<([^<>\s]+@[^<>\s]+)>/g)];
+  const address = (bracketed.at(-1)?.[1] ?? plain).trim().toLowerCase();
   return z.email().max(320).safeParse(address).success ? address : undefined;
 };
 const headerSchema = z.object({ name: z.string().max(100), value: z.string().max(8192) });
@@ -165,7 +189,7 @@ export async function readVerificationEmails(
     const firstAuthentication = headers('authentication-results')[0];
     const authentication =
       firstAuthentication && /^\s*mx\.google\.com\s*;/i.test(firstAuthentication)
-        ? firstAuthentication
+        ? firstAuthentication.replace(/"(?:\\.|[^"\\])*"/g, '""')
         : undefined;
     const authenticatedDomain =
       authentication &&
@@ -175,10 +199,12 @@ export async function readVerificationEmails(
     if (!authenticatedDomain) continue;
     const authenticatedSite = parse(authenticatedDomain, { allowPrivateDomains: true });
     const senderSite = parse(address.split('@')[1], { allowPrivateDomains: true });
+    const expectedSite = parse(query.senderDomain, { allowPrivateDomains: true });
     if (
       !authenticatedSite.domain ||
       (!authenticatedSite.isIcann && !authenticatedSite.isPrivate) ||
-      authenticatedSite.domain !== senderSite.domain
+      authenticatedSite.domain !== senderSite.domain ||
+      senderSite.domain !== expectedSite.domain
     )
       continue;
     const body = messageText(value.payload);

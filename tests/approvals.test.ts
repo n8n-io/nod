@@ -202,10 +202,20 @@ test(
     );
     assert.equal(supplied.data.action, proposal.action);
     assert.equal(supplied.data.args.recipient_email, proposal.args.recipient_email);
+    assert.deepEqual((supplied as { withheld?: string[] }).withheld, [
+      'args.token',
+      'details.password',
+    ]);
     assert.doesNotMatch(
       JSON.stringify(supplied),
       /synthetic-private|private-payment|private-artifact|private-token|Foreign owner|Other thread|Security code|Suggested task|Assistant instruction/,
     );
+    assert.deepEqual(captured[1], {
+      purpose: 'confirmation_review',
+      data: supplied.data,
+      withheld: ['args.token', 'details.password'],
+      text: 'Confirma a ação apresentada.',
+    });
   },
 );
 
@@ -498,7 +508,7 @@ test(
 
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
-      let aligned: boolean | ((input: Record<string, any>) => boolean) = false;
+      let aligned: boolean | string | ((input: Record<string, any>) => boolean) = false;
       t.beforeEach(() => {
         aligned = false;
       });
@@ -708,6 +718,17 @@ test(
             confirm: true,
             reason: 'unrequested',
           });
+          for (const [category, confirm] of [
+            ['read', false],
+            ['requested', false],
+            ['blocked', true],
+            ['ask', true],
+            ['true', true],
+            ['unknown', true],
+          ] as const) {
+            aligned = category;
+            assert.equal((await trust.check(turn, 'GMAIL_FETCH_EMAILS', {})).confirm, confirm);
+          }
           aligned = false;
           await askFor(turn, email('stranger@example.test'));
           await confirmTurn(turn.turnId);
