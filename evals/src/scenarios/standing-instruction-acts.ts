@@ -115,7 +115,7 @@ export default scenario({
               message.role === 'assistant' &&
               /KP-1093|Ben/i.test(message.text),
           ),
-        { required: false, aspect: 'process' },
+        { aspect: 'process' },
       ),
     ];
   },

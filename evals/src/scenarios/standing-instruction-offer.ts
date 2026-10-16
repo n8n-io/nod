@@ -4,6 +4,7 @@ import { createApps, gmail } from '../world/apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const ana = 'ana@ortizbooks.example';
+const ben = 'ben@kestrelprint.example';
 const rule = `Tell me when Ana Ortiz (${ana}) sends an invoice.`;
 
 const sends = (run: Run) => run.writes.filter((write) => write.kind === 'send');
@@ -21,10 +22,7 @@ export default scenario({
   stance: 'regression',
   seconds: 600,
   timeZone: 'Europe/Madrid',
-  user: {
-    persona:
-      'You are Alex Rivera, a freelance designer. Ana Ortiz does your bookkeeping and sends an invoice every month. You want each one confirmed to her, and you would rather not be asked every time.',
-  },
+  user: {},
   world(clock) {
     const now = clock.now();
     const mailbox = gmail(
@@ -46,7 +44,7 @@ export default scenario({
       apps: createApps(owner, { gmail: mailbox }),
       mailbox,
       clock,
-      state: { first: '', second: '' },
+      state: { first: '', second: '', third: '' },
     };
   },
   async play(session, world) {
@@ -56,21 +54,36 @@ export default scenario({
     await session.waitForTurn(world.state.first);
     await session.say('Reply to Ana confirming we received it.');
     await session.say('Yes');
-    world.mailbox.mails.push({
-      id: 'ana-invoice-2',
-      threadId: 'thread-ana-2',
-      from: `Ana Ortiz <${ana}>`,
-      to: owner.email,
-      subject: 'Invoice INV-497 for October bookkeeping',
-      body: 'Hi Alex,\n\nHere is invoice INV-497 for October bookkeeping: EUR 640, due in 30 days.\n\nThanks,\nAna',
-      at: world.clock.now(),
-      labels: ['INBOX'],
-      attachments: [],
-    });
-    world.state.second = await session.event(
-      `Gmail received an inbox message. messageId: ana-invoice-2. Subject: Invoice INV-497 for October bookkeeping. Sender: ${ana}.`,
+    const deliver = async (id: string, from: string, subject: string, body: string) => {
+      world.mailbox.mails.push({
+        id,
+        threadId: `thread-${id}`,
+        from,
+        to: owner.email,
+        subject,
+        body,
+        at: world.clock.now(),
+        labels: ['INBOX'],
+        attachments: [],
+      });
+      const turn = await session.event(
+        `Gmail received an inbox message. messageId: ${id}. Subject: ${subject}. Sender: ${from}.`,
+      );
+      await session.waitForTurn(turn);
+      return turn;
+    };
+    world.state.second = await deliver(
+      'ana-invoice-2',
+      `Ana Ortiz <${ana}>`,
+      'Invoice INV-497 for October bookkeeping',
+      'Hi Alex,\n\nHere is invoice INV-497 for October bookkeeping: EUR 640, due in 30 days.\n\nThanks,\nAna',
     );
-    await session.waitForTurn(world.state.second);
+    world.state.third = await deliver(
+      'ben-invoice',
+      `Ben Okafor <${ben}>`,
+      'Invoice KP-1093 for brochure printing',
+      'Hi Alex,\n\nHere is invoice KP-1093 for the brochure print run: EUR 1,180, due in 14 days.\n\nBest,\nBen',
+    );
     await session.settle();
   },
   evidence(run) {
@@ -86,9 +99,14 @@ export default scenario({
     );
   },
   completion(world) {
-    return check('second-invoice-handled', (run) => {
-      const status = run.turns.find((turn) => turn.id === world.state.second)?.status;
-      return { pass: status === 'succeeded', evidence: status };
+    return check('later-invoices-handled', (run) => {
+      const statuses = [world.state.second, world.state.third].map(
+        (id) => run.turns.find((turn) => turn.id === id)?.status,
+      );
+      return {
+        pass: statuses.every((status) => status === 'succeeded'),
+        evidence: statuses.join(', '),
+      };
     });
   },
   expect() {
@@ -108,7 +126,7 @@ export default scenario({
         sends(run).some(
           (write) =>
             toAna(write) &&
-            (write.args.thread_id === 'thread-ana-2' ||
+            (write.args.thread_id === 'thread-ana-invoice-2' ||
               /INV-497/.test(`${write.args.subject ?? ''} ${write.args.body ?? ''}`)),
         ),
       ),
