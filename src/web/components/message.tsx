@@ -34,14 +34,14 @@ export const MessageText = memo(function MessageText({
   text,
   previews = false,
   connectedAppIds,
-  onHandoffDone,
+  handoff,
   handoffPaused,
   handoffTurnId,
 }: {
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
-  onHandoffDone?: () => Promise<void>;
+  handoff?: boolean;
   handoffPaused?: boolean;
   handoffTurnId?: string;
 }) {
@@ -102,13 +102,8 @@ export const MessageText = memo(function MessageText({
             (action) => action.setup !== 'browser' && !connected(action.href),
           )}
         />
-        {onHandoffDone && handoffTurnId && actions.some((action) => action.setup === 'browser') && (
-          <BrowserHandoff
-            key={handoffTurnId}
-            turnId={handoffTurnId}
-            onDone={onHandoffDone}
-            paused={handoffPaused}
-          />
+        {handoff && handoffTurnId && actions.some((action) => action.setup === 'browser') && (
+          <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
         )}
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
@@ -130,7 +125,7 @@ export function MessageBubble({
   grouped = false,
   streaming = false,
   onReply,
-  onHandoffDone,
+  handoff,
   handoffPaused,
 }: {
   message: Message;
@@ -138,7 +133,7 @@ export function MessageBubble({
   grouped?: boolean;
   streaming?: boolean;
   onReply?(): void;
-  onHandoffDone?(): Promise<void>;
+  handoff?: boolean;
   handoffPaused?: boolean;
 }) {
   const dateFormat = useDateFormat();
@@ -418,7 +413,7 @@ export function MessageBubble({
                   text={message.text}
                   previews={!streaming}
                   connectedAppIds={connectedAppIds}
-                  onHandoffDone={streaming ? undefined : onHandoffDone}
+                  handoff={!streaming && handoff}
                   handoffPaused={handoffPaused}
                   handoffTurnId={message.turnId ?? undefined}
                 />

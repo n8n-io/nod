@@ -18,9 +18,11 @@ import {
 import { events, type ServerEvent } from './events.ts';
 import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
+  activeHandoffSql,
   activeThread,
   reactToAssistantMessage,
   resetThread,
+  resumeAfterHandoff,
   stopThread,
   submitUserMessage,
 } from './thread.ts';
@@ -147,10 +149,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       );
       return { running: result.rows };
     });
-  const activeHandoff = `u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NOT NULL
-    AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))`;
   const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping",
-    CASE WHEN ${activeHandoff}
+    CASE WHEN ${activeHandoffSql}
       THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
     if (!ids.length) return [];
@@ -443,7 +443,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const latest = await pool.query(
       `SELECT u.handoff_browser_id FROM turns u
        JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
-       WHERE u.owner_id=$1 AND u.id=$2 AND th.archived_at IS NULL AND ${activeHandoff}`,
+       WHERE u.owner_id=$1 AND u.id=$2 AND th.archived_at IS NULL AND ${activeHandoffSql}`,
       [ownerId, turnId],
     );
     return latest.rows[0]?.handoff_browser_id as string | undefined;
@@ -587,6 +587,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
         .code(409)
         .send({ error: browserErrorMessage(code) ?? 'The browser did not take that input.' });
     }
+    return { ok: true };
+  });
+  app.post('/api/browser-handoff/done', async (request, reply) => {
+    const body = z.object({ turnId: z.uuid() }).strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'Choose a browser handoff.' });
+    if (!(await resumeAfterHandoff(body.data.turnId)))
+      return reply.code(423).send({ error: handoffClosed });
     return { ok: true };
   });
   app.post('/api/browser-handoff/navigate', async (request, reply) => {

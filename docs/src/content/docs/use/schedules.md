@@ -7,7 +7,7 @@ sidebar:
 
 Ask Otto to do something later or regularly, and it saves a schedule and does the work in the background.
 
-Otto also notices new email and activity in your connected apps and prepares useful work on its own. This page covers both.
+When you ask, Otto also notices new email and activity in your connected apps and prepares useful work on its own. This page covers both.
 
 ## Create a schedule
 
@@ -51,12 +51,17 @@ Each run appears in **Tasks → Previous**.
 
 ## Work Otto starts on its own
 
-You don't need a schedule for Otto to keep an eye on things.
+Otto keeps an eye on your connected apps only after you say so. Connecting an app doesn't start it.
 
-- **Gmail.** Otto checks for new inbox mail every five minutes. When you've told Otto what's worth interrupting you for, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Without that, Otto only saves the message.
-- **Other connected apps.** Each update works the same way. For an app without updates, once you've said what's worth interrupting you for, Otto checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
+- **Otto offers once.** After a task that connects or uses an app like Gmail or Slack, Otto asks in one line whether to flag what needs you there. Say yes and it starts. Ignore or decline it, and Otto doesn't ask again for that app.
+- **Or just tell it.** At any time, say what's worth interrupting you for, such as "tell me when a client emails" or "flag Slack messages that need my reply".
 
-Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. Tell Otto what's worth interrupting you for, and it follows that.
+How Otto checks:
+
+- **Gmail.** Otto checks for new inbox mail every five minutes. Once you've said yes, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Until then, Otto only saves the message.
+- **Other connected apps.** Each update works the same way. For an app without updates, Otto checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
+
+Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. To stop, tell Otto, for example "stop flagging Slack messages".
 
 The first time Otto messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, Otto offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes.
 

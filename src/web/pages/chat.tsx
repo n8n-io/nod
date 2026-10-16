@@ -208,7 +208,6 @@ export function Chat({
   );
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [returningHandoff, setReturningHandoff] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -372,7 +371,6 @@ export function Chat({
     requestedSends.current = [];
     setText('');
     setSending(false);
-    setReturningHandoff(null);
     setError('');
     setStopping(false);
     stickToBottom.current = true;
@@ -639,20 +637,6 @@ export function Chat({
       composer.current?.focus();
     });
   }, [requestedMessage, state.configuration.llmReady, resetting, welcoming]);
-  async function finishHandoff(messageId: string) {
-    const sentThread = threadId;
-    setReturningHandoff(messageId);
-    try {
-      const result = await send(
-        'Done, I finished in the browser.',
-        [],
-        allMessages.find((message) => message.id === messageId) ?? null,
-      );
-      if (!result.sent) throw new Error('Could not hand control back. Try Done again.');
-    } finally {
-      if (threadRef.current === sentThread) setReturningHandoff(null);
-    }
-  }
   async function history() {
     const version = ++historyVersion.current;
     setLoadingHistory(true);
@@ -950,13 +934,10 @@ export function Chat({
                     connectedAppIds={connectedAppIds}
                     streaming={streamIds.has(message.streamId ?? '')}
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
-                    onHandoffDone={
-                      message.id === returningHandoff ||
-                      (message.role === 'assistant' &&
-                        !sending &&
-                        state.turns.some((turn) => turn.handoffMessageId === message.id))
-                        ? () => finishHandoff(message.id)
-                        : undefined
+                    handoff={
+                      message.role === 'assistant' &&
+                      !sending &&
+                      state.turns.some((turn) => turn.handoffMessageId === message.id)
                     }
                     onReply={
                       message.turnId || persistedIds.has(message.id)

@@ -21,11 +21,14 @@ async function call(
   return response;
 }
 
+const askedForUpdates =
+  'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step on something I asked you to follow up. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.';
+
 export async function prepare(stack: Stack, world: World, timeZone: string) {
   await call(stack, 'PATCH', '/api/preferences', {
     timeZone,
     quietHoursEnabled: false,
-    notificationRule: world.notificationRule,
+    notificationRule: world.notificationRule ?? askedForUpdates,
   });
   const slugs = world.apps?.services ?? [];
   for (const slug of slugs) {

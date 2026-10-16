@@ -111,10 +111,10 @@ sequenceDiagram
 ```
 
 - Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
-- **Done** replies to the question. It continues the session that asked, including a background session.
+- **Done** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
 - One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
-- Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.
+- An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.
 
 :::caution[Limits]
 In a source install, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app blocks workspace traffic to private and reserved address ranges. The browser reaches only public addresses in every mode. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.

@@ -27,7 +27,7 @@ When Otto needs you on a page, it asks in chat with an **Open browser** link.
 
 1. Open Otto on the desktop or the web. The live page appears under Otto's message.
 2. Click, type and scroll on the page. Use **Back** and **Reload** if you need them, or **Enlarge browser** for a bigger view.
-3. When you're finished, select **Done**. Otto looks at the page again and carries on.
+3. When you're finished, select **Done**. Otto looks at the page to see what you did and carries on. Done doesn't post a message for you.
 
 </Steps>
 
@@ -43,7 +43,7 @@ Solving a challenge is up to the model. Some challenges block automated browsers
 
 ## Passkeys and sign-in on another device
 
-- **Passkeys.** Otto doesn't supply a passkey authenticator. Use another sign-in method, such as a password saved in Vault.
+- **Passkeys.** Your passkeys live on your own devices, so Otto's browser can't use them. A passkey request there fails right away instead of opening a prompt you can't see. Use another sign-in method, such as a password saved in Vault.
 - **Approval on your phone.** When a site asks you to approve on another device, Otto tells you what the page says. Then it checks the page every 15 seconds, up to eight times, and continues once the page confirms. It stops if the request is denied or expires, and asks you if the result stays unclear.
 
 ## A browser for each job
