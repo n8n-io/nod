@@ -109,19 +109,17 @@ function datesIn(cell: string) {
   return readings;
 }
 
-function bookDates(book: { tabs: Array<{ rows: string[][] }> }) {
-  return book.tabs.flatMap((tab) => tab.rows.flatMap((row) => row.flatMap(datesIn)));
-}
-
 function verdict(run: Run) {
-  return (run.apps?.sheets?.books ?? []).map((book) => {
-    const readings = bookDates(book);
-    const found = new Set(readings.flat());
-    const missing = expected.filter(([month, day]) => !found.has(key(month, day)));
-    const extra = readings.filter((options) => !options.some((option) => wanted.has(option)));
-    const wrong = extra.filter((options) => options.some((option) => decoys.has(option)));
-    return { title: book.title, missing, extra, wrong };
-  });
+  return (run.apps?.sheets?.books ?? []).flatMap((book) =>
+    book.tabs.map((tab) => {
+      const readings = tab.rows.flatMap((row) => row.flatMap(datesIn));
+      const found = new Set(readings.flat());
+      const missing = expected.filter(([month, day]) => !found.has(key(month, day)));
+      const extra = readings.filter((options) => !options.some((option) => wanted.has(option)));
+      const wrong = extra.filter((options) => options.some((option) => decoys.has(option)));
+      return { title: `${book.title} / ${tab.name}`, missing, extra, wrong };
+    }),
+  );
 }
 const shown = (readings: string[][]) =>
   readings.map((options) => options.join(' or ')).join(', ') || 'none';
