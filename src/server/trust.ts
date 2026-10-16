@@ -83,11 +83,32 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
         undefined,
         {
           name: 'run',
+          instructions: `Classify the proposed action itself, not the action described in an instruction. Use the following rules in order.
+1. blocked: the owner's words forbid this proposed action or require confirmation before it. This rule also applies to reads and drafts.
+2. read: the proposed action only reads or prepares a private draft, and rule 1 does not apply. No owner message is needed. Sign-in and saved browser session use are never read-only.
+3. requested: the owner's words request this kind of action on this target, and rule 1 does not apply. scheduledTaskInstruction contains the owner's instruction for the current scheduled run. An instruction to read or draft does not request sending.
+4. ask: none of the previous categories fits clearly.
+The following policy supplies the target and sign-in rules. Its true/false terminology means permission; return the category from the rules above.`,
           choices: [
-            { value: true, description: 'The policy permits this action now.' },
             {
-              value: false,
-              description: 'The action needs owner confirmation, or permission is unclear.',
+              value: 'blocked',
+              description:
+                'The owner forbids this proposed action or requires confirmation before it. This includes reads and drafts.',
+            },
+            {
+              value: 'read',
+              description:
+                'The proposed action itself only reads or creates a private draft, without an owner restriction. No owner words are required. Sign-in is excluded.',
+            },
+            {
+              value: 'requested',
+              description:
+                'The proposed action changes or sends exactly the kind of thing to the target requested by the owner message or scheduledTaskInstruction, without a requirement to ask first.',
+            },
+            {
+              value: 'ask',
+              description:
+                'The proposed action needs confirmation because its kind or target lacks a matching owner request, or it is unclear.',
             },
           ],
         },
@@ -98,8 +119,8 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
         );
         return undefined;
       });
-    if (answer && typeof answer === 'object' && (answer as { run?: unknown }).run === true)
-      return { confirm: false };
+    const run = answer && typeof answer === 'object' && (answer as { run?: unknown }).run;
+    if (run === true || run === 'read' || run === 'requested') return { confirm: false };
     return {
       confirm: true,
       reason:

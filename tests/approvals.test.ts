@@ -508,7 +508,7 @@ test(
 
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
-      let aligned: boolean | ((input: Record<string, any>) => boolean) = false;
+      let aligned: boolean | string | ((input: Record<string, any>) => boolean) = false;
       t.beforeEach(() => {
         aligned = false;
       });
@@ -718,6 +718,17 @@ test(
             confirm: true,
             reason: 'unrequested',
           });
+          for (const [category, confirm] of [
+            ['read', false],
+            ['requested', false],
+            ['blocked', true],
+            ['ask', true],
+            ['true', true],
+            ['unknown', true],
+          ] as const) {
+            aligned = category;
+            assert.equal((await trust.check(turn, 'GMAIL_FETCH_EMAILS', {})).confirm, confirm);
+          }
           aligned = false;
           await askFor(turn, email('stranger@example.test'));
           await confirmTurn(turn.turnId);

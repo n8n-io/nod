@@ -39,6 +39,7 @@ export function createDecisionModel(options: {
       signal?.throwIfAborted();
       const connection = await options.resolve();
       if (!connection) return undefined;
+      if (question.instructions) instructions = `${question.instructions}\n${instructions}`;
       const service = services[connection.provider];
       const id = crypto.randomUUID();
       const started = performance.now();

@@ -1739,6 +1739,16 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
     'https://openrouter.ai/api/alpha/decisions',
     'https://api.typesafe.ai/v1/systemone',
   ]);
+  reply = jev();
+  await model.check({
+    instructions: 'Apply the owner policy.',
+    input,
+    question: { ...question, instructions: 'Classify the action first.' },
+  });
+  assert.equal(
+    calls.at(-1)!.body.questions.run.instructions,
+    'Classify the action first.\nApply the owner policy.',
+  );
   for (const provider of ['openai', 'openrouter', 'typesafe'] as const) {
     connection = { provider, key: 'fixture-key' };
     for (const value of ['yes', 'no', 'other']) {

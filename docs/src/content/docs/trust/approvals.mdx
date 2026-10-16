@@ -25,6 +25,8 @@ Otto selects the checker from your current model connection:
 
 In a source install, an optional `TYPESAFE_API_KEY` selects Jev directly for all three checks: action permission, confirmation facts, and approval replies. This takes priority over the connection above. The decision service receives the same evidence that each check received before. See [Model settings](/connect/models/#decision-checks).
 
+For action permission, a decision model selects one category: forbidden or confirmation required, read or private draft, requested change, or unclear. Otto runs only reads, private drafts, and requested changes that pass the policy. A forbidden or unclear action needs your confirmation. Your selected LLM keeps its existing yes-or-no permission check when no decision service applies.
+
 | It sees                                                                         | It never sees                            |
 | ------------------------------------------------------------------------------- | ---------------------------------------- |
 | For main chat, your last five messages from the past day and the source request | Tool results, web pages, emails or files |

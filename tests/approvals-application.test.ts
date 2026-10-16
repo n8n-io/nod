@@ -185,7 +185,9 @@ test(
             } else {
               choice =
                 asked.has(input.userMessages?.at(-1)?.text ?? '') ||
-                cleared.has(String(input.action?.arguments?.recipient_email));
+                cleared.has(String(input.action?.arguments?.recipient_email))
+                  ? 'requested'
+                  : 'ask';
             }
             return Response.json({
               answers: [{ name, type: 'choice', choice }],

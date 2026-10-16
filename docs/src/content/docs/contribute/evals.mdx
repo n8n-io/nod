@@ -121,7 +121,7 @@ pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/
 
 The command compares the baseline LLM, the current LLM path, GPT Decisions, and Jev through OpenRouter. The current LLM path separates prompt changes from model changes. GPT Decisions needs `OPENAI_API_KEY`. Jev needs `OPENROUTER_API_KEY`. Keys stay in memory and do not enter the inputs or saved results.
 
-The 40 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, and a long request. Expected answers are fixed before the first request. The models receive only the input and the production policy.
+The 48 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
 
 Each case runs three times by default, with one warm-up request per model excluded from the score. Two workers rotate the model order. The run stops at an estimated $3. A failed warm-up blocks that model; failed requests never count as correct. The baseline skips a check if that revision does not have it.
 
@@ -129,7 +129,7 @@ Results go to `.local/capability-evals/decisions/<label>/`. The manifest saves c
 
 The report shows correct answers, unsafe approvals, errors, median time, and the 95th percentile. It also shows cases that pass at least once and on every attempt. These are check-request times, including network time, not whole-task times. Read all disagreements before changing a safety rule. A small synthetic sample cannot establish production safety.
 
-### Experiment on 16 October 2026
+### Initial experiment on 16 October 2026
 
 The baseline was fetched `origin/main` at `01912b89`. The candidate was `4c6f632c`. Both LLM paths used `gpt-6.1-sol` with low reasoning. The decision models were `gpt-6-luna` and `typesafe/jev-1.13`. The production prompts were unchanged during the experiment.
 

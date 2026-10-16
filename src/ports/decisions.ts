@@ -2,6 +2,7 @@ import type { ProviderUsageEvent } from './provider-usage.ts';
 
 export interface DecisionQuestion {
   name: 'run' | 'answer' | 'valid';
+  instructions?: string;
   choices: Array<{ value: string | boolean; description: string }>;
 }
 
