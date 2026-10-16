@@ -40,7 +40,7 @@ import {
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
-import { OttoGlyph, Rise } from './onboarding/motion';
+import { OttoGlyph, Rise } from '../components/motion';
 import { SidebarToggle } from '../components/sidebar-toggle';
 
 function verificationFailure(
@@ -115,6 +115,11 @@ function TaskCards({
                     <span className={`task-source-${task.source}`} aria-hidden="true" />
                   )}
                   {taskSources[task.source]}
+                  {task.kind && (
+                    <span className="task-kind">
+                      {task.kind === 'ongoing' ? 'Ongoing' : 'Right now'}
+                    </span>
+                  )}
                 </span>
                 <p className="task-title">{task.title}</p>
                 <div className="task-action" aria-live="polite">
@@ -125,7 +130,7 @@ function TaskCards({
                       disabled={disabled}
                       onClick={() => onStart(task)}
                     >
-                      Do it
+                      {task.kind === 'ongoing' ? 'Set it up' : 'Do it'}
                     </button>
                   ) : state === 'working' ? (
                     <span className="task-state">
@@ -137,9 +142,9 @@ function TaskCards({
                   ) : (
                     <span className="task-state">
                       <span className="task-check" aria-hidden="true">
-                        <Check size={13} strokeWidth={3} />
+                        <Check size={14} strokeWidth={3} />
                       </span>
-                      Done
+                      {task.kind === 'ongoing' ? 'Set up' : 'Done'}
                     </span>
                   )}
                 </div>

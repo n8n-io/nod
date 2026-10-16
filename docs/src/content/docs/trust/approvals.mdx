@@ -27,12 +27,12 @@ In a source install, an optional `TYPESAFE_API_KEY` selects Jev directly for all
 
 For action permission, a decision model selects one category: forbidden or confirmation required, read or private draft, requested change, or unclear. Otto runs only reads, private drafts, and requested changes that pass the policy. A forbidden or unclear action needs your confirmation. Your selected LLM keeps its existing yes-or-no permission check when no decision service applies.
 
-| It sees                                                                         | It never sees                            |
-| ------------------------------------------------------------------------------- | ---------------------------------------- |
-| For main chat, your last five messages from the past day and the source request | Tool results, web pages, emails or files |
-| The Otto message your latest one answered                                       | Anything Otto read while working         |
-| A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat |
-| The action and its arguments as Otto sends them                                 | Other people's words as yours            |
+| It sees                                                                         | It never sees                                                               |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| For main chat, your last five messages from the past day and the source request | Tool results, web pages, emails or files                                    |
+| The Otto message your latest one answered                                       | Anything Otto read while working                                            |
+| A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat, even when they started a schedule |
+| The action and its arguments as Otto sends them                                 | Other people's words as yours                                               |
 
 For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
 

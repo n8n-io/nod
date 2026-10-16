@@ -241,7 +241,34 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.ok(external);
   assert.match(external, /\brel="noopener noreferrer"/);
   assert.match(external, /\breferrerPolicy="no-referrer"/);
-  assert.doesNotMatch(result, /href="https:\/\/outside\.example\/connect"/);
+  const ordinary = JSDOM.fragment(result).querySelector(
+    'a[href="https://outside.example/connect"]',
+  );
+  assert.equal(ordinary?.getAttribute('target'), '_blank');
+  assert.equal(ordinary?.getAttribute('rel'), 'noopener noreferrer');
+  assert.equal(ordinary?.getAttribute('referrerPolicy'), 'no-referrer');
+  assert.equal(JSDOM.fragment(result).querySelector('button[data-setup="app"]'), null);
+  for (const href of [
+    'https://connect.composio.dev/link/synthetic',
+    'https://CONNECT.COMPOSIO.DEV:443/link/synthetic',
+    'https://composio.n8n.cloud/v1/connect/pair?ticket=synthetic',
+    'https://custom-proxy.example.test/v1/connect/pair?ticket=synthetic',
+  ]) {
+    const document = JSDOM.fragment(render(`[Connect Calendar](${href})`));
+    assert.ok(document.querySelector('button[data-setup="app"]'));
+    assert.equal(document.querySelector('a'), null);
+  }
+  for (const href of [
+    'https://connect.composio.dev.example.test/link/synthetic',
+    'https://connect.composio.dev:8443/link/synthetic',
+    'http://connect.composio.dev/link/synthetic',
+    'https://outside.example/v1/connect/pairing?ticket=synthetic',
+    'https://outside.example/other/v1/connect/pair?ticket=synthetic',
+  ]) {
+    const document = JSDOM.fragment(render(`[Connect Calendar](${href})`));
+    assert.equal(document.querySelector('button[data-setup="app"]'), null);
+    assert.equal(document.querySelector('a')?.getAttribute('href'), href);
+  }
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 

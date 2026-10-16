@@ -2,22 +2,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-export const secretFields = ['composioApiKey'];
-const integrationKeys = [
-  'COMPOSIO_GMAIL_AUTH_CONFIG_ID',
-  'COMPOSIO_CALENDAR_AUTH_CONFIG_ID',
-  'COMPOSIO_DRIVE_AUTH_CONFIG_ID',
-  'COMPOSIO_SHEETS_AUTH_CONFIG_ID',
-  'COMPOSIO_DOCS_AUTH_CONFIG_ID',
-  'COMPOSIO_SLACK_AUTH_CONFIG_ID',
-];
+const secretFields = ['composioApiKey'];
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 
 export function createSettingsStore(path, encryption) {
   let current;
   let loading;
   let writing = Promise.resolve();
-  let engineRevision = 0;
   async function write(value) {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.pending`;
@@ -108,25 +99,10 @@ export function createSettingsStore(path, encryption) {
   }
   function redacted(value) {
     return {
-      hasComposioKey: Boolean(value.secrets.composioApiKey),
       launchAtLogin: value.launchAtLogin,
       notifications: value.notifications,
       theme: value.theme,
       onboardingCompleted: value.onboardingCompleted,
-      keys: Object.fromEntries(
-        secretFields.map((field) => {
-          const metadata = value.keyMetadata[field];
-          const present = Boolean(value.secrets[field]);
-          return [
-            field,
-            {
-              suffix: present ? metadata.suffix : null,
-              source: present ? metadata.source : null,
-              updatedAt: present ? metadata.updatedAt : null,
-            },
-          ];
-        }),
-      ),
     };
   }
   return {
@@ -134,24 +110,11 @@ export function createSettingsStore(path, encryption) {
       await writing;
       return redacted(await read());
     },
-    async revision() {
-      await writing;
-      return engineRevision;
-    },
-    async revealKey(field) {
-      if (!secretFields.includes(field)) throw new Error('Choose a supported app connection key.');
-      await writing;
-      return reveal((await read()).secrets[field]);
-    },
-    save(input, importedConfiguration) {
+    save(input) {
       const operation = writing.then(async () => {
         if (!input || typeof input !== 'object' || Array.isArray(input))
           throw new Error('Check your settings and try again.');
-        if (
-          Object.keys(input).some(
-            (key) => !['theme', 'clearKeys', ...preferenceFields, ...secretFields].includes(key),
-          )
-        )
+        if (Object.keys(input).some((key) => !['theme', ...preferenceFields].includes(key)))
           throw new Error('These settings are not supported.');
         const previous = await read();
         const value = {
@@ -169,51 +132,7 @@ export function createSettingsStore(path, encryption) {
           if (typeof input[field] !== 'boolean') throw new Error('Check your preferences.');
           value[field] = input[field];
         }
-        if (input.clearKeys !== undefined) {
-          if (
-            !Array.isArray(input.clearKeys) ||
-            input.clearKeys.some((key) => !secretFields.includes(key))
-          )
-            throw new Error('Choose a supported key to remove.');
-          for (const key of input.clearKeys) {
-            delete value.secrets[key];
-            delete value.keyMetadata[key];
-          }
-        }
-        for (const key of secretFields) {
-          if (input[key] === null) {
-            delete value.secrets[key];
-            delete value.keyMetadata[key];
-            continue;
-          }
-          if (input[key] === undefined || input[key] === '') continue;
-          if (typeof input[key] !== 'string' || input[key].length > 16_384)
-            throw new Error('Enter a valid app connection key.');
-          const secret = input[key].trim();
-          if (secret) {
-            value.secrets[key] = protect(secret);
-            value.keyMetadata[key] = {
-              suffix: secret.length > 4 ? secret.slice(-4) : null,
-              source: importedConfiguration ? 'import' : 'manual',
-              updatedAt: new Date().toISOString(),
-            };
-          }
-        }
-        if (importedConfiguration) {
-          const allowed = Object.fromEntries(
-            integrationKeys
-              .filter((key) => typeof importedConfiguration[key] === 'string')
-              .map((key) => [key, importedConfiguration[key]]),
-          );
-          value.secrets.integrationConfiguration = protect(JSON.stringify(allowed));
-        }
-        if (secretFields.some((field) => value.secrets[field]))
-          value.secrets.vaultKey ??= protect(randomBytes(32).toString('base64'));
-        const changed = [...secretFields, 'integrationConfiguration'].some(
-          (field) => value.secrets[field] !== previous.secrets[field],
-        );
         await write(value);
-        if (changed) engineRevision++;
         return redacted(value);
       });
       writing = operation.catch(() => {});
@@ -236,10 +155,6 @@ export function createSettingsStore(path, encryption) {
         value = await read();
       }
       return {
-        ...(value.secrets.integrationConfiguration
-          ? JSON.parse(reveal(value.secrets.integrationConfiguration))
-          : {}),
-        COMPOSIO_API_KEY: reveal(value.secrets.composioApiKey),
         OTTO_VAULT_KEY: reveal(value.secrets.vaultKey),
       };
     },

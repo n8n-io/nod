@@ -62,7 +62,9 @@ If a download isn't available, you can import the matching `Otto-Runtime-darwin-
 
 The server listens on a loopback port that needs a token, created again at every launch. Only the app's own windows receive it, so a website in your normal browser can't reach Otto.
 
-Electron `safeStorage` encrypts the Composio key and the Vault key. It uses the macOS key store on a Mac and DPAPI on Windows. Model connections and saved logins are encrypted with the Vault key. None of them enter the containers.
+Electron `safeStorage` encrypts the Vault key. It uses the macOS key store on a Mac and DPAPI on Windows. Model connections and saved logins are encrypted with the Vault key. None of them enter the containers.
+
+App connections use Otto's connection by default, without a Composio key. You can use your own Composio key instead. Notion and Linear connect directly to their hosted MCP servers. See [Apps](/connect/apps/).
 
 ## Where your data lives
 
@@ -171,6 +173,16 @@ The app, DMG and matching runtime archive land in `dist/desktop`. `--seed-cache`
 | Use a fresh, throwaway profile      | `OTTO_DESKTOP_USER_DATA=/tmp/otto-onboarding-review pnpm --dir desktop start --onboarding` |
 
 `OTTO_DESKTOP_USER_DATA` works only in development. Packaged apps always use their normal profile.
+
+To test a local connection service, run the unpackaged app with a new, absolute profile path and a proxy origin:
+
+```sh title="Terminal"
+OTTO_DESKTOP_USER_DATA=/tmp/otto-proxy-review \
+OTTO_COMPOSIO_PROXY_URL=http://127.0.0.1:8787 \
+pnpm run desktop:dev
+```
+
+For OAuth callbacks, use your development service's public HTTPS origin instead. The address must have no path, query, fragment or user credentials; HTTP is allowed only for loopback. Packaged apps and source launches without an explicit development profile ignore this override. Never use your normal Otto profile for this test.
 
 <details>
 <summary>Build for Windows</summary>

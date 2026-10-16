@@ -1,6 +1,30 @@
-import type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
+import type {
+  IntegrationService,
+  IntegrationServiceInfo,
+  IntegrationAccessAttempt,
+  IntegrationAccessProgress,
+  IntegrationManagedAccess,
+} from '../shared/integrations.ts';
 import type { Connection } from '../shared/contracts.ts';
 export type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
+export interface IntegrationAccessProvider {
+  origin: string;
+  accessStatus(): Promise<IntegrationManagedAccess>;
+  startAccess(
+    browserKey: unknown,
+    origin: string,
+    challenge: string,
+    signal?: AbortSignal,
+  ): Promise<IntegrationAccessAttempt>;
+  pollAccess(id: string, signal?: AbortSignal): Promise<IntegrationAccessProgress>;
+  completeAccess(
+    id: string,
+    challenge: string,
+    signal?: AbortSignal,
+  ): Promise<IntegrationManagedAccess>;
+  cancelAccess(id: string): Promise<{ cancelled: true }>;
+  revokeAccess(): Promise<IntegrationManagedAccess>;
+}
 export type ConnectedApp = Pick<
   Connection,
   | 'slug'
@@ -27,12 +51,14 @@ export interface IntegrationSearch {
   tools: unknown;
   suggestions: Array<{ useCase: string; primaryToolSlugs: string[] }>;
 }
+export interface IntegrationAuthorization {
+  accountId: string;
+  url: string;
+  verificationSecret?: string;
+}
 export interface IntegrationSession {
   id: string;
-  authorize(
-    service: IntegrationService,
-    callbackUrl: string,
-  ): Promise<{ accountId: string; url: string }>;
+  authorize(service: IntegrationService, callbackUrl: string): Promise<IntegrationAuthorization>;
   search(query: string, signal?: AbortSignal): Promise<IntegrationSearch>;
   execute(
     action: string,
@@ -44,6 +70,7 @@ export interface IntegrationSession {
     action: string,
     file: IntegrationFile,
     signal?: AbortSignal,
+    accountId?: string,
   ): Promise<Record<string, unknown>>;
 }
 export interface IntegrationEvent {
@@ -136,15 +163,36 @@ export interface InboxSnippet {
   subject: string;
   snippet: string;
 }
+export interface InboxThread {
+  subject: string;
+  from: string;
+  received: string;
+  messages: number;
+  waitingOnYou: boolean;
+  flagged: boolean;
+  automated: boolean;
+  text: string;
+}
 export interface IntegrationProvider {
   id: string;
   configured: boolean;
+  configurationId?: string;
   setApiKey?(apiKey?: string): void;
   verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
   listServices?(): Promise<IntegrationServiceInfo[]>;
   webhooksConfigured: boolean;
   supportsSubscriptions: readonly IntegrationService[];
+  authorize?(
+    ownerId: string,
+    service: IntegrationService,
+    callbackUrl: string,
+  ): Promise<IntegrationAuthorization>;
+  connectionStatus?(
+    ownerId: string,
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<{ pairingConfirmed: boolean; signInRequired?: boolean }>;
   createSession(
     ownerId: string,
     accounts: Partial<Record<IntegrationService, string | string[]>>,
@@ -156,7 +204,7 @@ export interface IntegrationProvider {
     service: IntegrationService,
     accountId: string,
     callbackUrl: string,
-  ): Promise<{ accountId: string; url: string; authConfigId: string }>;
+  ): Promise<IntegrationAuthorization & { authConfigId: string }>;
   inspectAccount(
     id: string,
     ownerId: string,
@@ -176,16 +224,21 @@ export interface IntegrationProvider {
   ): Promise<VerificationEmail[] | undefined>;
   sentEmails?(accountId: string, signal: AbortSignal): Promise<SentEmail[]>;
   inboxSnippets?(accountId: string, signal: AbortSignal): Promise<InboxSnippet[]>;
+  inboxThreads?(accountId: string, signal: AbortSignal): Promise<InboxThread[]>;
   pollInbox?(
     accountId: string,
     cursor: string | null,
     signal: AbortSignal,
   ): Promise<IntegrationInboxPoll>;
-  parseCallback(query: unknown):
-    | Promise<{ state: string; accountId: string; success: boolean }>
+  parseCallback(
+    query: unknown,
+    pending?: { accountId: string; verificationSecret?: string | null; service: string },
+  ):
+    | Promise<{ state: string; accountId: string; pendingAccountId?: string; success: boolean }>
     | {
         state: string;
         accountId: string;
+        pendingAccountId?: string;
         success: boolean;
       };
   subscribe(

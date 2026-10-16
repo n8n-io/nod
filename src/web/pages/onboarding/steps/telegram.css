@@ -10,7 +10,7 @@
 .ob-tg-heading {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   font-weight: 500;
 }
 
@@ -22,7 +22,7 @@
   height: 32px;
   border-radius: 50%;
   background: var(--telegram);
-  color: var(--gray-0);
+  color: var(--on-solid);
 }
 
 .ob-tg-logo > svg {

@@ -5,7 +5,7 @@ export interface MemoryCurator {
   configured: boolean;
   curate(
     request: {
-      task: 'reflect' | 'review' | 'interview' | 'style' | 'plan' | 'analytics';
+      task: 'reflect' | 'review' | 'interview' | 'style' | 'plan' | 'brief' | 'analytics';
       instructions: string;
       input: object;
     },

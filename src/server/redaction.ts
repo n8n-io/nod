@@ -43,7 +43,11 @@ function compileRedactor(
   const stringLimit = Math.min(64_000, Math.max(100, limits.string ?? 8000));
   const payloadLimit = Math.min(160_000, Math.max(1000, limits.payload ?? payloadDefault));
   const values = [
-    ...new Set(secrets.filter((value) => value.length >= (limits.minimumSecretLength ?? 8))),
+    ...new Set(
+      secrets
+        .flatMap((value) => [value, value.trim()])
+        .filter((value) => value.length >= (limits.minimumSecretLength ?? 8)),
+    ),
   ].sort((a, b) => b.length - a.length);
   const secretVariants = [...new Set(values.flatMap((value) => [value, encodeURIComponent(value)]))]
     .sort((a, b) => b.length - a.length)

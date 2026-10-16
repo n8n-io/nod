@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { getDomain } from 'tldts';
@@ -16,6 +16,7 @@ import {
   type IntegrationSearch,
   type IntegrationServiceInfo,
   type IntegrationSession,
+  type InboxThread,
   type SentEmail,
 } from '../ports/integrations.ts';
 import { integrationServiceIds, integrationServices } from '../shared/integrations.ts';
@@ -90,7 +91,10 @@ type ConnectionRow = {
   pending_account_id: string | null;
   pending_account_email: string | null;
   pending_auth_config_id: string | null;
+  replaces_connection_id: string | null;
   callback_hash: string | null;
+  callback_claim_id: string | null;
+  callback_verifier: string | null;
   setup_link_hash: string | null;
   callback_expires: Date | null;
   callback_return_to: ReturnTarget;
@@ -111,6 +115,7 @@ type ConnectionRow = {
   account_checked_at: Date | null;
   revoked: boolean;
   provider_id: string;
+  configuration_id: string | null;
   turn_id: string | null;
 };
 type IntegrationOptions = {
@@ -124,9 +129,14 @@ type IntegrationOptions = {
     current?: (client: PoolClient) => Promise<boolean>,
   ): Promise<unknown>;
   provider: IntegrationProvider;
+  standbyProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
   learnWritingStyle?(
     read: (signal: AbortSignal) => Promise<SentEmail[]>,
+    stop: AbortSignal,
+  ): Promise<void>;
+  briefInbox?(
+    read: (signal: AbortSignal) => Promise<InboxThread[]>,
     stop: AbortSignal,
   ): Promise<void>;
   readWorkspaceFile?(turn: TurnRef, path: string, maxBytes: number): Promise<Uint8Array>;
@@ -154,7 +164,7 @@ function browserService(origin: string) {
 function failure(prefix: string, error: unknown) {
   return `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
 }
-class IntegrationError extends Error {
+export class IntegrationError extends Error {
   constructor(
     message: string,
     readonly statusCode = 400,
@@ -226,12 +236,33 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (featured) return { slug, ...featured };
     return { slug, name: slug.replaceAll('_', ' '), description: '' };
   }
+  function providerForRow(row: Pick<ConnectionRow, 'provider_id'>) {
+    if (row.provider_id !== providerId)
+      throw new IntegrationError('This connection provider is unavailable.', 503);
+    return provider;
+  }
+  function configurationMatches(row: Pick<ConnectionRow, 'provider_id' | 'configuration_id'>) {
+    return Boolean(
+      row.provider_id === providerId &&
+      provider.configured &&
+      (!provider.configurationId || row.configuration_id === provider.configurationId),
+    );
+  }
+  function rowProvider(row: Pick<ConnectionRow, 'provider_id' | 'configuration_id'>) {
+    return [provider, ...(options.standbyProviders ?? [])].find(
+      (item) =>
+        item.id === row.provider_id &&
+        item.configured &&
+        (!item.configurationId || item.configurationId === row.configuration_id),
+    );
+  }
   const savedSessions = (
     await pool.query<{ name: string | null }>("SELECT to_regclass('integration_sessions') AS name")
   ).rows[0].name
     ? (
-        await pool.query<{ session_id: string }>(
-          'SELECT session_id FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2',
+        await pool.query<{ session_id: string; configuration_id: string | null }>(
+          `SELECT session_id,to_jsonb(integration_sessions)->>'configuration_id' AS configuration_id
+           FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2`,
           [configuredOwner, providerId],
         )
       ).rows
@@ -261,9 +292,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
     CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
     ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
+      ADD COLUMN IF NOT EXISTS callback_verifier text,
+      DROP COLUMN IF EXISTS pairing_code,
+      ADD COLUMN IF NOT EXISTS callback_claim_id text,
+      ADD COLUMN IF NOT EXISTS configuration_id text,
       ADD COLUMN IF NOT EXISTS setup_link_hash text,
       ADD COLUMN IF NOT EXISTS pending_account_email text,
       ADD COLUMN IF NOT EXISTS pending_auth_config_id text,
+      ADD COLUMN IF NOT EXISTS replaces_connection_id uuid,
       ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
@@ -290,6 +326,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   let refreshing: Promise<void> | undefined;
   let polling: Promise<void> | undefined;
   const stop = new AbortController();
+  let switching: Promise<void> | undefined;
+  const working = new Set<Promise<unknown>>();
+  function steady<T>(operation: () => Promise<T>) {
+    if (switching)
+      return Promise.reject(
+        new IntegrationError('Your app connection is changing. Try again.', 409),
+      );
+    const result = operation();
+    working.add(result);
+    const settled = () => working.delete(result);
+    result.then(settled, settled);
+    return result;
+  }
   function background(operation: () => Promise<void>) {
     if (closed) return undefined;
     return options.admission ? options.admission.run(operation) : Promise.resolve().then(operation);
@@ -301,7 +350,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     ]).catch(() => {});
   void background(async () => {
     if (!provider.configured) return;
-    for (const row of savedSessions) await bounded(() => provider.deleteSession(row.session_id));
+    for (const row of savedSessions)
+      if (!provider.configurationId || row.configuration_id === provider.configurationId)
+        await bounded(() => provider.deleteSession(row.session_id));
     for (const row of stale.rows.filter((item) => item.provider_id === providerId)) {
       if (row.trigger_id) await bounded(() => provider.unsubscribe(row.trigger_id!));
       for (const account of new Set([row.account_id, row.pending_account_id]))
@@ -323,11 +374,103 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   async function connectionRows(ownerId: string) {
     assertOwner(ownerId);
     return (
-      await pool.query<ConnectionRow>(
-        'SELECT * FROM app_connections WHERE owner_id = $1 AND provider_id = $2',
-        [ownerId, providerId],
-      )
+      await pool.query<ConnectionRow>('SELECT * FROM app_connections WHERE owner_id=$1', [ownerId])
     ).rows;
+  }
+
+  async function boundedRequest<T>(operation: () => Promise<T>, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const timeout = new AbortController();
+    try {
+      return await Promise.race([
+        operation(),
+        delay(10_000, undefined, {
+          signal: AbortSignal.any([signal, timeout.signal]),
+          ref: false,
+        }).then(() => {
+          throw new Error('Account request timed out.');
+        }),
+      ]);
+    } finally {
+      timeout.abort();
+    }
+  }
+
+  async function verifyConfigurations() {
+    if (closed) return;
+    const configurationId = provider.configurationId;
+    if (!provider.configured || !configurationId) return;
+    const { rows: pending } = await pool.query<ConnectionRow>(
+      `SELECT * FROM app_connections WHERE owner_id=$1 AND provider_id=$2
+         AND configuration_id IS DISTINCT FROM $3 AND account_id IS NOT NULL AND NOT revoked`,
+      [configuredOwner, provider.id, configurationId],
+    );
+    await Promise.all(
+      Array.from({ length: Math.min(4, pending.length) }, async () => {
+        while (pending.length && !closed) {
+          const row = pending.shift()!;
+          try {
+            const remote = await boundedRequest(
+              () =>
+                provider.inspectAccount(row.account_id!, configuredOwner, { verifyOwner: true }),
+              stop.signal,
+            );
+            if (
+              closed ||
+              !provider.configured ||
+              provider.configurationId !== configurationId ||
+              !remote.active ||
+              remote.service !== row.slug
+            )
+              continue;
+            const client = await pool.connect();
+            let saved = false;
+            try {
+              await client.query('BEGIN');
+              await client.query(
+                'SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 FOR UPDATE NOWAIT',
+                [row.id, configuredOwner],
+              );
+              if (!closed && provider.configured && provider.configurationId === configurationId) {
+                const updated = await client.query(
+                  `UPDATE app_connections SET configuration_id=$1 WHERE id=$2 AND owner_id=$3
+                     AND provider_id=$4 AND account_id=$5 AND configuration_id IS NOT DISTINCT FROM $6
+                     AND slug=$7 AND NOT revoked
+                     AND NOT EXISTS (
+                       SELECT 1 FROM app_connections pending
+                       WHERE pending.owner_id=$3 AND pending.replaces_connection_id=$2
+                         AND pending.account_id IS NULL AND pending.callback_expires>now()
+                         AND NOT pending.revoked
+                     )`,
+                  [
+                    configurationId,
+                    row.id,
+                    configuredOwner,
+                    provider.id,
+                    row.account_id,
+                    row.configuration_id,
+                    row.slug,
+                  ],
+                );
+                saved = Boolean(updated.rowCount);
+              }
+              await steady(async () => {
+                if (provider.configurationId !== configurationId)
+                  throw new IntegrationError('This connection provider changed.', 409);
+                await client.query('COMMIT');
+              });
+            } catch (error) {
+              await client.query('ROLLBACK');
+              throw error;
+            } finally {
+              client.release();
+            }
+            if (!saved) continue;
+            if (!closed) options.refresh?.();
+          } catch {}
+        }
+      }),
+    );
   }
 
   async function withAccountSession<T>(
@@ -336,6 +479,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     signal: AbortSignal | undefined,
     operation: (session: IntegrationSession) => Promise<T>,
   ) {
+    if (rows.some((row) => !configurationMatches(row)))
+      throw new IntegrationError('This connected account is unavailable.', 404);
     signal?.throwIfAborted();
     const accounts: Partial<Record<Slug, string[]>> = {};
     for (const row of rows) (accounts[row.slug] ??= []).push(row.account_id!);
@@ -349,6 +494,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           !latest ||
           latest.revoked ||
           !latest.account_active ||
+          !configurationMatches(latest) ||
+          latest.provider_id !== row.provider_id ||
+          latest.watch_revision !== row.watch_revision ||
           latest.account_id !== row.account_id
         )
           throw new IntegrationError('This connected account is unavailable.', 404);
@@ -383,6 +531,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       if (error instanceof IntegrationCatalogAccessDenied)
         throw new IntegrationError(error.message, 403);
+      if (error instanceof IntegrationConnectionError) throw error;
       throw new IntegrationError('The app catalog is unavailable. Try again later.', 502);
     }
     serviceCatalog = new Map(entries.map((entry) => [entry.slug, entry]));
@@ -426,8 +575,15 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       `UPDATE app_connections SET watch_attempted=true,watch_attempted_at=now(),watch_revision=watch_revision+1 WHERE id=$1 AND owner_id=$2 AND provider_id=$3
        AND watch_requested AND (NOT watch_attempted OR watch_attempted_at IS NULL OR watch_attempted_at < now()-interval '5 minutes')
        AND (watch_retry_at IS NULL OR watch_retry_at<=now()) AND NOT revoked AND account_id IS NOT NULL
-       AND trigger_id IS NULL AND slug=ANY($4::text[]) RETURNING *`,
-      [id, configuredOwner, providerId, provider.supportsSubscriptions],
+       AND trigger_id IS NULL AND slug=ANY($4::text[])
+       AND ($5::text IS NULL OR configuration_id=$5) RETURNING *`,
+      [
+        id,
+        configuredOwner,
+        providerId,
+        provider.supportsSubscriptions,
+        provider.configurationId ?? null,
+      ],
     );
     const row = claimed.rows[0];
     if (!row) return;
@@ -439,16 +595,25 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       const saved = await pool.query(
         `UPDATE app_connections SET trigger_id=$2,triggers_enabled=true,watch_failures=0,watch_retry_at=NULL WHERE id=$1 AND owner_id=$3
-         AND provider_id=$4 AND watch_requested AND NOT revoked AND watch_revision=$5 AND trigger_id IS NULL`,
-        [row.id, trigger.id, configuredOwner, providerId, row.watch_revision],
+         AND provider_id=$4 AND watch_requested AND NOT revoked AND watch_revision=$5 AND trigger_id IS NULL
+         AND ($6::text IS NULL OR configuration_id=$6)`,
+        [
+          row.id,
+          trigger.id,
+          configuredOwner,
+          providerId,
+          row.watch_revision,
+          provider.configurationId ?? null,
+        ],
       );
       if (!saved.rowCount) await provider.unsubscribe(trigger.id);
     } catch {
       await pool.query(
         `UPDATE app_connections SET watch_attempted=false,watch_failures=watch_failures+1,
         watch_retry_at=now()+LEAST(3600,5*power(2,LEAST(watch_failures,10)))*interval '1 second'
-        WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND watch_revision=$4 AND trigger_id IS NULL`,
-        [row.id, configuredOwner, providerId, row.watch_revision],
+        WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND watch_revision=$4 AND trigger_id IS NULL
+        AND ($5::text IS NULL OR configuration_id=$5)`,
+        [row.id, configuredOwner, providerId, row.watch_revision, provider.configurationId ?? null],
       );
     }
   }
@@ -461,6 +626,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         .filter(
           (row) =>
             row.provider_id === providerId &&
+            configurationMatches(row) &&
             provider.supportsSubscriptions.includes(row.slug) &&
             row.watch_requested &&
             !row.revoked &&
@@ -476,6 +642,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       (row) =>
         row.account_id &&
         !row.revoked &&
+        configurationMatches(row) &&
         (!row.account_checked_at || Date.now() - row.account_checked_at.getTime() > 60_000),
     );
     await Promise.all(
@@ -571,7 +738,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const accounts = rows.filter((row) => row.slug === slug && row.account_id);
       const entries: Array<ConnectionRow | undefined> = accounts.length ? accounts : [undefined];
       for (const row of entries) {
-        const active = Boolean(row?.account_id && !row.revoked && row.account_active);
+        const changed = Boolean(row && !configurationMatches(row));
+        const active = Boolean(row?.account_id && !row.revoked && row.account_active && !changed);
         const accountName = row?.account_name ?? undefined;
         const accountEmail = row?.account_email ?? undefined;
         const supported = supportsWatch(slug);
@@ -603,7 +771,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ...(row ? { connectionId: row.id, accountId: row.account_id! } : {}),
           ...(row
             ? {
-                reconnectRequired: row.inbox_reconnect_required,
+                reconnectRequired: changed || row.inbox_reconnect_required,
                 canReconnect: Boolean(
                   !row.revoked && provider.configured && provider.reconnectAccount,
                 ),
@@ -622,9 +790,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 ? 'unavailable'
                 : 'pending',
           supportsTriggers: supported,
-          description: row?.inbox_reconnect_required
-            ? 'Inbox history expired. Reconnect this account to resume new email updates. Review the missing interval separately; reconnecting does not recover it.'
-            : service.description,
+          description: changed
+            ? 'The integration service changed. Connect this account again to use it here.'
+            : row?.inbox_reconnect_required
+              ? 'Inbox history expired. Reconnect this account to resume new email updates. Review the missing interval separately; reconnecting does not recover it.'
+              : service.description,
         });
       }
     }
@@ -673,7 +843,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function analyticsConnections(): Promise<AnalyticsConnection[]> {
     return (await connectionRows(configuredOwner))
-      .filter((row) => row.account_id && row.account_active && !row.revoked)
+      .filter(
+        (row) => row.account_id && row.account_active && !row.revoked && configurationMatches(row),
+      )
       .map((row) => connectionAnalytics(row.slug));
   }
 
@@ -706,7 +878,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         row.slug === slug &&
         row.account_id &&
         (!row.revoked || includeRevoked) &&
-        (row.account_active || includeRevoked),
+        ((row.account_active && configurationMatches(row)) || includeRevoked),
     );
     if (connectionId) {
       const row = rows.find((item) => item.id === connectionId);
@@ -723,46 +895,104 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return rows[0];
   }
 
-  async function connect(slug: Slug, returnTo: ReturnTarget = 'apps', turn?: TurnRef) {
+  async function connect(
+    slug: Slug,
+    returnTo: ReturnTarget = 'apps',
+    turn?: TurnRef,
+    replacement?: ConnectionRow,
+  ) {
     await requireService(slug);
     await pool.query(
-      'DELETE FROM app_connections WHERE owner_id=$1 AND account_id IS NULL AND callback_expires<now()',
-      [configuredOwner],
+      `DELETE FROM app_connections WHERE owner_id=$1 AND account_id IS NULL AND callback_expires<now()
+       AND (configuration_id IS NOT DISTINCT FROM $2 OR callback_expires<now()-interval '10 minutes')`,
+      [configuredOwner, provider.configurationId ?? null],
     );
     const active = (await connectionRows(configuredOwner)).filter(
-      (row) => row.slug === slug && row.account_id && !row.revoked,
+      (row) => row.slug === slug && row.account_id && !row.revoked && configurationMatches(row),
     );
     if (active.length >= 10)
       throw new IntegrationError('This service supports up to ten connected accounts.', 409);
     const nonce = randomBytes(32).toString('base64url');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
     callbackUrl.searchParams.set('state', nonce);
+    const configurationId = provider.configurationId;
     track(slug, 'started');
     let session: IntegrationSession | undefined;
     try {
-      session = await provider.createSession(configuredOwner, {});
-      const attempt = await session.authorize(slug, callbackUrl.href);
+      if (!provider.authorize) session = await provider.createSession(configuredOwner, {});
+      const attempt = provider.authorize
+        ? await provider.authorize(configuredOwner, slug, callbackUrl.href)
+        : await session!.authorize(slug, callbackUrl.href);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
         throw new IntegrationError(
           'The connection provider did not return a valid sign-in link.',
           502,
         );
-      await pool.query(
-        `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash)
-         VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8)`,
-        [
-          configuredOwner,
-          slug,
-          attempt.accountId,
-          createHash('sha256').update(nonce).digest('hex'),
-          providerId,
-          returnTo,
-          turn?.turnId ?? null,
-          createHash('sha256').update(redirect.href).digest('hex'),
-        ],
-      );
-      return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
+      const client = await pool.connect();
+      let discarded: ConnectionRow[] = [];
+      try {
+        await client.query('BEGIN');
+        if (replacement) {
+          const current = await client.query<ConnectionRow>(
+            `SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3
+             AND account_id=$4 AND configuration_id IS NOT DISTINCT FROM $5 AND NOT revoked FOR UPDATE`,
+            [
+              replacement.id,
+              configuredOwner,
+              replacement.provider_id,
+              replacement.account_id,
+              replacement.configuration_id,
+            ],
+          );
+          if (
+            !current.rows[0] ||
+            configurationMatches(current.rows[0]) ||
+            current.rows[0].account_email !== replacement.account_email
+          )
+            throw new IntegrationError('This connected account changed. Try again.', 409);
+          discarded = (
+            await client.query<ConnectionRow>(
+              'DELETE FROM app_connections WHERE owner_id=$1 AND replaces_connection_id=$2 AND account_id IS NULL RETURNING *',
+              [configuredOwner, replacement.id],
+            )
+          ).rows;
+        }
+        await client.query(
+          `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash,callback_verifier,configuration_id,replaces_connection_id,pending_account_email)
+           VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            configuredOwner,
+            slug,
+            attempt.accountId,
+            createHash('sha256').update(nonce).digest('hex'),
+            providerId,
+            returnTo,
+            turn?.turnId ?? null,
+            createHash('sha256').update(redirect.href).digest('hex'),
+            attempt.verificationSecret ?? null,
+            configurationId ?? null,
+            replacement?.id ?? null,
+            replacement ? normalizedEmail(replacement.account_email!) : null,
+          ],
+        );
+        if (provider.configurationId !== configurationId)
+          throw new IntegrationError(
+            'Your app connection changed while this was starting. Try again.',
+            409,
+          );
+        await steady(() => client.query('COMMIT'));
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+      for (const previous of discarded) await discardReconnect(previous);
+      return {
+        url: attempt.url,
+        ...(returnTo === 'window' ? { attempt: nonce } : {}),
+      };
     } catch (error) {
       track(slug, 'failed', connectionFailure(error));
       throw error;
@@ -772,25 +1002,36 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   async function discardReconnect(row: ConnectionRow, accountId = row.pending_account_id) {
-    if (!accountId || accountId === row.account_id) return;
+    const selected = rowProvider(row);
+    if (!accountId || accountId === row.account_id || !selected) return;
     try {
       const retained = await pool.query(
         `SELECT 1 FROM app_connections WHERE owner_id=$1 AND provider_id=$2
          AND (account_id=$3 OR pending_account_id=$3) LIMIT 1`,
         [configuredOwner, row.provider_id, accountId],
       );
-      if (!retained.rowCount) await provider.deleteAccount(accountId, configuredOwner);
+      if (!retained.rowCount) await selected.deleteAccount(accountId, configuredOwner);
     } catch {}
   }
 
-  async function clearReconnect(id: string, hash: string) {
+  async function clearReconnect(id: string, hash: string, claimId?: string) {
+    const discarded = await pool.query<ConnectionRow>(
+      `DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3
+       AND account_id IS NULL AND callback_claim_id IS NOT DISTINCT FROM $4 RETURNING *`,
+      [id, configuredOwner, hash, claimId ?? null],
+    );
+    if (discarded.rows[0]) {
+      await discardReconnect(discarded.rows[0]);
+      return discarded.rows[0].pending_account_id;
+    }
     const { rows } = await pool.query<ConnectionRow>(
       `WITH pending AS (
-         SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL FOR UPDATE
+         SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL
+         AND callback_claim_id IS NOT DISTINCT FROM $4 FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-       callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
+       callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
        WHERE c.id=pending.id RETURNING pending.*`,
-      [id, configuredOwner, hash],
+      [id, configuredOwner, hash, claimId ?? null],
     );
     if (rows[0]) await discardReconnect(rows[0]);
     return rows[0]?.pending_account_id;
@@ -803,7 +1044,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     turn?: TurnRef,
   ) {
     const row = await selectConnection(configuredOwner, slug, connectionId, true);
-    if (row.revoked || !provider.configured || !provider.reconnectAccount)
+    if (!configurationMatches(row)) {
+      if (row.revoked || !normalizedEmail(row.account_email ?? ''))
+        throw new IntegrationError(
+          'The original account identity could not be verified. Add an account separately; the saved connection will remain unchanged.',
+          409,
+        );
+      return connect(slug, returnTo, turn, row);
+    }
+    const selected = providerForRow(row);
+    if (row.revoked || !selected.configured || !selected.reconnectAccount)
       throw new IntegrationError(
         'This account cannot be reconnected. Add an account separately.',
         409,
@@ -827,7 +1077,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       `WITH previous AS (
          SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=$6,pending_auth_config_id=NULL,
-       callback_hash=$5,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
+       callback_hash=$5,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
        FROM previous WHERE c.id=previous.id RETURNING previous.*`,
       [
         row.id,
@@ -846,7 +1096,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     track(slug, 'started');
     let attemptedId: string | undefined;
     try {
-      const attempt = await provider.reconnectAccount(
+      const attempt = await selected.reconnectAccount(
         configuredOwner,
         slug,
         row.account_id!,
@@ -859,26 +1109,32 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           'The connection provider did not return a valid sign-in link.',
           502,
         );
-      const saved = await pool.query(
-        `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8
-         WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND callback_hash=$5 AND NOT revoked`,
-        [
-          row.id,
-          configuredOwner,
-          row.provider_id,
-          row.account_id,
-          hash,
-          attemptedId,
-          z.string().min(1).max(200).parse(attempt.authConfigId),
-          createHash('sha256').update(redirect.href).digest('hex'),
-        ],
+      const saved = await steady(() =>
+        pool.query(
+          `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9
+           WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND callback_hash=$5 AND NOT revoked`,
+          [
+            row.id,
+            configuredOwner,
+            row.provider_id,
+            row.account_id,
+            hash,
+            attemptedId,
+            z.string().min(1).max(200).parse(attempt.authConfigId),
+            createHash('sha256').update(redirect.href).digest('hex'),
+            attempt.verificationSecret ?? null,
+          ],
+        ),
       );
       if (!saved.rowCount)
         throw new IntegrationError(
           'This connection attempt was replaced. Use the newest sign-in link.',
           409,
         );
-      return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
+      return {
+        url: attempt.url,
+        ...(returnTo === 'window' ? { attempt: nonce } : {}),
+      };
     } catch (error) {
       const cleared = await clearReconnect(row.id, hash);
       if (attemptedId && cleared !== attemptedId) await discardReconnect(row, attemptedId);
@@ -887,43 +1143,78 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
-  async function completeConnection(parsed: unknown, pending: ConnectionRow) {
+  async function completeConnection(
+    parsed: unknown,
+    pending: ConnectionRow,
+    verifiedAccount?: (accountId: string) => void,
+  ) {
     const query = z
       .object({
         state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
         accountId: z.string().min(1).max(200),
+        pendingAccountId: z.string().min(1).max(200).optional(),
         success: z.literal(true),
       })
       .parse(parsed);
     const hash = createHash('sha256').update(query.state).digest('hex');
-    const { rows } = await pool.query<ConnectionRow>(
-      'SELECT * FROM app_connections WHERE owner_id=$1 AND callback_hash=$2 AND callback_expires>now() AND pending_account_id=$3 AND provider_id=$4',
-      [configuredOwner, hash, query.accountId, pending.provider_id],
-    );
-    const row = rows[0];
-    if (!row) throw new IntegrationError('This connection link is expired or already used.', 409);
-    const remote = await provider.inspectAccount(
-      row.pending_account_id!,
+    const row = pending;
+    if (
+      hash !== row.callback_hash ||
+      (query.pendingAccountId ?? query.accountId) !== row.pending_account_id ||
+      !row.callback_claim_id
+    )
+      throw new IntegrationError('This connection link is expired or already used.', 409);
+    if (!configurationMatches(row))
+      throw new IntegrationError('This connection provider changed. Start sign-in again.', 409);
+    const remote = await providerForRow(row).inspectAccount(
+      query.accountId,
       configuredOwner,
-      row.account_id ? { verifyOwner: true } : undefined,
+      row.account_id || row.replaces_connection_id || query.pendingAccountId
+        ? { verifyOwner: true }
+        : undefined,
     );
     if (!remote.active || remote.service !== row.slug)
       throw new IntegrationError('App sign-in is incomplete. Connect again.', 409);
+    if (query.pendingAccountId && query.pendingAccountId !== query.accountId)
+      verifiedAccount?.(query.accountId);
     if (
-      row.account_id &&
+      (row.account_id || row.replaces_connection_id) &&
       (!row.pending_account_email ||
         normalizedEmail(remote.accountEmail ?? '') !== row.pending_account_email ||
-        !row.pending_auth_config_id ||
-        remote.authConfigId !== row.pending_auth_config_id)
+        (row.account_id &&
+          (!row.pending_auth_config_id || remote.authConfigId !== row.pending_auth_config_id)))
     )
       throw new IntegrationError('Sign in with the original account to reconnect it.', 409);
     let connectedId = row.id;
     let previousTrigger = row.trigger_id;
     await transaction(async (client) => {
+      let replacement: ConnectionRow | undefined;
+      if (row.replaces_connection_id) {
+        replacement = (
+          await client.query<ConnectionRow>(
+            'SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND slug=$3 AND NOT revoked FOR UPDATE',
+            [row.replaces_connection_id, configuredOwner, row.slug],
+          )
+        ).rows[0];
+        if (
+          !replacement?.account_id ||
+          configurationMatches(replacement) ||
+          normalizedEmail(replacement.account_email ?? '') !== row.pending_account_email
+        )
+          throw new IntegrationError('This connected account changed. Start sign-in again.', 409);
+      }
       const claimed = await client.query<ConnectionRow>(
         `SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND callback_hash=$4
-         AND callback_expires>now() AND pending_account_id=$5 AND account_id IS NOT DISTINCT FROM $6 AND NOT revoked FOR UPDATE`,
-        [row.id, configuredOwner, row.provider_id, hash, row.pending_account_id, row.account_id],
+         AND callback_expires>now() AND pending_account_id=$5 AND account_id IS NOT DISTINCT FROM $6 AND callback_claim_id=$7 AND NOT revoked FOR UPDATE`,
+        [
+          row.id,
+          configuredOwner,
+          row.provider_id,
+          hash,
+          row.pending_account_id,
+          row.account_id,
+          pending.callback_claim_id,
+        ],
       );
       if (!claimed.rows[0])
         throw new IntegrationError('This connection link was already used.', 409);
@@ -937,29 +1228,50 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         'SELECT * FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND account_id=$3 AND id<>$4 FOR UPDATE',
         [configuredOwner, row.provider_id, query.accountId, row.id],
       );
-      if (row.account_id) {
-        if (existing.rows[0])
+      if (row.account_id || replacement) {
+        const previous = replacement ?? row;
+        connectedId = previous.id;
+        if (existing.rows.some((item) => item.id !== connectedId))
           throw new IntegrationError('This account is already saved as another connection.', 409);
         await client.query(
-          `UPDATE app_connections SET account_id=pending_account_id,pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-           callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
+          `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
+           callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,replaces_connection_id=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
            trigger_id=NULL,triggers_enabled=false,watch_attempted=false,watch_attempted_at=NULL,watch_failures=0,watch_retry_at=NULL,
-           watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
-           WHERE id=$1`,
-          [row.id, remote.accountName ?? row.account_name, remote.accountEmail],
+           watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false,
+           provider_id=$5,configuration_id=$6,turn_id=$7 WHERE id=$1 AND owner_id=$8`,
+          [
+            connectedId,
+            remote.accountName ?? previous.account_name,
+            remote.accountEmail,
+            query.accountId,
+            row.provider_id,
+            row.configuration_id,
+            row.turn_id,
+            configuredOwner,
+          ],
         );
         await client.query(
           `UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND state IN ('queued','processing')
            AND (poll_connection_id=$2 OR (provider_id=$3 AND account_id=$4))`,
-          [configuredOwner, row.id, row.provider_id, row.account_id],
+          [configuredOwner, connectedId, previous.provider_id, previous.account_id],
         );
+        if (replacement)
+          await client.query('DELETE FROM app_connections WHERE id=$1 AND owner_id=$2', [
+            row.id,
+            configuredOwner,
+          ]);
       } else if (existing.rows[0]) {
         connectedId = existing.rows[0].id;
         await client.query('DELETE FROM app_connections WHERE id=$1', [row.id]);
         await client.query(
-          `UPDATE app_connections SET revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
+          `UPDATE app_connections SET revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,configuration_id=$4,
            watch_requested=true,watch_attempted=CASE WHEN trigger_id IS NULL THEN false ELSE watch_attempted END WHERE id=$1`,
-          [connectedId, remote.accountName ?? null, remote.accountEmail ?? null],
+          [
+            connectedId,
+            remote.accountName ?? null,
+            remote.accountEmail ?? null,
+            row.configuration_id,
+          ],
         );
         if (existing.rows[0].revoked || existing.rows[0].inbox_reconnect_required) {
           await client.query(
@@ -974,26 +1286,37 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         }
       } else {
         await client.query(
-          `UPDATE app_connections SET account_id=pending_account_id,pending_account_id=NULL,callback_hash=NULL,setup_link_hash=NULL,
+          `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,setup_link_hash=NULL,
            callback_expires=NULL,revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3 WHERE id=$1`,
-          [row.id, remote.accountName ?? null, remote.accountEmail ?? null],
+          [row.id, remote.accountName ?? null, remote.accountEmail ?? null, query.accountId],
         );
       }
     }, pool);
+    options.refresh?.();
+    const selected = providerForRow(row);
     track(row.slug, 'connected');
     if (row.account_id) {
-      if (previousTrigger) await provider.unsubscribe(previousTrigger).catch(() => {});
-      if (row.account_id !== row.pending_account_id)
-        await provider.deleteAccount(row.account_id).catch(() => {});
+      if (previousTrigger) await selected.unsubscribe(previousTrigger).catch(() => {});
+      if (row.account_id !== query.accountId)
+        await selected.deleteAccount(row.account_id).catch(() => {});
     }
     if (supportsWatch(row.slug)) await activateWatch(connectedId);
-    if (row.slug === 'gmail' && provider.sentEmails && options.learnWritingStyle)
-      void background(() =>
-        options.learnWritingStyle!(
-          (signal) => provider.sentEmails!(query.accountId, signal),
-          stop.signal,
-        ),
-      )?.catch(() => {});
+    if (row.slug === 'gmail' && configurationMatches(row)) {
+      if (selected.sentEmails && options.learnWritingStyle)
+        void background(() =>
+          options.learnWritingStyle!(
+            (signal) => selected.sentEmails!(query.accountId, signal),
+            stop.signal,
+          ),
+        )?.catch(() => {});
+      if (selected.inboxThreads && options.briefInbox)
+        void background(() =>
+          options.briefInbox!(
+            (signal) => selected.inboxThreads!(query.accountId, signal),
+            stop.signal,
+          ),
+        )?.catch(() => {});
+    }
     if (row.turn_id)
       return (await options.resumeConnection?.(row.turn_id, row.slug).catch(() => false)) ?? false;
     return false;
@@ -1011,7 +1334,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       row = current.rows[0];
       await client.query(
         `UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,
-         callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
+         callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
          watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
          WHERE id=$1 AND owner_id=$2 AND provider_id=$3`,
         [row.id, configuredOwner, row.provider_id],
@@ -1022,15 +1345,103 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
     }, pool);
     if (!row.revoked) track(row.slug, 'disconnected');
-    if (row.trigger_id) await provider.unsubscribe(row.trigger_id);
-    if (row.account_id) await provider.deleteAccount(row.account_id);
-    if (row.pending_account_id && row.pending_account_id !== row.account_id)
-      await provider.deleteAccount(row.pending_account_id);
+    const sdk = [providerForRow(row), ...(options.standbyProviders ?? [])].find(
+      (item) =>
+        item.id === row.provider_id &&
+        item.configured &&
+        (!item.configurationId || item.configurationId === row.configuration_id),
+    );
+    if (sdk) {
+      if (row.trigger_id) await sdk.unsubscribe(row.trigger_id);
+      if (row.account_id) await revokeAccount(sdk, row.account_id);
+      if (row.pending_account_id && row.pending_account_id !== row.account_id)
+        await sdk.deleteAccount(row.pending_account_id);
+    }
     await pool.query(
       'DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND revoked AND account_id=$4',
       [row.id, configuredOwner, row.provider_id, row.account_id],
     );
     return { ok: true };
+  }
+
+  async function revokeAccount(selected: IntegrationProvider, id: string) {
+    const missing = (error: unknown) => (error as { status?: unknown } | undefined)?.status === 404;
+    const bounded = <T>(operation: () => Promise<T>) =>
+      boundedRequest(operation, new AbortController().signal);
+    try {
+      await bounded(() => selected.deleteAccount(id));
+    } catch (error) {
+      if (
+        !missing(error) ||
+        (await bounded(() => selected.inspectAccount(id, configuredOwner)).then(
+          () => true,
+          (reason: unknown) => !missing(reason),
+        ))
+      )
+        throw error;
+    }
+  }
+
+  async function disconnectProvider(skipRemoteRevocation?: () => Promise<boolean>) {
+    if (!provider.configured) return;
+    const rows = (await connectionRows(configuredOwner)).filter(
+      (row) => row.provider_id === providerId && configurationMatches(row),
+    );
+    if (rows.length && (await skipRemoteRevocation?.())) {
+      const deleted = await transaction(async (client) => {
+        return client.query<Pick<ConnectionRow, 'slug' | 'revoked'>>(
+          `WITH removed AS (
+             DELETE FROM app_connections WHERE owner_id=$1 AND provider_id=$2
+             AND configuration_id IS NOT DISTINCT FROM $3
+             RETURNING id,slug,revoked,account_id,pending_account_id,trigger_id
+           ), discarded AS (
+           UPDATE integration_events SET state='discarded' WHERE owner_id=$1 AND provider_id=$2
+           AND state IN ('queued','processing') AND EXISTS (
+             SELECT 1 FROM removed WHERE removed.id=poll_connection_id
+             OR removed.account_id=integration_events.account_id
+             OR removed.pending_account_id=integration_events.account_id
+             OR removed.trigger_id=integration_events.trigger_id
+           ) RETURNING id
+           ) SELECT slug,revoked FROM removed`,
+          [configuredOwner, providerId, provider.configurationId ?? null],
+        );
+      }, pool);
+      for (const row of deleted.rows) if (!row.revoked) track(row.slug, 'disconnected');
+      options.refresh?.();
+      return;
+    }
+    let removed = false;
+    try {
+      for (const row of rows) {
+        const kept = () => {
+          throw new IntegrationError(
+            `Otto couldn’t disconnect ${serviceInfo(row.slug).name}, so it kept your current connection. Try again.`,
+          );
+        };
+        if (row.pending_account_id && row.pending_account_id !== row.account_id)
+          await revokeAccount(provider, row.pending_account_id).catch(kept);
+        if (!row.account_id) continue;
+        await revokeAccount(provider, row.account_id).catch(kept);
+        if (row.trigger_id) await provider.unsubscribe(row.trigger_id).catch(() => {});
+        const deleted = await pool.query<Pick<ConnectionRow, 'slug' | 'revoked'>>(
+          `WITH removed AS (
+             DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND account_id=$3
+             RETURNING id,slug,revoked
+           ), discarded AS (
+           UPDATE integration_events SET state='discarded' WHERE owner_id=$2
+           AND state IN ('queued','processing') AND poll_connection_id IN (SELECT id FROM removed)
+           RETURNING id
+           ) SELECT slug,revoked FROM removed`,
+          [row.id, configuredOwner, row.account_id],
+        );
+        for (const item of deleted.rows) if (!item.revoked) track(item.slug, 'disconnected');
+        removed ||= deleted.rows.length > 0;
+      }
+    } finally {
+      if (removed) {
+        options.refresh?.();
+      }
+    }
   }
 
   function matchingService(action: string, services: Iterable<string>) {
@@ -1178,6 +1589,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             row.account_id &&
             !row.revoked &&
             row.account_active &&
+            configurationMatches(row) &&
             (!connectionId || row.id === connectionId),
         );
         const services = knownServices(ownerRows);
@@ -1324,7 +1736,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             },
             async (file) => {
               signal?.throwIfAborted();
-              const result = await session.upload!(action, file, signal);
+              const result = await session.upload!(action, file, signal, row.account_id!);
               signal?.throwIfAborted();
               return result;
             },
@@ -1376,6 +1788,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const matches = (await connectionRows(ownerId)).filter(
         (row) =>
           row.slug === 'gmail' &&
+          row.provider_id === providerId &&
+          configurationMatches(row) &&
           row.account_id &&
           row.account_active &&
           !row.revoked &&
@@ -1395,8 +1809,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const current = async (database: Pick<PoolClient, 'query'> = pool) =>
         (
           await database.query(
-            `SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND account_active AND NOT revoked AND lower(trim(account_email))=$5 FOR SHARE NOWAIT`,
-            [row.id, ownerId, providerId, row.account_id, primaryEmail],
+            `SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND account_active AND NOT revoked AND lower(trim(account_email))=$5
+             AND ($6::text IS NULL OR configuration_id=$6) FOR SHARE NOWAIT`,
+            [
+              row.id,
+              ownerId,
+              providerId,
+              row.account_id,
+              primaryEmail,
+              provider.configurationId ?? null,
+            ],
           )
         ).rowCount === 1;
       if (!(await current())) return;
@@ -1432,7 +1854,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function inboxSnippets(signal: AbortSignal) {
     const row = (await connectionRows(configuredOwner)).find(
-      (item) => item.slug === 'gmail' && item.account_id && item.account_active && !item.revoked,
+      (item) =>
+        item.slug === 'gmail' &&
+        item.account_id &&
+        item.account_active &&
+        !item.revoked &&
+        configurationMatches(item),
     );
     return row && provider.inboxSnippets ? provider.inboxSnippets(row.account_id!, signal) : [];
   }
@@ -1444,10 +1871,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const { rows } = await pool.query<ConnectionRow>(
         `WITH due AS (SELECT id FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND slug='gmail'
          AND watch_requested AND account_active AND NOT revoked AND NOT inbox_reconnect_required AND account_id IS NOT NULL
+         AND ($4::text IS NULL OR configuration_id=$4)
          AND (inbox_poll_at IS NULL OR inbox_poll_at<=now()) ORDER BY inbox_poll_at NULLS FIRST LIMIT 4 FOR UPDATE SKIP LOCKED)
          UPDATE app_connections c SET inbox_poll_at=now()+interval '5 minutes',inbox_claim_id=$3
          FROM due WHERE c.id=due.id RETURNING c.*`,
-        [configuredOwner, providerId, randomBytes(16).toString('hex')],
+        [
+          configuredOwner,
+          providerId,
+          randomBytes(16).toString('hex'),
+          provider.configurationId ?? null,
+        ],
       );
       await Promise.all(
         rows.map(async (row) => {
@@ -1465,7 +1898,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               `UPDATE app_connections SET inbox_cursor=$1,inbox_checked_at=now(),inbox_failed=false,
              inbox_poll_at=CASE WHEN $2 THEN now() ELSE inbox_poll_at END
              WHERE id=$3 AND owner_id=$4 AND provider_id=$5 AND account_id=$6 AND watch_revision=$7 AND inbox_claim_id=$8
-             AND watch_requested AND account_active AND NOT revoked RETURNING id`,
+             AND watch_requested AND account_active AND NOT revoked
+             AND ($9::text IS NULL OR configuration_id=$9) RETURNING id`,
               [
                 result.cursor,
                 result.hasMore,
@@ -1475,6 +1909,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 row.account_id,
                 row.watch_revision,
                 row.inbox_claim_id,
+                provider.configurationId ?? null,
               ],
             );
             if (saved.rowCount) {
@@ -1514,7 +1949,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             await (client ?? pool).query(
               `WITH failed AS (UPDATE app_connections SET inbox_failed=true,inbox_reconnect_required=$7
                WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND inbox_claim_id=$6
-               AND watch_requested AND NOT revoked RETURNING id)
+               AND watch_requested AND NOT revoked AND ($10::text IS NULL OR configuration_id=$10) RETURNING id)
                INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
                SELECT $8,$2,$9,'gmail',$4,$3,id FROM failed WHERE $7 ON CONFLICT(id) DO NOTHING`,
               [
@@ -1527,6 +1962,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 error instanceof IntegrationInboxCursorExpired,
                 `${providerId}:inbox-expired:${row.id}:${row.watch_revision}`,
                 `Gmail inbox updates need reconnection because the saved history expired. Reconnect this account to resume future updates; the missing interval still needs a separate inbox review. Source connectionId: ${row.id}.`,
+                provider.configurationId ?? null,
               ],
             );
             options.refresh?.();
@@ -1542,18 +1978,23 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   async function drain() {
-    if (draining) return;
+    if (draining || !provider.configured) return;
     draining = true;
     const matchingConnection = `c.owner_id=e.owner_id AND c.slug=e.slug
       AND c.account_id=e.account_id AND c.provider_id=e.provider_id AND NOT c.revoked AND (
         (e.poll_connection_id IS NULL AND c.trigger_id=e.trigger_id AND c.triggers_enabled) OR
         (e.poll_connection_id=c.id AND c.watch_requested AND c.account_active))`;
-    const currentConnection = `SELECT 1 FROM app_connections c WHERE ${matchingConnection}`;
+    const currentConnection = `SELECT 1 FROM app_connections c WHERE ${matchingConnection}
+      AND ($3::text IS NULL OR c.configuration_id=$3)`;
+    const scope = [providerId, configuredOwner, provider.configurationId ?? null];
     try {
       await pool.query(
         `UPDATE integration_events e SET state = 'discarded' WHERE provider_id=$1 AND e.owner_id=$2
-         AND state IN ('queued','processing') AND NOT EXISTS (${currentConnection})`,
-        [providerId, configuredOwner],
+         AND state IN ('queued','processing') AND NOT EXISTS (${currentConnection})
+         AND NOT EXISTS (SELECT 1 FROM app_connections c WHERE c.owner_id=e.owner_id
+           AND c.provider_id=e.provider_id AND c.account_id=e.account_id
+           AND $3::text IS NOT NULL AND c.configuration_id IS DISTINCT FROM $3)`,
+        scope,
       );
       for (let count = 0; count < 20; count++) {
         const { rows } = await pool.query<{
@@ -1566,7 +2007,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
            ORDER BY e.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
            UPDATE integration_events e SET state = 'processing', claimed_at = now() FROM next WHERE e.id = next.id
            RETURNING e.id,e.summary,e.claimed_at::text AS claim`,
-          [providerId, configuredOwner],
+          scope,
         );
         const event = rows[0];
         if (!event) break;
@@ -1575,9 +2016,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             (
               await (client ?? pool).query(
                 `SELECT e.id FROM integration_events e JOIN app_connections c ON ${matchingConnection}
-                 WHERE e.id=$1 AND e.owner_id=$2 AND e.state='processing' AND e.claimed_at=$3::timestamptz
+                 WHERE e.provider_id=$1 AND e.owner_id=$2 AND ($3::text IS NULL OR c.configuration_id=$3)
+                 AND e.id=$4 AND e.state='processing' AND e.claimed_at=$5::timestamptz
                  ${client ? 'FOR SHARE OF c,e' : ''}`,
-                [event.id, configuredOwner, event.claim],
+                [...scope, event.id, event.claim],
               )
             ).rowCount,
           );
@@ -1585,15 +2027,15 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           if (!(await current())) continue;
           await options.wake(event.summary, event.id, current);
           await pool.query(
-            `UPDATE integration_events e SET state='delivered' WHERE e.id=$1 AND e.owner_id=$2
-             AND e.state='processing' AND e.claimed_at=$3::timestamptz AND EXISTS (${currentConnection})`,
-            [event.id, configuredOwner, event.claim],
+            `UPDATE integration_events e SET state='delivered' WHERE e.provider_id=$1 AND e.owner_id=$2 AND e.id=$4
+             AND e.state='processing' AND e.claimed_at=$5::timestamptz AND EXISTS (${currentConnection})`,
+            [...scope, event.id, event.claim],
           );
         } catch {
           await pool.query(
-            `UPDATE integration_events e SET state='queued' WHERE e.id=$1 AND e.owner_id=$2
-             AND e.state='processing' AND e.claimed_at=$3::timestamptz AND EXISTS (${currentConnection})`,
-            [event.id, configuredOwner, event.claim],
+            `UPDATE integration_events e SET state='queued' WHERE e.provider_id=$1 AND e.owner_id=$2 AND e.id=$4
+             AND e.state='processing' AND e.claimed_at=$5::timestamptz AND EXISTS (${currentConnection})`,
+            [...scope, event.id, event.claim],
           );
           break;
         }
@@ -1601,6 +2043,38 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } finally {
       draining = false;
     }
+  }
+  let verifying: Promise<unknown> | undefined = background(verifyConfigurations)?.catch(() => {});
+  async function providerChanged() {
+    serviceCatalog = undefined;
+    try {
+      await pool.query(
+        `UPDATE app_connections SET callback_expires=now() WHERE owner_id=$1 AND provider_id=$2
+         AND callback_expires>now() AND configuration_id IS DISTINCT FROM $3`,
+        [configuredOwner, providerId, provider.configurationId ?? null],
+      );
+    } finally {
+      verifying = Promise.all([verifying, background(verifyConfigurations)?.catch(() => {})]);
+      options.refresh?.();
+    }
+  }
+  async function changeProvider(
+    revoke: boolean,
+    swap: () => Promise<void>,
+    skipRemoteRevocation?: () => Promise<boolean>,
+  ) {
+    const change = (async () => {
+      await Promise.allSettled(working);
+      if (revoke) await disconnectProvider(skipRemoteRevocation);
+      await swap();
+    })();
+    switching = change.catch(() => {});
+    try {
+      await change;
+    } finally {
+      switching = undefined;
+    }
+    await providerChanged().catch(() => {});
   }
   const timer = setInterval(() => {
     void background(drain)?.catch(() => {});
@@ -1614,7 +2088,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       closed = true;
       clearInterval(timer);
       stop.abort();
-      await Promise.all([refreshing, polling]);
+      await Promise.all([verifying, refreshing, polling]);
     });
     app.register(async (scope) => {
       scope.setErrorHandler((error, _request, reply) => {
@@ -1649,28 +2123,44 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       scope.get('/api/apps/catalog', async () => catalog());
       scope.post('/api/apps/setup-status', async (request, reply) => {
-        const { hashes, connectionIds } = z
+        const { hashes, connectionIds, pairingUrl } = z
           .object({
             hashes: z
               .array(z.string().regex(/^[a-f0-9]{64}$/))
               .min(1)
               .max(100),
             connectionIds: z.array(z.uuid()).max(100).default([]),
+            pairingUrl: z.string().url().max(16_000).optional(),
           })
           .strict()
           .parse(request.body);
-        const [completed, pending, discovered] = await Promise.all([
-          pool.query<{ link_hash: string }>(
-            'SELECT link_hash FROM app_setup_completions WHERE owner_id=$1 AND link_hash=ANY($2::text[])',
-            [configuredOwner, hashes],
-          ),
-          pool.query<{ hash: string; slug: string }>(
-            `SELECT setup_link_hash AS hash,slug FROM app_connections
-             WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now()`,
+        const [links, discovered] = await Promise.all([
+          pool.query<{
+            hash: string;
+            slug: string;
+            completed: boolean;
+            provider_id: string;
+            configuration_id: string | null;
+          }>(
+            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS provider_id,NULL AS configuration_id FROM app_setup_completions
+             WHERE owner_id=$1 AND link_hash=ANY($2::text[])
+             UNION ALL
+             SELECT setup_link_hash AS hash,slug,false AS completed,provider_id,configuration_id FROM app_connections
+             WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now() AND NOT revoked`,
             [configuredOwner, hashes],
           ),
           options.discovered?.setupServices(connectionIds, hashes) ?? [],
         ]);
+        const pairingHash = pairingUrl
+          ? createHash('sha256').update(pairingUrl).digest('hex')
+          : undefined;
+        const pendingPairing = links.rows.find((row) => !row.completed && row.hash === pairingHash);
+        const connectionStatus =
+          pairingUrl && pendingPairing && configurationMatches(pendingPairing)
+            ? await providerForRow(pendingPairing)
+                .connectionStatus?.(configuredOwner, pairingUrl)
+                .catch(() => undefined)
+            : undefined;
         const discoveredLinks = discovered.map(({ id, link_hash, ...service }) => ({
           ...service,
           hash:
@@ -1678,7 +2168,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               ? link_hash
               : createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
         }));
-        const apps = [...pending.rows, ...discoveredLinks.filter((link) => !link.completed)]
+        const apps = [...links.rows, ...discoveredLinks]
+          .filter((link) => !link.completed)
           .filter(({ hash }) => hashes.includes(hash))
           .map((row) => {
             const info = serviceInfo(row.slug);
@@ -1687,11 +2178,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               slug: row.slug,
               name: 'name' in row && typeof row.name === 'string' ? row.name : info.name,
               ...(info.logoUrl ? { logoUrl: info.logoUrl } : {}),
+              ...(connectionStatus?.pairingConfirmed && row.hash === pairingHash
+                ? { pairingConfirmed: true }
+                : {}),
+              ...(connectionStatus?.signInRequired && row.hash === pairingHash
+                ? { signInRequired: true }
+                : {}),
             };
           });
         return reply.header('Cache-Control', 'no-store').send({
           completed: [
-            ...completed.rows.map((row) => row.link_hash),
+            ...links.rows.filter((row) => row.completed).map((row) => row.hash),
             ...discoveredLinks
               .filter((link) => link.completed && hashes.includes(link.hash))
               .map((link) => link.hash),
@@ -1755,7 +2252,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           );
         return connect(slugSchema.parse(request.params.slug), input.returnTo);
       });
-      scope.get('/api/apps/callback', async (request, reply) => {
+      const callback = async (request: FastifyRequest, reply: FastifyReply) => {
         let returnTo: ReturnTarget = 'apps';
         let outcome: 'connected' | 'continued' | 'cancelled' | 'failed' | 'expired' = 'expired';
         let service: string | undefined;
@@ -1777,31 +2274,62 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             returnTo = Object.hasOwn(returnPaths, row.callback_return_to)
               ? row.callback_return_to
               : 'apps';
-            if (row.callback_expires && new Date(row.callback_expires).getTime() > Date.now()) {
-              try {
-                const result = await provider.parseCallback(request.query);
-                if (!result.success) {
-                  outcome = 'cancelled';
-                  const deleted = await pool.query(
-                    'DELETE FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NULL',
-                    [row.id, configuredOwner, hash],
-                  );
-                  const cleared = await clearReconnect(row.id, hash);
-                  if (deleted.rowCount || cleared) track(row.slug, 'failed', 'cancelled');
-                } else {
-                  const resumed = await completeConnection(result, row);
-                  outcome = resumed && returnTo === 'chat' ? 'continued' : 'connected';
+            if (!configurationMatches(row)) {
+              outcome = 'failed';
+              const pending = await clearReconnect(
+                row.id,
+                hash,
+                row.callback_claim_id ?? undefined,
+              );
+              const previous = rowProvider(row);
+              if (pending && previous)
+                try {
+                  const result = await previous.parseCallback(request.query, {
+                    accountId: pending,
+                    verificationSecret: row.callback_verifier,
+                    service: row.slug,
+                  });
+                  if (result.success && result.accountId !== pending)
+                    await discardReconnect(row, result.accountId);
+                } catch {}
+            } else if (
+              row.callback_expires &&
+              new Date(row.callback_expires).getTime() > Date.now()
+            ) {
+              const claimId = randomBytes(32).toString('base64url');
+              const claimed = (
+                await pool.query<ConnectionRow>(
+                  `UPDATE app_connections SET callback_claim_id=$4 WHERE id=$1 AND owner_id=$2
+                   AND callback_hash=$3 AND callback_claim_id IS NULL AND callback_expires>now() AND NOT revoked RETURNING *`,
+                  [row.id, configuredOwner, hash, claimId],
+                )
+              ).rows[0];
+              if (claimed) {
+                let verifiedAccountId: string | undefined;
+                try {
+                  const result = await providerForRow(claimed).parseCallback(request.query, {
+                    accountId: claimed.pending_account_id ?? '',
+                    verificationSecret: claimed.callback_verifier,
+                    service: claimed.slug,
+                  });
+                  if (!result.success) {
+                    outcome = 'cancelled';
+                    await clearReconnect(claimed.id, hash, claimId);
+                    track(claimed.slug, 'failed', 'cancelled');
+                  } else {
+                    const resumed = await completeConnection(result, claimed, (id) => {
+                      verifiedAccountId = id;
+                    });
+                    outcome = resumed && returnTo === 'chat' ? 'continued' : 'connected';
+                  }
+                } catch {
+                  outcome = 'failed';
+                  track(claimed.slug, 'failed', 'verification_failed');
+                  await clearReconnect(claimed.id, hash, claimId);
+                  if (verifiedAccountId) await discardReconnect(claimed, verifiedAccountId);
                 }
-              } catch {
-                outcome = 'failed';
-                const pending = await pool.query(
-                  'SELECT 1 FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3',
-                  [row.id, configuredOwner, hash],
-                );
-                await clearReconnect(row.id, hash);
-                if (pending.rowCount) track(row.slug, 'failed', 'verification_failed');
               }
-            } else await clearReconnect(row.id, hash);
+            } else if (!row.callback_claim_id) await clearReconnect(row.id, hash);
           } else if (options.discovered) {
             const result = await options.discovered
               .completeOAuth(request.query)
@@ -1823,6 +2351,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               options.baseUrl,
             ).href,
           );
+      };
+      scope.get('/api/apps/callback', async (request, reply) => {
+        while (switching) await switching;
+        return steady(() => callback(request, reply));
       });
       scope.post<{ Params: { slug: string; connectionId: string } }>(
         '/api/apps/:slug/accounts/:connectionId/disconnect',
@@ -1863,6 +2395,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         if (
           !row ||
           row.provider_id !== providerId ||
+          !configurationMatches(row) ||
           row.revoked ||
           !row.triggers_enabled ||
           row.trigger_id !== event.subscriptionId ||
@@ -2024,6 +2557,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           (row) =>
             provider.configured &&
             row.slug === slug &&
+            row.provider_id === providerId &&
+            configurationMatches(row) &&
             row.account_id &&
             !row.revoked &&
             row.account_active,
@@ -2041,6 +2576,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     drain,
     syncWatches,
     pollInboxes,
+    changeProvider,
     ready: provider.configured,
   };
 }

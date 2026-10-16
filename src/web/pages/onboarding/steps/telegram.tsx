@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Send } from 'lucide-react';
 import type { StepProps } from '..';
+import { Rise } from '../../../components/motion';
 import { TelegramSetup } from '../../../components/telegram-setup';
 import { Button } from '../../../components/ui';
 import { telegramState, useChannelSettings } from '../../../hooks/use-channel-settings';
 import { channelSetupBody } from '../../../lib/secondary-pages';
 import { sessionStore } from '../../../lib/session';
-import { Bubble, Footer, Messages, Rise, useReveal } from '../motion';
+import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { wait: 300 }];
 

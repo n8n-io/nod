@@ -8,7 +8,8 @@ import { modelReady, modelSelection, useModelSignIn, useModels } from '../../../
 import { api, ApiError, errorMessage } from '../../../lib/api';
 import { sessionStore } from '../../../lib/session';
 import type { StepProps } from '..';
-import { Bubble, Footer, Messages, Rise, useReveal, type RevealStep } from '../motion';
+import { Rise } from '../../../components/motion';
+import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
   { typing: 450 },
@@ -257,7 +258,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           <details className="ob-brain-fallback">
             <summary data-analytics-public>Sign-in page didn’t open?</summary>
             <p data-analytics-public>
-              <button type="button" className="ob-brain-link" onClick={flow.reopen}>
+              <button type="button" className="ob-link" onClick={flow.reopen}>
                 Open it again
               </button>{' '}
               or paste the address your browser ended up on.
@@ -302,7 +303,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           <p className="ob-brain-note">{providers[provider].note}</p>
         </div>
         <Problem>{models.error}</Problem>
-        <button type="button" className="ob-brain-link" onClick={() => switchMethod('key')}>
+        <button type="button" className="ob-link" onClick={() => switchMethod('key')}>
           Use an API key instead
         </button>
       </div>
@@ -354,7 +355,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         {oauth && (
           <button
             type="button"
-            className="ob-brain-link"
+            className="ob-link"
             data-analytics-public
             onClick={() => switchMethod('oauth')}
           >
@@ -396,7 +397,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
               </span>
               {usable(item).length > 0 && (
                 <span className="ob-brain-badge" role="img" aria-label="Connected">
-                  <Check size={13} strokeWidth={3} aria-hidden="true" />
+                  <Check size={14} strokeWidth={3} aria-hidden="true" />
                 </span>
               )}
             </button>

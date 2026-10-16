@@ -45,6 +45,7 @@ import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
+import { createComposioProxy } from '../providers/composio/proxy.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
@@ -63,10 +64,12 @@ import { createCloudflareRuntimeTransport } from '../providers/runtime-host/clou
 import { createLocalRuntimeTransport } from '../providers/runtime-host/local.ts';
 import { createComputerShutdownConfirmation } from '../providers/runtime-host/computer-shutdown.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
+import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
-import { createIntegrationKeyService, registerIntegrationKeyRoutes } from './integration-key.ts';
+import { createIntegrationKeyService } from './integration-key.ts';
+import { createIntegrationAccess } from './integration-access.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -159,6 +162,7 @@ export interface ApplicationAdapters {
   observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
+  integrationAccess?: ReturnType<typeof createIntegrationAccess>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
   confirmComputerShutdown?(): Promise<void>;
@@ -169,6 +173,7 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
+  standbyIntegrations?: IntegrationProvider[];
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
@@ -205,9 +210,16 @@ export function createDefaultAdapters(
     pool,
     env.OTTO_VAULT_KEY
       ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-      : process.platform === 'darwin'
-        ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
-        : createEnvironmentKeyStore(),
+      : runtimeMode !== 'local' || desktopMode
+        ? createEnvironmentKeyStore()
+        : process.platform === 'darwin'
+          ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
+          : process.platform === 'linux'
+            ? createFilesystemKeyStore({
+                dataRoot,
+                canCreate: async () => !(await sealedDataExists(pool)),
+              })
+            : createEnvironmentKeyStore(),
   );
   const models = createModelService({
     database: pool,
@@ -264,23 +276,46 @@ export function createDefaultAdapters(
     googledocs: env.COMPOSIO_DOCS_AUTH_CONFIG_ID,
     slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
   };
-  const integrations = createComposioProvider({
-    apiKey: env.COMPOSIO_API_KEY,
+  const environmentKey = desktopMode ? undefined : env.COMPOSIO_API_KEY?.trim() || undefined;
+  const integrationProxy = environmentKey
+    ? undefined
+    : createComposioProxy({
+        dataRoot,
+        ownerId,
+        url: !desktopMode || env.OTTO_DESKTOP_USER_DATA ? env.OTTO_COMPOSIO_PROXY_URL : undefined,
+        ...(runtimeMode === 'tenant'
+          ? { identitySecret: parseCredentialKey(env.OTTO_VAULT_KEY || '') }
+          : {}),
+      });
+  const ownIntegrations = createComposioProvider({
+    apiKey: environmentKey,
     webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
     webhooksVerified: runtimeMode === 'tenant' && env.OTTO_COMPOSIO_WEBHOOKS === 'gateway',
     webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });
-  const integrationKey =
-    runtimeMode === 'local' && !desktopMode
-      ? createIntegrationKeyService({
-          database: pool,
-          ownerId,
-          keyStore,
-          provider: integrations,
-          changed: refresh,
+  const integrationAccess =
+    integrationProxy && runtimeMode !== 'tenant'
+      ? createIntegrationAccess({
+          proxy: integrationProxy,
+          origin: publicOrigin,
+          desktop: desktopMode,
         })
       : undefined;
+  const integrationKey = createIntegrationKeyService({
+    ownerId,
+    keyStore,
+    provider: ownIntegrations,
+    fixed: environmentKey ? 'own' : runtimeMode === 'tenant' ? 'otto' : undefined,
+    managed: integrationAccess,
+  });
+  const ottoIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
+  const integrations = ottoIntegrations
+    ? new Proxy(ownIntegrations, {
+        get: (_, key) =>
+          Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
+      })
+    : ownIntegrations;
   const computerProvider = env.COMPUTER_PROVIDER || 'docker';
   if (
     !['docker', 'e2b', 'cloudflare'].includes(computerProvider) ||
@@ -348,7 +383,8 @@ export function createDefaultAdapters(
       : {}),
     initialize: async () => {
       await models.initialize();
-      await integrationKey?.initialize();
+      await integrationProxy?.initialize();
+      await integrationKey.initialize();
       await allocations?.initialize();
       await databaseObjects?.initialize();
     },
@@ -402,7 +438,9 @@ export function createDefaultAdapters(
       voice: env.TTS_VOICE,
     }),
     integrations,
-    ...(integrationKey ? { integrationKey } : {}),
+    ...(ottoIntegrations ? { standbyIntegrations: [ownIntegrations, ottoIntegrations] } : {}),
+    integrationKey,
+    integrationAccess,
     keyStore,
     memoryCurator: modelCurator,
     analyticsCurator: selectedCurator,
@@ -628,6 +666,11 @@ async function initializeApplication(
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
+    briefInbox:
+      runtimeMode === 'tenant'
+        ? undefined
+        : (read, stop) => onboardingSuggestions.briefInbox(read, stop),
+    standbyProviders: adapters.standbyIntegrations,
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
@@ -834,6 +877,10 @@ async function initializeApplication(
           (channel) => channel.provider === 'telegram' && channel.enabled && channel.allowedUserId,
         ),
       ),
+    apps: async () =>
+      (await integrations.connectedApps())
+        .filter((app) => app.status === 'connected')
+        .map((app) => app.name),
   });
   const localConsent = await localAccounts?.readConsent(ownerId);
   analytics.setUsageData(
@@ -960,6 +1007,7 @@ async function initializeApplication(
       taskLedger: tasks.read,
       task: tasks.execute,
       startTurn: tasks.inherit,
+      turnFinished: (turn, outcome) => void onboardingSuggestions.afterTurn(turn, outcome),
       connections: async (...args) => {
         const result = await integrations.manageConnections(...args);
         if (!('url' in result) || !('name' in result) || typeof result.name !== 'string')
@@ -1259,9 +1307,8 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app);
-  if (adapters.integrationKey) adapters.integrationKey.register(app);
-  else if (runtimeMode === 'local' && desktopMode)
-    registerIntegrationKeyRoutes(app, adapters.integrations);
+  adapters.integrationKey?.register(app, integrations);
+  adapters.integrationAccess?.register(app);
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });
@@ -1615,7 +1662,7 @@ export async function createGatewayApplication(
         listOwners: tenants.listOwners,
         hasOwner: async (owner) => Boolean(await tenants.get(owner)),
         integrations: createComposioProvider({
-          apiKey: env.COMPOSIO_API_KEY,
+          apiKey: env.COMPOSIO_API_KEY?.trim() || undefined,
           webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
         }),
       }),

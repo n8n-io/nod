@@ -120,6 +120,7 @@ if (process.argv.includes('--run')) {
       'src',
       'tests',
       'scripts',
+      'public',
       'deployment/e2b',
       'desktop/ui',
       'tsconfig.json',

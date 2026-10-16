@@ -107,6 +107,10 @@ export interface ThreadDependencies {
   taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
   taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
   startTurn?: (turn: TurnRef) => Promise<void>;
+  turnFinished?: (
+    turn: TurnRef & { source: TurnSource; background: boolean },
+    outcome: string,
+  ) => void;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -1405,6 +1409,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       },
     });
     running.delete(turnId);
+    dependencies.turnFinished?.(
+      { ...ref, source: turn.source, background: Boolean(turn.background) },
+      outcome,
+    );
   }
 }
 

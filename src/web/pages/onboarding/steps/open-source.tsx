@@ -1,8 +1,10 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { StepProps } from '..';
+import { OttoGlyph, type GlyphReaction } from '../../../components/motion';
 import { Switch } from '../../../components/ui';
-import { errorMessage, post } from '../../../lib/api';
-import { Bubble, Footer, Messages, OttoGlyph, useReveal, type GlyphReaction } from '../motion';
+import { errorMessage } from '../../../lib/api';
+import { Bubble, Footer, Messages, useReveal } from '../motion';
+import { prepareSuggestions } from '../storage';
 
 const sequence = [
   { typing: 450 },
@@ -11,16 +13,19 @@ const sequence = [
   { wait: 300 },
 ];
 
-export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) {
+export function OpenSource({ arrived, onNext, onBack, busy, notice, usage }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const [saving, setSaving] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [reaction, setReaction] = useState<GlyphReaction | null>(null);
   const id = useId();
+  const noticeBox = useRef<HTMLDivElement>(null);
   const enabled = saving ?? usage?.enabled ?? false;
+  const noticed = !!notice;
+  useEffect(() => void prepareSuggestions(true), []);
   useEffect(() => {
-    void post('/api/onboarding/suggestions').catch(() => {});
-  }, []);
+    if (noticed) noticeBox.current?.scrollIntoView({ block: 'nearest' });
+  }, [noticed]);
 
   async function change(value: boolean) {
     if (!usage || saving !== null) return;
@@ -48,7 +53,7 @@ export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) 
         }
         items={[
           <Bubble>
-            One last thing: I’m <strong>open source</strong>. A small team builds me in the open,
+            One last thing: I’m <strong>open source</strong>. n8n Labs is building me in the open,
             and your feedback shapes what I become.
           </Bubble>,
           <Bubble>
@@ -79,6 +84,11 @@ export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) 
           </Bubble>,
         ]}
       />
+      {notice && (
+        <div className="ob-notice" ref={noticeBox}>
+          {notice}
+        </div>
+      )}
       <Footer
         show={revealed >= sequence.length}
         onBack={onBack}
