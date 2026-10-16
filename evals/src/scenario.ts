@@ -66,6 +66,7 @@ interface Meta {
   required: boolean;
   aspect: 'process' | 'outcome';
   failure: FailureClass;
+  otherwise?: string;
 }
 
 export type Expectation =
@@ -100,6 +101,7 @@ interface Options {
   required?: boolean;
   aspect?: 'process' | 'outcome';
   failure?: FailureClass;
+  otherwise?: string;
 }
 
 export const check = (
@@ -112,6 +114,7 @@ export const check = (
   required: options.required ?? true,
   aspect: options.aspect ?? 'outcome',
   failure: options.failure ?? 'incomplete',
+  otherwise: options.otherwise,
   async check(run) {
     const result = await test(run);
     return typeof result === 'boolean' ? { pass: result } : result;

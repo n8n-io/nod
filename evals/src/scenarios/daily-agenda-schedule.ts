@@ -207,7 +207,11 @@ export default scenario({
               : `missing ${missing.map((item) => item.summary).join(', ')}`,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The scheduled agenda message refers to every event on the day it covers, in any wording: its title, a paraphrase, a participant or its time.',
+        },
       ),
       check(
         'leaves-out-yesterday',

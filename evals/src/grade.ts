@@ -18,6 +18,7 @@ export async function grade(options: {
   const { definition, world, trace, judge, truth } = options;
   const checks: CheckResult[] = [];
   const task: Judged[] = [];
+  const rescued = new Set<string>();
   let graderFault: string | undefined;
   let judgeFault: string | undefined;
   const shared = definition.completion
@@ -30,6 +31,19 @@ export async function grade(options: {
     }
     try {
       const verdict = await expectation.check(trace);
+      if (!verdict.pass && expectation.otherwise && !options.skipJudges) {
+        rescued.add(expectation.id);
+        task.push({
+          id: expectation.id,
+          group: expectation.group,
+          kind: 'judge',
+          required: expectation.required,
+          aspect: expectation.aspect,
+          failure: expectation.failure,
+          criterion: `${expectation.otherwise}${verdict.evidence ? ` A literal code check did not find it (${verdict.evidence}); decide from what was actually said or done.` : ''}`,
+        });
+        continue;
+      }
       checks.push({
         id: expectation.id,
         kind: 'check',
@@ -61,7 +75,7 @@ export async function grade(options: {
           const source = list.find((item) => item.id === verdict.id)!;
           checks.push({
             id: verdict.id,
-            kind: 'judge',
+            kind: group === 'task' && rescued.has(verdict.id) ? 'check' : 'judge',
             group,
             criterion: source.criterion,
             na: verdict.na || undefined,
