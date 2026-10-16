@@ -3,6 +3,8 @@ const element = (id) => document.getElementById(id);
 let loading = new URLSearchParams(location.search).get('mode') === 'loading';
 let initialized = false;
 let busy = false;
+let savingPreferences = false;
+let preferenceSave = Promise.resolve(true);
 let latestStatus = { phase: 'idle' };
 
 function error(message = '', preparation = false) {
@@ -26,8 +28,9 @@ function render() {
   element('intro').hidden = loading;
   element('actions').hidden = loading;
   element('preparation').hidden = !loading;
-  for (const control of document.querySelectorAll('#setup-form input, #continue'))
-    control.disabled = busy || !initialized;
+  for (const control of document.querySelectorAll('#setup-form input'))
+    control.disabled = busy || savingPreferences || !initialized;
+  element('continue').disabled = busy || !initialized;
   element('continue').textContent = busy ? 'Saving…' : 'Open Otto';
   element('keychain-notice').hidden = latestStatus.platform !== 'darwin';
   if (!loading) {
@@ -93,6 +96,7 @@ element('setup-form').addEventListener('submit', async (event) => {
   error();
   render();
   try {
+    if (savingPreferences && !(await preferenceSave)) return;
     await desktop.saveSettings({
       launchAtLogin: element('launch-at-login').checked,
       notifications: element('notifications').checked,
@@ -107,23 +111,27 @@ element('setup-form').addEventListener('submit', async (event) => {
   }
 });
 for (const field of ['notifications', 'launch-at-login'])
-  element(field).addEventListener('change', async () => {
-    if (busy || !initialized) return;
-    busy = true;
+  element(field).addEventListener('change', () => {
+    if (busy || savingPreferences || !initialized) return;
+    savingPreferences = true;
     const enabled = element(field).checked;
+    error();
     render();
-    try {
-      await desktop.saveSettings({
+    preferenceSave = desktop
+      .saveSettings({
         notifications: element('notifications').checked,
         launchAtLogin: element('launch-at-login').checked,
+      })
+      .then(() => true)
+      .catch((cause) => {
+        element(field).checked = !enabled;
+        error(cause.message || 'Your choice could not be updated.');
+        return false;
+      })
+      .finally(() => {
+        savingPreferences = false;
+        render();
       });
-    } catch (cause) {
-      element(field).checked = !enabled;
-      error(cause.message || 'Your choice could not be updated.');
-    } finally {
-      busy = false;
-      render();
-    }
   });
 element('retry').addEventListener('click', () => void prepare({ retry: true }));
 element('install-wsl').addEventListener('click', async () => {

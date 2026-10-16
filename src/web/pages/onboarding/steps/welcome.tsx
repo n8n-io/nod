@@ -1,17 +1,25 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react';
+import { OttoGlyph, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { sessionStore } from '../../../lib/session';
 import type { StepProps } from '..';
-import { Bubble, Messages, OttoGlyph, Rise, useReveal, type RevealStep } from '../motion';
+import { Bubble, Messages, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
   { wait: 40 },
   { wait: 60 },
-  { wait: 1050 },
-  { wait: 650, typing: 600 },
-  { wait: 400, typing: 600 },
-  { wait: 400, typing: 600 },
-  { wait: 400 },
+  { wait: 600 },
+  { wait: 450, typing: 400 },
+  { wait: 120, typing: 300 },
+  { wait: 120, typing: 250 },
+  { wait: 160 },
 ];
 
 export function Welcome({ arrived, onNext }: StepProps) {
@@ -26,10 +34,21 @@ export function Welcome({ arrived, onNext }: StepProps) {
     revealed: stage,
     typing,
     played,
+    done,
     replay,
+    skip,
   } = useReveal(sequence, {
     enabled: arrived === 'forward',
   });
+  useEffect(() => {
+    const press = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;
+      if (done) onNext();
+      else skip();
+    };
+    window.addEventListener('keydown', press);
+    return () => window.removeEventListener('keydown', press);
+  }, [done]);
   useLayoutEffect(() => {
     if (stage !== 1 || !section.current || !slot.current) return;
     const area = section.current.getBoundingClientRect();
@@ -60,6 +79,7 @@ export function Welcome({ arrived, onNext }: StepProps) {
       ref={section}
       className={`ob-step ob-welcome${stage === 0 ? ' ob-welcome-reset' : ''}`}
       data-analytics-public
+      onClick={done ? undefined : skip}
     >
       <Messages
         revealed={Math.max(0, stage - 3)}
@@ -72,14 +92,17 @@ export function Welcome({ arrived, onNext }: StepProps) {
               style={avatar}
               title="Say hi again"
               aria-label="Say hi again"
-              onClick={replay}
+              onClick={(event) => {
+                event.stopPropagation();
+                replay();
+              }}
             >
               <OttoGlyph mode={typing ? 'thinking' : 'idle'} />
             </button>
           </span>
         }
         items={[
-          <Bubble className="ob-greeting">
+          <Bubble>
             <span className="ob-greeting-title">
               <span
                 className={`ob-wave-hand${played && stage >= 4 ? ' waving' : ''}`}
@@ -105,9 +128,7 @@ export function Welcome({ arrived, onNext }: StepProps) {
             so I can really help.
           </Bubble>,
           <Bubble>
-            It’s <strong>safe</strong> to connect your work accounts. Your{' '}
-            <strong>keys and passwords are encrypted</strong>, and I{' '}
-            <strong>check with you before I send, post or delete</strong> anything you didn’t ask
+            I <strong>check with you before I send, post or delete</strong> anything you didn’t ask
             for.
           </Bubble>,
         ]}

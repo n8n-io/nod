@@ -7,7 +7,9 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to your model and decision providers, and the apps you choose. The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Otherwise, the Otto team at n8n receives none of your data unless you send feedback to its collector or opt in to usage analytics. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
+By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
+
+The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback and usage analytics are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
@@ -25,29 +27,35 @@ For what Otto stores and how long it keeps it, see the [Security review guide](/
 ```mermaid
 flowchart LR
   otto[Otto on your computer]:::accent
-  otto -- prompts and results --> model[Model providers]
-  otto -- app actions --> apps[Composio and<br/>your apps]
+  otto -- prompts and results --> model[Model and decision providers]
+  otto -- app actions with Otto's connection --> managed["Otto hosted service (n8n)"]
+  managed --> apps[Composio and<br/>your apps]
+  otto -- direct app actions --> apps
   otto -- your chats --> chat[Telegram, WhatsApp]
   otto -- browsing --> web[Websites]
   otto -- searches --> search[Web search]
-  otto -. updates, and what you choose .-> n8n[n8n]:::muted
+  otto -- update checks and downloads --> n8n[n8n]:::muted
+  otto -. opt-in analytics .-> n8n[n8n]:::muted
+  otto -. feedback you send .-> feedback[Configured feedback recipient]:::muted
 ```
 
-| Goes to                                   | What                                                                                                                                                                                                                                                                                                                                                                               |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected, also recent email Otto reads to suggest first tasks and learn your writing style. When a browser step needs your yes, the page's visible text, to write the question                                                                                                                                        |
-| Decision services                         | Recent task messages or a schedule instruction, proposed action arguments, confirmation facts, and approval replies. For a browser step, the website, page address, control label, any dialog text or uploaded file name, and what Otto typed or chose on that page; when it needs your yes, the fact check also reads the page's visible text. Each check receives its own input. |
-| Apps and services you connect             | The actions Otto runs in them                                                                                                                                                                                                                                                                                                                                                      |
-| Composio, if you connect apps through it  | Those app connections and the actions Otto sends                                                                                                                                                                                                                                                                                                                                   |
-| Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                                                                                                                                                                                                                                                        |
-| Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                                                                                                                                                                                                                                   |
-| Exa, for web search                       | Otto's search queries. With a ChatGPT plan, OpenAI runs the search instead                                                                                                                                                                                                                                                                                                         |
-| n8n                                       | Update checks and downloads from the desktop app, which show your IP address, app version and platform. Masked usage analytics if you opt in. Feedback when using the default collector                                                                                                                                                                                            |
-| Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                                                                                                                                                                                                                                               |
+| Goes to                                   | What                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected: your text from recent sent emails for writing style, plus inbox subjects and snippets for first tasks. Desktop and personal web installs can instead use the latest-message text from up to 40 recent inbox conversations for a setup summary. When a browser step needs your yes, the page’s visible text is also sent to write the question |
+| Decision services                         | Recent task messages or a schedule instruction, proposed action arguments, confirmation facts, and approval replies. For a browser step, the website, page address, control label, any dialog text or uploaded file name, and what Otto typed or chose on that page; when it needs your yes, the fact check also reads the page's visible text. Each check receives its own input.                                   |
+| Apps and services you connect             | The actions Otto runs in them                                                                                                                                                                                                                                                                                                                                                                                        |
+| Composio, if you connect apps through it  | Those app connections and the actions Otto sends, in n8n's project or in your own                                                                                                                                                                                                                                                                                                                                    |
+| Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                                                                                                                                                                                                                                                                                          |
+| Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                                                                                                                                                                                                                                                                     |
+| Exa, for web search                       | Otto's search queries. With a ChatGPT plan, OpenAI runs the search instead                                                                                                                                                                                                                                                                                                                                           |
+| n8n                                       | App requests and results when you use Easy Connect. Desktop update checks and downloads, which show your IP address, app version and platform. Masked usage analytics if you opt in, and feedback when using the default collector                                                                                                                                                                                   |
+| Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                                                                                                                                                                                                                                                                                 |
 
 OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
 
-Provider keys, such as your model and Composio keys, stay in the Otto server. They never enter a prompt, Otto's workspace or its browser.
+Google sign-in for Easy Connect sends identity information to Google and n8n's connection service. That service stores your verified email, Google account identifier, installation admission, and expiring sign-in state. It discards Google's access and ID tokens after validation. Signing in doesn't grant access to Gmail. Removing proxy access doesn't delete provider accounts.
+
+Your model keys and your Composio key, if you use one, stay on your installation. Keys you save in the app are stored encrypted, and Otto only shows the last four characters of a Composio key. Otto's connection doesn't need a Composio key. Provider keys never enter a prompt, Otto's workspace or its browser.
 
 ## Usage analytics
 
@@ -65,13 +73,14 @@ Operators can disable submission and status checks with `OTTO_FEEDBACK_ENABLED=f
 
 ## What memory learns from
 
-Otto learns only from your own short messages, never from its replies, tool results or web pages. When you connect Gmail, your model also reads your recent sent email and writes one short note on your writing style. The model is told to leave out facts, names and quotes, and Otto drops a note with an email address or link. See [Memory](/use/memory/).
+Otto learns only from your own short messages, never from its replies, tool results or web pages. When you connect Gmail, your model also reads your recent sent email and writes one short note on your writing style. During setup on desktop and personal web installs, it can also summarise the latest-message text from up to 40 recent inbox conversations to suggest first tasks. That summary is never saved to memory and is deleted once the cards are posted. When no summary is available, and in hosted mode, task suggestions use recent subjects and snippets instead. The model is told to leave out facts, names and quotes, and Otto drops a note with an email address or link. See [Memory](/use/memory/).
 
 ## Delete your data
 
 - **Memories.** Open **Settings → Memory**, select a note and choose **Forget**. This deletes the note and its earlier versions. You can also ask Otto to forget something.
 - **Vault items.** Open the item in **Trust → Saved** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
+- **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
 - **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. In hosted mode, ask your operator.
 
 :::caution

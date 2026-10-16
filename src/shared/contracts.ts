@@ -187,6 +187,7 @@ export interface Connection {
   status: 'not_configured' | 'disconnected' | 'connected';
   accountId?: string;
   connectionId?: string;
+  direct?: boolean;
   accountName?: string;
   accountEmail?: string;
   savedLogin?: boolean;
@@ -202,7 +203,14 @@ export interface Connection {
 }
 export interface AppSetupStatus {
   completed: string[];
-  apps: Array<{ hash: string; slug: string; name: string; logoUrl?: string }>;
+  apps: Array<{
+    hash: string;
+    slug: string;
+    name: string;
+    logoUrl?: string;
+    pairingConfirmed?: boolean;
+    signInRequired?: boolean;
+  }>;
 }
 export interface Configuration {
   provider: string;

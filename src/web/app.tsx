@@ -38,7 +38,7 @@ import {
 } from './lib/desktop';
 
 function replayingOnboarding(path: string) {
-  return import.meta.env?.DEV === true && path === '/onboarding';
+  return (import.meta.env?.DEV === true || desktopSettingsAvailable()) && path === '/onboarding';
 }
 function navigate(path: string) {
   window.history.pushState(null, '', path);
@@ -79,13 +79,11 @@ function Workspace({
   path,
   session,
   account,
-  settingsError,
   onFeedback,
 }: {
   path: string;
   session: SessionResponse;
   account: AccountControls;
-  settingsError: string;
   onFeedback(): void;
 }) {
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
@@ -196,7 +194,6 @@ function Workspace({
         <div className="workspace-frame">
           <div className="workspace-body">
             <main id="workspace" className="main-workspace" tabIndex={-1}>
-              {settingsError && <Notice>{settingsError}</Notice>}
               <div
                 className={`chat-route ${handoff ? 'chat-entering' : ''}`}
                 hidden={currentPath !== '/'}
@@ -238,7 +235,11 @@ function Workspace({
                 <Trust hosted={session.auth.mode === 'google'} onAsk={askInChat} />
               )}
               {currentPath === '/apps' && (
-                <Apps configuration={state?.configuration} onAsk={askInChat} />
+                <Apps
+                  configuration={state?.configuration}
+                  onAsk={askInChat}
+                  onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
+                />
               )}
               {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
               {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
@@ -317,13 +318,11 @@ function AuthenticatedApp({
         ? 'Appearance'
         : 'Profile',
   );
-  const [settingsError, setSettingsError] = useState('');
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const lastPath = useRef('/');
   const settingsPath = path === '/memory' ? 'Memory' : undefined;
   if (!settingsPath) lastPath.current = path;
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
-    setSettingsError('');
     setSettingsRequest((current) => current + 1);
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
     setSettingsTab(
@@ -365,22 +364,6 @@ function AuthenticatedApp({
     return () => document.removeEventListener('click', openSettingsLink);
   }, []);
   useEffect(() => {
-    const apply = () => {
-      setSettingsError('');
-      setSettingsOpen(false);
-    };
-    const failed = (event: Event) => {
-      const message = (event as CustomEvent<unknown>).detail;
-      if (typeof message === 'string') setSettingsError(message);
-    };
-    window.addEventListener('otto:apply-settings', apply);
-    window.addEventListener('otto:settings-error', failed);
-    return () => {
-      window.removeEventListener('otto:apply-settings', apply);
-      window.removeEventListener('otto:settings-error', failed);
-    };
-  }, []);
-  useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey : event.ctrlKey;
       if (
@@ -419,7 +402,6 @@ function AuthenticatedApp({
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
   const onboarding = !session.settings!.onboardingCompleted || replayingOnboarding(path);
-  const workspace = allowed && path !== '/browser' && !match && !onboarding;
   return (
     <>
       {!allowed ? (
@@ -445,22 +427,20 @@ function AuthenticatedApp({
           onFeedback={openFeedback}
           usageData={account.usageData}
           onUsageData={account.onUsageData}
-          onComplete={() =>
-            onAccountUpdate({ onboardingCompleted: true }).then(() => {
-              if (replayingOnboarding(path)) navigate('/');
-            })
-          }
+          onComplete={async () => {
+            if (!session.settings!.onboardingCompleted)
+              await onAccountUpdate({ onboardingCompleted: true });
+            if (replayingOnboarding(path)) navigate('/');
+          }}
         />
       ) : (
         <Workspace
           path={lastPath.current}
           session={session}
           account={account}
-          settingsError={settingsError}
           onFeedback={openFeedback}
         />
       )}
-      {settingsError && !workspace && <Notice>{settingsError}</Notice>}
       <FeedbackDialog
         key={session.user!.id}
         ownerId={session.user!.id}
@@ -480,6 +460,14 @@ function AuthenticatedApp({
         openRequest={settingsRequest}
         onOpenChange={setSettingsOpen}
         onName={(name) => onAccountUpdate({ name })}
+        onReplayOnboarding={
+          import.meta.env?.DEV === true && !desktopSettingsAvailable()
+            ? () => {
+                setSettingsOpen(false);
+                navigate('/onboarding?replay=1');
+              }
+            : undefined
+        }
         returnFocus={() =>
           settingsTrigger.current?.isConnected
             ? settingsTrigger.current

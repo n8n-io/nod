@@ -5,7 +5,8 @@ import { AccountAvatar, accountInitials } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
 import { desktopSettingsAvailable } from '../lib/desktop';
 
-export type AccountTab = 'Profile' | 'General' | 'Appearance' | 'Preferences' | 'Models' | 'Memory';
+export type AccountTab =
+  'Profile' | 'General' | 'Appearance' | 'Preferences' | 'Models' | 'App connections' | 'Memory';
 export interface AccountControls {
   user: AccountUser;
   local: boolean;

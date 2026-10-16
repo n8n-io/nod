@@ -7,6 +7,7 @@ import {
   KeyRound,
   Globe,
   MapPin,
+  Plug,
   LogOut,
   Monitor,
   Moon,
@@ -43,7 +44,8 @@ import {
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
-import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
+import { DesktopOptions, useDesktopSettings } from './desktop-settings';
+import { ConnectionSettings } from './connection-choice';
 import { Memory } from '../pages/memory';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
@@ -343,6 +345,7 @@ export function AccountSettings({
   openRequest,
   onOpenChange,
   onName,
+  onReplayOnboarding,
   returnFocus,
 }: {
   account: AccountControls;
@@ -351,26 +354,27 @@ export function AccountSettings({
   openRequest: number;
   onOpenChange(open: boolean): void;
   onName(name: string): Promise<void>;
+  onReplayOnboarding?(): void;
   returnFocus(): HTMLElement | null;
 }) {
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
   const tabs: AccountTab[] = desktop
-    ? ['General', 'Models', 'Preferences', 'Memory']
+    ? ['General', 'Models', 'App connections', 'Preferences', 'Memory']
     : account.local
-      ? ['Models', 'Appearance', 'Preferences', 'Memory']
-      : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory'];
+      ? ['Models', 'App connections', 'Appearance', 'Preferences', 'Memory']
+      : ['Profile', 'Models', 'App connections', 'Appearance', 'Preferences', 'Memory'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
-  const [composioDirty, setComposioDirty] = useState(false);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
+  const [connectionDirty, setConnectionDirty] = useState(false);
   const [name, setName] = useState(account.user.name);
   const pending = useRef(false);
   pending.current =
-    composioDirty ||
     modelDirty ||
     preferencesDirty ||
+    connectionDirty ||
     native.busy ||
     account.saving ||
     name.trim() !== account.user.name;
@@ -473,13 +477,15 @@ export function AccountSettings({
               const Icon =
                 value === 'Models'
                   ? KeyRound
-                  : value === 'Profile'
-                    ? UserRound
-                    : value === 'Memory'
-                      ? Brain
-                      : value === 'Appearance' || value === 'General'
-                        ? Sun
-                        : SlidersHorizontal;
+                  : value === 'App connections'
+                    ? Plug
+                    : value === 'Profile'
+                      ? UserRound
+                      : value === 'Memory'
+                        ? Brain
+                        : value === 'Appearance' || value === 'General'
+                          ? Sun
+                          : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -670,13 +676,18 @@ export function AccountSettings({
               )}
               {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
               {tab === 'Memory' && <Memory />}
+              {tab === 'App connections' && (
+                <ConnectionSettings onDirtyChange={setConnectionDirty} />
+              )}
               {tab === 'Models' && (
                 <>
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
-                  {desktop && (
-                    <ComposioSettings onDirtyChange={setComposioDirty} applyBlocked={modelDirty} />
-                  )}
                 </>
+              )}
+              {onReplayOnboarding && tab === 'Appearance' && (
+                <Button variant="outline" disabled={pending.current} onClick={onReplayOnboarding}>
+                  Replay onboarding
+                </Button>
               )}
               {error && tab !== 'Profile' && <Notice>{error}</Notice>}
             </div>

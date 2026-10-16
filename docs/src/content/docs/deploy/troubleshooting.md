@@ -25,7 +25,7 @@ You ran `docker compose` yourself before Otto created the database password. Run
 
 ### Configure OTTO_VAULT_KEY in server settings before saving a connection.
 
-Otto has no key to encrypt saved credentials. This happens outside macOS, where there's no Keychain. Add a key to `.env`, then restart Otto.
+Otto has no key to encrypt saved credentials. Local macOS and Linux web installs normally create a protected key automatically. Other server configurations need an explicit key. If saved encrypted data exists, restore its original key instead of generating a new one. For a fresh server only, add a key to `.env`, then restart Otto.
 
 ```sh title="Terminal"
 sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
@@ -81,11 +81,19 @@ ChatGPT sign-in receives its callback on port 1455. Another Otto app or another 
 
 ### Composio says "Invalid API key"
 
-A valid key without the right permissions can show this error, as Composio's [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions) explains. Saving a key in Otto doesn't verify every permission needed to connect Gmail.
+If you use your own Composio key, a valid key without the right permissions can show this error. Composio's [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions) explains why. Saving a key in Otto doesn't verify every permission needed to connect Gmail.
 
 For Gmail sign-in, check **Auth configs → Read only** and **Session management → Read and write**. Keep the other permissions listed in [Apps](/connect/apps/), including **Connected accounts** and **Session tool execution**.
 
-You can't edit a key's permissions. Create a replacement key in the same Composio project, [save it in Otto](/connect/apps/#add-the-key-to-otto), then select **Connect Gmail** again. Your existing connected accounts belong to that project.
+You can't edit a key's permissions. Create a replacement in the same Composio project and save it in **Settings → App connections → My Composio key**. If your server sets `COMPOSIO_API_KEY`, replace the environment value and restart Otto. Then select **Connect Gmail** again. Your existing connected accounts belong to that project.
+
+Otto's connection doesn't need a personal Composio key. If the error persists there, [send feedback](/deploy/troubleshooting/#send-feedback-with-a-diagnostic-report).
+
+### Apps disconnected after switching connection
+
+Switching between Otto's connection and your own Composio key disconnects the apps connected through the one you left, because their accounts belong to that project. Connect them again in **Apps**.
+
+If Otto says it couldn't disconnect an app, it kept your current connection. Apps it disconnected before that stay disconnected, so connect them again if you don't switch. Check your network and try again.
 
 ## Channels
 

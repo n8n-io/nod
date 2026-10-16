@@ -18,7 +18,6 @@ import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
-import { FeedbackLauncher } from '../components/feedback-intro';
 import {
   Button,
   Dialog,
@@ -41,7 +40,7 @@ import {
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
-import { OttoGlyph, Rise } from './onboarding/motion';
+import { OttoGlyph, Rise } from '../components/motion';
 import { SidebarToggle } from '../components/sidebar-toggle';
 
 function verificationFailure(
@@ -116,6 +115,11 @@ function TaskCards({
                     <span className={`task-source-${task.source}`} aria-hidden="true" />
                   )}
                   {taskSources[task.source]}
+                  {task.kind && (
+                    <span className="task-kind">
+                      {task.kind === 'ongoing' ? 'Ongoing' : 'Right now'}
+                    </span>
+                  )}
                 </span>
                 <p className="task-title">{task.title}</p>
                 <div className="task-action" aria-live="polite">
@@ -126,7 +130,7 @@ function TaskCards({
                       disabled={disabled}
                       onClick={() => onStart(task)}
                     >
-                      Do it
+                      {task.kind === 'ongoing' ? 'Set it up' : 'Do it'}
                     </button>
                   ) : state === 'working' ? (
                     <span className="task-state">
@@ -138,9 +142,9 @@ function TaskCards({
                   ) : (
                     <span className="task-state">
                       <span className="task-check" aria-hidden="true">
-                        <Check size={13} strokeWidth={3} />
+                        <Check size={14} strokeWidth={3} />
                       </span>
-                      Done
+                      {task.kind === 'ongoing' ? 'Set up' : 'Done'}
                     </span>
                   )}
                 </div>
@@ -790,12 +794,17 @@ export function Chat({
         </Button>
       )}
       {onFeedback && (
-        <FeedbackLauncher
-          key={ownerId}
-          ownerId={ownerId}
-          visible={visible}
-          onFeedback={onFeedback}
-        />
+        <Button
+          id="feedback-launcher"
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="chat-report-button"
+          onClick={onFeedback}
+        >
+          <MessageSquarePlus size={16} aria-hidden="true" />
+          Send feedback
+        </Button>
       )}
     </>
   );

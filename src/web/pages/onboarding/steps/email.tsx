@@ -1,22 +1,22 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Check, ExternalLink, LoaderCircle } from 'lucide-react';
-import type { Configuration, Connection } from '../../../../shared/contracts';
-import type { IntegrationKeyStatus } from '../../../../shared/integrations';
-import { Button, Input } from '../../../components/ui';
-import { useDesktopSettings } from '../../../components/desktop-settings';
+import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { Check, KeyRound, LoaderCircle } from 'lucide-react';
+import type { AppSetupStatus, Configuration, Connection } from '../../../../shared/contracts';
+import {
+  ConnectionChoice,
+  connectionRoutes,
+  useConnectionChoice,
+} from '../../../components/connection-choice';
+import { OttoGlyph, Rise } from '../../../components/motion';
+import { AppAccessRecovery } from '../../../components/app-connection-dialog';
+import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
-import { api, errorMessage, post } from '../../../lib/api';
+import { api, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession } from '../../../lib/analytics';
 import { connectionUrl } from '../../../lib/connection-url';
-import {
-  applyDesktopSettings,
-  desktopLinksAvailable,
-  desktopSettingsAvailable,
-  openConnection,
-} from '../../../lib/desktop';
-import { pageDataCache } from '../../../lib/page-data-cache';
+import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import type { StepProps } from '..';
-import { Bubble, Footer, Messages, Rise, useReveal, type RevealStep } from '../motion';
+import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
   { typing: 450 },
@@ -27,59 +27,52 @@ const sequence: RevealStep[] = [
 
 const outcomes = ['connected', 'cancelled', 'failed', 'expired'];
 
-function connectionMessage(result: string | null) {
+const unavailableReasons = {
+  load: 'Couldn’t check your app connections.',
+  ready: 'App connections aren’t available right now.',
+  gmail: 'Gmail isn’t available with this connection.',
+};
+
+function connectionMessage(result?: string) {
   if (result === 'cancelled') return 'Sign-in cancelled. You can try again.';
   if (result === 'failed' || result === 'expired') return 'Gmail didn’t connect. Try again?';
   return '';
 }
 
-function Badge({ state, children }: { state: 'idle' | 'active' | 'done'; children: string }) {
-  return (
-    <span className="ob-email-badge" data-state={state} aria-hidden="true">
-      {state === 'done' ? <Check size={14} strokeWidth={3} /> : children}
-    </span>
-  );
-}
-
 export function Email({ arrived, onNext, onBack }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
-  const desktop = desktopSettingsAvailable();
-  const native = useDesktopSettings(desktop);
-  const { data: configuration } = usePageData<Configuration>('/api/configuration');
-  const { data: apps, refresh: refreshApps } = usePageData<Connection[]>('/api/apps');
-  const [local, setLocal] = useState<IntegrationKeyStatus | null>(null);
-  const [explain, setExplain] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [key, setKey] = useState('');
-  const [checking, setChecking] = useState(false);
-  const [keyError, setKeyError] = useState('');
+  const configuration = usePageData<Configuration>('/api/configuration');
+  const apps = usePageData<Connection[]>('/api/apps');
+  const refreshApps = apps.refresh;
+  const [reloading, setReloading] = useState(false);
   const [pending, setPending] = useState<'opening' | 'waiting'>();
+  const [pairingConfirmed, setPairingConfirmed] = useState(false);
+  const [signInUrl, setSignInUrl] = useState<string>();
+  const [stale, setStale] = useState(false);
+  const [pollFailing, setPollFailing] = useState(false);
   const [error, setError] = useState('');
-  const keyInput = useRef<HTMLInputElement>(null);
+  const [signInRequired, setSignInRequired] = useState(false);
+  const [accessRenewed, setAccessRenewed] = useState(false);
+  const [setupExpanded, setSetupExpanded] = useState(false);
+  const choice = useConnectionChoice('onboarding', () => {
+    setError('');
+    setSetupExpanded(false);
+  });
+  const keyStatus = choice.status;
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<string | undefined>(undefined);
   const active = useRef(false);
-  const mode = desktop
-    ? 'desktop'
-    : configuration && (configuration.localOnly ? 'local' : 'hosted');
 
-  useEffect(() => {
-    if (mode !== 'local') return;
-    let current = true;
-    api<IntegrationKeyStatus>('/api/integrations/key')
-      .then((value) => current && setLocal(value))
-      .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, [mode]);
+  function clearAttempt() {
+    attempt.current = undefined;
+    setSignInUrl(undefined);
+    setStale(false);
+    setPollFailing(false);
+    setSignInRequired(false);
+  }
 
   useEffect(() => {
     active.current = true;
-    const result = new URLSearchParams(window.location.search).get('connection');
-    setError(connectionMessage(result));
-    if (result) window.history.replaceState(null, '', window.location.pathname);
-    const settle = () => setPending((current) => (current === 'waiting' ? undefined : current));
     const channel =
       typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.apps');
     if (channel)
@@ -94,80 +87,150 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           !outcomes.includes(connection ?? '')
         )
           return;
-        attempt.current = undefined;
-        setError(connectionMessage(connection ?? null));
-        settle();
+        clearAttempt();
+        setError(connectionMessage(connection));
+        setPending((current) => (current === 'waiting' ? undefined : current));
         void refreshApps();
       };
-    window.addEventListener('focus', settle);
     return () => {
       active.current = false;
       channel?.close();
-      window.removeEventListener('focus', settle);
       request.current?.abort();
       attempt.current = undefined;
     };
   }, []);
 
-  const status =
-    mode === 'desktop'
-      ? native.settings && {
-          saved: native.settings.hasComposioKey,
-          suffix: native.settings.keys.composioApiKey.suffix,
-          editable: true,
+  useEffect(() => {
+    const currentAttempt = attempt.current;
+    if (!signInUrl || !currentAttempt) return;
+    const controller = new AbortController();
+    let checking: Promise<boolean> | undefined;
+    let poll: number | undefined;
+    let grace: number | undefined;
+    let failures = 0;
+    let confirmed = false;
+    const current = () => !controller.signal.aborted && attempt.current === currentAttempt;
+    const settle = (result: 'connected' | 'failed' | 'expired') => {
+      if (!current()) return;
+      controller.abort();
+      window.clearTimeout(poll);
+      window.clearTimeout(grace);
+      clearAttempt();
+      setPending(undefined);
+      setError(connectionMessage(result));
+      void refreshApps();
+    };
+    const read = async () => {
+      try {
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signInUrl));
+        const hash = Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, '0'),
+        ).join('');
+        const result = await api<AppSetupStatus>('/api/apps/setup-status', {
+          method: 'POST',
+          body: JSON.stringify({ hashes: [hash], pairingUrl: signInUrl }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+          cache: 'no-store',
+        });
+        if (!current()) return false;
+        failures = 0;
+        setPollFailing(false);
+        if (result.completed.includes(hash)) {
+          settle('connected');
+          return true;
         }
-      : mode === 'hosted'
-        ? { saved: !!configuration?.integrationsReady, suffix: null, editable: false }
-        : mode === 'local' && local
-          ? { saved: local.managed || local.saved, suffix: local.suffix, editable: !local.managed }
-          : null;
-  const keyDone = !!status?.saved && !editing;
-  const restartRequired = mode === 'desktop' && !!native.settings?.restartRequired;
-  const gmail = apps?.filter((connection) => connection.slug === 'gmail') ?? [];
+        const app = result.apps.find((app) => app.hash === hash);
+        if (!app) {
+          settle('failed');
+          return true;
+        }
+        if (app.signInRequired === true) setSignInRequired(true);
+        if (app.pairingConfirmed === true && !confirmed) {
+          confirmed = true;
+          setPairingConfirmed(true);
+        }
+      } catch {
+        if (current() && ++failures >= 3) setPollFailing(true);
+      }
+      return false;
+    };
+    const check = () => {
+      if (!current()) return Promise.resolve(false);
+      checking ??= read().finally(() => {
+        checking = undefined;
+      });
+      return checking;
+    };
+    const schedule = () => {
+      poll = window.setTimeout(() => {
+        void check().finally(() => {
+          if (current()) schedule();
+        });
+      }, 5000);
+    };
+    const returned = () => {
+      if (document.visibilityState !== 'visible') return;
+      void check();
+      window.clearTimeout(grace);
+      grace = window.setTimeout(() => {
+        if (current()) setStale(true);
+      }, 4000);
+    };
+    if (document.visibilityState === 'visible') void check();
+    schedule();
+    window.addEventListener('focus', returned);
+    document.addEventListener('visibilitychange', returned);
+    const timer = window.setTimeout(() => {
+      void check().then((settled) => {
+        if (!settled) settle('expired');
+      });
+    }, 10 * 60_000);
+    return () => {
+      controller.abort();
+      window.clearTimeout(poll);
+      window.clearTimeout(grace);
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', returned);
+      document.removeEventListener('visibilitychange', returned);
+    };
+  }, [signInUrl, refreshApps]);
+
+  const gmail = apps.data?.filter((connection) => connection.slug === 'gmail') ?? [];
   const account = gmail.find((connection) => connection.status === 'connected');
   const connected = !!account;
+  const keyNeeded = !!keyStatus && choice.mode !== keyStatus.mode;
+  const personalSetup = !!keyStatus?.switchable;
+  const compactSetup =
+    personalSetup &&
+    choice.ready &&
+    !keyNeeded &&
+    !choice.dirty &&
+    !choice.view.editing &&
+    !choice.view.error &&
+    !choice.view.notice &&
+    !choice.loadError;
+  const showGmail =
+    !!keyStatus &&
+    (!personalSetup ||
+      !!pending ||
+      (choice.ready && !keyNeeded && !choice.dirty && !choice.view.editing));
+  const loading = (!configuration.data && !configuration.error) || (!apps.data && !apps.error);
+  const unavailable: keyof typeof unavailableReasons | undefined = loading
+    ? undefined
+    : !configuration.data || !apps.data
+      ? 'load'
+      : !configuration.data.integrationsReady
+        ? 'ready'
+        : gmail.some((connection) => connection.status !== 'not_configured')
+          ? undefined
+          : 'gmail';
   const canConnect =
-    keyDone &&
-    !restartRequired &&
-    !!configuration?.integrationsReady &&
-    gmail.some((connection) => connection.status !== 'not_configured');
-
-  async function saveKey(event: FormEvent) {
-    event.preventDefault();
-    const value = key.trim();
-    if (!value) {
-      setKeyError('Paste your Composio key first.');
-      return;
-    }
-    const capture = analyticsForCurrentSession();
-    setChecking(true);
-    setKeyError('');
-    try {
-      if (mode === 'desktop') {
-        await post('/api/integrations/key/check', { key: value });
-        const saved = await native.save({ composioApiKey: value });
-        if (saved.restartRequired) await applyDesktopSettings().catch(() => {});
-      } else {
-        await api('/api/integrations/key', { method: 'PUT', body: JSON.stringify({ key: value }) });
-        const next = await api<IntegrationKeyStatus>('/api/integrations/key');
-        if (active.current) setLocal(next);
-        await Promise.all([
-          pageDataCache.refresh('/api/configuration', true),
-          pageDataCache.refresh('/api/apps', true),
-        ]);
-      }
-      if (!active.current) return;
-      setKey('');
-      setEditing(false);
-      setExplain(false);
-    } catch (cause) {
-      if (!active.current) return;
-      setKeyError(errorMessage(cause));
-      capture('otto_ui_error', { area: 'onboarding', action: 'save' });
-    } finally {
-      if (active.current) setChecking(false);
-    }
-  }
+    !loading &&
+    !unavailable &&
+    !keyNeeded &&
+    choice.ready &&
+    !choice.switching &&
+    !choice.signingIn;
 
   async function connect() {
     if (request.current || !canConnect) return;
@@ -175,49 +238,50 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     const external = desktopLinksAvailable();
     const popup = external
       ? null
-      : window.open('', 'otto-connect-gmail', 'popup,width=520,height=720');
+      : window.open(
+          '/connection-loading.html?service=gmail',
+          'otto-connect-gmail',
+          'popup,width=520,height=720',
+        );
     try {
       if (popup) popup.opener = null;
     } catch {}
     const controller = new AbortController();
     request.current = controller;
-    attempt.current = undefined;
+    clearAttempt();
     setPending('opening');
+    setPairingConfirmed(false);
     setError('');
-    let next: 'opening' | 'waiting' | undefined;
+    setAccessRenewed(false);
+    let next: 'waiting' | undefined;
     try {
       const response = await api<{ url: string; attempt?: string }>('/api/apps/gmail/connect', {
         method: 'POST',
-        body: JSON.stringify({ returnTo: popup || external ? 'window' : 'onboarding' }),
+        body: JSON.stringify({ returnTo: 'window' }),
         signal: controller.signal,
       });
       if (controller.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
       const url = connectionUrl(response.url, window.location.origin);
-      if (external || popup) {
-        if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
-          throw new Error('Gmail didn’t connect. Try again?');
-        attempt.current = response.attempt;
-      }
-      if (external) {
-        await openConnection(url);
-        next = 'waiting';
-      } else if (!popup) {
-        next = 'opening';
-        window.location.assign(url);
-      } else if (!popup.closed) {
-        next = 'waiting';
-        popup.location.href = url;
-      }
+      if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
+        throw new Error('Gmail didn’t connect. Try again?');
+      attempt.current = response.attempt;
+      flushSync(() => {
+        setSignInUrl(url);
+      });
+      next = 'waiting';
+      if (external) await openConnection(url);
+      else if (popup && !popup.closed) popup.location.href = url;
     } catch (cause) {
       popup?.close();
+      clearAttempt();
       if (!controller.signal.aborted) {
         setError(errorMessage(cause));
         capture('otto_ui_error', { area: 'onboarding', action: 'connect' });
       }
     } finally {
-      if (next !== 'opening' && request.current === controller) {
+      if (request.current === controller) {
         request.current = null;
-        if (active.current) setPending(next);
+        if (active.current) setPending(attempt.current ? next : undefined);
       }
     }
   }
@@ -225,17 +289,88 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   function cancel() {
     request.current?.abort();
     request.current = null;
-    attempt.current = undefined;
+    clearAttempt();
     setPending(undefined);
   }
 
-  function change() {
-    setEditing(true);
-    setKeyError('');
-    requestAnimationFrame(() => keyInput.current?.focus());
+  async function reload() {
+    setReloading(true);
+    await Promise.all([configuration.refresh(), refreshApps(), choice.reload()]);
+    if (active.current) setReloading(false);
   }
 
   const gmailState = connected ? 'connected' : (pending ?? 'idle');
+  let status;
+  if (account)
+    status = personalSetup ? null : (
+      <p className="ob-email-done">
+        {account.accountEmail ? (
+          <>
+            Signed in as <strong data-analytics-private>{account.accountEmail}</strong>
+          </>
+        ) : (
+          'Signed in.'
+        )}
+      </p>
+    );
+  else if (signInRequired)
+    status = (
+      <AppAccessRecovery
+        key={signInUrl}
+        onCancel={cancel}
+        onRenewed={() => {
+          cancel();
+          setAccessRenewed(true);
+        }}
+      />
+    );
+  else if (gmailState === 'waiting')
+    status = (
+      <div className="ob-email-waiting">
+        <LoaderCircle size={18} className="spin" aria-hidden="true" />
+        <p>
+          {stale ? 'Didn’t finish signing in?' : 'Finish signing in in your browser.'}{' '}
+          {signInUrl && !pairingConfirmed && (
+            <a href={signInUrl} target="_blank" rel="noreferrer">
+              Open sign-in
+            </a>
+          )}
+        </p>
+        {stale && (
+          <Button variant="outline" size="sm" onClick={() => void connect()}>
+            Start again
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" onClick={cancel}>
+          Cancel
+        </Button>
+      </div>
+    );
+  else if (loading) status = <p className="ob-email-muted">Checking app connections…</p>;
+  else if (unavailable)
+    status = (
+      <div className="ob-email-retry">
+        <p className="ob-email-muted">{unavailableReasons[unavailable]}</p>
+        <Button variant="ghost" size="sm" disabled={reloading} onClick={() => void reload()}>
+          {reloading && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+          Try again
+        </Button>
+      </div>
+    );
+  else if (!personalSetup)
+    status = (
+      <div className="ob-email-notes">
+        <p>
+          {keyStatus?.mode === 'otto'
+            ? 'Google will ask you to sign in to Composio, the service Otto uses to connect apps.'
+            : 'Google will ask you to sign in and allow access to your inbox.'}
+        </p>
+        {keyStatus && !keyStatus.switchable && (
+          <p className="ob-email-muted">{connectionRoutes[keyStatus.mode]}</p>
+        )}
+      </div>
+    );
+
   return (
     <section className="ob-step ob-email" data-analytics-public>
       <Messages
@@ -244,171 +379,69 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         items={[
           <Bubble>Let’s connect your email.</Bubble>,
           <Bubble>
-            It’s where a lot of your work happens, so it’s the quickest way for me to learn how you
-            work. I can read, sort and draft, and I won’t send anything unless you ask.
+            I can help you read, sort and draft.
+            <br />
+            I’ll only send when you ask.
           </Bubble>,
         ]}
       />
-      <Rise show={revealed >= 3} className="ob-email-card">
-        <div className="ob-email-head">
-          <span className="ob-email-tile">
-            <img src="/logos/gmail.svg" alt="" width={24} height={24} />
-          </span>
-          <div className="ob-email-title">
-            <p className="ob-email-name">Gmail</p>
-            <p className="ob-email-muted">Start with one inbox. You can add more apps later.</p>
-          </div>
-          {connected && (
-            <span className="ob-email-chip">
-              <Check size={14} strokeWidth={2.5} aria-hidden="true" />
-              Connected
-            </span>
-          )}
-        </div>
-        <div className="ob-email-step">
-          <Badge state={keyDone ? 'done' : 'active'}>1</Badge>
-          <div className="ob-email-body">
-            <div className="ob-email-label">
-              <p>Paste your Composio key</p>
-              {status?.editable !== false && (
-                <button
-                  type="button"
-                  className="ob-email-link"
-                  aria-expanded={explain}
-                  onClick={() => setExplain((value) => !value)}
-                >
-                  What’s this?
-                </button>
-              )}
-            </div>
-            {explain && (
-              <div className="ob-email-explain">
-                <p>
-                  Composio is how I sign in to apps like Gmail, Calendar and Slack for you. I never
-                  see your passwords, and you can take away access anytime.
-                </p>
-                <p>
-                  Make a free account, copy your API key from its Settings and paste it here. It
-                  takes about a minute.
-                </p>
-                <a href="https://app.composio.dev" target="_blank" rel="noreferrer">
-                  Open Composio
-                  <ExternalLink size={14} aria-hidden="true" />
-                </a>
-              </div>
-            )}
-            {status?.editable && !keyDone && (
-              <>
-                <form className="ob-email-form" onSubmit={(event) => void saveKey(event)}>
-                  <Input
-                    ref={keyInput}
-                    type="password"
-                    value={key}
-                    placeholder="ak_…"
-                    aria-label="Composio API key"
-                    autoComplete="off"
-                    spellCheck={false}
-                    maxLength={16384}
-                    disabled={checking}
-                    data-analytics-private
-                    onChange={(event) => {
-                      setKey(event.target.value);
-                      setKeyError('');
-                    }}
-                  />
-                  <Button type="submit" variant="outline" disabled={checking}>
-                    {checking && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-                    {checking ? 'Checking' : 'Save'}
-                  </Button>
-                </form>
-                {keyError && (
-                  <p role="alert" className="ob-email-error" data-analytics-private>
-                    {keyError}
+      <Rise
+        show={revealed >= 3}
+        className={personalSetup ? 'ob-email-card ob-email-card-personal' : 'ob-email-card'}
+      >
+        {(!personalSetup || !compactSetup || setupExpanded) && (
+          <ConnectionChoice state={choice} disabled={!!pending} className="ob-email-choice" />
+        )}
+        {showGmail && (
+          <div className="ob-email-gmail" data-gmail={gmailState}>
+            <div className="ob-email-head">
+              <span className="ob-email-tile">
+                <img src="/logos/gmail.svg" alt="" width={24} height={24} />
+              </span>
+              <div className="ob-email-title">
+                <p className="ob-email-name">Gmail</p>
+                {account && personalSetup ? (
+                  <p className="ob-email-muted" data-analytics-private>
+                    {account.accountEmail ?? 'Signed in.'}
+                  </p>
+                ) : (
+                  <p className="ob-email-muted">
+                    {personalSetup
+                      ? 'Choose the inbox you want to connect.'
+                      : 'Start with one inbox. You can add more apps later.'}
                   </p>
                 )}
-                <p className="ob-email-muted">
-                  It’s encrypted, stays on this computer and never goes to AI providers.
-                </p>
-              </>
-            )}
-            {keyDone && (
-              <div className="ob-email-saved">
-                {status?.editable ? (
-                  <>
-                    <span className="ob-mono" data-analytics-private>
-                      Key saved{status.suffix ? ` · ••••${status.suffix}` : ''}
-                    </span>
-                    <button type="button" className="ob-email-change" onClick={change}>
-                      Change
-                    </button>
-                  </>
-                ) : (
-                  <span>Already set up for you.</span>
-                )}
               </div>
-            )}
-            {status && !status.saved && !status.editable && (
-              <p className="ob-email-muted">
-                Apps aren’t set up here yet. Ask your Otto admin, or skip this for now.
+              {connected ? (
+                <span className="ob-email-chip">
+                  <Check size={14} strokeWidth={2.5} aria-hidden="true" />
+                  Connected
+                </span>
+              ) : (
+                gmailState !== 'waiting' && (
+                  <Button
+                    variant={personalSetup ? 'default' : 'outline'}
+                    className="ob-gmail-connect"
+                    disabled={!canConnect || gmailState === 'opening'}
+                    onClick={() => void connect()}
+                  >
+                    {gmailState === 'opening' && (
+                      <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                    )}
+                    {personalSetup ? 'Connect Gmail' : 'Connect'}
+                  </Button>
+                )
+              )}
+            </div>
+            {status}
+            {accessRenewed && (
+              <p role="status" className="ob-email-muted">
+                Browser sign-in renewed. Connect Gmail again.
               </p>
             )}
-          </div>
-        </div>
-        <div className="ob-email-step">
-          <Badge state={connected ? 'done' : keyDone ? 'active' : 'idle'}>2</Badge>
-          <div className="ob-email-body" data-gmail={gmailState}>
-            <div className="ob-email-label">
-              <p>Sign in to Gmail</p>
-            </div>
-            {gmailState === 'idle' || gmailState === 'opening' ? (
-              <div className="ob-email-connect">
-                <Button
-                  variant="outline"
-                  className="ob-gmail-connect"
-                  disabled={!canConnect || gmailState === 'opening'}
-                  onClick={() => void connect()}
-                >
-                  {gmailState === 'opening' ? (
-                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                  ) : (
-                    <img src="/logos/gmail.svg" alt="" width={16} height={16} />
-                  )}
-                  Connect Gmail
-                </Button>
-                <p className="ob-email-muted">
-                  {!keyDone
-                    ? 'Save your Composio key first.'
-                    : restartRequired
-                      ? 'Restart Otto to start using your key.'
-                      : 'Opens Google in your browser.'}
-                </p>
-                {restartRequired && keyDone && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void applyDesktopSettings().catch(() => {})}
-                  >
-                    Restart now
-                  </Button>
-                )}
-              </div>
-            ) : gmailState === 'waiting' ? (
-              <div className="ob-email-waiting">
-                <LoaderCircle size={18} className="spin" aria-hidden="true" />
-                <p>Finish signing in to Google in your browser.</p>
-                <Button variant="ghost" size="sm" onClick={cancel}>
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <p className="ob-email-done">
-                {account?.accountEmail ? (
-                  <>
-                    Signed in as <strong data-analytics-private>{account.accountEmail}</strong>
-                  </>
-                ) : (
-                  'Signed in.'
-                )}
+            {pollFailing && (
+              <p role="alert" className="ob-email-error">
+                Can’t check on the sign-in right now. Still trying.
               </p>
             )}
             {error && (
@@ -417,14 +450,46 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
               </p>
             )}
           </div>
-        </div>
+        )}
+        {personalSetup && compactSetup && keyStatus && (
+          <div
+            className={
+              connected ? 'ob-email-summary ob-email-summary-connected' : 'ob-email-summary'
+            }
+          >
+            {!connected && (
+              <p ref={choice.view.savedKey} tabIndex={-1}>
+                {keyStatus.mode === 'otto' ? (
+                  <OttoGlyph size={16} mode="still" />
+                ) : (
+                  <KeyRound size={16} aria-hidden="true" />
+                )}
+                <span>
+                  {keyStatus.mode === 'otto' ? 'Using Easy Connect' : 'Using your Composio key'}
+                </span>
+              </p>
+            )}
+            <button
+              ref={(node) => {
+                choice.view.tiles.current.otto = node;
+              }}
+              type="button"
+              className="connection-link"
+              disabled={!!pending}
+              aria-expanded={setupExpanded}
+              onClick={() => setSetupExpanded((value) => !value)}
+            >
+              {setupExpanded ? 'Done' : connected ? 'Change connection' : 'Change'}
+            </button>
+          </div>
+        )}
       </Rise>
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={connected ? undefined : onNext}
+        onSkip={connected && showGmail ? undefined : onNext}
         onNext={onNext}
-        nextDisabled={!connected}
+        nextDisabled={!connected || !showGmail}
       />
     </section>
   );
