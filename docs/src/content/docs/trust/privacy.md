@@ -7,7 +7,7 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to the model provider and apps you choose. The Otto team at n8n receives none of your data unless you send feedback to its collector or opt in to usage analytics. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
+The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to your model and decision providers, and the apps you choose. The Otto team at n8n receives none of your data unless you send feedback to its collector or opt in to usage analytics. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
@@ -25,7 +25,7 @@ For what Otto stores and how long it keeps it, see the [Security review guide](/
 ```mermaid
 flowchart LR
   otto[Otto on your computer]:::accent
-  otto -- prompts and results --> model[Model provider]
+  otto -- prompts and results --> model[Model providers]
   otto -- app actions --> apps[Composio and<br/>your apps]
   otto -- your chats --> chat[Telegram, WhatsApp]
   otto -- browsing --> web[Websites]
@@ -35,12 +35,15 @@ flowchart LR
 | Goes to                                   | What                                                                                                                                                    |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected, also recent email Otto reads to suggest first tasks and learn your writing style |
+| Decision services                         | Recent task messages or a schedule instruction, proposed action arguments, confirmation facts, and approval replies. Each check receives its own input. |
 | Apps and services you connect             | The actions Otto runs in them                                                                                                                           |
 | Composio, if you connect apps through it  | Those app connections and the actions Otto sends                                                                                                        |
 | Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                             |
 | Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                        |
 | n8n                                       | Masked usage analytics if you opt in; feedback when using the default collector                                                                         |
 | Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                    |
+
+OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
 
 Provider keys, such as your model and Composio keys, stay in the Otto server. They never enter a prompt, Otto's workspace or its browser.
 
