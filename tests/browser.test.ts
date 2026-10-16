@@ -1934,7 +1934,7 @@ test('visual browser actions fence the session when releasing the pointer fails'
 });
 
 test(
-  'native container browser stays responsive, streams live frames and keeps WebAuthn after heavy stderr output',
+  'native container browser stays responsive, streams live frames and refuses passkeys after heavy stderr output',
   {
     skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
     timeout: 30_000,
@@ -2000,9 +2000,9 @@ test(
       const passkey = await computer.act('fixture', {
         action: 'evaluate',
         script:
-          "(() => { const controller = new AbortController(); controller.abort(); return navigator.credentials.get({ signal: controller.signal, publicKey: { challenge: new Uint8Array(32) } }).then(() => 'resolved', (error) => error.name); })()",
+          "Object.getPrototypeOf(navigator.credentials).get.call(navigator.credentials, { publicKey: { challenge: new Uint8Array(32) } }).then(() => 'resolved', (error) => error.message)",
       });
-      assert.match(passkey.text, /AbortError/);
+      assert.match(passkey.text, /Passkeys are not available in this browser/);
     } finally {
       if (stderrPath) {
         const pipe = await open(stderrPath, constants.O_RDONLY | constants.O_NONBLOCK).catch(

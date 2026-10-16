@@ -7,7 +7,7 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to your model and decision providers, and the apps you choose. The Otto team at n8n receives none of your data unless you send feedback to its collector or opt in to usage analytics. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
+The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to your model and decision providers, and the apps you choose. The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Otherwise, the Otto team at n8n receives none of your data unless you send feedback to its collector or opt in to usage analytics. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
@@ -29,19 +29,21 @@ flowchart LR
   otto -- app actions --> apps[Composio and<br/>your apps]
   otto -- your chats --> chat[Telegram, WhatsApp]
   otto -- browsing --> web[Websites]
-  otto -. only if you choose .-> n8n[n8n]:::muted
+  otto -- searches --> search[Web search]
+  otto -. updates, and what you choose .-> n8n[n8n]:::muted
 ```
 
-| Goes to                                   | What                                                                                                                                                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected, also recent email Otto reads to suggest first tasks and learn your writing style |
-| Decision services                         | Recent task messages or a schedule instruction, proposed action arguments, confirmation facts, and approval replies. Each check receives its own input. |
-| Apps and services you connect             | The actions Otto runs in them                                                                                                                           |
-| Composio, if you connect apps through it  | Those app connections and the actions Otto sends                                                                                                        |
-| Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                             |
-| Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                        |
-| n8n                                       | Masked usage analytics if you opt in; feedback when using the default collector                                                                         |
-| Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                    |
+| Goes to                                   | What                                                                                                                                                                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected, also recent email Otto reads to suggest first tasks and learn your writing style                                 |
+| Decision services                         | Recent task messages or a schedule instruction, proposed action arguments, confirmation facts, and approval replies. Each check receives its own input.                                 |
+| Apps and services you connect             | The actions Otto runs in them                                                                                                                                                           |
+| Composio, if you connect apps through it  | Those app connections and the actions Otto sends                                                                                                                                        |
+| Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                                                             |
+| Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                                        |
+| Exa, for web search                       | Otto's search queries. With a ChatGPT plan, OpenAI runs the search instead                                                                                                              |
+| n8n                                       | Update checks and downloads from the desktop app, which show your IP address, app version and platform. Masked usage analytics if you opt in. Feedback when using the default collector |
+| Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                                                    |
 
 OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
 
@@ -57,7 +59,7 @@ Analytics have no fields for raw messages, Vault values, full page addresses, na
 
 ## Feedback
 
-The feedback dialog shows who receives your submission. The default is the Otto team at n8n; an operator can set a different HTTPS collector. By default feedback includes a diagnostic report of your recent chat, actions and their results. Select **Review** to read the report first, or untick **Include diagnostic report** to leave it out. Otto removes known secret values from the report before you see it. Feedback is a separate, deliberate submission and does not turn on usage analytics.
+The feedback dialog shows who receives your submission. The default is the Otto team at n8n; an operator can set a different HTTPS collector. By default feedback includes a diagnostic report of your recent chat, actions and their results. Select **Review** to read the report first, or untick **Include diagnostic report** to leave it out. Otto removes known secret values from the report before you see it. From the desktop app, feedback also includes the app version, your platform and your computer's name. Feedback is a separate, deliberate submission and does not turn on usage analytics.
 
 Operators can disable submission and status checks with `OTTO_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
 

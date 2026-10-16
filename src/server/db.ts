@@ -1,6 +1,5 @@
 import pg from 'pg';
 import { databaseUrl } from './config.ts';
-import { defaultPreferences } from './preferences.ts';
 
 function poolSize(value: string | undefined, fallback: number) {
   const size = value === undefined ? fallback : Number(value);
@@ -117,8 +116,13 @@ export async function initializeDatabase() {
     DROP TABLE IF EXISTS inspector_records;
     DROP TABLE IF EXISTS inspector_prompts;
   `);
-  await pool.query('UPDATE preferences SET notification_rule=$1 WHERE notification_rule=$2', [
-    defaultPreferences.notificationRule,
-    'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step for an active goal. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
-  ]);
+  await pool.query(
+    "UPDATE preferences SET notification_rule='' WHERE notification_rule=ANY($1::text[])",
+    [
+      [
+        'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step on something I asked you to follow up. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
+        'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step for an active goal. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
+      ],
+    ],
+  );
 }

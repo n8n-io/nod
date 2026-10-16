@@ -652,6 +652,32 @@ export async function retryCredentials(turnId: string) {
   );
 }
 
+export const activeHandoffSql = `u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))`;
+
+export async function resumeAfterHandoff(turnId: string) {
+  const resumed = await transaction(async (client) => {
+    await lockThread(client);
+    const open = await client.query(
+      `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE u.owner_id=$1 AND u.id=$2 AND th.archived_at IS NULL AND ${activeHandoffSql}`,
+      [ownerId, turnId],
+    );
+    return (
+      Boolean(open.rowCount) &&
+      resumeTurn(
+        turnId,
+        `handoff:${turnId}`,
+        'The owner pressed Done on the browser you handed them. Look at the current page to see what they did there, if anything, then continue the request.',
+        false,
+        client,
+      )
+    );
+  }, pool);
+  if (resumed) refresh();
+  return resumed;
+}
+
 export function resumeAfterConnection(turnId: string, service: string) {
   return resumeTurn(
     turnId,

@@ -158,7 +158,7 @@ export const toolDefinitions = {
   ),
   follow_up: defineTool(
     'follow_up',
-    'Queue one short line in a chat or saved task. It goes out as its own message right after your result. Use it for an offer to repeat work you complete in this session. If you assign the work to a saved task, let that task make the offer after it delivers the result. Never repeat it in your reply.',
+    'Queue one short line in a chat or saved task. It goes out as its own message right after your result. Use it for an offer to repeat work you complete in this session, or to flag updates from an app the task connected or used. If you assign the work to a saved task, let that task make the offer after it delivers the result. Never repeat it in your reply.',
     Type.Object({ text: Type.String({ minLength: 1, maxLength: 300, pattern: '\\S' }) }),
   ),
   delegate: defineTool(

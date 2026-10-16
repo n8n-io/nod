@@ -81,6 +81,28 @@ const streamFrame = z.object({
 
 const holdMs = 30 * 60_000;
 
+const withoutPasskeys = `(() => {
+  const container = window.CredentialsContainer && CredentialsContainer.prototype;
+  if (!container) return;
+  const unavailable = () =>
+    Promise.reject(new DOMException('Passkeys are not available in this browser.', 'NotAllowedError'));
+  const { get, create } = container;
+  container.get = function (options) {
+    return options && options.publicKey ? unavailable() : get.call(this, options);
+  };
+  container.create = function (options) {
+    return options && options.publicKey ? unavailable() : create.call(this, options);
+  };
+  const key = window.PublicKeyCredential;
+  if (!key) return;
+  key.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
+  key.isConditionalMediationAvailable = () => Promise.resolve(false);
+  const capabilities = key.getClientCapabilities;
+  if (capabilities)
+    key.getClientCapabilities = () =>
+      capabilities.call(key).then((all) => Object.fromEntries(Object.keys(all).map((name) => [name, false])));
+})();`;
+
 class BrowserLockedError extends Error {
   statusCode = 423;
   constructor() {
@@ -449,6 +471,8 @@ export function createAgentBrowserComputer(options: {
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
+    const initScript = resolve(runtimeRoot, 'browser-init.js');
+    await writeFile(initScript, withoutPasskeys, { mode: 0o600 });
     state.proxy ??= createBrowserProxy({ privateNetwork });
     const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
@@ -469,6 +493,8 @@ export function createAgentBrowserComputer(options: {
           ...(state.browserExecutable ? ['--executable-path', state.browserExecutable] : []),
           ...(headed ? ['--headed'] : []),
           '--no-webmcp',
+          '--init-script',
+          initScript,
           '--json',
           '--proxy',
           proxyUrl,
