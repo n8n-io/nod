@@ -39,6 +39,7 @@ export interface Run {
     source: string;
     error: string | null;
     background: boolean;
+    waiting_reason?: string | null;
     startedAt?: number;
     finishedAt?: number;
   }>;
@@ -255,7 +256,7 @@ export async function collect(options: {
   }));
   const turns = (
     await stack.pool.query(
-      'SELECT id,status,source,error,background,started_at,finished_at FROM turns ORDER BY created_at, id',
+      'SELECT id,status,source,error,background,waiting_reason,started_at,finished_at FROM turns ORDER BY created_at, id',
     )
   ).rows.map(({ started_at, finished_at, ...turn }) => ({
     ...turn,
@@ -403,7 +404,7 @@ export async function collect(options: {
         `Actions the user approved or declined (the server runs these itself, so they never appear as tool calls): ${approvals.length ? approvals.map((item) => `${item.action} ${item.status} ${JSON.stringify(item.args).slice(0, 220)}`).join('; ') : 'none'}.`,
         `Saved memory: ${memory.slice(0, 700)}`,
         failedTurns.length
-          ? `Turns that did not succeed: ${failedTurns.map((turn) => `${turn.status}${turn.error ? ` (${turn.error})` : ''}`).join('; ')}.`
+          ? `Turns that did not succeed: ${failedTurns.map((turn) => `${turn.status} (${turn.background ? 'background ' : ''}${turn.source}${turn.waiting_reason ? `, waiting for ${turn.waiting_reason}` : ''})${turn.error ? ` (${turn.error})` : ''}`).join('; ')}.`
           : 'Every turn finished.',
       ].join('\n');
     },
