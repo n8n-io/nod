@@ -17,7 +17,7 @@ You can see everything Otto remembers, where it learned it, and change or forget
 | **Preferences** | Window seats, short replies, metric units    |
 | **People**      | Who your manager is, your partner's birthday |
 | **Routines**    | You review invoices on Mondays               |
-| **Lessons**     | What worked or failed on an earlier task     |
+| **Lessons**     | Never send invoices from your personal email |
 
 ## Where Otto learns from
 

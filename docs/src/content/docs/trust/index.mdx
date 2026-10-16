@@ -10,7 +10,7 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Trust decides what Otto can do in your apps. Vault decides how Otto uses your saved logins and cards, and it never shows them to the model.
 
-Otto can sign in to a website, read a report, prepare a reply and complete a checkout. The model plans that work. The Otto server, not the model, decides which app actions, sign-ins and payments can run, and you can read every rule it applies.
+Otto can sign in to a website, read a report, prepare a reply and complete a checkout. The model plans that work. A separate check decides which app actions and sign-ins can run. It sees only your words and the action, never the pages or emails Otto read, and asks you when your words don't cover the action. Every payment waits for your approval.
 
 <CardGrid>
   <LinkCard
