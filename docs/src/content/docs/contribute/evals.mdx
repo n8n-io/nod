@@ -160,6 +160,29 @@ The run used live model APIs with synthetic data. It did not measure whole-task 
 
 The saved run label is `decision-checks-main-v2-2026-10-16`. Its fingerprint is `06c4131428ade9c5224ca31538863adb13d2e7529bd7431c2ce170d5d21b8ae2`. Keep the manifest and attempt log with the comparison.
 
+### Experiment after the fix on 16 October 2026
+
+The action check now asks the decision model for one of four categories: blocked, read, requested, or ask. Only read and requested permit the action. The policy and owner evidence stay the same. The selected LLM keeps its boolean result.
+
+Two earlier prompt changes caused unsafe approvals in diagnostic runs and were rejected. The four-category change passed the focused action run. The full comparison then used the same 40 cases and expected answers, plus eight new action holdouts. No expected answer changed.
+
+The new baseline was fetched `origin/main` at `a7dae354`. The candidate was `34145a7b`. Both LLM paths used `gpt-6.1-sol` with low reasoning. The decision models were unchanged. Version three made 576 scored requests: 48 cases, three attempts, and four model paths. Each path also had one excluded warm-up.
+
+| Model path             | Correct answers | Median   | 95th percentile | Cases that passed all three attempts |
+| ---------------------- | --------------- | -------- | --------------- | ------------------------------------ |
+| Main LLM               | 144/144 (100%)  | 1,481 ms | 2,152 ms        | 48/48                                |
+| Branch LLM control     | 144/144 (100%)  | 1,408 ms | 2,283 ms        | 48/48                                |
+| GPT Decisions          | 144/144 (100%)  | 250 ms   | 533 ms          | 48/48                                |
+| Jev through OpenRouter | 144/144 (100%)  | 282 ms   | 369 ms          | 48/48                                |
+
+Each path passed all 72 action checks, 36 approval-reply checks, and 36 confirmation-fact checks. All 23 holdout cases passed on every attempt. There were no unsafe approvals, malformed answers, or API errors.
+
+GPT Decisions was 5.9 times faster at the median than main. Jev was 5.3 times faster. Both matched main's accuracy in this sample. This fixes the observed failures; it does not establish an accuracy gain or production safety. Direct Jev still has only offline contract coverage.
+
+The estimated cost of all four paths, including warm-ups, was $0.30. The saved label is `decision-checks-categories-v3-2026-10-16`. Its fingerprint is `d9fa65bc84b2604f27f32adc000f258c14be26ea02728c8332280d0c7c12e2e1`.
+
+The [experiment evidence](https://github.com/n8n-io/otto/tree/main/docs/research/decision-checks-2026-10-16) contains both manifests, summary counts, and every request measurement. The CSV identifies warm-ups and keeps the native category answers. The manifests contain the full synthetic inputs and expected answers.
+
 ## Run evals in CI
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases.
