@@ -11,6 +11,7 @@ import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { createDecisionModel } from '../src/providers/decisions.ts';
+import { BrowserActionError } from '../src/ports/computer.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -157,6 +158,14 @@ test(
           act: async (_id, input) => {
             browserActs.push({ ...input });
             return { text: 'Synthetic bank page', url: 'https://bank.example.test/transfer' };
+          },
+          download: async (_id, input) => {
+            if (input.selector) throw new BrowserActionError('browser_download_control');
+            return {
+              bytes: Buffer.from('synthetic'),
+              name: 'synthetic.pdf',
+              mimeType: 'application/pdf',
+            };
           },
           currentPage: async (_id, step) => {
             if (dialogOpen && step?.action !== 'accept_dialog')
@@ -436,6 +445,16 @@ test(
           }
           assert.deepEqual(clicks().slice(before), [click, click]);
           assert.equal((await approvalsFor(moved))[0].status, 'expired');
+          const download = await propose('download', { selector: '@e7' }, 'browser');
+          const [unclicked] = await approvalsFor(download);
+          assert.equal(unclicked.status, 'pending');
+          const declined = await request('POST', '/api/messages', {
+            text: 'No',
+            replyToMessageId: unclicked.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          await waitFor(declined.json().turnId, 'succeeded');
+          assert.deepEqual(clicks().slice(before), [click, click]);
           dialogOpen = true;
           try {
             const dialog = await propose('accept_dialog', {}, 'browser');

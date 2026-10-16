@@ -3236,7 +3236,10 @@ test('a checked browser step is described from its snapshot and runs only on tha
       [{ role: 'button', name: '' }],
     );
     assert.deepEqual(page().entered, []);
-    await assert.rejects(computer.download('checked', { selector: '@e2' }));
+    await assert.rejects(
+      computer.download('checked', { selector: '@e2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_download_control',
+    );
     assert.equal(
       commands.some((command) => command.action === 'download'),
       false,

@@ -1175,10 +1175,7 @@ export function createAgentBrowserComputer(options: {
           )
             url = new URL(href.value, current).href;
         }
-        if (!url)
-          throw new Error(
-            'This control is not a download link. Click it, then call download without a selector to save the file it starts.',
-          );
+        if (!url) throw new BrowserActionError('browser_download_control');
       }
       if (!url) {
         const type = await evaluate(state, 'document.contentType', signal);

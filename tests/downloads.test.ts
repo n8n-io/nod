@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import pg from 'pg';
+import { BrowserActionError } from '../src/ports/computer.ts';
 import { IntegrationDownload } from '../src/ports/integrations.ts';
 import { ObjectStoreConflict } from '../src/ports/object-storage.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
@@ -168,15 +169,24 @@ test(
         const computer = bridge.computer;
         try {
           assert.equal((await fetch(`${fixture.origin}/invoice.pdf`)).status, 403);
-          for (const [id, input] of [
-            ['attachment', { selector: '#download', name: 'invoice.pdf' }],
-            ['inline-url', { url: `${fixture.origin}/inline.pdf`, name: 'invoice.pdf' }],
-            ['blob', { selector: '#blob', name: 'invoice.pdf' }],
-            ['blob-anchor', { selector: '#blob-anchor', name: 'invoice.pdf' }],
+          for (const [id, input, control] of [
+            ['attachment', { selector: '#download', name: 'invoice.pdf' }, undefined],
+            ['inline-url', { url: `${fixture.origin}/inline.pdf`, name: 'invoice.pdf' }, undefined],
+            ['blob', { selector: '#blob', name: 'invoice.pdf' }, '#blob'],
+            ['blob-anchor', { selector: '#blob-anchor', name: 'invoice.pdf' }, '#blob-anchor'],
           ] as const) {
             await computer.act(id, { action: 'open', url: `${fixture.origin}/session` });
             const before = fixture.authenticatedDownloads();
-            const file = await computer.download!(id, input);
+            if (control) {
+              await assert.rejects(
+                computer.download!(id, input),
+                (error) =>
+                  error instanceof BrowserActionError && error.code === 'browser_download_control',
+              );
+              assert.equal(fixture.authenticatedDownloads(), before);
+              await computer.act(id, { action: 'click', selector: control });
+            }
+            const file = await computer.download!(id, control ? { name: input.name } : input);
             assert.equal(fixture.authenticatedDownloads(), before + 1);
             assert.deepEqual(file, {
               bytes: browserDownloadPdf,
