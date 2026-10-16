@@ -49,6 +49,9 @@ type TurnRow = {
   channel: string;
 };
 
+const notRun = (error: unknown) =>
+  Boolean(error && typeof error === 'object' && (error as { notRun?: unknown }).notRun === true);
+
 function conflict(message = 'This confirmation is expired, already handled, or its turn changed.') {
   return Object.assign(new Error(message), { statusCode: 409 });
 }
@@ -170,6 +173,13 @@ export async function createApprovals(
       );
       return snapshot;
     } catch (error) {
+      if (notRun(error)) {
+        await pool.query(
+          "UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2 AND status='executing'",
+          [approval.id, ownerId],
+        );
+        throw error;
+      }
       await pool.query(
         "UPDATE approvals SET status='uncertain' WHERE id=$1 AND owner_id=$2 AND status='executing'",
         [approval.id, ownerId],
@@ -507,7 +517,15 @@ export async function createApprovals(
       return selected;
     });
     if (!approval) return undefined;
-    const result = await run(approval);
+    let result: unknown;
+    try {
+      result = await run(approval);
+    } catch (error) {
+      if (!notRun(error)) throw error;
+      return {
+        prompt: `The action the user confirmed did not run, so nothing was done: ${(error as Error).message} Do not report it as done.`,
+      };
+    }
     const prompt = `The exact action confirmed by the user was executed once by the trusted worker. Do not repeat it. Continue from its result.\n${untrustedBlock(`${approval.action} result`, JSON.stringify(result) ?? 'null')}`;
     signal.throwIfAborted();
     return { prompt };

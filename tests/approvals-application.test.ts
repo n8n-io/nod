@@ -70,6 +70,9 @@ test(
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
     const executedApps: string[] = [];
+    const browserActs: Array<Record<string, unknown>> = [];
+    let browserUrl = 'https://bank.example.test/transfer';
+    let dialogOpen = false;
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -136,7 +139,11 @@ test(
                 if (plan) {
                   const result = await options.tools
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
-                    .execute({ action: plan.action, args: plan.args });
+                    .execute(
+                      plan.tool === 'browser'
+                        ? { action: plan.action, ...plan.args }
+                        : { action: plan.action, args: plan.args },
+                    );
                   results.set(options.turnId, result);
                   return;
                 }
@@ -146,7 +153,25 @@ test(
           },
           dispose() {},
         },
-        computer: fakeComputer(),
+        computer: fakeComputer({
+          act: async (_id, input) => {
+            browserActs.push({ ...input });
+            return { text: 'Synthetic bank page', url: 'https://bank.example.test/transfer' };
+          },
+          currentPage: async (_id, step) => {
+            if (dialogOpen && step?.action !== 'accept_dialog')
+              throw new Error('A JavaScript dialog blocks the page.');
+            return {
+              origin: 'https://bank.example.test',
+              url: browserUrl,
+              ...(step?.action === 'accept_dialog'
+                ? { dialog: 'Send 120 EUR to the synthetic payee?' }
+                : step
+                  ? { controls: [{ role: 'button', name: 'Authorize payment' }] }
+                  : {}),
+            };
+          },
+        }),
         workspace: fakeWorkspace(),
         integrations: {
           ...integrationFixture.provider,
@@ -355,6 +380,79 @@ test(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(held))[0].status, 'declined');
           assert.equal(sends(), 0);
+        },
+      );
+
+      await t.test(
+        'a browser step the owner did not ask for runs only after a bound yes, once, on the same page',
+        async () => {
+          const clicks = () =>
+            browserActs
+              .filter((act) => act.action === 'click')
+              .map(({ action, selector, expectOrigin }) => ({ action, selector, expectOrigin }));
+          const click = {
+            action: 'click',
+            selector: '@e7',
+            expectOrigin: 'https://bank.example.test',
+          };
+          const before = clicks().length;
+          const held = await propose('click', { selector: '@e7' }, 'browser');
+          const [card] = await approvalsFor(held);
+          assert.equal(card.status, 'pending');
+          assert.equal(card.action, 'OTTO_browser');
+          assert.equal(card.args.website, 'https://bank.example.test');
+          assert.deepEqual(card.args.control, [{ role: 'button', name: 'Authorize payment' }]);
+          assert.deepEqual(
+            decisionInputs.findLast((item) => item.name === 'run')?.input.action.arguments.control,
+            [{ role: 'button', name: 'Authorize payment' }],
+          );
+          assert.equal(clicks().length, before);
+          const approved = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: card.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(approved.statusCode, 200, approved.body);
+          await waitFor(approved.json().turnId, 'succeeded');
+          assert.deepEqual(clicks().slice(before), [click]);
+          assert.equal((await approvalsFor(held))[0].status, 'completed');
+          const text = `Authorize the synthetic transfer ${randomUUID()}`;
+          asked.add(text);
+          const requested = await propose('click', { selector: '@e7' }, 'browser', text);
+          assert.deepEqual(await approvalsFor(requested), []);
+          assert.deepEqual(clicks().slice(before), [click, click]);
+          const moved = await propose('click', { selector: '@e7' }, 'browser');
+          const [stale] = await approvalsFor(moved);
+          browserUrl = 'https://bank.example.test/payees/remove';
+          try {
+            const late = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: stale.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            await waitFor(late.json().turnId, 'succeeded');
+          } finally {
+            browserUrl = 'https://bank.example.test/transfer';
+          }
+          assert.deepEqual(clicks().slice(before), [click, click]);
+          assert.equal((await approvalsFor(moved))[0].status, 'expired');
+          dialogOpen = true;
+          try {
+            const dialog = await propose('accept_dialog', {}, 'browser');
+            const [card] = await approvalsFor(dialog);
+            assert.equal(card.args.dialog, 'Send 120 EUR to the synthetic payee?');
+            assert.equal(browserActs.filter((act) => act.action === 'accept_dialog').length, 0);
+            const accepted = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: card.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            await waitFor(accepted.json().turnId, 'succeeded');
+            assert.equal((await approvalsFor(dialog))[0].status, 'completed');
+          } finally {
+            dialogOpen = false;
+          }
+          assert.equal(browserActs.filter((act) => act.action === 'accept_dialog').length, 1);
         },
       );
 

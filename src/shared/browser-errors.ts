@@ -22,6 +22,9 @@ const browserErrors = {
     'The approved card field could not accept the value, so nothing more was entered. Check the result before another attempt.',
   browser_card_changed:
     'The checkout page changed. The operation may have reached the site. Check the result before another attempt.',
+  browser_target_changed:
+    'Otto could not confirm it was still on the page and control it checked, so nothing was done. Take a fresh snapshot and choose the control again.',
+  browser_script_writes: 'This script changes the page, so it needs a check before it runs.',
 } as const;
 
 export type BrowserErrorCode = keyof typeof browserErrors;

@@ -14,6 +14,7 @@ import type {
   CardExpiryField,
   CredentialInput,
   CredentialSubmission,
+  BrowserControl,
   BrowserPage,
 } from '../../ports/computer.ts';
 import { BrowserActionError } from '../../ports/computer.ts';
@@ -48,6 +49,7 @@ interface BrowserState {
   queue: Promise<unknown>;
   injecting: boolean;
   secrets: Set<string>;
+  refs: Map<string, BrowserControl>;
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
   privateDocument?: string;
@@ -322,6 +324,7 @@ export function createAgentBrowserComputer(options: {
         queue: Promise.resolve(),
         injecting: false,
         secrets: new Set(),
+        refs: new Map(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -414,6 +417,9 @@ export function createAgentBrowserComputer(options: {
       throw new Error('A valid observed selector or element reference is required.');
     return value;
   }
+
+  const referenceOf = (value: string | undefined) =>
+    /^@?(?:ref=)?(e\d+)$/.exec(value?.trim() ?? '')?.[1];
 
   async function closeInterruptedBrowser(state: BrowserState) {
     state.closing = true;
@@ -584,14 +590,23 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  async function pendingDialog(state: BrowserState, signal?: AbortSignal) {
+  async function openDialog(state: BrowserState, signal?: AbortSignal) {
     const dialog = await observationCommand(
       state,
       { action: 'dialog', response: 'status' },
       { signal },
     );
     if (dialog.hasDialog !== true) return;
-    return `A ${String(dialog.type)} dialog blocks the page: "${redactBrowserText(String(dialog.message ?? ''), state.secrets)}". Use accept_dialog {text?} or dismiss_dialog.`;
+    return {
+      type: String(dialog.type),
+      message: redactBrowserText(String(dialog.message ?? ''), state.secrets),
+    };
+  }
+
+  async function pendingDialog(state: BrowserState, signal?: AbortSignal) {
+    const dialog = await openDialog(state, signal);
+    if (dialog)
+      return `A ${dialog.type} dialog blocks the page: "${dialog.message}". Use accept_dialog {text?} or dismiss_dialog.`;
   }
 
   async function currentUrl(state: BrowserState, signal?: AbortSignal): Promise<string> {
@@ -744,6 +759,20 @@ export function createAgentBrowserComputer(options: {
     };
     const data = await snapshot();
     if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
+    if (!scope) state.refs.clear();
+    for (const ref of Array.isArray(data.removedRefs) ? data.removedRefs : [])
+      state.refs.delete(String(ref));
+    for (const [ref, control] of Object.entries(
+      data.refs && typeof data.refs === 'object' ? (data.refs as Record<string, unknown>) : {},
+    ))
+      if (control && typeof control === 'object')
+        state.refs.set(ref, {
+          role: String((control as { role?: unknown }).role ?? ''),
+          name: redactBrowserText(
+            String((control as { name?: unknown }).name ?? ''),
+            state.secrets,
+          ).slice(0, 300),
+        });
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     return {
       text: `Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
@@ -897,6 +926,7 @@ export function createAgentBrowserComputer(options: {
         if (!state.started) throw new BrowserActionError('browser_not_open');
         if (input.action !== 'reload' && (await privateDocumentOpen(state, signal)))
           throw new BrowserActionError('browser_card_paused');
+        await onTarget(state, input, signal);
         if (input.action === 'tab_list') {
           const tabs = await browserTabs(state, signal);
           return {
@@ -1048,6 +1078,7 @@ export function createAgentBrowserComputer(options: {
               throw new BrowserActionError('browser_script_paused');
             read = await devtools.readOnly(script);
             if (!read) {
+              if (input.readOnly) throw new BrowserActionError('browser_script_writes');
               await devtools.scripted(true);
               await saveState(state);
             }
@@ -1055,7 +1086,10 @@ export function createAgentBrowserComputer(options: {
             devtools.close();
           }
           const value = read ? read.value : await evaluate(state, script, signal);
-          if (!read) await markScripted(state);
+          if (!read) {
+            await markScripted(state);
+            await observe(state, signal).catch(() => state.refs.clear());
+          }
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
             text: `Script result (JSON):\n${result}`,
@@ -1090,6 +1124,7 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       if (await privateDocumentOpen(state, signal))
         throw new BrowserActionError('browser_card_paused');
+      await onTarget(state, input, signal);
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const file = resolve(directory, input.name);
@@ -1496,7 +1531,87 @@ export function createAgentBrowserComputer(options: {
     );
   }
 
-  async function currentPage(id: string): Promise<BrowserPage> {
+  async function controlsOf(
+    state: BrowserState,
+    target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
+  ) {
+    const ref = referenceOf(target.selector);
+    if (ref) return state.refs.has(ref) ? [state.refs.get(ref)!] : [];
+    if (!target.selector && !target.point && !target.focused) return [];
+    const devtools = await inspector(state).catch(() => undefined);
+    try {
+      return ((await devtools?.controls(target).catch(() => [])) ?? []).map((control) => ({
+        role: control.role,
+        name: redactBrowserText(control.name, state.secrets).slice(0, 300),
+      }));
+    } finally {
+      devtools?.close();
+    }
+  }
+
+  async function stepControls(state: BrowserState, step: BrowserAction) {
+    const point =
+      step.x !== undefined && step.y !== undefined ? { x: step.x, y: step.y } : step.points?.[0];
+    const controls = await controlsOf(
+      state,
+      step.action === 'press'
+        ? { focused: true }
+        : step.selector
+          ? { selector: step.selector }
+          : point
+            ? { point }
+            : { focused: step.action === 'type' },
+    );
+    if (step.action !== 'drag') return { controls };
+    const drop = step.targetSelector
+      ? { selector: step.targetSelector }
+      : step.points && step.points.length > 1
+        ? { point: step.points.at(-1)! }
+        : {};
+    return { controls, dropTarget: await controlsOf(state, drop) };
+  }
+
+  async function onTarget(
+    state: BrowserState,
+    input: {
+      expectOrigin?: string;
+      expectUrl?: string;
+      selector?: string;
+      targetSelector?: string;
+      action?: string;
+    },
+    signal?: AbortSignal,
+  ) {
+    if (input.expectOrigin === undefined && input.expectUrl === undefined) return;
+    const at =
+      input.action === 'accept_dialog' && (await openDialog(state, signal))
+        ? await dialogPageUrl(state, signal).catch(() => '')
+        : await currentUrl(state, signal).catch(() => '');
+    const refs = [referenceOf(input.selector), referenceOf(input.targetSelector)];
+    if (
+      !at ||
+      (input.expectOrigin !== undefined && originOf(at) !== input.expectOrigin) ||
+      (input.expectUrl !== undefined && redactBrowserUrl(at, state.secrets) !== input.expectUrl) ||
+      refs.some((ref) => ref !== undefined && !state.refs.has(ref))
+    )
+      throw new BrowserActionError('browser_target_changed');
+  }
+
+  async function dialogPageUrl(state: BrowserState, signal?: AbortSignal) {
+    const active = (await browserTabs(state, signal)).find((tab) => tab.active);
+    if (!active?.url) throw new BrowserActionError('browser_target_changed');
+    return active.url;
+  }
+
+  function originOf(url: string) {
+    try {
+      return browserUrl(url).origin;
+    } catch {
+      return '';
+    }
+  }
+
+  async function currentPage(id: string, step?: BrowserAction): Promise<BrowserPage> {
     const state = await recoverBrowser(id);
     if (state?.saved.navigationFailed || (!state && (await screens.load(id))?.navigationFailed))
       throw new BrowserActionError('browser_navigation_failed');
@@ -1505,11 +1620,11 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       if (await privateDocumentOpen(state)) throw new BrowserLockedError();
-      const url = await currentUrl(state);
-      return {
-        origin: browserUrl(url).origin,
-        url: redactBrowserUrl(url, state.secrets),
-      };
+      const dialog = step?.action === 'accept_dialog' ? await openDialog(state) : undefined;
+      const url = dialog ? await dialogPageUrl(state) : await currentUrl(state);
+      const page = { origin: browserUrl(url).origin, url: redactBrowserUrl(url, state.secrets) };
+      if (dialog) return { ...page, dialog: dialog.message.slice(0, 2000) };
+      return step ? { ...page, ...(await stepControls(state, step)) } : page;
     });
   }
 

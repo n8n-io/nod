@@ -403,6 +403,131 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         )) === true
       );
     },
+    async controls(query: {
+      selector?: string;
+      point?: { x: number; y: number };
+      focused?: boolean;
+    }) {
+      let backendNodeId: number | undefined;
+      let session = page;
+      const describe = async (params: Record<string, unknown>) =>
+        ((await send('DOM.describeNode', params, session)) as { node: { backendNodeId: number } })
+          .node.backendNodeId;
+      if (query.point) {
+        const { cssVisualViewport: view } = (await send('Page.getLayoutMetrics', {}, page)) as {
+          cssVisualViewport: { clientWidth: number; clientHeight: number };
+        };
+        const at = (fraction: number, size: number) =>
+          Math.max(0, Math.min(Math.ceil(size) - 1, Math.round(fraction * size)));
+        const x = at(query.point.x, view.clientWidth);
+        const y = at(query.point.y, view.clientHeight);
+        ({ backendNodeId } = (await send(
+          'DOM.getNodeForLocation',
+          { x, y, ignorePointerEventsNone: true },
+          page,
+        )) as { backendNodeId?: number });
+        const owner = backendNodeId
+          ? (
+              (await send('DOM.describeNode', { backendNodeId }, page)) as {
+                node: { nodeName: string; frameId?: string };
+              }
+            ).node
+          : undefined;
+        if (owner?.frameId && ['IFRAME', 'FRAME'].includes(owner.nodeName)) {
+          for (const child of [...sessions].filter((item) => item !== page)) {
+            if ((await tree(child).catch(() => []))[0]?.id !== owner.frameId) continue;
+            const { model } = (await send('DOM.getBoxModel', { backendNodeId }, page)) as {
+              model: { content: number[] };
+            };
+            const inner = (await send(
+              'DOM.getNodeForLocation',
+              {
+                x: Math.round(x - model.content[0]!),
+                y: Math.round(y - model.content[1]!),
+                ignorePointerEventsNone: true,
+              },
+              child,
+            ).catch(() => undefined)) as { backendNodeId?: number } | undefined;
+            if (inner?.backendNodeId) {
+              backendNodeId = inner.backendNodeId;
+              session = child;
+            }
+            break;
+          }
+        }
+      } else if (query.selector) {
+        const { root } = (await send('DOM.getDocument', { depth: 0 }, page)) as {
+          root: { nodeId: number };
+        };
+        const { nodeId } = (await send(
+          'DOM.querySelector',
+          { nodeId: root.nodeId, selector: query.selector },
+          page,
+        )) as { nodeId: number };
+        if (nodeId) backendNodeId = await describe({ nodeId });
+      } else if (query.focused) {
+        const hits = (await everyFrame(focusScript, 'focus').catch(() => [])).filter(
+          (item) => item.value,
+        );
+        const hit = hits.length === 1 ? hits[0]! : undefined;
+        if (hit) {
+          session = hit.session;
+          const { result } = (await send(
+            'Runtime.evaluate',
+            {
+              contextId: hit.context,
+              expression: 'globalThis.__ottoFocused',
+              objectGroup: 'otto-control',
+            },
+            session,
+          )) as { result?: { objectId?: string } };
+          if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
+          await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, session);
+        }
+        const [main] = backendNodeId ? [] : await tree(page);
+        if (main) {
+          session = page;
+          const { result } = (await send(
+            'Runtime.evaluate',
+            {
+              contextId: await world(page, main.id),
+              expression:
+                '(() => { let node = document.activeElement; while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement; return node === document.body && !node.isContentEditable ? null : node; })()',
+              objectGroup: 'otto-control',
+            },
+            page,
+          )) as { result?: { objectId?: string } };
+          if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
+          await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, page);
+        }
+      }
+      if (!backendNodeId) return [];
+      const { nodes } = (await send(
+        'Accessibility.getPartialAXTree',
+        { backendNodeId, fetchRelatives: true },
+        session,
+      )) as {
+        nodes: Array<{
+          nodeId: string;
+          parentId?: string;
+          ignored?: boolean;
+          backendDOMNodeId?: number;
+          role?: { value?: unknown };
+          name?: { value?: unknown };
+        }>;
+      };
+      const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+      const controls: Array<{ role: string; name: string }> = [];
+      for (
+        let node = nodes.find((item) => item.backendDOMNodeId === backendNodeId);
+        node && controls.length < 3;
+        node = node.parentId ? byId.get(node.parentId) : undefined
+      ) {
+        const name = String(node.name?.value ?? '').trim();
+        if (!node.ignored && name) controls.push({ role: String(node.role?.value ?? ''), name });
+      }
+      return controls;
+    },
     async document() {
       const [main] = await tree(page);
       if (!main?.loaderId) throw new Error('The checkout page could not be identified.');

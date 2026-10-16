@@ -1,11 +1,11 @@
 ---
 title: Approvals and the trust check
-description: Which connected-app actions Otto runs directly, which wait for your yes, and how the Otto server decides.
+description: Which app actions and browser steps Otto runs directly, which wait for your yes, and how the Otto server decides.
 sidebar:
   order: 5
 ---
 
-Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
+Before Otto runs an action in a connected app, or a step in its browser that could send, submit or change something, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
 The same checker decides when Otto changes its own schedules, notification settings or spending limits. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
 
@@ -57,6 +57,14 @@ flowchart TD
 
 If the checker can't answer, Otto requires confirmation. If the model can't write or check that confirmation, the action stays blocked. Otto sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
 
+## Browser steps
+
+On websites, the same checker decides each step that could send, submit or change something: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening a page, reading it, typing into a field without pressing Enter (including single characters pressed into a text field), and read-only scripts skip the checker. Typing skips it even on a page that saves as you type.
+
+The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Otto typed or chose on that page. It never sees the page's text. Following links, searching, filtering, closing a popup, declining optional cookies, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, accepting cookies, and changing an account or a setting that saves at once count as acting, and run only when your words ask for them. A reading step that repeats exactly within 10 minutes, under the same words from you, reuses its earlier verdict.
+
+When the checker asks, the question names what the page shows, such as the amount and payee: the question writer and its fact check read the page's visible text, which the checker itself never sees. Your yes approves that one step. Otto runs it once, only while the browser is still on the same page and the control is still there. If the page moved on, nothing runs and Otto looks again. A subagent can't ask you, so it hands the step back to the main task.
+
 ## The confirmation
 
 The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Otto is asking, preserving the material facts in your conversation language. There are no language-specific confirmation templates or yes/no word lists.
@@ -95,16 +103,17 @@ Otto doesn't add its own confirmation on top of the trust check or payment appro
 :::
 
 :::caution[What the trust check doesn't cover]
-It checks connected-app actions, Otto's own changes and [sign-ins](/trust/vault/). Other clicks and form submissions on websites in Otto's browser follow the model's instructions; card entry always goes through [payment approval](/trust/payments/). The checker is a best-effort judge and can be wrong.
+It checks connected-app actions, browser steps that could submit or change something, Otto's own changes and [sign-ins](/trust/vault/). Card entry always goes through [payment approval](/trust/payments/). The checker judges a browser step by the label the website gives the control, so a deceptive site can mislabel a button. Opening a link Otto found counts as reading. The checker is a best-effort judge and can be wrong.
 :::
 
 ## Where this is enforced
 
-| Part                    | Source                                                                                                |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| Trust check and checker | [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts)                 |
-| Confirmation text       | [`src/server/communication.ts`](https://github.com/n8n-io/otto/blob/main/src/server/communication.ts) |
-| Confirmations, run once | [`src/server/approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)         |
+| Part                    | Source                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trust check and checker | [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts)                                                                                                                               |
+| Confirmation text       | [`src/server/communication.ts`](https://github.com/n8n-io/otto/blob/main/src/server/communication.ts)                                                                                                               |
+| Confirmations, run once | [`src/server/approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)                                                                                                                       |
+| Browser steps           | [`src/runtime/tools.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/tools.ts) and [`src/providers/agent-browser/index.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/agent-browser/index.ts) |
 
 ## Related resources
 

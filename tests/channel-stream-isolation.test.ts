@@ -65,6 +65,7 @@ test(
       });
       await personal.initialize({ workers: false });
       await thread.startThreadWorkers({
+        browserStep: async () => 'run',
         async runTurn(context) {
           contexts.set(context.turnId, context);
           return new Promise<RuntimeResult>((resolve) => releases.set(context.turnId, resolve));

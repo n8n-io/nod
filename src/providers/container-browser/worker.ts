@@ -77,7 +77,7 @@ async function dispatch(
       return image?.toString('base64') ?? null;
     }
     case 'currentPage':
-      return computer.currentPage(request.threadId);
+      return computer.currentPage(request.threadId, request.input);
     case 'injectCredentials':
       return computer.injectCredentials(request.input);
     case 'fillCard':
