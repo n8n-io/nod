@@ -60,6 +60,7 @@ export default scenario({
         threadId: `thread-${id}`,
         from,
         to: owner.email,
+        cc: '',
         subject,
         body,
         at: world.clock.now(),
