@@ -2049,9 +2049,10 @@ test(
                 [ownerId, eventIds.map((id) => `notification:${id}`)],
               )
             ).rows;
+          const rule = 'Tell me about new requests.';
           try {
             quietBackgroundWork = true;
-            await preferences.update({ quietHoursEnabled: false });
+            await preferences.update({ quietHoursEnabled: false, notificationRule: rule });
             const revokedEvent = randomUUID();
             assert.equal(
               await triage.triageEvent(
@@ -2062,7 +2063,6 @@ test(
               undefined,
             );
             assert.deepEqual(await eventTurns([revokedEvent]), []);
-            const rule = (await preferences.get()).notificationRule;
             const clearedEvent = randomUUID();
             assert.equal(
               await triage.triageEvent(
@@ -2166,6 +2166,14 @@ test(
           try {
             quietBackgroundWork = true;
             dependencies.skipTurn = triage.staleCheck;
+            await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
+            currentApps = [app, other];
+            await triage.heartbeat();
+            assert.deepEqual(await checks(), []);
+            assert.equal(
+              await triage.triageEvent('Synthetic event before a rule', randomUUID()),
+              undefined,
+            );
             await preferences.update({ notificationRule: 'Tell me about new requests.' });
             currentApps = [app, other, ...ignored];
             await Promise.all([triage.heartbeat(), triage.heartbeat()]);
@@ -2352,7 +2360,14 @@ test(
             await thread.retryCredentials(resumed);
             await checkResume(`credentials-retry:${resumed}`);
             assert.equal(await thread.resumeAfterConnection(research, 'Synthetic source'), true);
-            await checkResume(`connection:${research}`);
+            const connected = await checkResume(`connection:${research}`);
+            await db.pool.query(
+              "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text WHERE id=$1",
+              [connected],
+            );
+            assert.equal(await thread.resumeAfterHandoff(connected), true);
+            await checkResume(`handoff:${connected}`);
+            assert.equal(await thread.resumeAfterHandoff(connected), false);
           } finally {
             quietBackgroundWork = false;
             dependencies.readArtifact = previousRead;

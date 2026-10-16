@@ -81,6 +81,8 @@ export function backgroundCalendar(input: {
       const time = `${String(input.hour).padStart(2, '0')}:${String(input.minute).padStart(2, '0')}`;
       const prompt = `Move my private ${input.summary} calendar block to ${date} at ${time}, keeping it 30 minutes long. It has no guests.`;
       return {
+        notificationRule:
+          'Tell me about messages that need my reply and calendar changes that affect me.',
         apps,
         state,
         blocked,

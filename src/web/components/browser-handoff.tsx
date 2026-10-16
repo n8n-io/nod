@@ -27,15 +27,7 @@ const batchBytes = 64 * 1024;
 const textPiece = 2000;
 const encoder = new TextEncoder();
 
-export function BrowserHandoff({
-  turnId,
-  onDone,
-  paused = false,
-}: {
-  turnId: string;
-  onDone: () => Promise<void>;
-  paused?: boolean;
-}) {
+export function BrowserHandoff({ turnId, paused = false }: { turnId: string; paused?: boolean }) {
   const screen = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const pending = useRef<BrowserHandoffInput[]>([]);
@@ -200,7 +192,7 @@ export function BrowserHandoff({
     setReturning(true);
     try {
       await flush();
-      await onDone();
+      await post('/api/browser-handoff/done', { turnId });
       setClosed(true);
     } catch (reason) {
       setError(errorMessage(reason));

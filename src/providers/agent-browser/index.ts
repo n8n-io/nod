@@ -81,6 +81,21 @@ const streamFrame = z.object({
 
 const holdMs = 30 * 60_000;
 
+const withoutPasskeys = `(() => {
+  const credentials = navigator.credentials;
+  if (!credentials) return;
+  const unavailable = () =>
+    Promise.reject(new DOMException('Passkeys are not available in this browser.', 'NotAllowedError'));
+  const get = credentials.get.bind(credentials);
+  const create = credentials.create.bind(credentials);
+  credentials.get = (options) => (options && options.publicKey ? unavailable() : get(options));
+  credentials.create = (options) => (options && options.publicKey ? unavailable() : create(options));
+  if (window.PublicKeyCredential) {
+    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
+    PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(false);
+  }
+})();`;
+
 class BrowserLockedError extends Error {
   statusCode = 423;
   constructor() {
@@ -449,6 +464,8 @@ export function createAgentBrowserComputer(options: {
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
+    const initScript = resolve(runtimeRoot, 'browser-init.js');
+    await writeFile(initScript, withoutPasskeys, { mode: 0o600 });
     state.proxy ??= createBrowserProxy({ privateNetwork });
     const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
@@ -469,6 +486,8 @@ export function createAgentBrowserComputer(options: {
           ...(state.browserExecutable ? ['--executable-path', state.browserExecutable] : []),
           ...(headed ? ['--headed'] : []),
           '--no-webmcp',
+          '--init-script',
+          initScript,
           '--json',
           '--proxy',
           proxyUrl,

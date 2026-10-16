@@ -52,6 +52,8 @@ export default scenario({
           zone,
         ),
       }),
+      notificationRule:
+        'Tell me about messages that need my reply and calendar changes that affect me.',
       times,
       state: { first: '', second: '' },
     };
