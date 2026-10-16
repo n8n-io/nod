@@ -356,6 +356,21 @@ export async function startStack(options: {
             ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
           }
         : {}),
+      ...(model.provider !== 'anthropic' &&
+      existsSync(join(appSource, 'src/providers/decisions.ts'))
+        ? {
+            decisions: (
+              await load<typeof import('../../src/providers/decisions.ts')>(
+                'src/providers/decisions.ts',
+              )
+            ).createDecisionModel({
+              resolve: async () => ({
+                provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
+                key: model.apiKey,
+              }),
+            }),
+          }
+        : {}),
       memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
       onboardingCurator: createPiMemoryCurator({
         provider: model.provider,
