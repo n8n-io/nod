@@ -78,6 +78,19 @@ export default scenario({
   },
   expect(world) {
     const s = world.state;
+    const agreed = (run: Run) =>
+      Math.min(
+        s.goAt,
+        ...run.interactions
+          .filter(
+            (item) =>
+              item.kind === 'approval' &&
+              item.action?.startsWith('GMAIL_') &&
+              /^yes\b/i.test(item.reply ?? '') &&
+              item.at > (reminders(run)[0]?.at ?? Infinity),
+          )
+          .map((item) => item.at),
+      );
     return [
       check(
         'first-reminder-was-sent-to-tom',
@@ -98,7 +111,7 @@ export default scenario({
       check(
         'did-not-send-the-second-nudge-before-asking',
         (run) => {
-          const early = reminders(run).filter((mail, index) => index > 0 && mail.at < s.goAt);
+          const early = reminders(run).filter((mail, index) => index > 0 && mail.at < agreed(run));
           return {
             pass: early.length === 0,
             evidence: `${early.length} nudges sent before the user agreed`,
@@ -129,7 +142,7 @@ export default scenario({
       check(
         'second-nudge-went-out-only-after-the-yes',
         (run) => ({
-          pass: reminders(run).length === 2 && reminders(run)[1].at >= s.goAt,
+          pass: reminders(run).length === 2 && reminders(run)[1].at >= agreed(run),
           evidence: `${reminders(run).length} emails to Tom`,
         }),
         { failure: 'incomplete' },
