@@ -46,7 +46,11 @@ test(
     >();
     const batches = new Map<
       string,
-      { subagents: boolean; calls: Array<{ action: string; args: Record<string, unknown> }> }
+      {
+        subagents: boolean;
+        sequential?: boolean;
+        calls: Array<{ action: string; args: Record<string, unknown> }>;
+      }
     >();
     const parts = new Map<string, { action: string; args: Record<string, unknown> }>();
     let partsWaiting = 0;
@@ -61,6 +65,7 @@ test(
     let confirmationValid = true;
     let beforeConfirmation = async () => {};
     let decisionsEnabled = true;
+    let decisionCost: number | undefined;
     let refusedDecision = '';
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
@@ -99,6 +104,10 @@ test(
                       )
                     : undefined;
                 if (batch) {
+                  if (batch.sequential) {
+                    for (const call of batch.calls) await tool('apps').execute(call);
+                    return;
+                  }
                   await Promise.allSettled(
                     batch.calls.map((call, index) => {
                       if (!batch.subagents) return tool('apps').execute(call);
@@ -191,7 +200,7 @@ test(
             }
             return Response.json({
               answers: [{ name, type: 'choice', choice }],
-              usage: { input_tokens: 1000 },
+              usage: { input_tokens: 1000, cost: decisionCost },
             });
           },
         }),
@@ -970,6 +979,49 @@ test(
         },
       );
 
+      await t.test('decision costs stop later tools at the task check-in', async () => {
+        const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
+        assert.equal(reset.statusCode, 200, reset.body);
+        const before = executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length;
+        const inputs = decisionInputs.length;
+        const text = `Read the synthetic inbox three times ${randomUUID()}`;
+        asked.add(text);
+        batches.set(text, {
+          subagents: false,
+          sequential: true,
+          calls: Array.from({ length: 3 }, () => ({
+            action: 'GMAIL_FETCH_EMAILS',
+            args: { max_results: 1 },
+          })),
+        });
+        await pool.query(
+          'INSERT INTO spending_limits(owner_id,task_usd) VALUES($1,1) ON CONFLICT(owner_id) DO UPDATE SET task_usd=excluded.task_usd',
+          [ownerId],
+        );
+        decisionCost = 0.6;
+        try {
+          const response = await request('POST', '/api/messages', { text });
+          assert.equal(response.statusCode, 200, response.body);
+          const turnId = response.json().turnId;
+          await waitFor(turnId, 'failed|succeeded');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
+            before + 2,
+          );
+          assert.equal(decisionInputs.length, inputs + 2);
+          const rows = (
+            await pool.query('SELECT cost_usd FROM model_usage WHERE turn_id=$1', [turnId])
+          ).rows;
+          assert.deepEqual(
+            rows.map((row) => row.cost_usd),
+            [0.6, 0.6],
+          );
+        } finally {
+          decisionCost = undefined;
+          await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
+        }
+      });
+
       await t.test(
         'the spending limit blocks decision requests before provider access',
         async () => {
@@ -986,6 +1038,11 @@ test(
               },
             }),
           );
+          const usageId = randomUUID();
+          await pool.query('INSERT INTO model_usage(id,owner_id,cost_usd) VALUES($1,$2,1)', [
+            usageId,
+            ownerId,
+          ]);
           await pool.query(
             'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,0.000001) ON CONFLICT(owner_id) DO UPDATE SET monthly_usd=excluded.monthly_usd',
             [ownerId],
@@ -1008,6 +1065,7 @@ test(
             assert.equal(calls, 0);
           } finally {
             await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
+            await pool.query('DELETE FROM model_usage WHERE id=$1', [usageId]);
           }
         },
       );
