@@ -112,7 +112,7 @@ These calls are billed through the connection that runs them. GPT Decisions is p
 
 In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for that check. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, and restart Otto after either change. The key stays on the server and is not added to **Models**.
 
-A failed decision request does not switch providers or approve anything: the confirmation stays pending. See [Approvals and the trust check](/trust/approvals/).
+A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Otto as an ordinary message. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice needs its own key]
 Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An OpenAI key in **Models** or a ChatGPT plan doesn't turn on voice.
