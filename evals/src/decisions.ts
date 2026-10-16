@@ -338,13 +338,18 @@ export interface DecisionAttempt {
   usage: Array<Partial<ProviderUsageEvent>>;
 }
 
-function usageCost(usage: DecisionAttempt['usage']): number | null {
+const costScale = 1_000_000_000_000;
+const budgetUnits = 3_000_000_000_000n;
+
+function usageCost(usage: DecisionAttempt['usage']): bigint | null {
   if (!usage.length) return null;
-  let total = 0;
+  let total = 0n;
   for (const item of usage) {
     const cost = item.costUsd ?? item.estimateUsd;
     if (cost == null || !Number.isFinite(cost) || cost < 0) return null;
-    total += cost;
+    const units = Math.ceil(cost * costScale);
+    if (!Number.isSafeInteger(units)) return null;
+    total += BigInt(units);
   }
   return total;
 }
@@ -371,7 +376,7 @@ export function summarizeDecisions(attempts: DecisionAttempt[], repeat = 3) {
     ).length,
     cases: cases.length,
     costUsd: costs.every((cost) => cost !== null)
-      ? costs.reduce((sum, cost) => sum + cost, 0)
+      ? Number(costs.reduce((sum, cost) => sum + cost, 0n)) / costScale
       : null,
   };
 }
@@ -478,7 +483,7 @@ export async function runDecisionEval(options: {
   );
   const attempts: DecisionAttempt[] = [];
   const blocked: Record<string, string> = {};
-  let spent = 0;
+  let spent = 0n;
   let unpriced = false;
   async function check(arm: string, item: Case, attempt: number, warmup = false) {
     const startedAt = new Date().toISOString();
@@ -574,7 +579,7 @@ export async function runDecisionEval(options: {
     return result;
   }
   for (const arm of arms) {
-    if (unpriced || spent >= 3) break;
+    if (unpriced || spent >= budgetUnits) break;
     const result = await check(arm, decisionCases[0], 0, true);
     if (result.status === 'error')
       blocked[arm] = `Canary request failed (${result.httpStatus ?? 'model error'}).`;
@@ -585,10 +590,10 @@ export async function runDecisionEval(options: {
   let next = 0;
   await Promise.all(
     Array.from({ length: 2 }, async () => {
-      while (next < jobs.length && spent < 3 && !unpriced) {
+      while (next < jobs.length && spent < budgetUnits && !unpriced) {
         const index = next++;
         const { item, attempt } = jobs[index];
-        for (let offset = 0; offset < arms.length && spent < 3 && !unpriced; offset++) {
+        for (let offset = 0; offset < arms.length && spent < budgetUnits && !unpriced; offset++) {
           const arm = arms[(index + offset) % arms.length];
           if (
             !blocked[arm] &&
@@ -624,10 +629,10 @@ export async function runDecisionEval(options: {
       {
         fingerprint,
         blocked,
-        spentUsd: unpriced ? null : spent,
-        knownCostUsd: spent,
+        spentUsd: unpriced ? null : Number(spent) / costScale,
+        knownCostUsd: Number(spent) / costScale,
         unpriced,
-        budgetReached: spent >= 3,
+        budgetReached: spent >= budgetUnits,
         summary,
         attempts,
       },

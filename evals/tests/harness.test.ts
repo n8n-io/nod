@@ -88,6 +88,16 @@ test('decision results keep unsafe answers, model errors, and incomplete repeats
     summarizeDecisions([{ ...attempt, usage: [{ costUsd: null, estimateUsd: 0.02 }] }]).costUsd,
     0.02,
   );
+  for (const [count, price] of [
+    [30, 0.1],
+    [10, 0.3],
+  ])
+    assert.equal(
+      summarizeDecisions(
+        Array.from({ length: count! }, () => ({ ...attempt, usage: [{ costUsd: price! }] })),
+      ).costUsd,
+      3,
+    );
 });
 
 const analyticsCase = (name: string) => analyticsCases.find((item) => item.id === name)!;
