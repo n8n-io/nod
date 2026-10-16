@@ -184,7 +184,11 @@ export default scenario({
             evidence: sent.map((item) => item.body.slice(0, 200)).join(' | ') || 'nothing sent',
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'Every email sent to Marta Silva confirms the meeting on Thursday at 10:00, in any wording or time format.',
+        },
       ),
       check(
         'kept-her-thread',

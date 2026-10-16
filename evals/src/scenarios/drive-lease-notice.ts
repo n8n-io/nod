@@ -249,7 +249,11 @@ export default scenario({
           pass: sixty.test(run.said),
           evidence: run.said.slice(-300) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            "The answer tells the owner they must give 60 days' (two months') notice, in any format.",
+        },
       ),
       check(
         'does-not-give-the-old-thirty-days',
@@ -259,7 +263,11 @@ export default scenario({
             ? 'the answer gives 30 days without saying it is from the old contract'
             : undefined,
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer does not present 30 days as the notice the owner needs now; mentioning 30 days only as the term of the old or expired 2021 contract passes.',
+        },
       ),
       noWrites('create', 'update', 'delete', 'send', 'draft', 'post'),
       check(

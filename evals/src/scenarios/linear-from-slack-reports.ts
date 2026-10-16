@@ -395,7 +395,11 @@ export default scenario({
           const { csv } = matched();
           return { pass: !!csv, evidence: csv ? `${csv.identifier} "${csv.title}"` : undefined };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'One of the new Linear issues Otto filed, other than the Firefox charts one, is about the invoice CSV export leaving out customers whose names have accents, described in any wording.',
+        },
       ),
       check(
         'firefox-charts-bug-filed',
@@ -406,7 +410,11 @@ export default scenario({
             evidence: firefox ? `${firefox.identifier} "${firefox.title}"` : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'One of the new Linear issues Otto filed is about the dashboard charts being blank in Firefox since the latest release, described in any wording.',
+        },
       ),
       check(
         'existing-issues-unchanged',

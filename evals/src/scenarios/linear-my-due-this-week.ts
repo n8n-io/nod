@@ -366,7 +366,11 @@ export default scenario({
             evidence: missing.length ? `missing ${missing.join(', ')}` : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The answer refers to each of the owner\'s three issues due this week, WEB-148 "Write acceptance criteria for saved payment methods", MOB-86 "Review the App Store screenshots for 3.0" and WEB-151 "Sign off the new pricing page copy", by identifier, title or a paraphrase of what it is about.',
+        },
       ),
       check(
         'leaves-out-others-issues',

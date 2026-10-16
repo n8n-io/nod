@@ -124,7 +124,11 @@ export default scenario({
           pass: mentions(run.said, points),
           evidence: run.final.slice(0, 200) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The assistant tells the user their Ryde Rewards balance is 12,840 points, in any number format.',
+        },
       ),
       check(
         'did-not-ask-for-the-password-in-chat',

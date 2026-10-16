@@ -224,7 +224,11 @@ export default scenario({
           pass: /\bpaid\b/i.test(run.said),
           evidence: run.final.slice(0, 240) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            "The assistant tells the user that this month's Stackly invoice is paid, in any wording.",
+        },
       ),
       judge(
         'reports-this-months-invoice-correctly',

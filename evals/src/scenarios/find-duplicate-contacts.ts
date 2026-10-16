@@ -160,7 +160,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The reply identifies Marta Gonçalves, Jonas Weber and Inês Carvalho as the duplicated contacts, under any of their spellings or by their email addresses.',
+        },
       ),
       noWrites('create', 'update', 'delete', 'draft', 'send', 'post'),
       judge(

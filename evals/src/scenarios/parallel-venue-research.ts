@@ -210,7 +210,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer presents both Quinta do Moinho Velho and Armazém 16 as venues that work for 40 people on the date, in any wording.',
+        },
       ),
       judge(
         'no-unsuitable-venue-presented-as-working',

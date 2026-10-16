@@ -102,7 +102,10 @@ export default scenario({
           pass: /\b12\s*(?:kg|kgs|kilos?|kilograms?)\b/i.test(run.said),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: "The answer gives the infant's checked bag allowance as 12 kg, in any format.",
+        },
       ),
       judge(
         'infant-allowance-not-confused-with-adult',

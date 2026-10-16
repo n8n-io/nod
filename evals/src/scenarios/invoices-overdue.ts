@@ -276,7 +276,11 @@ export default scenario({
             evidence: bad.length ? `unclear for ${bad.map((b) => b.number).join(', ')}` : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'Each reminder draft names its invoice number and the exact amount owed, in any format: INV-2031 for €1,850.00 to Harborline Logistics, INV-2038 for €620.00 to Kestrel Bikes, and INV-2044 for €3,200.00 to Lumen Foods.',
+        },
       ),
       noWrites('send'),
       judge(

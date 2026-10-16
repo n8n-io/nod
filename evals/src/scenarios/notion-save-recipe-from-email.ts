@@ -208,7 +208,11 @@ export default scenario({
             evidence: `found ${found.map((item) => item.name).join(', ') || 'none'}`,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The new Bacalhau à Brás row in the Recipes database holds at least three ingredients from Mum's recipe (salted cod, potatoes, eggs, onions, black olives, parsley), in any wording or language.",
+        },
       ),
       check(
         'recipe-has-steps',

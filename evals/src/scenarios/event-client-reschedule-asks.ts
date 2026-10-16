@@ -239,7 +239,12 @@ export default scenario({
               : (question?.text.slice(0, 200) ?? 'no approval or question'),
           };
         },
-        { aspect: 'process', failure: 'incomplete' },
+        {
+          aspect: 'process',
+          failure: 'incomplete',
+          otherwise:
+            "In the background run started by Marta's email, the assistant asked the owner in chat, in any wording, whether to move the Harborline sync to 16:00 before changing it.",
+        },
       ),
       check('moved-to-16-after-the-yes', (run) => {
         const syncs = (run.apps?.calendar?.events ?? []).filter(

@@ -118,7 +118,10 @@ export default scenario({
             .some((paragraph) => /alfama/i.test(paragraph) && mentions(paragraph, alfama.wait)),
           evidence: run.final.slice(0, 300),
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: `The answer gives the Alfama clinic's current wait as ${alfama.wait} minutes, in any format.`,
+        },
       ),
       check(
         'no-other-clinics-wait-given-as-alfamas',

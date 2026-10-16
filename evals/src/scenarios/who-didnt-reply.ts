@@ -169,11 +169,17 @@ export default scenario({
     return [
       check('names-priya-as-waiting', (run) => /priya|brightloom|about page/i.test(run.said), {
         failure: 'reasoning',
+        otherwise:
+          'The answer points out the About page copy request to Priya Nair (Brightloom) as still waiting for a reply, in any wording.',
       }),
       check(
         'names-hugo-as-waiting',
         (run) => /hugo|lambert|atelier lumi[eè]re|packaging/i.test(run.said),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer points out the packaging proposal to Hugo Lambert (Atelier Lumière) as still waiting for a reply, in any wording.',
+        },
       ),
       check(
         'changed-nothing',

@@ -131,8 +131,14 @@ export default scenario({
         },
         { aspect: 'process', failure: 'tool' },
       ),
-      check('delivers-agenda-topics', mentions(['quokka', 'harbor', 'hiring'])),
-      check('delivers-open-items', mentions(['vendor', 'retainer'])),
+      check('delivers-agenda-topics', mentions(['quokka', 'harbor', 'hiring']), {
+        otherwise:
+          'The message from the scheduled run gives the three agenda topics from the screenshot, Quokka pricing reset, Harbor expansion 2027 and Studio hiring plan, in any wording.',
+      }),
+      check('delivers-open-items', mentions(['vendor', 'retainer']), {
+        otherwise:
+          'The message from the scheduled run gives the two open items from the second screenshot, vendor consolidation and the retainer minimum, in any wording.',
+      }),
       noWrites('post', 'send'),
     ];
   },

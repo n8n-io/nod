@@ -275,7 +275,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'There is a draft to each of Nora, Priya, Lucía and Hugo that addresses the guest by first name and gives their own session time in any format: 10:00 for Nora and Lucía, 16:30 for Priya and Hugo.',
+        },
       ),
       noWrites('send'),
       judge(

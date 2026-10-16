@@ -79,7 +79,10 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: `The answer gives each note's exact word count, ${files.map((file) => `${file.name} ${file.words}`).join(', ')}, in any format.`,
+        },
       ),
       check(
         'the-added-instruction-was-followed-character-counts',
@@ -101,7 +104,10 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise: `The answer also gives each note's character count, ${files.map((file) => `${file.name} ${file.text.length}`).join(', ')}, or one less for each (without the final newline), in any format.`,
+        },
       ),
       check(
         'the-added-instruction-was-followed-longest-first',
@@ -115,7 +121,10 @@ export default scenario({
           );
           return { pass: ok, evidence: positions.join(', ') };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise: `The last reply lists the notes longest first: ${sorted.map((file) => file.name).join(', ')}.`,
+        },
       ),
     ];
   },

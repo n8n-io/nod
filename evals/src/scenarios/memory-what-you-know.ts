@@ -69,7 +69,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "After the reset, the answer to 'What do you remember about me?' says the owner is vegetarian, climbs on Tuesday evenings and has a partner called Sam, in any wording.",
+        },
       ),
       check(
         'facts-saved',

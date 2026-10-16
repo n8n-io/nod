@@ -181,7 +181,11 @@ export default scenario({
             evidence: `mentions ${hits.map((item) => item.label).join(', ') || 'none'}`,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The reply lists at least two of the real action items from the doc 'Shared notes: offsite' (the venue in Sintra, dietary requirements, team hoodies, the minibus), in any wording.",
+        },
       ),
       check(
         'nothing-shared',

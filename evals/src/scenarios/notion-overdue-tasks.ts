@@ -191,7 +191,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer presents all three overdue tasks as overdue: sending the Q3 VAT figures to the accountant, replying to Casa Velha about the menu quote, and renewing the portfolio domain, in any wording.',
+        },
       ),
       check(
         'done-task-absent-unless-called-done',

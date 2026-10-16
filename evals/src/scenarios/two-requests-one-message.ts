@@ -134,7 +134,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The answer refers to both of tomorrow morning's events, the portfolio review with Lena and the Kestrel Bikes kickoff call, in any wording: its title, a paraphrase, a participant or its time.",
+        },
       ),
       check(
         'does-not-mix-in-other-days',

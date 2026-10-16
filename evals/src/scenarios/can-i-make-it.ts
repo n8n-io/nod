@@ -84,6 +84,8 @@ export default scenario({
         (run) => /board[\s-]*prep|\b15[:.h]30\b|\b3[:.]30\s*p\.?m/i.test(run.said),
         {
           failure: 'reasoning',
+          otherwise:
+            'The answer names the clash with Board prep, by its title, a paraphrase or its 15:30 start time in any time format.',
         },
       ),
       check(

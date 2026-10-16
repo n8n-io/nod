@@ -105,7 +105,11 @@ export default scenario({
       check(
         'gives-the-sunday-opening-time',
         (run) => ({ pass: sundayOpening(run.said), evidence: run.final.slice(0, 300) }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer says the Museu do Azulejo opens at 10:00 on Sunday, in any wording or time format.',
+        },
       ),
       check(
         'read-the-visit-page-past-the-consent-wall',

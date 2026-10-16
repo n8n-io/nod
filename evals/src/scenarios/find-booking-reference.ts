@@ -154,7 +154,11 @@ export default scenario({
           pass: departureTime.test(run.said),
           evidence: departureTime.test(run.said) ? undefined : '07:45 never mentioned',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer gives 07:45 as the departure time of the upcoming flight to Berlin, in any format such as 7:45 am.',
+        },
       ),
       check(
         'does-not-give-last-years-booking',

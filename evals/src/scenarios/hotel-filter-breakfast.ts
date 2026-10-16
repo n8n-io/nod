@@ -222,7 +222,11 @@ export default scenario({
           pass: /casa da ribeira/i.test(run.said),
           evidence: run.final.slice(0, 300),
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer names Casa da Ribeira as the hotel that meets the conditions, in any spelling or formatting.',
+        },
       ),
       judge(
         'only-casa-da-ribeira-is-offered-as-a-match',

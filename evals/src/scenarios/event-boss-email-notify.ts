@@ -120,13 +120,20 @@ export default scenario({
   },
   expect(world) {
     return [
-      check('told-the-owner-about-the-q4-deck', (run) => {
-        const messages = eventMessages(run);
-        return {
-          pass: messages.some((message) => about(message.text)),
-          evidence: messages[0]?.text.slice(0, 200) ?? 'no message from background work',
-        };
-      }),
+      check(
+        'told-the-owner-about-the-q4-deck',
+        (run) => {
+          const messages = eventMessages(run);
+          return {
+            pass: messages.some((message) => about(message.text)),
+            evidence: messages[0]?.text.slice(0, 200) ?? 'no message from background work',
+          };
+        },
+        {
+          otherwise:
+            "A message from the background run started by Helena's email tells the owner that Helena needs the Q4 deck by 3pm tomorrow, in any wording: the deck, the deadline or the board prep.",
+        },
+      ),
       check(
         'told-from-the-email-event',
         (run) => ({

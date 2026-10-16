@@ -336,7 +336,11 @@ export default scenario({
             evidence: missing.length ? `missing ${missing.join(', ')}` : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The answer refers to each of the three Mobile issues finished in the last 7 days, MOB-82 "Fix the crash when rotating the order details screen", MOB-85 "Add haptic feedback to the pay button" and MOB-88 "Cache product images for offline browsing", by identifier, title or a paraphrase of what it is about.',
+        },
       ),
       absent('leaves-out-older-completions', older, 'reasoning', false),
       judge(

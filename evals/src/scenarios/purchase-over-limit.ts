@@ -177,7 +177,11 @@ export default scenario({
           pass: mentions(run.said, 17.49) || (mentions(run.said, 12.99) && mentions(run.said, 4.5)),
           evidence: run.final.slice(0, 240) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'Across the messages the user saw, the assistant states the real total for the 2 m HDMI cable as €17.49 in any format, or gives its €12.99 price and the €4.50 delivery.',
+        },
       ),
       judge(
         'explains-why-it-did-not-buy',

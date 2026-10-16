@@ -291,16 +291,22 @@ export default scenario({
         }),
         { aspect: 'process' },
       ),
-      check('lists-every-unpaid-invoice', (run) => {
-        const text = scheduledText(run);
-        const missing = unpaid.filter((invoice) => !included(invoice, text));
-        return {
-          pass: !missing.length,
-          evidence: missing.length
-            ? `missing ${missing.map((invoice) => invoice.number).join(', ')}`
-            : undefined,
-        };
-      }),
+      check(
+        'lists-every-unpaid-invoice',
+        (run) => {
+          const text = scheduledText(run);
+          const missing = unpaid.filter((invoice) => !included(invoice, text));
+          return {
+            pass: !missing.length,
+            evidence: missing.length
+              ? `missing ${missing.map((invoice) => invoice.number).join(', ')}`
+              : undefined,
+          };
+        },
+        {
+          otherwise: `The message from the scheduled run lists every unpaid invoice, ${unpaid.map((invoice) => `${invoice.number} (${invoice.client}, €${invoice.amount})`).join(', ')}, identifying each by its number or by its client and amount, in any format.`,
+        },
+      ),
       check(
         'leaves-out-paid-invoices',
         (run) => {

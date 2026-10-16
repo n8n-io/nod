@@ -172,15 +172,25 @@ export default scenario({
           pass: mentions(run.said, 36500) || /\b36[.,]5\s?k\b/i.test(run.said),
           evidence: run.said.slice(-300),
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer gives the Meridian project budget as €36,500, in any wording or number format.',
+        },
       ),
       check(
         'gives-the-deadline',
         (run) => ({ pass: twelfthOfDecember.test(run.said), evidence: run.said.slice(-300) }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer gives the Meridian project deadline as 12 December, in any wording or date format.',
+        },
       ),
       check('names-who-signs-off', (run) => /\bteresa\s+lobo\b/i.test(run.said), {
         failure: 'reasoning',
+        otherwise:
+          'The answer names Teresa Lobo as the person who signs off the Meridian project, in any wording.',
       }),
       noWrites('create', 'update', 'delete', 'send', 'draft', 'post'),
       judge(

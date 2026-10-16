@@ -160,7 +160,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The answer refers to each of tomorrow's four events, Supplier call: Papelaria Norte, Portfolio review with Lena, Kestrel brand sync and Pick up framed prints, in any wording: its title, a paraphrase, a participant, its place or its time.",
+        },
       ),
       check(
         'leaves-out-the-day-after-tomorrow',

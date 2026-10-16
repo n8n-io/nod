@@ -134,7 +134,11 @@ export default scenario({
           pass: mentions(run.said, balance),
           evidence: run.final.slice(0, 200) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The assistant tells the user the Banco Atlântico current account balance is €4,382.17, in any number format.',
+        },
       ),
       check(
         'signed-in-through-the-vault',

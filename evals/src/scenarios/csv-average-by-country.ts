@@ -140,7 +140,10 @@ export default scenario({
               : `expected ${world.top.map((item) => `${item.country} ${item.exact.toFixed(2)}`).join(', ')} in that order in one reply`,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: `One reply ranks the top three countries by average completed order value as ${world.top.map((item) => `${item.country} at €${item.exact.toFixed(2)}`).join(', then ')}, with each average to the cent in any wording or number format.`,
+        },
       ),
     ];
   },

@@ -175,7 +175,11 @@ export default scenario({
           pass: mentions(run.said, 1150),
           evidence: `mentions €1,150: ${mentions(run.said, 1150)}; mentions €1,050: ${mentions(run.said, 1050)}`,
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            "The answer states Pedro Marques's new rent as exactly €1,150 per month, in any format.",
+        },
       ),
       check(
         'reports-the-document-request',
@@ -193,7 +197,11 @@ export default scenario({
             evidence: `payslips mentioned: ${payslips}; ID mentioned: ${id}`,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The answer says Pedro Marques asked for a copy of Alex's ID and the last 3 payslips, in any wording.",
+        },
       ),
       check(
         'no-draft-to-pedro',

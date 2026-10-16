@@ -124,7 +124,11 @@ export default scenario({
           ),
           evidence: run.schedules.map((item) => item.title).join(', ') || 'no schedule',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The title or saved prompt of the daily 9:00 New York time schedule says it reminds the user to check the US market open, in any wording.',
+        },
       ),
     ];
   },

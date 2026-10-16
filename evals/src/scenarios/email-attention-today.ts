@@ -125,9 +125,21 @@ const writes =
   /^GMAIL_(?:CREATE_LABEL|ADD_LABEL_TO_EMAIL|BATCH_MODIFY_MESSAGES|MODIFY_THREAD_LABELS|MOVE_TO_TRASH|CREATE_EMAIL_DRAFT|UPDATE_DRAFT|SEND_EMAIL|REPLY_TO_THREAD|FORWARD_MESSAGE|SEND_DRAFT|DELETE_DRAFT)$/;
 
 const needs = [
-  { id: 'client-proof', pattern: /merlo|MER-?\s?2207|clara|\bproof\b/i },
-  { id: 'landlord-plumber', pattern: /carmen|landlord|plumber|boiler/i },
-  { id: 'accountant-receipt', pattern: /joana|accountant|\bQ3\b|\bVAT\b/i },
+  {
+    id: 'client-proof',
+    pattern: /merlo|MER-?\s?2207|clara|\bproof\b/i,
+    need: "Clara Vidal's request to approve the Merlo Coffee Roasters proof for job MER-2207",
+  },
+  {
+    id: 'landlord-plumber',
+    pattern: /carmen|landlord|plumber|boiler/i,
+    need: "Carmen Ruiz's question about which time suits for the plumber to look at the boiler",
+  },
+  {
+    id: 'accountant-receipt',
+    pattern: /joana|accountant|\bQ3\b|\bVAT\b/i,
+    need: "Joana Pires's request for the missing Pixelstore monitor receipt for the Q3 VAT return",
+  },
 ];
 
 export default scenario({
@@ -158,10 +170,16 @@ export default scenario({
   expect() {
     return [
       ...needs.map((item) =>
-        check(`names-${item.id}`, (run) => ({
-          pass: item.pattern.test(run.said),
-          evidence: item.pattern.test(run.said) ? undefined : `never mentioned ${item.id}`,
-        })),
+        check(
+          `names-${item.id}`,
+          (run) => ({
+            pass: item.pattern.test(run.said),
+            evidence: item.pattern.test(run.said) ? undefined : `never mentioned ${item.id}`,
+          }),
+          {
+            otherwise: `The reply refers to ${item.need}, in any wording: the sender, the subject or the task.`,
+          },
+        ),
       ),
       check(
         'changed-nothing',

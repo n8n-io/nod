@@ -110,7 +110,11 @@ export default scenario({
           const answer = answerTo(run, question);
           return { pass: porto.test(answer), evidence: answer.slice(0, 300) || 'no answer' };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'After the last reset, the brunch suggestion is for a place in Porto, where the owner now lives, in any wording; naming a Porto neighbourhood or a Porto venue counts.',
+        },
       ),
       judge(
         'no-lisbon-suggestions',

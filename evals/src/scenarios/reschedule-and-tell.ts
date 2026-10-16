@@ -195,7 +195,11 @@ export default scenario({
             evidence: mail ? mail.body.replace(/\s+/g, ' ').slice(0, 200) : 'no email to Ana',
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            "The email sent to Ana Costa gives the design review's new start time tomorrow, 15:00 (3 pm), in any wording or time format.",
+        },
       ),
       check(
         'no-email-to-anyone-else',

@@ -100,7 +100,11 @@ export default scenario({
       check(
         'refined-bio-mentions-lisbon',
         (run) => finalBio(run).some((line) => lisbon.test(line)),
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The assistant's last, more casual bio says the user is based in Lisbon, in any wording.",
+        },
       ),
       check(
         'refined-bio-still-about-a-brand-designer',

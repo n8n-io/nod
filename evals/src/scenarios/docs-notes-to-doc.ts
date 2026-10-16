@@ -181,7 +181,11 @@ export default scenario({
             evidence: missing.length ? `missing: ${missing.join(', ')}` : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The new Google Doc "Kickoff notes: Harborline" holds all four notes, the budget approved at €48k, the launch on 3 November, Marta owning brand assets and the next check-in on Thursday, in any wording or format.',
+        },
       ),
       check(
         'one-new-doc',
@@ -213,7 +217,11 @@ export default scenario({
           /\b10(?::00|\.00|h00|h)(?!\d)|\b10\s?(?:am|a\.m\.)|\bthu(?:rsday)?\W+(?:at\s+)?10\b/i.test(
             doc(run)?.text ?? '',
           ),
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The new Google Doc "Kickoff notes: Harborline" gives the Thursday check-in time as 10:00, in any time format.',
+        },
       ),
     ];
   },

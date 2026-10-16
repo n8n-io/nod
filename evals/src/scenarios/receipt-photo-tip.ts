@@ -74,7 +74,11 @@ export default scenario({
           pass: numbers(run.said).some((value) => Math.abs(value - tip) < 0.005),
           evidence: `expected €${tip.toFixed(2)}`,
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The assistant tells the user the tip on the Taberna La Encina receipt was €5.90, in any format.',
+        },
       ),
     ];
   },

@@ -141,26 +141,40 @@ export default scenario({
         },
         { aspect: 'process' },
       ),
-      check('answer-names-all-three', (run) => {
-        const text = answer(run);
-        const missing = routines.filter((routine) => !routine.topic.test(text));
-        return {
-          pass: !missing.length,
-          evidence: missing.length
-            ? `missing ${missing.map((routine) => routine.name).join(', ')}`
-            : undefined,
-        };
-      }),
-      check('answer-gives-their-timing', (run) => {
-        const text = answer(run);
-        const missing = routines.filter((routine) => !routine.timing.test(text));
-        return {
-          pass: !missing.length,
-          evidence: missing.length
-            ? `no timing for ${missing.map((routine) => routine.name).join(', ')}`
-            : undefined,
-        };
-      }),
+      check(
+        'answer-names-all-three',
+        (run) => {
+          const text = answer(run);
+          const missing = routines.filter((routine) => !routine.topic.test(text));
+          return {
+            pass: !missing.length,
+            evidence: missing.length
+              ? `missing ${missing.map((routine) => routine.name).join(', ')}`
+              : undefined,
+          };
+        },
+        {
+          otherwise:
+            'In its answer to "What do you have scheduled for me?", the assistant refers to all three saved reminders, watering the plants, paying the rent and the weekly review, in any wording.',
+        },
+      ),
+      check(
+        'answer-gives-their-timing',
+        (run) => {
+          const text = answer(run);
+          const missing = routines.filter((routine) => !routine.timing.test(text));
+          return {
+            pass: !missing.length,
+            evidence: missing.length
+              ? `no timing for ${missing.map((routine) => routine.name).join(', ')}`
+              : undefined,
+          };
+        },
+        {
+          otherwise:
+            'In its answer to "What do you have scheduled for me?", the assistant gives the right day for each reminder in any wording or format: Sundays for watering the plants, the 1st of every month for the rent and Fridays for the weekly review.',
+        },
+      ),
       judge(
         'answer-matches-the-saved-schedules',
         'In its answer to "What do you have scheduled for me?", the assistant lists exactly the three saved reminders with their timing: water the plants every Sunday at 10:00, pay the rent on the 1st of every month at 9:00, and the weekly review every Friday at 16:00 (any time format is fine). It does not invent other schedules or give a wrong day or time for any of them.',

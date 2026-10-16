@@ -77,7 +77,11 @@ export default scenario({
             evidence: rule.slice(0, 300) || 'no rule',
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The saved notification rule tells the assistant to notify the owner about emails from Helena and about messages from the owner's bank, in any wording.",
+        },
       ),
       check(
         'other-settings-unchanged',

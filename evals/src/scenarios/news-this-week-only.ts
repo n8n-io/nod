@@ -152,7 +152,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The answer presents both of Acme's announcements from the last 7 days, the Orbit self-serve analytics dashboard launch and the new engineering office in Porto, in any wording.",
+        },
       ),
       judge(
         'only-the-last-7-days',

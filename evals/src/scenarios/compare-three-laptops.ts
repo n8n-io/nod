@@ -224,7 +224,11 @@ export default scenario({
           pass: /tech\s*shop/i.test(run.said) && mentions(run.said, 1019),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer names TechShop with its total of €1,019 for the ThinkPad X1 Carbon Gen 12 delivered to Portugal, in any wording or price format.',
+        },
       ),
       judge(
         'techshop-is-presented-as-the-cheapest',

@@ -162,7 +162,10 @@ export default scenario({
           pass: mentions(run.said, world.total),
           evidence: `expected €${world.total.toFixed(2)} in the final reply`,
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: `The answer states the travel spending in ${world.month.name} as exactly €${world.total.toFixed(2)}, in any format.`,
+        },
       ),
       noWrites('create', 'update', 'delete', 'draft', 'send', 'post'),
       check(

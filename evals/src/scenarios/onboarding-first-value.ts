@@ -151,7 +151,11 @@ export default scenario({
       check(
         'first-tasks-include-the-reply-sofia-is-waiting-for',
         () => Boolean(state.suggestions?.tasks.some(replyToSofia)),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            "One of the first tasks Otto offered comes from Gmail and offers to answer Sofia Almeida's question about how many revision rounds the €4,500 Meridian rebrand includes, in any wording.",
+        },
       ),
       check(
         'no-first-task-from-the-sign-in-code',

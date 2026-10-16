@@ -197,7 +197,11 @@ export default scenario({
               /twin|2\s*[x×]\s*750/i.test(run.said)),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer identifies the Serra Gold twin pack (2 × 750 ml for €10.98, €7.32 per litre) as the cheapest olive oil per litre, in any wording or number format.',
+        },
       ),
       judge(
         'the-twin-pack-is-the-answer',

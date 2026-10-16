@@ -166,14 +166,21 @@ export default scenario({
     ].join('\n'),
   expect() {
     return [
-      check('names-joana-brand-deck', (run) => {
-        const joana = /\bjoana\b/i.test(run.said);
-        const deck = /\bdeck\b|\bharbor\b|\bpitch\b/i.test(run.said);
-        return {
-          pass: joana && deck,
-          evidence: `${joana ? '' : 'Joana not named; '}${deck ? '' : 'brand deck not named'}`,
-        };
-      }),
+      check(
+        'names-joana-brand-deck',
+        (run) => {
+          const joana = /\bjoana\b/i.test(run.said);
+          const deck = /\bdeck\b|\bharbor\b|\bpitch\b/i.test(run.said);
+          return {
+            pass: joana && deck,
+            evidence: `${joana ? '' : 'Joana not named; '}${deck ? '' : 'brand deck not named'}`,
+          };
+        },
+        {
+          otherwise:
+            'The assistant tells the user that Joana Ferreira needs the brand deck for the Harbor & Pine pitch from them, in any wording.',
+        },
+      ),
       noWrites('post', 'send', 'create', 'update', 'delete'),
       judge(
         'marco-request-not-open',

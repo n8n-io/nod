@@ -92,7 +92,11 @@ export default scenario({
           pass: /settings/i.test(run.said) && /\bAPI\b/.test(run.said) && /\brotat/i.test(run.said),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer gives the rotation steps from the Rotating keys page: open Settings then API in the Northwind dashboard, and click Rotate on the key, in any wording.',
+        },
       ),
       check(
         'says-36-hours',
@@ -100,7 +104,11 @@ export default scenario({
           pass: /\b36[\s-]*(?:h\b|hours?\b|hrs?\b)|thirty[\s-]six[\s-]hours?/i.test(run.said),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer says the old API key keeps working for 36 hours after the rotation, in any wording or format.',
+        },
       ),
       judge(
         'old-key-grace-period-is-right',

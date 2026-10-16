@@ -175,7 +175,11 @@ export default scenario({
             evidence: `counts found: ${counts.join(', ') || 'none'}`,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer states that the Kettle Pro has exactly 4 one-star reviews, in any wording or number format.',
+        },
       ),
       check(
         'names-the-lid-as-the-main-complaint',
@@ -183,7 +187,11 @@ export default scenario({
           pass: /\blids?\b|\bhinges?\b|\blatch/i.test(run.said),
           evidence: run.final.slice(0, 300),
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer names the lid breaking (the hinge snapping, the latch cracking or the lid coming off) as the most common complaint in the Kettle Pro one-star reviews, in any wording.',
+        },
       ),
       check(
         'did-not-post-a-review',

@@ -120,7 +120,11 @@ export default scenario({
             evidence: text ? text.slice(0, 200) : 'the check was silent',
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'A message from the scheduled follow-up run tells the owner that Tom Bailey has not paid or replied about INV-2038 and asks whether to send him the second nudge, in any wording.',
+        },
       ),
       check(
         'second-nudge-went-out-only-after-the-yes',

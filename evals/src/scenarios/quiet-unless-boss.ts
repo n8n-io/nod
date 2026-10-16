@@ -203,17 +203,25 @@ export default scenario({
         },
         { failure: 'scope' },
       ),
-      check('tells-about-the-budget-sign-off', (run) => {
-        const [first = 0, second = 0] = fired();
-        const text = runMessages(run, first, second)
-          .map((message) => message.text)
-          .join('\n');
-        return {
-          pass:
-            /budget|sign-?off/i.test(text) || (/helena/i.test(text) && !/ortiz|proofs/i.test(text)),
-          evidence: text ? text.slice(0, 200) : 'the second run sent no message',
-        };
-      }),
+      check(
+        'tells-about-the-budget-sign-off',
+        (run) => {
+          const [first = 0, second = 0] = fired();
+          const text = runMessages(run, first, second)
+            .map((message) => message.text)
+            .join('\n');
+          return {
+            pass:
+              /budget|sign-?off/i.test(text) ||
+              (/helena/i.test(text) && !/ortiz|proofs/i.test(text)),
+            evidence: text ? text.slice(0, 200) : 'the second run sent no message',
+          };
+        },
+        {
+          otherwise:
+            "A message from the second scheduled run tells the user about Helena Marques's unread email asking for their sign-off on the Q1 studio budget, in any wording.",
+        },
+      ),
       check(
         'names-helena-in-the-alert',
         (run) => {

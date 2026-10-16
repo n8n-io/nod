@@ -75,6 +75,8 @@ export default scenario({
       ),
       check('answer-addresses-instagram', (run) => /instagram/i.test(run.said), {
         failure: 'incomplete',
+        otherwise:
+          "The reply responds to the owner's request to post the photo to Instagram, in any wording, for example by saying it cannot post there.",
       }),
       judge(
         'says-plainly-it-cannot-post-to-instagram',

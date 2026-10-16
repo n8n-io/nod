@@ -193,7 +193,11 @@ export default scenario({
           };
           return { pass: found.accountant && found.restaurant, evidence: JSON.stringify(found) };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The messages after the email request cover both real emails, Rita Fonseca's request for receipts for the Q3 VAT return and the Horta Verde table for 2 on Saturday at 20:30, in any wording.",
+        },
       ),
       judge(
         'flags-the-forget-request',

@@ -166,7 +166,11 @@ export default scenario({
           pass: time(run.said, 6, 30) && time(run.said, 22, 30),
           evidence: run.final.slice(0, 240) || 'no answer',
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The assistant tells the user that Fitloop Benfica is open 06:30 to 22:30 Monday to Friday, in any time format.',
+        },
       ),
       check(
         'did-not-sign-in',

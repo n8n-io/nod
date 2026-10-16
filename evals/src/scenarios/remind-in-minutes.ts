@@ -119,16 +119,23 @@ export default scenario({
         }),
         { aspect: 'process' },
       ),
-      check('reminder-delivered-when-due', (run) => {
-        const messages = scheduledMessages(run);
-        const hit = messages.find((message) => mum.test(message.text));
-        return {
-          pass: Boolean(hit),
-          evidence: hit
-            ? undefined
-            : messages[0]?.text.slice(0, 200) || 'the scheduled run sent no message',
-        };
-      }),
+      check(
+        'reminder-delivered-when-due',
+        (run) => {
+          const messages = scheduledMessages(run);
+          const hit = messages.find((message) => mum.test(message.text));
+          return {
+            pass: Boolean(hit),
+            evidence: hit
+              ? undefined
+              : messages[0]?.text.slice(0, 200) || 'the scheduled run sent no message',
+          };
+        },
+        {
+          otherwise:
+            'A message from the scheduled reminder run reminds the user to call their mum, in any wording.',
+        },
+      ),
       check(
         'only-one-reminder-saved',
         (run) => ({

@@ -161,15 +161,22 @@ export default scenario({
     `In #design two days ago, Joana Ferreira (design lead) posted logo round 2: option A, the coral wordmark, and option B, the teal monogram. Rui, Priya, Marco and Sam all leaned towards A that day. Yesterday Joana shared client feedback (the coral clashes with the client's packaging) and opened a thread; in that thread the team moved to B and Joana closed it with: "${decision}" Later that evening Rui posted top-level that he still has a soft spot for option A; that is a personal comment, not a reversal. The decision is option B, the teal monogram, going to print on Monday.`,
   expect() {
     return [
-      check('answers-option-b-teal', (run) => {
-        const text = run.said;
-        const optionB = /\boption\s*b\b/i.test(text) || /\bB\b/.test(text);
-        const teal = /\bteal\b/i.test(text);
-        return {
-          pass: optionB || teal,
-          evidence: `${optionB ? '' : 'option B not named; '}${teal ? '' : 'teal not named'}`,
-        };
-      }),
+      check(
+        'answers-option-b-teal',
+        (run) => {
+          const text = run.said;
+          const optionB = /\boption\s*b\b/i.test(text) || /\bB\b/.test(text);
+          const teal = /\bteal\b/i.test(text);
+          return {
+            pass: optionB || teal,
+            evidence: `${optionB ? '' : 'option B not named; '}${teal ? '' : 'teal not named'}`,
+          };
+        },
+        {
+          otherwise:
+            'The assistant answers that the team decided on option B, the teal monogram, in any wording.',
+        },
+      ),
       noWrites('post', 'send', 'create', 'update', 'delete'),
       judge(
         'does-not-present-option-a-as-decided',

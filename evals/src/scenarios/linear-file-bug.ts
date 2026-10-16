@@ -347,7 +347,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'Every new Linear issue Otto filed describes, in its title or description and in any wording, the checkout page crashing on Safari when the promo code field is empty.',
+        },
       ),
       check(
         'priority-urgent',

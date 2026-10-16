@@ -27,6 +27,7 @@ export default scenario({
     return [
       check('answers-the-calculation', (run) => ({ pass: answer.test(run.said) }), {
         failure: 'reasoning',
+        otherwise: 'The assistant answers that 17% of 2,340 is 397.8, in any format.',
       }),
       check(
         'creates-the-file-exactly-once-with-the-right-content',
@@ -42,6 +43,7 @@ export default scenario({
       ),
       check('answers-the-day-of-the-week', (run) => ({ pass: /sunday/i.test(run.said) }), {
         failure: 'reasoning',
+        otherwise: 'The assistant answers that 3 January 2027 is a Sunday, in any wording.',
       }),
       check(
         'nothing-was-dropped-or-repeated',

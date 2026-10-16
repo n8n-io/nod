@@ -200,7 +200,10 @@ export default scenario({
       check(
         'states-the-total-revenue',
         (run) => ({ pass: totalShown(run.said), evidence: `expected €${world.total.toFixed(2)}` }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: `In chat, the assistant states the total 2025 revenue as €${world.total.toFixed(2)} in any format, rounded to the euro at most.`,
+        },
       ),
       check(
         'names-december-as-the-best-month',
@@ -208,7 +211,10 @@ export default scenario({
           pass: namesDecemberBest(run.said),
           evidence: `expected ${names[world.best]} 2025 named as the best month`,
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise: `In chat, the assistant names ${names[world.best]} 2025 as the best month by total revenue, in any wording.`,
+        },
       ),
       check(
         'pdf-is-one-page',

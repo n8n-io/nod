@@ -71,10 +71,16 @@ export default scenario({
       check(
         'names-the-cheapest-shop-and-price',
         (run) => ({ pass: /fix\s*it\s*depot/i.test(run.final) && /114[.,]50/.test(run.final) }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The final answer names FixIt Depot as the cheapest shop and gives its price as €114.50, in any wording or number format.',
+        },
       ),
       check('states-the-difference', (run) => ({ pass: /\b14[.,]50\b/.test(run.final) }), {
         failure: 'reasoning',
+        otherwise:
+          'The final answer states that the cheapest shop costs €14.50 less than the most expensive one (ToolBarn at €129.00), in any wording or number format.',
       }),
       check(
         'checked-the-shops-in-parallel',

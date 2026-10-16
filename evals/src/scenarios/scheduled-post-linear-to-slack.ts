@@ -311,18 +311,25 @@ export default scenario({
         },
         { required: false, aspect: 'process', failure: 'scope' },
       ),
-      check('post-lists-every-web-issue-closed-this-week', (run) => {
-        const text = post(run) ?? '';
-        const missing = closed.filter((identifier) => !listed(identifier, text));
-        return {
-          pass: text.length > 0 && !missing.length,
-          evidence: text
-            ? missing.length
-              ? `missing ${missing.join(', ')}`
-              : undefined
-            : 'no post',
-        };
-      }),
+      check(
+        'post-lists-every-web-issue-closed-this-week',
+        (run) => {
+          const text = post(run) ?? '';
+          const missing = closed.filter((identifier) => !listed(identifier, text));
+          return {
+            pass: text.length > 0 && !missing.length,
+            evidence: text
+              ? missing.length
+                ? `missing ${missing.join(', ')}`
+                : undefined
+              : 'no post',
+          };
+        },
+        {
+          otherwise:
+            'The post the scheduled run made in #eng refers to each of WEB-412 (checkout button focus ring), WEB-415 (lazy-loaded hero images on the pricing page) and WEB-419 (signup form rejecting plus addresses), by key, title or a paraphrase.',
+        },
+      ),
       check(
         'post-leaves-out-earlier-closures',
         (run) => {

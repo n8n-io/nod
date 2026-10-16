@@ -143,7 +143,11 @@ export default scenario({
           pass: /\b(30|thirty)[\s-]*(calendar\s+)?days?\b/i.test(run.said),
           evidence: run.final.slice(0, 300),
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer states that the current refund window is 30 days, in any wording or number format.',
+        },
       ),
       check(
         'read-the-current-handbook',

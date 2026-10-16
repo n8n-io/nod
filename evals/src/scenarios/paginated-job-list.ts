@@ -358,7 +358,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The answer lists all nine open design jobs in Lisbon from the ground truth (Product, UX, Graphic, UI, Brand, Motion, Service, Interaction and Visual Designer), each recognisable by its title or company, in any wording.',
+        },
       ),
       check(
         'closed-posting-is-not-listed-as-open',

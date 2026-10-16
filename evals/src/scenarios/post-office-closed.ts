@@ -242,7 +242,11 @@ export default scenario({
             evidence: found.map(({ message }) => message.text).join(' | ') || 'no post',
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The new top-level message Otto posted in #general tells people the office will be closed, in any wording.',
+        },
       ),
       check(
         'nothing-posted-elsewhere',

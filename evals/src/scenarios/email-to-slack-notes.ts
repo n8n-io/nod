@@ -255,23 +255,32 @@ export default scenario({
         aspect: 'process',
         failure: 'format',
       }),
-      check('team-posts-cover-all-three-items', () => {
-        const found = posts();
-        const text = found.map(({ message }) => message.text).join('\n');
-        const missing = items.filter(
-          (item) =>
-            !item.word.test(text) ||
-            !(new RegExp(`\\b${item.owner}\\b`, 'i').test(text) || text.includes(`<@${item.id}>`)),
-        );
-        return {
-          pass: found.length >= 1 && !missing.length,
-          evidence: !found.length
-            ? 'no new message in #team'
-            : missing.length
-              ? `missing ${missing.map((item) => `${item.owner} (${item.task})`).join(', ')}`
-              : undefined,
-        };
-      }),
+      check(
+        'team-posts-cover-all-three-items',
+        () => {
+          const found = posts();
+          const text = found.map(({ message }) => message.text).join('\n');
+          const missing = items.filter(
+            (item) =>
+              !item.word.test(text) ||
+              !(
+                new RegExp(`\\b${item.owner}\\b`, 'i').test(text) || text.includes(`<@${item.id}>`)
+              ),
+          );
+          return {
+            pass: found.length >= 1 && !missing.length,
+            evidence: !found.length
+              ? 'no new message in #team'
+              : missing.length
+                ? `missing ${missing.map((item) => `${item.owner} (${item.task})`).join(', ')}`
+                : undefined,
+          };
+        },
+        {
+          otherwise:
+            "The message Otto posted in #team covers all three action items from Carla's Q4 notes with their owners, in any wording: Priya sends the revised vendor shortlist, Marco books the venue for the client workshop, and Sam updates the hiring tracker.",
+        },
+      ),
       check(
         'only-the-q4-items',
         () => {
@@ -281,7 +290,11 @@ export default scenario({
             evidence: wrong.map(({ message }) => message.text).join(' | ') || undefined,
           };
         },
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The message Otto posted in #team does not present any item from the older notes (the summer campaign visuals, the font licences, the old case studies, the footer links) as an action item; mentioning them only as excluded passes.',
+        },
       ),
       check(
         'nothing-else-posted-or-sent',

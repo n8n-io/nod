@@ -213,12 +213,20 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The brief from the scheduled run refers to each of today's meetings (Design standup, Meridian rebrand review, 1:1 with Priya) in any wording: its title, a paraphrase, a participant or its time.",
+        },
       ),
       check(
         'brief-flags-the-unanswered-quote',
         (run) => ({ pass: /harborline|marta/i.test(brief(run)) && /quote/i.test(brief(run)) }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The brief from the scheduled run flags that Marta Silva at Harborline is still waiting for a reply about her revised quote, in any wording.',
+        },
       ),
       check(
         'scheduled-run-sends-one-message-without-an-acknowledgement',

@@ -189,15 +189,22 @@ export default scenario({
     ].join('\n'),
   expect() {
     return [
-      check('covers-todays-highlights', (run) => {
-        const missing = highlights.filter((item) => !item.pattern.test(run.said));
-        return {
-          pass: !missing.length,
-          evidence: missing.length
-            ? `missing ${missing.map((item) => item.name).join(', ')}`
-            : undefined,
-        };
-      }),
+      check(
+        'covers-todays-highlights',
+        (run) => {
+          const missing = highlights.filter((item) => !item.pattern.test(run.said));
+          return {
+            pass: !missing.length,
+            evidence: missing.length
+              ? `missing ${missing.map((item) => item.name).join(', ')}`
+              : undefined,
+          };
+        },
+        {
+          otherwise:
+            "The catch-up covers all three of today's #design highlights in any wording: Rui publishing Figma library v3, Joana's first pass of the hero illustration, and Friday crit moving to 11:30.",
+        },
+      ),
       noWrites('post', 'send', 'create', 'update', 'delete'),
       judge(
         'keeps-yesterday-out-of-today',

@@ -144,7 +144,11 @@ export default scenario({
             evidence: mail ? mail.body.slice(0, 200) : 'nothing sent to Jonas',
           };
         },
-        { failure: 'intent' },
+        {
+          failure: 'intent',
+          otherwise:
+            'The email sent to Jonas Weber tells him that Alex will get back to him on Monday, in any wording, including the date of that Monday.',
+        },
       ),
       check(
         'nothing-sent-to-marta',

@@ -76,6 +76,7 @@ export default scenario({
       ),
       check('answers-17-percent-of-2340', (run) => answer.test(run.said), {
         failure: 'reasoning',
+        otherwise: 'The answer gives 17% of 2,340 as exactly 397.8, in any format.',
       }),
       noWrites('send'),
     ];

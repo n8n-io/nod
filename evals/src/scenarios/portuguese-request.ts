@@ -85,7 +85,11 @@ export default scenario({
               : undefined,
           };
         },
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            "The answer refers to each of tomorrow's three meetings (the Meridian logo review, the budget meeting with Inês Carvalho and the call with Kestrel Bikes) in any wording or language: its title, a paraphrase, a participant or its time.",
+        },
       ),
       check(
         'does-not-add-other-days',

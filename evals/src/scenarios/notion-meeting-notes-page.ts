@@ -204,12 +204,21 @@ export default scenario({
       check(
         'notes-hold-budget',
         (run) => mentions(text(run), 48000) || /\b48\s?k\b|\b48\s+thousand\b/i.test(text(run)),
-        { failure: 'incomplete' },
+        {
+          failure: 'incomplete',
+          otherwise:
+            'The new Harborline call notes page under Meetings records the approved Q4 budget as €48,000, in any number format.',
+        },
       ),
       check('notes-hold-launch-date', (run) => mentionsDate(text(run), world.launch.iso), {
         failure: 'incomplete',
+        otherwise: `The new Harborline call notes page under Meetings records that the launch moves to ${world.launch.label}, in any date format.`,
       }),
-      check('notes-hold-marta', (run) => /\bMarta\b/.test(text(run)), { failure: 'incomplete' }),
+      check('notes-hold-marta', (run) => /\bMarta\b/.test(text(run)), {
+        failure: 'incomplete',
+        otherwise:
+          'The new Harborline call notes page under Meetings records that Marta Silva will send the brand assets by Friday, in any wording.',
+      }),
       check(
         'exactly-one-new-page',
         (run) => {

@@ -137,7 +137,11 @@ export default scenario({
           pass: /\bstudio\b/i.test(run.said) && mentions(run.said, 91),
           evidence: run.final.slice(0, 300),
         }),
-        { failure: 'reasoning' },
+        {
+          failure: 'reasoning',
+          otherwise:
+            'The answer names the Studio plan at €91 a month for the team, in any wording or price format.',
+        },
       ),
       judge(
         'concludes-studio-is-cheapest-on-monthly-billing',
