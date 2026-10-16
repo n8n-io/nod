@@ -2729,8 +2729,29 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
     sender = from;
     assert.deepEqual(await read(), []);
   }
-  auth = 'mx.google.com; dmarc=pass header.from=tenant.github.io';
-  sender = 'login@mail.tenant.github.io';
+  for (const [spoofed, spoofedAuth] of [
+    [
+      '"TOConline <login@toconline.pt>" <attacker@attacker.pt>',
+      'mx.google.com; dmarc=pass header.from=toconline.pt',
+    ],
+    [
+      'login@toconline.pt',
+      'mx.google.com; spf=pass smtp.mailfrom="; dmarc=pass header.from=toconline.pt;"@attacker.pt; dmarc=fail (p=NONE) header.from=attacker.pt',
+    ],
+    [
+      'login@toconline.pt',
+      'mx.google.com; spf=pass smtp.mailfrom="x\\" ; dmarc=pass header.from=toconline.pt ; y"@attacker.pt; dmarc=fail (p=NONE) header.from=attacker.pt',
+    ],
+  ]) {
+    sender = spoofed;
+    auth = spoofedAuth;
+    assert.deepEqual(await read(), []);
+  }
+  sender = 'TOConline <login@toconline.pt> (reports <noreply@elsewhere.net>)';
+  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
+  assert.equal((await read())?.length, 1);
+  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
+  sender = 'login@mail.toconline.pt';
   assert.equal((await read())?.length, 1);
   auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
   sender = 'login@toconline.pt';
