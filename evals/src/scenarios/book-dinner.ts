@@ -193,13 +193,16 @@ export default scenario({
       ),
       check(
         'confirmation-code-is-reported',
-        (run) => ({
-          pass: run.said
+        (run) => {
+          const pass = run.said
             .replace(/[^a-z0-9]/gi, '')
             .toUpperCase()
-            .includes('TB5529'),
-          evidence: 'the booking code TB-5529 was never given to the user',
-        }),
+            .includes('TB5529');
+          return {
+            pass,
+            ...(pass ? {} : { evidence: 'the booking code TB-5529 was never given to the user' }),
+          };
+        },
         { failure: 'incomplete' },
       ),
       judge(

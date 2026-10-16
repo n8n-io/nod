@@ -272,15 +272,18 @@ export default scenario({
       noWrites('create', 'update', 'delete', 'send', 'draft', 'post'),
       check(
         'opened-the-current-lease',
-        (run) => ({
-          pass: (run.apps?.calls ?? []).some(
+        (run) => {
+          const pass = (run.apps?.calls ?? []).some(
             (call) =>
               call.slug === 'GOOGLEDRIVE_DOWNLOAD_FILE' &&
               !call.error &&
               String(call.args.fileId ?? call.args.file_id) === world.leaseId,
-          ),
-          evidence: 'the 2024-2027 lease was never downloaded',
-        }),
+          );
+          return {
+            pass,
+            ...(pass ? {} : { evidence: 'the 2024-2027 lease was never downloaded' }),
+          };
+        },
         { required: false, aspect: 'process', failure: 'tool' },
       ),
       judge(

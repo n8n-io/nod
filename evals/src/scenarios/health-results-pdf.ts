@@ -87,13 +87,16 @@ export default scenario({
     return [
       check(
         'downloaded-the-attachment',
-        (run) => ({
-          pass:
+        (run) => {
+          const pass =
             (run.apps?.calls ?? []).some(
               (call) => call.slug === 'GMAIL_GET_ATTACHMENT' && !call.error,
-            ) || run.files.some((path) => /\.pdf$/i.test(path)),
-          evidence: 'no attachment download or PDF in the workspace',
-        }),
+            ) || run.files.some((path) => /\.pdf$/i.test(path));
+          return {
+            pass,
+            ...(pass ? {} : { evidence: 'no attachment download or PDF in the workspace' }),
+          };
+        },
         { aspect: 'process', failure: 'tool' },
       ),
       judge(
