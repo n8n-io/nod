@@ -118,8 +118,15 @@ main {
   height: 100vh;
   padding: 52px 32px 24px;
 }
+.titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 52px;
+}
+.titlebar,
 header {
   -webkit-app-region: drag;
+  user-select: none;
 }
 .brand {
   display: flex;

@@ -18,7 +18,6 @@ import { TaskCard } from './tasks';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
-import { FeedbackLauncher } from '../components/feedback-intro';
 import {
   Button,
   Dialog,
@@ -795,12 +794,17 @@ export function Chat({
         </Button>
       )}
       {onFeedback && (
-        <FeedbackLauncher
-          key={ownerId}
-          ownerId={ownerId}
-          visible={visible}
-          onFeedback={onFeedback}
-        />
+        <Button
+          id="feedback-launcher"
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="chat-report-button"
+          onClick={onFeedback}
+        >
+          <MessageSquarePlus size={16} aria-hidden="true" />
+          Send feedback
+        </Button>
       )}
     </>
   );

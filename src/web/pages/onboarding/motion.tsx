@@ -82,9 +82,23 @@ function Typing() {
   );
 }
 
-export function Grow({ open, children }: { open: boolean; children: ReactNode }) {
+export function Grow({
+  open,
+  animate = true,
+  children,
+}: {
+  open: boolean;
+  animate?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className="ob-grow" data-open={open} aria-hidden={!open} inert={!open}>
+    <div
+      className="ob-grow"
+      data-open={open}
+      data-animate={animate}
+      aria-hidden={!open}
+      inert={!open}
+    >
       <div>{children}</div>
     </div>
   );
@@ -133,7 +147,7 @@ export function Messages({
           {item}
         </Grow>
       ))}
-      <Grow open={typing}>
+      <Grow open={typing} animate={false}>
         <Typing />
       </Grow>
     </OttoRow>

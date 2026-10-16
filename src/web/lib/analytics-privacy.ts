@@ -41,7 +41,6 @@ const blocked = [
   '.vault-edit-form',
   '.vault-add-form',
   '.model-key-form',
-  '.telegram-pairing-qr',
   'img',
   'picture',
   'video',

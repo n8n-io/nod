@@ -1,6 +1,6 @@
 ---
 title: Chat with Otto
-description: Send Otto requests and files, keep talking while it works, stop it, choose the model and see what each reply cost.
+description: Send Otto requests and files, keep talking while it works, stop it and choose the model.
 sidebar:
   order: 1
 ---
@@ -45,10 +45,6 @@ If Otto may have sent or changed something, verify the result yourself or ask Ot
 ## Choose the model
 
 The model picker above the message box shows the model Otto uses. Select it to choose another model from your connected providers. See [Models](/connect/models/).
-
-## See what a reply cost
-
-Hover over Otto's final reply, or move keyboard focus to it, to see the time and the estimated model cost of that request. **Price unavailable** means part of the usage has no price, for example on a ChatGPT plan. See [Spending and usage](/use/spending/).
 
 ## React to messages
 

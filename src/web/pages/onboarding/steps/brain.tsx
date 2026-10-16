@@ -9,7 +9,7 @@ import { api, ApiError, errorMessage } from '../../../lib/api';
 import { sessionStore } from '../../../lib/session';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
-import { Bubble, Footer, Messages, Select, useReveal, type RevealStep } from '../motion';
+import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
   { typing: 450 },
@@ -54,9 +54,12 @@ function oauthFor(provider: ModelProvider, data: ModelsResponse | null | undefin
 }
 
 function recommended(source: ModelConnection) {
+  const subscription = source.method === 'subscription';
   return (
-    source.models.find((item) => item.id === agentModels[source.provider]) ?? source.models[0]
-  ).id;
+    (subscription && source.models.find((item) => item.id === 'gpt-6-sol')) ||
+    source.models.find((item) => item.id === agentModels[source.provider]) ||
+    source.models[0]
+  );
 }
 
 function Logo({ provider }: { provider: ModelProvider }) {
@@ -94,9 +97,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   const [keyError, setKeyError] = useState('');
   const [checking, setChecking] = useState(false);
   const [callback, setCallback] = useState('');
-  const claimed = useRef<ModelProvider | null>(null);
   const keyField = useRef<HTMLInputElement>(null);
-  const ready = modelReady(data);
   const connections = data?.connections ?? [];
   const selected = connections.find((item) => item.id === data?.selection?.connectionId);
   const usable = (provider: ModelProvider) =>
@@ -105,31 +106,49 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     choice ?? selected?.provider ?? order.find((item) => usable(item).length) ?? 'openai';
   const oauth = oauthFor(provider, data);
   const here = usable(provider);
-  const shown = selected?.provider === provider ? selected : here[0];
-  const options = here.filter((item) => item.status === 'connected' && item.models.length);
-  const current = selected?.provider === provider && data?.selection;
+  const source = here.find((item) => item.status === 'connected' && recommended(item));
+  const selectedReady = modelReady(data);
+  const shown =
+    here.find(
+      (item) =>
+        item.id === selected?.id &&
+        item.status === 'connected' &&
+        (selectedReady || recommended(item)),
+    ) ??
+    source ??
+    here[0];
+  const recommendation = shown && recommended(shown);
+  const ready = selectedReady && selected?.id === shown?.id;
 
   useEffect(() => {
-    if (!data || models.busy || flow.signIn) return;
-    const want = claimed.current ?? (ready ? null : provider);
-    if (!want) return;
-    if (ready && selected?.provider === want) {
-      claimed.current = null;
+    if (
+      !shown ||
+      shown.status !== 'connected' ||
+      !recommendation ||
+      ready ||
+      models.busy ||
+      models.error ||
+      flow.signIn ||
+      flow.pending ||
+      checking
+    )
       return;
-    }
-    const source = connections.find(
-      (item) => item.provider === want && item.status === 'connected' && item.models.length,
-    );
-    if (!source) return;
-    claimed.current = null;
-    void models.change('/api/models/selection', 'PUT', modelSelection(source, recommended(source)));
-  }, [data, models.busy, flow.signIn, provider, ready]);
+    void models.change('/api/models/selection', 'PUT', modelSelection(shown, recommendation.id));
+  }, [
+    shown,
+    recommendation,
+    ready,
+    models.busy,
+    models.error,
+    flow.signIn,
+    flow.pending,
+    checking,
+  ]);
 
   function pick(next: ModelProvider) {
+    models.setError('');
     if (next === provider) return;
     if (flow.signIn) void flow.cancel();
-    claimed.current = null;
-    models.setError('');
     setChoice(next);
     setMethod(null);
     setKey('');
@@ -138,7 +157,6 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   }
 
   function startSignIn() {
-    claimed.current = provider;
     const reconnect = connections.find(
       (item) =>
         item.provider === provider && item.status === 'reconnect' && item.method !== 'api_key',
@@ -154,7 +172,6 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     if (value.length < 8) return setKeyError(invalidKey);
     setKeyError('');
     setChecking(true);
-    claimed.current = provider;
     try {
       const result = await api<ModelsResponse>('/api/models/keys', {
         method: 'POST',
@@ -163,7 +180,6 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
       models.update(() => result);
       setKey('');
     } catch (cause) {
-      claimed.current = null;
       setKeyError(
         cause instanceof ApiError && cause.status === 400 ? invalidKey : errorMessage(cause),
       );
@@ -177,13 +193,6 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     setKeyError('');
     models.setError('');
     if (next === 'key') requestAnimationFrame(() => keyField.current?.focus());
-  }
-
-  function choose(value: string) {
-    const [id, ...rest] = value.split('|');
-    const source = options.find((item) => item.id === id);
-    if (source)
-      void models.change('/api/models/selection', 'PUT', modelSelection(source, rest.join('|')));
   }
 
   let panel;
@@ -202,48 +211,29 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         </span>
         <div className="ob-brain-status-text" data-analytics-public>
           <p className="ob-brain-title">Connected to {modelSource(shown)}</p>
-          <p className="ob-brain-note">You can add more later in Settings.</p>
+          <p className="ob-brain-note">
+            {shown.status === 'loading'
+              ? 'Refresh to load the models for this account.'
+              : 'You can add more later in Settings.'}
+          </p>
         </div>
-        {options.length ? (
-          <label className="ob-brain-model">
-            <span data-analytics-public>Model</span>
-            <Select
-              value={current ? `${current.connectionId}|${current.modelId}` : ''}
-              disabled={models.busy}
-              onChange={(event) => choose(event.target.value)}
-            >
-              {!current && (
-                <option value="" disabled>
-                  Pick a model
-                </option>
-              )}
-              {options.map((source) => {
-                const items = source.models.map((model) => (
-                  <option key={model.id} value={`${source.id}|${model.id}`}>
-                    {model.name}
-                  </option>
-                ));
-                return options.length > 1 ? (
-                  <optgroup key={source.id} label={`${modelSource(source)} · ${source.label}`}>
-                    {items}
-                  </optgroup>
-                ) : (
-                  items
-                );
-              })}
-            </Select>
-          </label>
-        ) : (
+        {(shown.status === 'loading' || (!ready && !recommendation) || models.error) && (
           <Button
             variant="outline"
             disabled={models.busy}
-            onClick={() =>
-              void models.change(`/api/models/connections/${shown.id}/refresh`, 'POST')
-            }
+            onClick={() => {
+              void models.change(`/api/models/connections/${shown.id}/refresh`, 'POST');
+            }}
           >
             {models.busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-            Load models
+            Refresh models
           </Button>
+        )}
+        {shown.status === 'connected' && !ready && !recommendation && (
+          <Problem>
+            The default model isn’t available for this account. Refresh the models or choose another
+            provider.
+          </Problem>
         )}
         <Problem>{models.error}</Problem>
       </div>
@@ -382,7 +372,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         typing={typing}
         className="ob-brain-messages"
         items={[
-          <Bubble data-analytics-public>Let’s pick a model for me.</Bubble>,
+          <Bubble data-analytics-public>Let’s connect an AI provider.</Bubble>,
           <Bubble data-analytics-public>
             Here are the providers I work with. Connect one and we’re off.
           </Bubble>,
@@ -395,6 +385,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
               type="button"
               className="ob-brain-card"
               aria-pressed={item === provider}
+              disabled={models.busy || checking || flow.pending}
               onClick={() => pick(item)}
             >
               <Logo provider={item} />

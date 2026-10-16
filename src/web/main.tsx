@@ -35,7 +35,7 @@ import './components/feedback.css';
 import './components/editor-formatting.css';
 import './components/feedback-attachments.css';
 import './components/feedback-diagnostics.css';
-import './components/feedback-intro.css';
+import './components/telegram-setup.css';
 import './components/models.css';
 import './components/time-zone-picker.css';
 import './components/sidebar-unread.css';

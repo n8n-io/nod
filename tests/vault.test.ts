@@ -3728,7 +3728,7 @@ test('session replay masks private DOM without exposing content', async () => {
 import assert from 'node:assert/strict';
 import {gunzipSync} from 'node:zlib';
 import { JSDOM } from 'jsdom';
-const dom = new JSDOM('<!doctype html><html data-theme="dark" data-desktop="true"><head><title>synthetic-private-title</title><style>.visible { color: red }</style></head><body><nav data-analytics-public>Settings</nav><div class="visible">synthetic-private-chat</div><div class="message-text"><span data-analytics-public>synthetic-private-markup</span></div><div class="vault-inset-value">synthetic-private-vault</div><input value="synthetic-private-input"><input type="hidden" value="synthetic-private-hidden"><input type="file"><img src="https://private.invalid/synthetic-private-image"><iframe src="https://private.invalid/synthetic-private-frame"></iframe><div id="mutable" title="synthetic-private-tooltip" data-owner="synthetic-private-owner" data-desktop="synthetic-private-layout" style="background-image: url(https://private.invalid/synthetic-private-css)">synthetic-private-name</div><a href="/credentials/synthetic-private-id?token=synthetic-private-token">synthetic-private-link</a><div contenteditable="true">synthetic-private-composer</div><figure class="telegram-pairing-qr"><svg><path d="M12345678 87654321h1v1h-1z"></path></svg></figure></body></html>', { url: 'https://otto.fixture.invalid/credentials/synthetic-private-request?token=synthetic-private-query#synthetic-private-hash', pretendToBeVisual: true });
+const dom = new JSDOM('<!doctype html><html data-theme="dark" data-desktop="true"><head><title>synthetic-private-title</title><style>.visible { color: red }</style></head><body><nav data-analytics-public>Settings</nav><div class="visible">synthetic-private-chat</div><div class="message-text"><span data-analytics-public>synthetic-private-markup</span></div><div class="vault-inset-value">synthetic-private-vault</div><input value="synthetic-private-input"><input type="hidden" value="synthetic-private-hidden"><input type="file"><img src="https://private.invalid/synthetic-private-image"><iframe src="https://private.invalid/synthetic-private-frame"></iframe><div id="mutable" title="synthetic-private-tooltip" data-owner="synthetic-private-owner" data-desktop="synthetic-private-layout" style="background-image: url(https://private.invalid/synthetic-private-css)">synthetic-private-name</div><a href="/credentials/synthetic-private-id?token=synthetic-private-token">synthetic-private-link</a><div contenteditable="true">synthetic-private-composer</div></body></html>', { url: 'https://otto.fixture.invalid/credentials/synthetic-private-request?token=synthetic-private-query#synthetic-private-hash', pretendToBeVisual: true });
 for (const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLFormElement','HTMLIFrameElement','HTMLImageElement','HTMLLinkElement','HTMLStyleElement','HTMLMediaElement','HTMLVideoElement','HTMLAudioElement','HTMLCanvasElement','SVGElement','Document','DocumentFragment','ShadowRoot','CSSStyleSheet','CSSStyleDeclaration','MutationObserver','Event','CustomEvent']) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? dom.window : name === 'document' ? dom.window.document : dom.window[name] });
 Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.window.navigator});
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
@@ -3754,6 +3754,15 @@ const { createElement, act } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { Sidebar } = await import('./src/web/components/sidebar.tsx');
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(Sidebar, {path:'/', unreadCount:73, collapsed:false, onToggle() {}, onNavigate() {}})));
+const { TelegramSetup } = await import('./src/web/components/telegram-setup.tsx');
+document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(TelegramSetup, {
+  setup: { provider: 'telegram', enabled: true, mode: 'polling', pairingExpiresAt: new Date(Date.now() + 900000).toISOString() },
+  pairingUrl: 'https://t.me/synthetic_private_bot?start=synthetic-private-pairing-code',
+  manual: false, fields: {}, busy: false, error: '', hosted: true,
+  onField() {}, onVerify() {}, onConfirm() {}, onNewLink() {}, onManual() {}, onSaveId() {},
+})));
+const pairingPaths = [...document.querySelectorAll('.telegram-setup-qr path')].map(path => path.getAttribute('d'));
+assert.ok(pairingPaths.length > 0);
 const stylesheet = document.createElement('style');
 document.head.append(stylesheet);
 stylesheet.sheet.insertRule('.fixture-stylesheet { background-image: url("file:///synthetic-private-local/image.png") }');
@@ -3783,7 +3792,7 @@ const badgeUpdates = events.filter(event => event.type === 3).flatMap(event => e
 assert.equal(badgeUpdates.length, badges.length);
 assert.deepEqual(badgeUpdates.map(text => text.value), Array(badges.length).fill('**'));
 const content = JSON.stringify(events.filter(e => e.type === 2 || e.type === 3));
-assert.doesNotMatch(content, /M12345678 87654321h1v1h-1z/);
+for (const path of pairingPaths) assert.equal(content.includes(path), false);
 assert.doesNotMatch(content, /synthetic-private/);
 
 const analytics = await import('./src/web/lib/analytics-client.ts');
