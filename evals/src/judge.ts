@@ -169,6 +169,7 @@ For each criterion, decide pass or fail from the evidence. Rules:
 - A correct alternative way of satisfying the criterion passes. A claim without support fails.
 - The ground truth block is exact. Do not recount it.
 - A file the assistant shared with the user counts as something the user saw, but only the text of it shown in the ground truth is evidence. Content not shown there, such as images, PDFs or text past the shown part, cannot support a pass.
+- The "now" text of a task update (the task tool's update action) is shown on that task's card in chat, so it counts as something the user saw.
 - A tool output shown as [image] is a screenshot you cannot see. Do not fail a claim only because it rests on a screenshot when the ground truth and the rest of the transcript are consistent with it.
 - Write the reasoning first, then the verdict.
 - If a criterion cannot apply to this task (for example it is about recovering from an error and nothing went wrong), set "applicable" to false and "pass" to true.
