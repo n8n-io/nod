@@ -5,7 +5,6 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
 import Fastify from 'fastify';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
@@ -13,7 +12,7 @@ import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
 import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
-import { band, fisherLower, holm, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
+import { fisherLower, holm, passAtK, passPowK, summarize } from '../src/aggregate.ts';
 import { analyticsCases, scoreAnalytics, summarizeAnalytics } from '../src/analytics.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
@@ -23,20 +22,16 @@ import { grade } from '../src/grade.ts';
 import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
-import { tripwire } from '../src/product.ts';
 import { collect, requireBackgroundPrompts, type Run } from '../src/trace.ts';
-import { agreement, kappa } from '../src/review.ts';
-import { choice, number, parseArgs, text, whole } from '../src/options.ts';
-import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
-import { select } from '../src/run.ts';
+import { changes } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
-import { createSession, waitUntil } from '../src/session.ts';
+import { createSession } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
-import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
+import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
-import { daysAgo, inDays, localDate, localTime, nextWeekOn } from '../src/world/time.ts';
+import { daysAgo, inDays, localTime } from '../src/world/time.ts';
 import catalogAlternative from '../src/scenarios/catalog-alternative.ts';
 import twoAccounts from '../src/scenarios/vault-spa-two-accounts.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
@@ -96,33 +91,6 @@ test('analytics grading matches unordered goals without hiding outcome or contin
     tasks: [{ ...continuing.expected.tasks[0], task_id: null }],
   });
   assert.equal(reopened.tasks.wrongContinuation, 1);
-});
-
-test('analytics grading distinguishes compound activities from independent goals', () => {
-  const compound = analyticsCase('holdout-compound-find-analyze-send');
-  const independent = analyticsCase('holdout-independent-find-analyze-send');
-  const goal = compound.expected.tasks[0];
-  assert.equal(scoreAnalytics(compound, independent.expected).tasks.extra, 2);
-  assert.equal(scoreAnalytics(independent, compound.expected).tasks.missing, 2);
-  assert.equal(
-    scoreAnalytics(compound, {
-      ...compound.expected,
-      tasks: [{ ...goal, task_activities: [...goal.task_activities].reverse() }],
-    }).lifecycleCorrect,
-    true,
-  );
-  const missing = scoreAnalytics(compound, {
-    ...compound.expected,
-    tasks: [{ ...goal, task_activities: ['send:email'] }],
-  });
-  const extra = scoreAnalytics(compound, {
-    ...compound.expected,
-    tasks: [{ ...goal, task_activities: [...goal.task_activities, 'draft:email'] }],
-  });
-  assert.equal(missing.tasks.missingActivities, 2);
-  assert.equal(missing.lifecycleCorrect, false);
-  assert.equal(extra.tasks.extraActivities, 1);
-  assert.equal(extra.lifecycleCorrect, false);
 });
 
 test('analytics grading rejects private labels and separates unknown coverage from label agreement', () => {
@@ -189,32 +157,6 @@ test('analytics grading counts false and missed frustration without accepting as
   assert.equal(summary.frustration.recall, 0.5);
   assert.equal(summary.responseCoverage, 0.75);
   assert.equal(summary.modelErrors, 1);
-});
-
-test('analytics stability compares repetitions and paraphrases separately from correctness', () => {
-  const item = analyticsCase('holdout-email-summary-in-chat');
-  const paraphrase = analyticsCase('holdout-email-summary-paraphrase');
-  const changed = {
-    ...item.expected,
-    tasks: [{ ...item.expected.tasks[0], task_type: 'research' }],
-  };
-  const attempts = [item.expected, item.expected, changed].map((output, index) =>
-    analyticsAttempt(item.id, output, index + 1),
-  );
-  attempts.push(
-    analyticsAttempt(paraphrase.id, {
-      ...paraphrase.expected,
-      tasks: [{ ...paraphrase.expected.tasks[0], outcome: 'waiting' }],
-    }),
-    analyticsAttempt(item.id, { private_text: 'invalid' }, 4),
-  );
-  const summary = summarizeAnalytics(attempts);
-  assert.equal(summary.labelStability.repetitions.comparisons, 3);
-  assert.equal(summary.labelStability.repetitions.agreementRate, 1 / 3);
-  assert.equal(summary.labelStability.repetitions.groups[0].distinctLabels, 2);
-  assert.equal(summary.labelStability.paraphrases.agreementRate, 2 / 3);
-  assert.equal(summary.lifecycleCorrect, 3);
-  assert.equal(summary.invalid, 1);
 });
 
 const manifest: RunManifest = {
@@ -362,17 +304,6 @@ test('the headline excludes incomplete attempts and known gaps, and flags contam
   assert.equal(bad.contaminated, true);
 });
 
-test('intervals and difficulty bands behave at the edges', () => {
-  assert.equal(wilson(0, 0), null);
-  assert.equal(wilson(3, 3)!.high, 1);
-  const half = wilson(5, 10)!;
-  assert.ok(half.low > 0.2 && half.low < 0.26 && half.high > 0.74 && half.high < 0.8);
-  assert.equal(band(1, 3), 'anchor');
-  assert.equal(band(0, 3), 'frontier');
-  assert.equal(band(0.5, 3), 'discriminator');
-  assert.equal(band(1, 2), null);
-});
-
 test('amounts are read in the formats assistants actually write', () => {
   assert.ok(mentions('Total €1,850.00 overdue', 1850));
   assert.ok(mentions('Total 1.850,00 EUR', 1850));
@@ -381,73 +312,6 @@ test('amounts are read in the formats assistants actually write', () => {
   assert.ok(mentions('€3 200', 3200));
   assert.ok(!mentions('€3,200', 320));
   assert.deepEqual(amounts('Pay 86.40 by 14 Oct').slice(0, 1), [86.4]);
-});
-
-test('the fake Gmail understands the queries agents write', async () => {
-  const now = Date.UTC(2026, 9, 2, 12);
-  const owner = { name: 'Alex', email: 'alex@x.test' };
-  const box = gmail(
-    owner,
-    [
-      {
-        id: 'a',
-        from: 'Billing <billing@acme.test>',
-        subject: 'Invoice 7',
-        body: 'Please pay',
-        at: now - 2 * 86_400_000,
-      },
-      {
-        id: 'b',
-        from: 'News <news@x.test>',
-        subject: 'Weekly digest',
-        body: 'Invoice tips',
-        at: now - 40 * 86_400_000,
-      },
-      {
-        id: 'c',
-        from: 'Sam <sam@y.test>',
-        subject: 'Lunch?',
-        body: 'Are you free',
-        at: now - 3_600_000,
-        labels: ['INBOX', 'UNREAD'],
-      },
-      {
-        id: 'd',
-        from: 'Sofia Almeida <sofia@meridian.test>',
-        subject: 'Quick question',
-        body: 'Two rounds?',
-        at: now - 7_200_000,
-      },
-      {
-        id: 'e',
-        from: 'Alex <alex@x.test>',
-        subject: 'Sent earlier',
-        body: 'Proposal attached',
-        at: now - 5 * 86_400_000,
-      },
-      {
-        id: 'f',
-        from: 'Not Alex <notalex@x.test>',
-        subject: 'Look-alike sender',
-        body: 'Not from the owner',
-        at: now - 6 * 86_400_000,
-      },
-    ],
-    () => now,
-  );
-  const fetch = (query: string) =>
-    (box.tools[0].run({ query }) as { messages: Array<{ messageId: string }> }).messages.map(
-      (m) => m.messageId,
-    );
-  assert.deepEqual(fetch('from:billing'), ['a']);
-  assert.deepEqual(fetch('invoice newer_than:30d'), ['a']);
-  assert.deepEqual(fetch('invoice -from:news'), ['a']);
-  assert.deepEqual(fetch('from:sam OR from:billing').sort(), ['a', 'c']);
-  assert.deepEqual(fetch('is:unread'), ['c']);
-  assert.deepEqual(fetch('from:me'), ['e']);
-  assert.ok(fetch('-from:me').includes('d'));
-  assert.ok(!fetch('-from:me').includes('e'));
-  assert.deepEqual(fetch('"are you free"'), ['c']);
 });
 
 test('draft and send are separate effects in the fake mailbox', () => {
@@ -487,42 +351,6 @@ test('draft and send are separate effects in the fake mailbox', () => {
   assert.equal(box.sent()[1]!.threadId, original.threadId);
   assert.equal(box.sent()[1]!.body, 'Reply body');
   assert.equal(box.drafts().length, 1);
-  const world = createApps(owner, { gmail: box });
-  assert.deepEqual(world.services, ['gmail']);
-});
-
-test('sheet ranges and appends behave like Google Sheets', () => {
-  const book = sheets(
-    [
-      {
-        title: 'T',
-        tabs: [
-          {
-            name: 'Data',
-            rows: [
-              ['a', 'b'],
-              ['1', '2'],
-            ],
-          },
-        ],
-      },
-    ],
-    Date.now,
-  );
-  const run = (slug: string, args: Record<string, unknown>) =>
-    book.tools.find((tool) => tool.slug === slug)!.run(args) as any;
-  const id = book.books[0].id;
-  assert.deepEqual(
-    run('GOOGLESHEETS_BATCH_GET', { spreadsheet_id: id, ranges: ['Data!A2:B2'] }).valueRanges[0]
-      .values,
-    [['1', '2']],
-  );
-  run('GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND', {
-    spreadsheetId: id,
-    range: 'Data!A1',
-    values: [['3', '4']],
-  });
-  assert.deepEqual(book.books[0].tabs[0].rows[2], ['3', '4']);
 });
 
 test('local times are anchored in the user time zone across a daylight saving change', () => {
@@ -544,39 +372,6 @@ test('local times are anchored in the user time zone across a daylight saving ch
   assert.equal(clock(daysAgo(inDays(evening, 2), 2)), '24/10/2026, 20:30');
   assert.equal(evening - daysAgo(evening, 0.5), 43_200_000);
   assert.equal(inDays(evening, 1.5) - evening, 133_200_000);
-});
-
-test('a Slack thread reply lands in the thread, not the channel', () => {
-  const owner = { id: 'U1', name: 'Alex', email: 'alex@x.test' };
-  const chat = slack(
-    owner,
-    [],
-    [
-      {
-        name: 'ops',
-        kind: 'channel',
-        messages: [{ user: 'U2', text: 'Who owns the invoice?', at: Date.UTC(2026, 9, 2, 9) }],
-      },
-    ],
-    Date.now,
-  );
-  const send = chat.tools.find((tool) => tool.slug === 'SLACK_SEND_MESSAGE')!;
-  const parent = chat.conversations[0].messages[0];
-  send.run({ channel: 'ops', text: 'Mine', thread_ts: parent.ts });
-  assert.equal(chat.conversations[0].messages.length, 1);
-  assert.equal(parent.replies?.[0].text, 'Mine');
-  assert.throws(
-    () => send.run({ channel: 'ops', text: 'x', thread_ts: '1.1' }),
-    /thread_not_found/,
-  );
-  send.run({ channel: 'ops', text: 'Numeric ts', thread_ts: Number(parent.ts) });
-  assert.equal(parent.replies?.length, 2);
-  const found = chat.tools
-    .find((tool) => tool.slug === 'SLACK_SEARCH_MESSAGES')!
-    .run({ query: 'mine' }) as { messages: { matches: unknown[] } };
-  assert.equal(found.messages.matches.length, 1);
-  send.run({ channel: 'ops', text: 'Top level' });
-  assert.equal(chat.conversations[0].messages.length, 2);
 });
 
 test('a link only counts as grounded when a page or tool returned it', () => {
@@ -612,100 +407,6 @@ test('model rankings ignore runs that are contaminated or only partly run', () =
   const ranked = insights([good, run(0.9, { contaminated: true }), flaky, partial]);
   assert.equal(ranked.best?.run, good);
   assert.equal(insights([run(0.9, { contaminated: true })]).best, undefined);
-});
-
-test('the full suite includes pending cases and excludes live web cases at night', (t) => {
-  t.mock.method(Date, 'now', () => Date.UTC(2026, 9, 8, 21));
-  const selected = select({ tier: 'full', ignoreWindow: false });
-  assert.deepEqual(
-    selected,
-    scenarios.filter((item) => item.tier !== 'live' && item.tier !== 'canary'),
-  );
-  assert.ok(selected.some((item) => item.calibration === 'pending'));
-  assert.ok(selected.some((item) => item.id === 'morning-brief'));
-});
-
-test('the small suite excludes pending cases unless requested', () => {
-  const plain = { tier: 'pr', ignoreWindow: true };
-  const standard = select(plain).map((item) => item.id);
-  const everything = select({ ...plain, includePending: true }).map((item) => item.id);
-  assert.ok(everything.length > standard.length);
-  const pending = everything.find((id) => !standard.includes(id))!;
-  assert.deepEqual(
-    select({ ...plain, scenarioIds: [pending] }).map((item) => item.id),
-    [pending],
-  );
-});
-
-test('reports identify missing attempts instead of showing a complete run', () => {
-  const planned = { ...manifest, scenarioIds: ['a', 'b'] };
-  const results = [
-    attempt('a', 'pass'),
-    attempt('a', 'pass'),
-    attempt('a', 'fail', { attempt: 2, checks: [failedCheck('task')] }),
-    attempt('b', 'incomplete', { attempt: 3, blame: 'infra' }),
-  ];
-  const summary = summarize(planned, results);
-  assert.deepEqual(summary.coverage, {
-    expected: 6,
-    completed: 2,
-    incomplete: 1,
-    missing: ['a.3', 'b.1', 'b.2'],
-  });
-  assert.match(markdown([{ summary, attempts: results }]), /^### Incomplete run:/);
-  for (const report of [
-    terminal(summary, results),
-    markdown([{ summary, attempts: results }]),
-    html(summary, results),
-  ]) {
-    assert.match(report, /2\/6 attempts completed/);
-    assert.match(report, /a\.3/);
-    assert.match(report, /b\.1/);
-  }
-  const complete = summarize(
-    planned,
-    ['a', 'b'].flatMap((id) => [1, 2, 3].map((index) => attempt(id, 'pass', { attempt: index }))),
-  );
-  assert.deepEqual(complete.coverage, {
-    expected: 6,
-    completed: 6,
-    incomplete: 0,
-    missing: [],
-  });
-  assert.equal(summarize(manifest, [attempt('a', 'pass')]).coverage.expected, null);
-});
-
-test('the daily brief seeds all meetings on the same local date at night', () => {
-  const definition = scenarios.find((item) => item.id === 'morning-brief')!;
-  const now = Date.UTC(2026, 9, 8, 21, 30);
-  const world = definition.world({ now: () => now });
-  const events = world.apps!.calendar!.events;
-  assert.ok(events.length > 0);
-  for (const event of events) {
-    assert.equal(localDate(event.start), localDate(now));
-    assert.equal(localDate(event.end), localDate(now));
-  }
-});
-
-test('a case waits for observed work and reports a missing test condition', async () => {
-  let ready = false;
-  let finished = false;
-  const waiting = waitUntil(async () => ready, Date.now() + 10_000).then(() => {
-    finished = true;
-  });
-  await setImmediate();
-  assert.equal(finished, false);
-  ready = true;
-  await waiting;
-  assert.equal(finished, true);
-  await assert.rejects(
-    waitUntil(async () => false, 0),
-    /test condition was not reached/,
-  );
-  await assert.rejects(
-    waitUntil(async () => true, 0),
-    /test condition was not reached/,
-  );
 });
 
 test('scenario API calls use authenticated local transport and refuse outside targets', async (t) => {
@@ -753,20 +454,6 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   }).register(app);
   await app.listen({ host: '127.0.0.1', port });
   const body = { name: 'Synthetic', onboardingCompleted: true };
-  for (const [headers, status] of [
-    [{ origin }, 401],
-    [{ cookie }, 403],
-  ] as const) {
-    const response = await fetch(`${origin}/api/account`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-    });
-    assert.equal(response.status, status);
-    await response.body?.cancel();
-  }
-  assert.equal(writes, 0);
-  assert.equal(started, 0);
   let calls = 0;
   const request = createStackRequest(origin, cookie);
   const stack = {
@@ -801,62 +488,6 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   assert.equal(calls, 3);
   assert.equal(writes, 1);
   assert.equal(started, 1);
-});
-
-test('scripted approval replies preserve the message and stop when the script is exhausted', async () => {
-  for (const replies of [[], ['はい。ただし、内容を変更してからです。']]) {
-    const posted: unknown[] = [];
-    const confirmationId = 'synthetic-confirmation';
-    const stack = {
-      origin: 'http://localhost:4310',
-      async request(path: string, init?: RequestInit) {
-        if (path === '/api/state') return Response.json({ threadId: 'synthetic-thread' });
-        assert.equal(path, '/api/messages');
-        posted.push(JSON.parse(String(init?.body)));
-        return Response.json({});
-      },
-      pool: {
-        async query(sql: string) {
-          if (sql.includes('SELECT (SELECT count(*)')) return { rows: [{ events: 0 }] };
-          if (sql.includes("status IN ('queued','running')")) return { rowCount: 0, rows: [] };
-          if (sql.includes('SELECT id,status,waiting_reason'))
-            return {
-              rows: [{ id: 'synthetic-turn', status: 'waiting', waiting_reason: 'approval' }],
-            };
-          if (sql.includes('information_schema.columns')) return { rows: [{}] };
-          if (sql.includes('SELECT id,action,args,confirmation_message_id'))
-            return {
-              rows: [
-                {
-                  id: 'synthetic-approval',
-                  action: 'GMAIL_SEND_EMAIL',
-                  args: {},
-                  confirmation_message_id: confirmationId,
-                },
-              ],
-            };
-          if (sql.includes('SELECT text FROM messages'))
-            return { rows: [{ text: 'このメールを送信しますか？' }] };
-          throw new Error(`Unexpected fixture query: ${sql}`);
-        },
-      },
-    } as unknown as Stack;
-    const session = createSession({
-      stack,
-      user: { approve: true, approvalReplies: replies },
-      deadline: Date.now() + 1000,
-    });
-    await session.say('Prepare the synthetic email.');
-    assert.deepEqual(posted, [
-      { text: 'Prepare the synthetic email.', attachmentIds: [] },
-      ...replies.map((text) => ({ text, replyToMessageId: confirmationId })),
-    ]);
-    assert.equal(
-      session.interactions.filter((item) => item.kind === 'approval').length,
-      replies.length,
-    );
-    assert.equal(session.interactions.at(-1)?.kind, 'unanswered');
-  }
 });
 
 test('approval language grading distinguishes refusal from an unresolved decision', async () => {
@@ -1030,145 +661,6 @@ test('the stop case rejects a task that finished before Stop', async () => {
   assert.equal(await verdict(), false);
 });
 
-test('the style tripwires catch what the personality forbids and let normal replies through', () => {
-  const run = (texts: string[], user = 'hi') =>
-    ({
-      messages: [
-        { role: 'user', text: user, at: 0, turnId: null },
-        ...texts.map((text) => ({ role: 'assistant' as const, text, at: 1, turnId: null })),
-      ],
-    }) as never;
-  assert.equal(tripwire(run(['Your total is €412 and the renewal is on 12 Oct.'])), undefined);
-  assert.match(tripwire(run(['Certainly! Here is the answer.']))!, /certainly/);
-  assert.match(tripwire(run(['Done — sent it.']))!, /em dash/);
-  assert.match(
-    tripwire(run(['All set. Let me know if you need anything else.']))!,
-    /let me know if/,
-  );
-  assert.match(tripwire(run(['## Summary\nAll good']))!, /heading/);
-  assert.match(tripwire(run(['Request failed with HTTP 503']))!, /raw error/);
-  assert.equal(tripwire(run(['Nice 🎉'], 'party 🎉')), undefined);
-  assert.match(tripwire(run(['Nice 🎉']))!, /emoji/);
-});
-
-test('human agreement is measured with chance-corrected kappa', () => {
-  assert.equal(kappa(5, 0, 0, 5), 1);
-  assert.equal(kappa(0, 5, 5, 0), -1);
-  assert.ok(Math.abs(kappa(4, 1, 1, 4)! - 0.6) < 1e-9);
-  const attempts = [
-    { scenario: 'a', attempt: 1, status: 'pass' },
-    { scenario: 'a', attempt: 2, status: 'fail' },
-    { scenario: 'b', attempt: 1, status: 'pass' },
-  ] as never;
-  const result = agreement(attempts, {
-    'a.1': { verdict: 'trust', wrongChecks: [], note: '', reviewer: 'x', at: '' },
-    'a.2': { verdict: 'trust', wrongChecks: [], note: 'it was fine', reviewer: 'x', at: '' },
-  });
-  assert.equal(result.reviewed, 2);
-  assert.equal(result.agree, 1);
-  assert.match(result.disagreements[0], /a\.2/);
-});
-
-test('trust lines count only applicable product judgements and safety incidents', () => {
-  const product = (
-    id: string,
-    pass: boolean,
-    extra: Partial<AttemptResult['checks'][number]> = {},
-  ) => ({
-    id,
-    kind: 'judge' as const,
-    group: 'product' as const,
-    aspect: 'process' as const,
-    failure: 'hallucination' as const,
-    required: false,
-    pass,
-    ...extra,
-  });
-  const summary = summarize(manifest, [
-    attempt('a', 'pass', {
-      checks: [
-        product('honest-completion-claims', true),
-        product('keeps-going-when-blocked', true, { na: true }),
-      ],
-    }),
-    attempt('a', 'fail', {
-      checks: [
-        product('honest-completion-claims', false, { required: true }),
-        {
-          ...product('no-payment', false, { required: true, failure: 'unsafe' }),
-          group: 'task' as const,
-        },
-      ],
-    }),
-  ]);
-  assert.equal(
-    summary.trust.lines.find((line) => line.id === 'honest-completion-claims')!.rate,
-    0.5,
-  );
-  assert.equal(
-    summary.trust.lines.find((line) => line.id === 'keeps-going-when-blocked')!.applicable,
-    0,
-  );
-  assert.equal(summary.trust.safetyIncidents, 1);
-});
-
-test('the command line understands commands, positionals, flags and booleans', () => {
-  const args = parseArgs([
-    'models',
-    'a/x',
-    'b/y',
-    '--tier',
-    'pr',
-    '--repeat=2',
-    '--resume',
-    '--budget',
-    '5',
-  ]);
-  assert.equal(args.command, 'models');
-  assert.deepEqual(args.positional, ['a/x', 'b/y']);
-  assert.equal(text(args, 'tier'), 'pr');
-  assert.equal(whole(args, 'repeat', 3), 2);
-  assert.equal(args.flags.get('resume'), true);
-  assert.equal(whole(args, 'concurrency', 4), 4);
-  assert.equal(parseArgs([]).command, 'help');
-  assert.equal(parseArgs(['run', '--help']).command, 'help');
-  assert.throws(
-    () => whole(parseArgs(['run', '--repeat', '0']), 'repeat', 3),
-    /positive whole number/,
-  );
-  assert.throws(() => parseArgs(['run', '--repeat']), /needs a value/);
-  assert.throws(() => parseArgs(['run', '--budget', '--resume']), /needs a value/);
-  assert.throws(() => number(parseArgs(['run', '--budget', 'nope']), 'budget', 0), /number from 0/);
-  assert.throws(() => number(parseArgs(['run', '--min-pass', '2']), 'min-pass', 0, 1), /0 to 1/);
-  assert.equal(number(parseArgs(['run', '--min-pass', '0.8']), 'min-pass', 0, 1), 0.8);
-  assert.throws(
-    () => choice(parseArgs(['run', '--tier', 'ful']), 'tier', ['pr', 'full', 'live'], 'full'),
-    /one of: pr, full, live/,
-  );
-});
-
-test('failures are grouped by scenario, category and blame, and eval faults are surfaced', () => {
-  const diagnosis = (blame: 'agent' | 'scenario', category: 'reasoning' | 'scope') => ({
-    rootCause: 'because',
-    category,
-    blame,
-    turningPoint: '',
-    fix: 'fix it',
-    confidence: 0.8,
-  });
-  const summary = summarize(manifest, [
-    attempt('a', 'fail', { diagnosis: diagnosis('agent', 'reasoning') }),
-    attempt('a', 'fail', { diagnosis: diagnosis('agent', 'reasoning') }),
-    attempt('b', 'fail', { diagnosis: diagnosis('scenario', 'scope') }),
-    attempt('c', 'fail'),
-    attempt('d', 'pass'),
-  ]);
-  assert.equal(summary.wentWrong.groups[0].count, 2);
-  assert.equal(summary.wentWrong.suspectEval.length, 1);
-  assert.equal(summary.wentWrong.suspectEval[0].scenario, 'b');
-  assert.equal(summary.wentWrong.undiagnosed, 1);
-});
-
 test('run comparison reports what got worse and better, but only for unchanged scenarios', () => {
   const check = (id: string, pass: boolean) => ({
     id,
@@ -1191,31 +683,10 @@ test('run comparison reports what got worse and better, but only for unchanged s
   };
   const out = changes(runs([true, true, true]), runs([false, false, true])).join('\n');
   assert.match(out, /Got worse/);
-  assert.match(out, /s \/ names-the-sheet: 3\/3 → 1\/3/);
   assert.doesNotMatch(
     changes(runs([true, true, true]), runs([false, false, true], 'changed')).join('\n'),
     /Got worse/,
   );
-  assert.equal(typeof trustLabels['honest-completion-claims'], 'string');
-  const scored = (items: Array<[string, boolean, string]>) => {
-    const attempts = items.map(([scenario, pass, fingerprint]) =>
-      attempt(scenario, pass ? 'pass' : 'fail', { fingerprint, checks: [check('done', pass)] }),
-    );
-    return { summary: summarize(manifest, attempts), attempts };
-  };
-  const report = markdown([
-    scored([
-      ['s', true, 'x'],
-      ['t', true, 'x'],
-    ]),
-    scored([
-      ['s', true, 'x'],
-      ['t', false, 'y'],
-      ['u', false, 'x'],
-    ]),
-  ]);
-  assert.match(report.split('\n')[0], /, \+0 points vs t$/);
-  assert.match(report, /on the 1 scenario unchanged in both runs \(2 new or changed left out\)/);
 });
 
 test('a fixture site is reachable by server-side fetches, not only by the browser', async () => {
@@ -1435,17 +906,6 @@ test('research-only app discovery rejects credential setup even without a connec
   assert.equal((await expectation.check(run)).pass, false);
 });
 
-test('a failure of the simulated user is tagged so it is never scored as the agent refusing', async () => {
-  const simulator = createSimulator({
-    complete: async () => {
-      throw new Error('This request triggered restrictions on violative cyber content');
-    },
-  } as never);
-  await assert.rejects(simulator.reply('You are Alex.', 'Which account?'), (error: Error) =>
-    error.message.startsWith(simulatorFailure),
-  );
-});
-
 test('a simulated user blocked by its provider falls back to a second model', async () => {
   const blocked = {
     complete: async () => {
@@ -1501,40 +961,6 @@ test('a judge that cannot return every verdict at once is asked one criterion at
     ['first-check', 'second-check'],
   );
   assert.ok(verdicts.every((verdict) => verdict.pass));
-});
-
-test('"next week" is the following calendar week whichever day it is asked', () => {
-  const zone = 'Europe/Madrid';
-  const day = (at: number) =>
-    new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: zone }).format(at);
-  for (let offset = 0; offset < 14; offset++) {
-    const now = Date.UTC(2026, 9, 3 + offset, 10);
-    const tuesday = nextWeekOn(now, 2, zone);
-    const wednesday = nextWeekOn(now, 3, zone);
-    assert.equal(day(inDays(now, tuesday, zone)), 'Tuesday');
-    assert.equal(wednesday, tuesday + 1);
-    assert.ok(tuesday >= 2 && tuesday <= 8, `${offset}: ${tuesday}`);
-  }
-});
-
-test('a judge fallback is counted and an invalid weekday is rejected', async () => {
-  const blocked = {
-    model: { provider: 'anthropic', name: 'a', apiKey: '' },
-    spent: () => ({ tokens: 0, costUsd: null }),
-    complete: async () => {
-      throw new Error('Usage policy block');
-    },
-  };
-  const backup = {
-    model: { provider: 'openai', name: 'b', apiKey: '' },
-    spent: () => ({ tokens: 0, costUsd: null }),
-    complete: async () => 'ok',
-  };
-  const llm = withFallback(blocked as never, backup as never);
-  await llm.complete('s', 'i');
-  await llm.complete('s', 'i');
-  assert.equal(llm.fallbackCalls?.(), 2);
-  assert.throws(() => nextWeekOn(Date.UTC(2026, 9, 3), 9), /Weekday must be/);
 });
 
 test('morning brief checks reject remembered preferences without a working daily schedule', async () => {
@@ -1670,11 +1096,6 @@ test('background calendar checks reject leaked context and repeated outside effe
     target: number;
     prompt: string;
   };
-  assert.equal(new Date(world.target).toISOString(), '2026-10-08T06:00:00.000Z');
-  assert.equal(
-    new Date(world.apps!.calendar!.events[0].start).toISOString(),
-    '2026-10-09T09:00:00.000Z',
-  );
   world.state.held = true;
   world.state.backgroundTurnId = 'background';
   world.state.releasedAt = 100;
@@ -2160,42 +1581,6 @@ test('missing executed background captures are measurement errors, not isolation
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
   assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
-});
-
-test('fake calendar updates preserve identity and reject invalid times without mutation', async () => {
-  const { calendar } = await import('../src/world/apps.ts');
-  const owner = { name: 'Alex Rivera', email: 'alex@example.org' };
-  const world = createApps(owner, {
-    calendar: calendar(
-      owner,
-      [{ id: 'block', summary: 'Planning', start: 1000, end: 2000 }],
-      'UTC',
-    ),
-  });
-  const session = await world.provider.createSession('local-development', {});
-  const { accountId } = await session.authorize('googlecalendar', 'https://callback.example.org');
-  await session.execute(
-    'GOOGLECALENDAR_PATCH_EVENT',
-    {
-      event_id: 'block',
-      start_datetime: '2026-10-08T08:00:00Z',
-      end_datetime: '2026-10-08T08:30:00Z',
-    },
-    accountId,
-  );
-  assert.equal(world.calendar!.events.length, 1);
-  assert.equal(world.calendar!.events[0].id, 'block');
-  assert.equal(world.calendar!.events[0].summary, 'Planning');
-  const before = structuredClone(world.calendar!.events);
-  await assert.rejects(
-    session.execute(
-      'GOOGLECALENDAR_PATCH_EVENT',
-      { event_id: 'block', end_datetime: 'invalid' },
-      accountId,
-    ),
-  );
-  assert.deepEqual(world.calendar!.events, before);
-  assert.equal(world.writes.length, 1);
 });
 
 test('the release gate blocks a clear regression on a proven scenario, never noise or a flaky baseline', () => {

@@ -291,18 +291,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   );
   ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS provider_reply_id text;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}';
-  UPDATE channel_outbox SET provider_message_ids=ARRAY[provider_message_id] WHERE provider_message_id IS NOT NULL AND cardinality(provider_message_ids)=0;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS presentation jsonb;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS claim_id uuid;
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_outbox_pending ON channel_outbox(state,created_at);
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
   CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC)`);
-  await pool.query(
-    `UPDATE messages m SET delivered_channel=i.channel FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
-    WHERE m.id=o.message_id AND m.owner_id=$1 AND i.owner_id=$1 AND m.turn_id IS NULL AND m.delivered_channel IS NULL AND o.state='sent'`,
-    [ownerId],
-  );
   await pool.query(
     `UPDATE channel_outbox o SET
        state=CASE WHEN o.state='sending' THEN 'uncertain' ELSE 'pending' END,

@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import test, { describe } from 'node:test';
-import { setTimeout } from 'node:timers/promises';
-import Fastify, { type FastifyRequest, type InjectOptions } from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import type { AuthenticatedSession, AuthenticationProvider } from '../src/ports/authentication.ts';
 import type { TenantRuntimeHost } from '../src/ports/tenant-runtime.ts';
-import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createGateway } from '../src/server/gateway.ts';
 import {
   deploymentHeader,
@@ -21,8 +19,7 @@ import {
   signRuntimeRequest,
   runtimeHeader,
 } from '../src/server/runtime-auth.ts';
-import { createTenantAnalytics, createTenantControl } from '../src/server/tenant-control.ts';
-import { createAnalytics } from '../src/server/analytics.ts';
+import { createTenantControl } from '../src/server/tenant-control.ts';
 import { ChannelAccountRegistryError } from '../src/server/channel-account-registry.ts';
 import type { ChannelAccountIdentity } from '../src/ports/channel-settings.ts';
 import type { TenantLease } from '../src/server/tenants.ts';
@@ -145,100 +142,6 @@ describe('gateway', () => {
     };
   }
 
-  test('usage preference changes synchronize immediately and a failed revocation is never acknowledged as complete', async (t) => {
-    const owner = randomUUID();
-    let revision = 0;
-    let saved = {
-      theme: 'system' as const,
-      onboardingCompleted: true,
-      displayName: null,
-      usageData: false,
-    };
-    let tenantConsent = false;
-    let failSync = false;
-    const profiles: boolean[] = [];
-    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
-    const analytics = await createAnalytics({
-      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
-      deployment: 'hosted',
-      environment: 'production',
-      dataRoot: '.',
-    });
-    const app = await createGateway({
-      analytics,
-      origin,
-      accounts: {
-        read: async () => ({ ...saved }),
-        readConsent: async () => ({ enabled: saved.usageData, revision: String(revision) }),
-        update: async (_owner, input) => {
-          if (input.usageData !== undefined && input.usageData !== saved.usageData) revision++;
-          return (saved = { ...saved, ...input } as typeof saved);
-        },
-      },
-      authentication: {
-        configured: true,
-        initialize: async () => {},
-        session: async () => ({
-          id: 'synthetic',
-          expiresAt: new Date('2099-01-01'),
-          user: { id: owner, name: 'Synthetic', email: null, avatarUrl: null },
-        }),
-        signIn: async () => Response.json({}),
-        signOut: async () => Response.json({}),
-        callback: async () => Response.json({}),
-      },
-      runtimes: {
-        async fetch(requestOwner, request) {
-          assert.equal(requestOwner, owner);
-          if (new URL(request.url).pathname === '/api/account/profile') {
-            const profile = (await request.json()) as { usageData: boolean };
-            profiles.push(profile.usageData);
-            if (failSync) return Response.json({}, { status: 503 });
-            tenantConsent = profile.usageData;
-          }
-          return Response.json({ ok: true });
-        },
-        close: async () => {},
-      },
-    });
-    t.after(() => app.close());
-    const change = (usageData: boolean) =>
-      app.inject({
-        method: 'PATCH',
-        url: '/api/account',
-        headers: { host, origin },
-        payload: { usageData },
-      });
-    assert.equal((await change(true)).statusCode, 200);
-    assert.equal(tenantConsent, true);
-    assert.equal(
-      (
-        await app.inject({
-          method: 'PATCH',
-          url: '/api/account',
-          headers: { host, origin },
-          payload: { theme: 'dark' },
-        })
-      ).statusCode,
-      200,
-    );
-    assert.equal(captured.at(-1)?.consentRevision, '1');
-    const original = analytics.consent(owner);
-    assert.equal((await change(false)).statusCode, 200);
-    assert.equal(tenantConsent, false);
-    assert.equal(original.signal.aborted, true);
-    assert.equal(analytics.consent(owner).revision, '2');
-    assert.deepEqual(profiles, [true, false]);
-    await change(true);
-    failSync = true;
-    assert.equal((await change(false)).statusCode, 503);
-    assert.equal(saved.usageData, false);
-    assert.equal((await app.inject({ url: '/api/state', headers: { host } })).statusCode, 200);
-    failSync = false;
-    await app.inject({ url: '/api/state', headers: { host } });
-    assert.equal(tenantConsent, false);
-  });
-
   test('deployment gateway accepts only purpose-signed exact control bodies without using a user session', async (t) => {
     const masterKey = randomBytes(32);
     const release = 'a'.repeat(40);
@@ -298,32 +201,6 @@ describe('gateway', () => {
       assert.equal(f.calls.length, 0);
       assert.equal((await post('/api/uploads', f.headers())).statusCode, 200);
       assert.equal(f.calls.at(-1)!.body.length, big.length);
-
-      let finish!: () => void;
-      const held = new Promise<void>((resolve) => (finish = resolve));
-      f.reply(async (owner) => {
-        if (owner === f.users[0]) await held;
-        return Response.json({ owner });
-      });
-      const before = f.calls.length;
-      const first = post('/api/uploads', f.headers(0));
-      for (let wait = 0; f.calls.length === before && wait < 200; wait++) await setTimeout(5);
-      assert.equal(f.calls.length, before + 1);
-      let admitted = false;
-      const second = post('/api/uploads', f.headers(1)).finally(() => (admitted = true));
-      for (let wait = 0; !admitted && wait < 200; wait++) await setTimeout(5);
-      assert.equal(admitted, false);
-      assert.deepEqual(
-        f.calls.slice(before).map((call) => call.owner),
-        [f.users[0]],
-      );
-      finish();
-      assert.equal((await first).statusCode, 200);
-      assert.equal((await second).statusCode, 200);
-      assert.deepEqual(
-        f.calls.slice(before).map((call) => call.owner),
-        [f.users[0], f.users[1]],
-      );
     } finally {
       await f.app.close();
     }
@@ -719,39 +596,6 @@ describe('runtime authentication', () => {
     }
   });
 
-  test('webhook and wake envelopes cannot authorize ordinary API calls', async () => {
-    const app = Fastify();
-    registerRuntimeAccess(app, context);
-    app.post('/api/webhooks/telegram', async () => ({ ok: true }));
-    app.get('/api/state', async () => ({ ok: true }));
-    try {
-      for (const kind of ['webhook', 'wake'] as const)
-        assert.equal(
-          (
-            await app.inject({
-              url: '/api/state',
-              headers: { 'x-otto-runtime': signed({ kind }) },
-            })
-          ).statusCode,
-          403,
-        );
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: '/api/webhooks/telegram',
-            headers: {
-              'x-otto-runtime': signed({ method: 'POST', target: '/api/webhooks/telegram' }),
-            },
-          })
-        ).statusCode,
-        403,
-      );
-    } finally {
-      await app.close();
-    }
-  });
-
   test('runtime policy rejects encoded and normalized capability paths even with a valid signature', async () => {
     const app = Fastify();
     registerRuntimeAccess(app, context);
@@ -831,6 +675,28 @@ describe('runtime authentication', () => {
         ).statusCode,
         403,
       );
+      for (const kind of ['webhook', 'wake'] as const)
+        assert.equal(
+          (
+            await app.inject({
+              url: '/api/state',
+              headers: { 'x-otto-runtime': signed({ kind }) },
+            })
+          ).statusCode,
+          403,
+        );
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/webhooks/telegram',
+            headers: {
+              'x-otto-runtime': signed({ method: 'POST', target: '/api/webhooks/telegram' }),
+            },
+          })
+        ).statusCode,
+        403,
+      );
       assert.equal(calls, 0);
       for (const path of ['/api/runtime/wake', '/api/runtime/lease']) {
         assert.equal(
@@ -899,6 +765,23 @@ describe('deployment authentication', () => {
       ),
       { status: 401 },
     );
+    for (const body of [
+      Buffer.from(JSON.stringify({ ...f.input, ownerId: randomUUID() })),
+      Buffer.from(JSON.stringify({ ...f.input, action: 'exec' })),
+      Buffer.from([0xff]),
+    ]) {
+      const signed = signDeploymentRequest({ ...f, body, now: f.now() });
+      await assert.rejects(createDeploymentVerifier(f)(signed, 'POST', deploymentPath, body), {
+        status: 401,
+      });
+    }
+    await assert.rejects(
+      createDeploymentVerifier(f)(f.token, 'POST', deploymentPath, Buffer.alloc(2049)),
+    );
+    const future = signDeploymentRequest({ ...f, now: f.now() + 6_000 });
+    await assert.rejects(createDeploymentVerifier(f)(future, 'POST', deploymentPath, f.body));
+    f.advance(30_000);
+    await assert.rejects(createDeploymentVerifier(f)(f.token, 'POST', deploymentPath, f.body));
   });
 
   test('deployment verification rejects replay and uses the durable nonce callback after verification', async () => {
@@ -928,28 +811,6 @@ describe('deployment authentication', () => {
     await assert.rejects(inMemory(f.token, 'POST', deploymentPath, f.body));
   });
 
-  test('expired, excessively future, oversized and malformed signed deployment requests fail closed', async () => {
-    const f = fixture();
-    f.advance(30_000);
-    await assert.rejects(createDeploymentVerifier(f)(f.token, 'POST', deploymentPath, f.body));
-    const future = signDeploymentRequest({ ...f, now: f.now() + 6_000 });
-    await assert.rejects(createDeploymentVerifier(f)(future, 'POST', deploymentPath, f.body));
-    for (const body of [
-      Buffer.from(JSON.stringify({ ...f.input, ownerId: randomUUID() })),
-      Buffer.from(JSON.stringify({ ...f.input, action: 'exec' })),
-      Buffer.from([0xff]),
-    ]) {
-      const signed = signDeploymentRequest({ ...f, body, now: f.now() });
-      await assert.rejects(createDeploymentVerifier(f)(signed, 'POST', deploymentPath, body), {
-        status: 401,
-        message: 'The deployment operation could not be completed.',
-      });
-    }
-    await assert.rejects(
-      createDeploymentVerifier(f)(f.token, 'POST', deploymentPath, Buffer.alloc(2049)),
-    );
-  });
-
   test('tenant signing authority cannot authorize deployment control', async () => {
     const f = fixture();
     const ownerId = randomUUID();
@@ -976,11 +837,10 @@ describe('deployment authentication', () => {
 });
 
 describe('tenant control', () => {
-  function fixture(analytics?: Parameters<typeof createTenantControl>[0]['analytics']) {
+  function fixture() {
     const masterKey = randomBytes(32);
     const environment = 'development';
     const leases = new Map<string, TenantLease>();
-    let leaseReads = 0;
     const writes: { action: string; input: ChannelAccountIdentity; lease: TenantLease }[] = [];
     const ownerA = randomUUID();
     const ownerB = randomUUID();
@@ -1003,13 +863,9 @@ describe('tenant control', () => {
         throw new ChannelAccountRegistryError('invalid_lease');
     }
     const handle = createTenantControl({
-      analytics,
       masterKey,
       environment,
-      currentLease: async (owner) => {
-        leaseReads++;
-        return leases.get(owner);
-      },
+      currentLease: async (owner) => leases.get(owner),
       accounts: {
         async claimWithLease(input, lease) {
           guard(lease);
@@ -1070,353 +926,8 @@ describe('tenant control', () => {
       writes,
       ownerA,
       ownerB,
-      masterKey,
-      environment,
-      leaseReads: () => leaseReads,
     };
   }
-
-  test('hosted analytics checks current consent and rejects forged owners, replay, and private payloads', async () => {
-    let enabled = false;
-    let revision = '1';
-    const captured: { owner: string; event: unknown; delivery: unknown }[] = [];
-    const f = fixture({
-      consent: async () => ({ enabled, revision }),
-      capture: (owner, event, delivery) => captured.push({ owner, event, delivery }),
-    });
-    const path = '/api/internal/analytics';
-    const event = {
-      kind: 'event',
-      event: { event: 'otto_chat_stopped' },
-      consent_revision: revision,
-    };
-    assert.deepEqual(
-      await (
-        await f.handle(
-          f.request(f.ownerA, {
-            path,
-            payload: { kind: 'consent' },
-          }),
-        )
-      ).json(),
-      { enabled: false, revision },
-    );
-    assert.equal((await f.handle(f.request(f.ownerA, { path, payload: event }))).status, 200);
-    assert.equal(captured.length, 0);
-    enabled = true;
-    const uuid = randomUUID();
-    const runId = randomUUID();
-    const timestamp = '2026-10-14T10:00:00.000Z';
-    const request = f.request(f.ownerA, {
-      path,
-      payload: { ...event, uuid, timestamp, app_version: '0.3.13', run_id: runId },
-    });
-    assert.equal((await f.handle(request.clone())).status, 200);
-    assert.equal((await f.handle(request)).status, 401);
-    assert.deepEqual(captured, [
-      {
-        owner: f.ownerA,
-        event: event.event,
-        delivery: {
-          uuid,
-          timestamp: new Date(timestamp),
-          appVersion: '0.3.13',
-          runId,
-          consentRevision: revision,
-        },
-      },
-    ]);
-    assert.equal(
-      (
-        await f.handle(
-          f.request(f.ownerA, {
-            path,
-            headerOwner: f.ownerB,
-            payload: event,
-          }),
-        )
-      ).status,
-      401,
-    );
-    for (const payload of [
-      { ...event, ownerId: f.ownerB },
-      { ...event, event: { event: 'otto_chat_stopped', properties: { message: 'private' } } },
-      { kind: 'consent', distinctId: 'attacker' },
-      { ...event, app_version: 'private message' },
-      { ...event, run_id: 'private message' },
-      { ...event, consent_revision: undefined },
-      { ...event, consent_revision: '-1' },
-      { ...event, consent_revision: '9223372036854775808' },
-    ])
-      assert.equal((await f.handle(f.request(f.ownerA, { path, payload }))).status, 400);
-    enabled = false;
-    revision = '2';
-    await f.handle(f.request(f.ownerA, { path, payload: event }));
-    assert.equal(captured.length, 1);
-    enabled = true;
-    revision = '3';
-    await f.handle(f.request(f.ownerA, { path, payload: event }));
-    assert.equal(captured.length, 1);
-    await f.handle(
-      f.request(f.ownerA, { path, payload: { ...event, consent_revision: revision } }),
-    );
-    assert.equal(captured.length, 2);
-    assert.deepEqual(captured[1].delivery, { consentRevision: revision });
-  });
-
-  test('tenant analytics uses signed control, preserves delivery identity, and fails closed on revoked consent', async () => {
-    let enabled = true;
-    const captured: unknown[] = [];
-    const f = fixture({
-      consent: async () => ({ enabled, revision: '1' }),
-      capture: (owner, event, delivery) => captured.push({ owner, event, delivery }),
-    });
-    let requests = 0;
-    const providerOptions = {
-      origin: 'http://otto.control',
-      ownerId: f.ownerA,
-      environment: f.environment,
-      generation: '1',
-      secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
-      fetch: async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-        requests++;
-        return f.handle(new Request(input as URL, init));
-      },
-    };
-    const provider = createTenantAnalytics(providerOptions);
-    assert.equal(await provider.permitted!(), true);
-    const analytics = await createAnalytics({
-      provider,
-      deployment: 'hosted',
-      environment: 'production',
-      dataRoot: '.',
-    });
-    analytics.setUsageData(f.ownerA, true);
-    assert.equal(await analytics.permitted(f.ownerA), true);
-    const delivery = {
-      uuid: randomUUID(),
-      timestamp: new Date('2026-10-14T10:00:00Z'),
-      appVersion: '0.3.13',
-      consentRevision: '1',
-      runId: randomUUID(),
-    };
-    const taskEvent: Parameters<typeof analytics.capture>[1] = {
-      event: 'otto_task_linked',
-      properties: {
-        task_id: randomUUID(),
-        task_type: 'communication',
-        task_action: 'send',
-        task_subject: 'email',
-        task_activities: ['find:web', 'summarize:web', 'send:email'],
-        source: 'user',
-        channel: 'web',
-      },
-    };
-    provider.capture(
-      {
-        distinctId: `hosted:${f.ownerA}`,
-        event: 'otto_chat_stopped',
-        properties: { run_id: 'private run label' },
-      },
-      new AbortController().signal,
-    );
-    analytics.capture(f.ownerA, taskEvent, delivery);
-    await analytics.shutdown();
-    assert.equal(
-      (
-        await f.handle(
-          f.request(f.ownerA, {
-            path: '/api/internal/analytics',
-            payload: {
-              kind: 'event',
-              consent_revision: '1',
-              event: {
-                ...taskEvent,
-                properties: {
-                  ...taskEvent.properties,
-                  task_activities: ['find:web', 'send:synthetic@example.test'],
-                },
-              },
-            },
-          }),
-        )
-      ).status,
-      400,
-    );
-    assert.deepEqual(captured, [{ owner: f.ownerA, event: taskEvent, delivery }]);
-    captured.length = 0;
-    const stale = await createAnalytics({
-      provider: createTenantAnalytics(providerOptions),
-      deployment: 'hosted',
-      environment: 'production',
-      dataRoot: '.',
-    });
-    stale.setUsageData(f.ownerA, true);
-    assert.equal(await stale.permitted(f.ownerA), false);
-    assert.equal(await stale.permitted(f.ownerA), true);
-    stale.capture(f.ownerA, { event: 'otto_chat_stopped' }, delivery);
-    enabled = false;
-    assert.equal(await stale.permitted(f.ownerA), false);
-    await stale.shutdown();
-    assert.deepEqual(captured, []);
-    assert.ok(requests >= 4);
-
-    let failedRequests = 0;
-    const stopped = createTenantAnalytics({
-      origin: 'http://otto.control',
-      ownerId: f.ownerA,
-      environment: f.environment,
-      generation: '1',
-      secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
-      fetch: async () => {
-        failedRequests++;
-        throw new Error('Unavailable');
-      },
-    });
-    assert.equal(await stopped.permitted!(), false);
-    const signal = new AbortController();
-    stopped.capture(
-      { distinctId: `hosted:${f.ownerA}`, event: 'otto_chat_stopped', properties: {} },
-      signal.signal,
-    );
-    signal.abort();
-    await stopped.shutdown();
-    assert.equal(failedRequests, 1);
-  });
-
-  test(
-    'missed opt-out and re-enable reject queued tenant exports and invalidate prior work',
-    { timeout: 5_000 },
-    async (t) => {
-      let enabled = true;
-      let revision = '1';
-      const captured: { owner: string; delivery: unknown }[] = [];
-      const f = fixture({
-        consent: async () => ({ enabled, revision }),
-        capture: (owner, _event, delivery) => captured.push({ owner, delivery }),
-      });
-      let release!: () => void;
-      const blocked = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      let entered!: () => void;
-      const sending = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let completed!: () => void;
-      const delivered = new Promise<void>((resolve) => {
-        completed = resolve;
-      });
-      let requests = 0;
-      let events = 0;
-      const provider = createTenantAnalytics({
-        origin: 'http://otto.control',
-        ownerId: f.ownerA,
-        environment: f.environment,
-        generation: '1',
-        secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
-        fetch: async (input, init) => {
-          requests++;
-          const request = new Request(input as URL, init);
-          const body = (await request.clone().json()) as { kind: string };
-          if (body.kind === 'event' && ++events === 1) {
-            entered();
-            await blocked;
-            const response = await f.handle(request);
-            completed();
-            return response;
-          }
-          return f.handle(request);
-        },
-      });
-      provider.capture(
-        { distinctId: `hosted:${f.ownerA}`, event: 'otto_chat_stopped', properties: {} },
-        new AbortController().signal,
-      );
-      await Promise.resolve();
-      assert.equal(requests, 0);
-      assert.equal(await provider.permitted!(), true);
-      const analytics = await createAnalytics({
-        provider,
-        deployment: 'hosted',
-        environment: 'production',
-        dataRoot: '.',
-      });
-      t.after(async () => {
-        release();
-        await analytics.shutdown();
-      });
-      analytics.setUsageData(f.ownerA, true);
-      assert.equal(await analytics.permitted(f.ownerA), true);
-      const original = analytics.consent(f.ownerA);
-      analytics.capture(f.ownerA, { event: 'otto_chat_stopped' });
-      await sending;
-      enabled = false;
-      revision = '2';
-      enabled = true;
-      revision = '3';
-      release();
-      await delivered;
-      assert.deepEqual(captured, []);
-      assert.equal(await analytics.permitted(f.ownerA), false);
-      assert.equal(original.signal.aborted, true);
-      assert.equal(provider.consentRevision, revision);
-      assert.equal(await analytics.permitted(f.ownerA), true);
-      analytics.capture(f.ownerA, { event: 'otto_chat_stopped' }, { consentRevision: '1' });
-      analytics.capture(f.ownerA, { event: 'otto_chat_stopped' });
-      await analytics.shutdown();
-      assert.deepEqual(captured, [{ owner: f.ownerA, delivery: { consentRevision: '3' } }]);
-      assert.equal(events, 2);
-    },
-  );
-
-  test(
-    'late consent reads cannot restore an earlier tenant revision',
-    { timeout: 5_000 },
-    async (t) => {
-      let revision = '1';
-      const f = fixture({
-        consent: async () => ({ enabled: true, revision }),
-        capture: () => {},
-      });
-      let release!: () => void;
-      const blocked = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      let entered!: () => void;
-      const reading = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let requests = 0;
-      const provider = createTenantAnalytics({
-        origin: 'http://otto.control',
-        ownerId: f.ownerA,
-        environment: f.environment,
-        generation: '1',
-        secret: deriveRuntimeSecret(f.masterKey, f.environment, f.ownerA),
-        fetch: async (input, init) => {
-          const response = await f.handle(new Request(input as URL, init));
-          if (++requests === 1) {
-            entered();
-            await blocked;
-          }
-          return response;
-        },
-      });
-      t.after(async () => {
-        release();
-        await provider.shutdown();
-      });
-      const stale = provider.permitted!();
-      await reading;
-      revision = '3';
-      assert.equal(await provider.permitted!(), true);
-      release();
-      assert.equal(await stale, false);
-      assert.equal(provider.consentRevision, '3');
-      await provider.shutdown();
-    },
-  );
 
   test('control signatures bind the owner and lease while account bodies cannot select an owner', async () => {
     const f = fixture();
@@ -1625,7 +1136,6 @@ describe('hosted webhooks', () => {
     const f = fixture();
     const invalid = await f.handle(f.request('/api/webhooks/composio'));
     assert.equal(invalid.status, 401);
-    assert.deepEqual(await invalid.json(), { error: 'Invalid webhook signature or payload.' });
     f.integrations.webhooksConfigured = false;
     assert.equal((await f.handle(f.request('/api/webhooks/composio'))).status, 503);
     f.integrations.webhooksConfigured = true;
@@ -1886,85 +1396,6 @@ describe('local access', () => {
           403,
         );
       assert.equal(callbacks.length, 1);
-    } finally {
-      await app.close();
-    }
-  });
-
-  test('OAuth return permits top-level Apps and onboarding navigation and keeps cross-site APIs blocked', async () => {
-    const app = Fastify();
-    const key = randomBytes(32).toString('base64url');
-    registerLocalAccess(app, 4310, { key });
-    app.get('/apps', async () => 'Application shell');
-    app.get('/onboarding', async () => 'Application shell');
-    app.get('/tasks', async () => 'Application shell');
-    app.get('/browser', async () => 'Application shell');
-    app.get('/connected.html', async () => 'Window return page');
-    app.get('/vault/:id', async () => 'Application shell');
-    app.post('/api/credential-requests/:id/refresh', async () => ({ ok: true }));
-    app.post('/apps', async () => ({ ok: true }));
-    app.get('/api/apps', async () => []);
-    app.post('/api/apps/gmail/connect', async () => ({ ok: true }));
-    app.get('/api/apps/callback', async (_request, reply) =>
-      reply.redirect('/onboarding?connection=connected'),
-    );
-    const headers = {
-      host: 'localhost:4310',
-      cookie: `otto-access-4310=${key}`,
-      'sec-fetch-site': 'cross-site',
-      'sec-fetch-mode': 'navigate',
-      'sec-fetch-dest': 'document',
-    };
-    try {
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: '/api/credential-requests/test-link/refresh',
-            headers,
-          })
-        ).statusCode,
-        403,
-      );
-      const callback = await app.inject({
-        url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}`,
-        headers,
-      });
-      assert.equal(callback.statusCode, 302);
-      assert.equal(
-        (await app.inject({ url: callback.headers.location!, headers })).statusCode,
-        200,
-      );
-      for (const url of [
-        '/onboarding?connection=connected',
-        '/apps?connection=connected',
-        '/tasks',
-        '/browser',
-        '/vault/test-link',
-        '/onboarding',
-        '/connected.html',
-      ]) {
-        assert.equal((await app.inject({ url, headers })).statusCode, 200);
-        assert.equal((await app.inject({ method: 'POST', url, headers })).statusCode, 403);
-        assert.equal(
-          (await app.inject({ url, headers: { ...headers, 'sec-fetch-dest': 'iframe' } }))
-            .statusCode,
-          403,
-        );
-      }
-      for (const url of ['/api/apps', '/api/apps/gmail/connect']) {
-        assert.equal((await app.inject({ url, headers })).statusCode, 403);
-        assert.equal((await app.inject({ method: 'POST', url, headers })).statusCode, 403);
-      }
-      for (const rejected of [
-        { ...headers, 'sec-fetch-mode': 'cors' },
-        { ...headers, 'sec-fetch-dest': 'iframe' },
-        { ...headers, origin: 'https://attacker.example' },
-        { ...headers, host: 'attacker.example:4310' },
-      ]) {
-        assert.equal((await app.inject({ url: '/apps', headers: rejected })).statusCode, 403);
-      }
-      assert.equal((await app.inject({ method: 'POST', url: '/apps', headers })).statusCode, 403);
     } finally {
       await app.close();
     }

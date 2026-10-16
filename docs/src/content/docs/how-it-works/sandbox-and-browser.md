@@ -112,7 +112,6 @@ sequenceDiagram
 
 - Each handoff identifies its waiting turn and browser. Input reaches only that browser while its question stays pending. Other sessions keep their own browsers.
 - **Done** replies to the question. It continues the session that asked, including a background session.
-- An upgrade keeps a waiting chat handoff linked to its existing browser.
 - One bridge call carries frames out, newest first, and your input in. Losing the connection disables input until it reconnects.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - Native WebAuthn stays on, but Otto doesn't supply an authenticator. A passkey needs one of yours.

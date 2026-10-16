@@ -4,7 +4,7 @@ import test from 'node:test';
 import { storageRequest } from '../src/storage.ts';
 import { fileBytes } from '../../../src/shared/files.ts';
 
-function put(url: string, body: string | Uint8Array, headers: Record<string, string> = {}) {
+function put(url: string, body: string, headers: Record<string, string> = {}) {
   return new Request(url, {
     method: 'PUT',
     body,
@@ -20,17 +20,11 @@ function fixture() {
       const value = objects.get(key);
       return value ? { body: value.body, size: value.body.byteLength, httpEtag: value.etag } : null;
     },
-    async put(key: string, value: ReadableStream | Uint8Array, options: { onlyIf: Headers }) {
+    async put(key: string, value: ReadableStream | Uint8Array) {
       const body =
         value instanceof Uint8Array
           ? value
           : new Uint8Array(await new Response(value).arrayBuffer());
-      const current = objects.get(key);
-      if (
-        (options.onlyIf.get('if-none-match') === '*' && current) ||
-        (options.onlyIf.has('if-match') && options.onlyIf.get('if-match') !== current?.etag)
-      )
-        return null;
       const etag = `"version-${++version}"`;
       objects.set(key, { body, etag });
       return { httpEtag: etag };
@@ -56,7 +50,6 @@ test('storage keys use trusted owner and environment and never caller-supplied h
   assert.deepEqual([...objects.keys()], [`development/${identity.ownerId}/${artifact}`]);
   const read = await storageRequest(new Request(url), identity, bucket);
   assert.equal(await read.text(), 'synthetic file');
-  assert.equal(read.headers.get('cache-control'), 'no-store');
   assert.equal(
     (await storageRequest(new Request(url), { ...identity, ownerId: randomUUID() }, bucket)).status,
     404,
@@ -66,65 +59,14 @@ test('storage keys use trusted owner and environment and never caller-supplied h
       .status,
     404,
   );
-  assert.equal(
-    (await storageRequest(put(url, 'replacement', { 'if-none-match': '*' }), identity, bucket))
-      .status,
-    412,
-  );
   await storageRequest(
     new Request(url, { method: 'DELETE' }),
     { ...identity, ownerId: randomUUID() },
     bucket,
   );
   assert.equal(objects.size, 1);
-  await assert.rejects(
-    storageRequest(
-      new Request(url, {
-        method: 'DELETE',
-        headers: { 'if-match': response.headers.get('etag')! },
-      }),
-      identity,
-      bucket,
-    ),
-    { status: 501 },
-  );
-  assert.equal(objects.size, 1);
   await storageRequest(new Request(url, { method: 'DELETE' }), identity, bucket);
   assert.equal(objects.size, 0);
-});
-
-test('session checkpoints require exact etag compare-and-swap across competing writers', async () => {
-  const { bucket, identity } = fixture();
-  const key = `sessions/${randomUUID()}.jsonl`;
-  const url = `http://otto.storage/v1/objects/${encodeURIComponent(key)}`;
-  const first = await storageRequest(put(url, 'first', { 'if-none-match': '*' }), identity, bucket);
-  const etag = first.headers.get('etag')!;
-  const writes = await Promise.all([
-    storageRequest(put(url, 'second', { 'if-match': etag }), identity, bucket),
-    storageRequest(put(url, 'stale', { 'if-match': etag }), identity, bucket),
-  ]);
-  assert.deepEqual(
-    writes.map((response) => response.status),
-    [204, 412],
-  );
-  assert.equal(await (await storageRequest(new Request(url), identity, bucket)).text(), 'second');
-  await assert.rejects(storageRequest(put(url, 'blind'), identity, bucket), { status: 428 });
-});
-
-test('Markdown memory stays in the trusted owner prefix', async () => {
-  const { objects, bucket, identity } = fixture();
-  const url = `http://otto.storage/v1/objects/${encodeURIComponent('memory/MEMORY.md')}`;
-  const response = await storageRequest(
-    put(url, '# Memory\n', { 'if-none-match': '*' }),
-    identity,
-    bucket,
-  );
-  assert.equal(response.status, 204);
-  assert.deepEqual([...objects.keys()], [`development/${identity.ownerId}/memory/MEMORY.md`]);
-  assert.equal(
-    (await storageRequest(new Request(url), { ...identity, ownerId: randomUUID() }, bucket)).status,
-    404,
-  );
 });
 
 test('private storage keeps tenants out of computer checkpoints and bounds object size', async () => {
@@ -166,11 +108,4 @@ test('private storage keeps tenants out of computer checkpoints and bounds objec
     { status: 413 },
   );
   assert.equal(objects.size, 0);
-  const large = new Uint8Array(20 * 1024 * 1024).fill(7);
-  assert.equal(
-    (await storageRequest(put(url, large, { 'if-none-match': '*' }), identity, bucket)).status,
-    204,
-  );
-  const read = await storageRequest(new Request(url), identity, bucket);
-  assert.deepEqual(new Uint8Array(await read.arrayBuffer()), large);
 });

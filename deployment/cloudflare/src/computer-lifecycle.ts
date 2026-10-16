@@ -14,7 +14,6 @@ export type ComputerIdentity = {
 export type ComputerState = ComputerIdentity & {
   phase: 'restoring' | 'ready' | 'dirty' | 'unsaved' | 'uncertain';
   stopped: boolean;
-  commands?: string[];
   checkpoint?: ComputerCheckpoint;
   previousCheckpoint?: ComputerCheckpoint;
   oversize?: { message: string; shown: boolean };
@@ -230,10 +229,6 @@ export function createComputerLifecycle(options: {
       ...expected,
       phase: 'restoring',
       stopped: false,
-      ...(previous?.generation === expected.generation &&
-        previous.commands && {
-          commands: previous.commands,
-        }),
       checkpoint: previous?.checkpoint,
       previousCheckpoint: previous?.previousCheckpoint,
       ...(notice && { notice }),
@@ -271,12 +266,9 @@ export function createComputerLifecycle(options: {
         const expected = identity(owner, input.generation);
         const id = ownerIdentity(input.id);
         const state = await prepare(expected);
-        if (state.commands?.includes(id)) throw new RuntimeControlError(409);
-        for (const previous of state.commands ?? [])
-          await options.claimCommand(expected, ownerIdentity(previous));
         if (!(await options.claimCommand(expected, id))) throw new RuntimeControlError(409);
         await assertCurrent(state);
-        const { commands: _commands, notice, oversize, ...next } = state;
+        const { notice, oversize, ...next } = state;
         const message = input.session
           ? [notice, oversize?.shown === false && oversize.message].filter(Boolean).join(' ')
           : '';

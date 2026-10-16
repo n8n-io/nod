@@ -47,12 +47,7 @@ export function createTenantLifecycle(options: {
   }
 
   async function stop(identity: TenantIdentity) {
-    const revoking = {
-      ...identity,
-      leaseExpiresAt: Number.isSafeInteger(identity.leaseExpiresAt) ? identity.leaseExpiresAt : 0,
-      revoking: true,
-      stopped: false,
-    };
+    const revoking = { ...identity, revoking: true, stopped: false };
     await write(revoking);
     await options.stopComputers?.(revoking);
     await options.stop();
@@ -141,8 +136,7 @@ export function createTenantLifecycle(options: {
         if (
           !identity ||
           identity.stopped ||
-          (identity.revoking !== true &&
-            (!Number.isSafeInteger(identity.leaseExpiresAt) || identity.leaseExpiresAt > now()))
+          (!identity.revoking && identity.leaseExpiresAt > now())
         )
           return;
         return stop(identity);

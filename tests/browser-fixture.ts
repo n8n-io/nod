@@ -213,7 +213,6 @@ export type DevtoolsModel = {
   frameOf: Record<string, string>;
   values: Map<string, string>;
   evaluate?(expression: string): unknown;
-  selects?: Set<string>;
   masked?: boolean;
   failMasks?: boolean;
   steal?: { after: number; field: string };
@@ -259,7 +258,6 @@ export async function fakeDevtools(model: DevtoolsModel) {
       if (expression.includes('__ottoField = node')) {
         if (!here) return '';
         model.armed = model.field;
-        if (model.selects?.has(model.field!)) return 'SELECT';
         model.values.set(model.field!, '');
         return 'INPUT';
       }
@@ -284,14 +282,6 @@ export async function fakeDevtools(model: DevtoolsModel) {
             },
           },
         });
-      }
-      if (expression.includes('choices.includes')) {
-        if (!here || model.armed !== model.field) return false;
-        const choices = JSON.parse(
-          /const choices = (\[[^\]]*\])/.exec(expression)![1]!,
-        ) as string[];
-        model.values.set(model.field!, choices[0]!);
-        return true;
       }
       return here ? 'INPUT' : '';
     };

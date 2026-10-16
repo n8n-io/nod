@@ -23,13 +23,10 @@ export async function createBrowserDownloadFixture() {
         'set-cookie': `synthetic-session=${cookie}; HttpOnly; SameSite=Strict; Path=/`,
       });
       response.end(`<html><title>Synthetic invoices</title><style>body > * { display: block; margin: 8px 0; }</style><body>
-        <textarea id="notes" aria-label="Notes" onkeydown="(window.keys??=[]).push(event.key)"></textarea><select id="format" aria-label="Format"><option value="csv">CSV</option><option value="pdf">PDF</option></select><input id="copy" type="checkbox" aria-label="Keep copy"><input id="identifier" aria-label="Account"><button id="continue" onclick="document.getElementById('identifier').remove();this.remove()">Continue</button>
         <a id="download" href="/invoice.pdf" download="invoice.pdf">Download invoice</a>
         <button id="popup" onclick="window.open('/invoice.pdf','_blank')">Invoice popup</button>
         <button id="blob" onclick="fetch('/invoice.pdf').then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=window.URL.createObjectURL(b);a.download='invoice.pdf';document.body.append(a);a.click()})">Invoice blob</button>
-        <button id="blob-view" onclick="const view=window.open('','_blank');fetch('/invoice.pdf').then(r=>r.blob()).then(b=>view.location=window.URL.createObjectURL(b))">View generated invoice</button>
         <a id="blob-anchor" href="#" onclick="event.preventDefault();fetch('/invoice.pdf').then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=window.URL.createObjectURL(b);a.download='invoice.pdf';document.body.append(a);a.click()})">Generate invoice</a>
-        <a id="inline" href="/inline.pdf">View invoice</a>
         <a id="cross-origin" href="${crossOrigin}/invoice.pdf">Download hosted invoice</a>
         <button id="large" onclick="window.location='/large.pdf'">Download large invoice</button>
         <button id="slow" onclick="window.location='/slow.pdf'">Download slow invoice</button>

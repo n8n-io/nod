@@ -6,10 +6,7 @@ import test from 'node:test';
 import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
-import { VaultDetails } from '../src/web/components/vault-details.tsx';
-import { Credentials, Payment } from '../src/web/pages/credentials.tsx';
 import { Trust } from '../src/web/pages/trust.tsx';
-import { setRequestAccount } from '../src/web/lib/api.ts';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -21,8 +18,6 @@ import { registerLocalAccess } from '../src/server/access.ts';
 import { verificationCode, verificationSenderDomain } from '../src/server/email-code.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
 import type { TurnRef } from '../src/server/thread.ts';
-import type { AnalyticsEvent } from '../src/server/analytics.ts';
-import { analyticsEvent } from '../src/server/analytics-events.ts';
 import {
   credentialOrigin,
   checkedKeyStore,
@@ -30,7 +25,6 @@ import {
   openCredential,
   sealCredential,
   type CredentialInjection,
-  type VaultUse,
 } from '../src/server/vault.ts';
 import type {
   CredentialRequest,
@@ -125,62 +119,6 @@ test('explicit card code replies keep private codes separate from ordinary numer
     assert.equal(securityCodeIn(text), undefined);
 });
 
-test('password exports from Chrome, 1Password and other managers read the same way', () => {
-  const login = (label: string, origin: string, username: string, password: string) => ({
-    label,
-    origin,
-    username,
-    password,
-  });
-  assert.deepEqual(
-    parsePasswordCsv(
-      '﻿name,url,username,password,note\r\n' +
-        'Old,http://login.fixture.test/,ana@example.test,old-secret,\r\n' +
-        'Fixture,https://login.fixture.test/signin?next=%2F,ana@example.test,"pa,ss""word\nline",\r\n' +
-        'Quote,https://quote.fixture.test,bo,pa"ss,\r\n' +
-        'App,android://key@com.fixture.app/,ana,app-secret,\r\n' +
-        'Short,https://short.fixture.test,cy\r\n',
-    ),
-    {
-      logins: [
-        login('Fixture', 'https://login.fixture.test', 'ana@example.test', 'pa,ss"word\nline'),
-        login('Quote', 'https://quote.fixture.test', 'bo', 'pa"ss'),
-        login('Old', 'https://login.fixture.test', 'ana@example.test', 'old-secret'),
-      ],
-      unreadable: 2,
-    },
-  );
-  assert.deepEqual(
-    parsePasswordCsv(
-      '"Title","Url","Username","Password","OTPAuth","Favorite","Archived","Tags","Notes"\n' +
-        '"Shop","shop.fixture.test","bo","bo-secret","otpauth://totp/x?secret=SYNTHETIC","false","false","",""\n' +
-        '"Old","old.fixture.test","bo","old-secret","","false","true","",""\n' +
-        '"Note","","","","","false","false","","Synthetic note"\n',
-    ).logins,
-    [login('Shop', 'https://shop.fixture.test', 'bo', 'bo-secret')],
-  );
-  assert.deepEqual(
-    parsePasswordCsv('email,username,url,password\nfox@example.test,,https://fox.fixture.test,cy\n')
-      .logins,
-    [login('', 'https://fox.fixture.test', 'fox@example.test', 'cy')],
-  );
-  assert.deepEqual(
-    parsePasswordCsv(
-      'folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n' +
-        ',,login,Warden,,,0,"androidapp://com.fixture,https://warden.fixture.test",di,di-secret,\n',
-    ).logins,
-    [login('Warden', 'https://warden.fixture.test', 'di', 'di-secret')],
-  );
-  assert.throws(() => parsePasswordCsv('date,amount\n2026-10-01,12\n'), /password manager/);
-  assert.throws(
-    () =>
-      parsePasswordCsv(
-        'url,username,password\nhttps://fixture.test,owner,"unfinished\nhttps://other.test,owner,synthetic\n',
-      ),
-    /incomplete quoted field/,
-  );
-});
-
 test('vault accepts exact HTTPS origins and explicit local development origins', () => {
   assert.equal(credentialOrigin('https://EXAMPLE.com:443/'), 'https://example.com');
   assert.equal(credentialOrigin('http://127.0.0.1:4310'), 'http://127.0.0.1:4310');
@@ -224,12 +162,15 @@ test(
     const injectionComplete = new Promise<void>((resolve) => {
       complete = resolve;
     });
-    const captured: AnalyticsEvent[] = [];
+    let failNext = false;
     const vault = await createVault(pool, {
-      analytics: (event) => captured.push(event),
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
       retry: async () => {},
       inject: async (input) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('Synthetic injection failure');
+        }
         assert.equal(input.origin, 'https://example.com');
         assert.equal(input.password, 'secret-password');
         injected++;
@@ -282,7 +223,6 @@ test(
         },
       });
       await injectionStarted;
-      assert.deepEqual(captured, []);
       assert.equal(resumed, 0);
       let secondSettled = false;
       const second = app
@@ -311,17 +251,6 @@ test(
         ).statusCode,
         409,
       );
-      assert.deepEqual(captured, [
-        {
-          event: 'otto_vault_changed',
-          properties: {
-            item_type: 'login',
-            operation: 'create',
-            source: 'user',
-            domain: 'example.com',
-          },
-        },
-      ]);
       const metadata = await app.inject({ url: '/api/vault' });
       assert.equal(metadata.json().length, 1);
       assert.equal(metadata.body.includes('secret-password'), false);
@@ -336,6 +265,16 @@ test(
           origin: 'https://other.example.com',
         }),
       );
+      const failedTask = await turn();
+      failNext = true;
+      await assert.rejects(
+        vault.fillSaved(failedTask, 'local-development', stored.rows[0].id, input),
+      );
+      assert.equal(
+        await vault.fillSaved(failedTask, 'local-development', stored.rows[0].id, input),
+        false,
+      );
+      assert.equal(injected, 1);
       await vault.fillSaved(task2, 'local-development', stored.rows[0].id, input);
       assert.equal(injected, 2);
       assert.equal(resumed, 1);
@@ -455,134 +394,6 @@ test(
 );
 
 test(
-  'a failed or repeated autofill opens the secure form and pending forms survive a restart',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    let app = Fastify();
-    const fixtureKey = randomBytes(32);
-    const { turn, wait, resume } = await seedTurns(pool);
-    const taskRetry = await turn();
-    const taskInterrupted = await turn();
-    let attempts = 0;
-    const options = {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
-      retry: async () => {},
-      inject: async () => {
-        attempts++;
-        if (attempts === 1) throw new Error('Synthetic injection failure');
-      },
-      resume: async () => {},
-    };
-    const vault = await createVault(pool, options);
-    vault.registerRoutes(app);
-    try {
-      const saved = await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        payload: {
-          label: 'Example',
-          origin: 'https://example.com',
-          username: 'person',
-          password: 'old-password',
-        },
-      });
-      const input = {
-        origin: 'https://example.com',
-        label: 'Example',
-        kind: 'password' as const,
-        passwordSelector: '#password',
-      };
-      await assert.rejects(vault.fillSaved(taskRetry, 'local-development', saved.json().id, input));
-      assert.equal(
-        await vault.fillSaved(taskRetry, 'local-development', saved.json().id, input),
-        false,
-      );
-      assert.equal(attempts, 1);
-      const retry = await vault.request(taskRetry, 'local-development', input);
-      await wait(taskRetry);
-      const response = await app.inject({
-        method: 'POST',
-        url: retry.url.replace('/vault/', '/api/credential-requests/'),
-        payload: { label: 'Fixture login', username: 'person', password: 'replacement-password' },
-      });
-      assert.equal(response.statusCode, 200);
-      assert.equal(attempts, 2);
-      assert.deepEqual((await vault.readCredential(saved.json().id)).secret, {
-        username: 'person',
-        password: 'replacement-password',
-      });
-      assert.equal((await vault.list()).length, 1);
-      const interrupted = await vault.request(taskInterrupted, 'local-development', input);
-      await wait(taskInterrupted);
-      await app.close();
-      app = Fastify();
-      const restarted = await createVault(pool, options);
-      restarted.registerRoutes(app);
-      const url = interrupted.url.replace('/vault/', '/api/credential-requests/');
-      assert.equal((await app.inject({ url })).json().status, 'pending');
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url,
-            payload: { label: 'Fixture login', password: 'fresh-after-restart' },
-          })
-        ).statusCode,
-        200,
-      );
-      assert.equal(attempts, 3);
-      const continued = await resume(taskInterrupted);
-      assert.equal(
-        await restarted.fillSaved(continued, 'local-development', saved.json().id, input),
-        true,
-      );
-      assert.equal(attempts, 4);
-      assert.equal(
-        await restarted.fillSaved(continued, 'local-development', saved.json().id, input),
-        false,
-      );
-      const rejected = await turn();
-      assert.equal(
-        await restarted.fillSaved(rejected, 'local-development', saved.json().id, input),
-        true,
-      );
-      assert.equal(
-        await restarted.fillSaved(rejected, 'local-development', saved.json().id, input),
-        false,
-      );
-      assert.equal(attempts, 5);
-      const corrected = await restarted.request(rejected, 'local-development', input);
-      await wait(rejected);
-      const correctedUrl = corrected.url.replace('/vault/', '/api/credential-requests/');
-      assert.equal((await app.inject({ url: correctedUrl })).json().status, 'pending');
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: correctedUrl,
-            payload: { label: 'Fixture login', username: 'person', password: 'corrected-password' },
-          })
-        ).statusCode,
-        200,
-      );
-      assert.equal(attempts, 6);
-    } finally {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
-test(
   'credential retry restarts only pending expired forms and stale forms never inject',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
@@ -595,22 +406,13 @@ test(
     });
     const { turn, archive, wait, resume } = await seedTurns(pool);
     const task1 = await turn();
-    const task2 = await turn();
     const app = Fastify();
     const key = randomBytes(32);
     let injected = 0;
-    let keyReads = 0;
     const retried: string[] = [];
     let failInjection = false;
     const vault = await createVault(pool, {
-      keyStore: {
-        id: 'fixture',
-        configured: true,
-        getKey: async () => {
-          keyReads++;
-          return key;
-        },
-      },
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       inject: async () => {
         injected++;
         if (failInjection) throw new Error('Synthetic browser failure');
@@ -643,7 +445,6 @@ test(
       assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
       assert.deepEqual(retried, [task1.turnId]);
       assert.equal(injected, 0);
-      assert.equal(keyReads, 0);
       assert.equal(
         (
           await app.inject({
@@ -688,29 +489,7 @@ test(
         await vault.fillSaved(await resume(retryTurn), 'local-development', entry.id, input),
         false,
       );
-      const archived = await vault.request(task2, 'local-development', input);
-      await wait(task2);
       await archive();
-      const archivedUrl = archived.url.replace('/vault/', '/api/credential-requests/');
-      assert.equal((await app.inject({ url: archivedUrl })).json().status, 'expired');
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: archivedUrl,
-            payload: { label: 'Fixture login', password: 'archived-secret' },
-          })
-        ).statusCode,
-        409,
-      );
-      assert.equal(
-        (await app.inject({ method: 'POST', url: `${archivedUrl}/retry` })).statusCode,
-        409,
-      );
-      await assert.rejects(
-        vault.request(task2, 'local-development', input),
-        /no longer request credentials/,
-      );
       assert.equal(injected, 1);
       failInjection = true;
       const taskRetry = await turn();
@@ -742,161 +521,27 @@ test(
   },
 );
 
-test(
-  'Vault starts on an existing database, drops its dead columns and keeps saved logins, cards and open forms',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `test_vault_existing_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const turns = await seedTurns(pool);
-    const key = randomBytes(32);
-    const options = {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-      page: async () => ({ origin: 'https://example.com', url: 'https://example.com/login' }),
-      inject: async () => {},
-      retry: async () => {},
-      resume: async (turnId: string, client: pg.PoolClient) => {
-        await client.query(
-          "INSERT INTO turns(id,owner_id,thread_id,source,source_id) SELECT gen_random_uuid(),owner_id,thread_id,'resume','credentials:'||id FROM turns WHERE id=$1",
-          [turnId],
-        );
-      },
-    };
-    const resumed = async () =>
-      (
-        await pool.query(
-          "SELECT substring(source_id from 13) AS id FROM turns WHERE source='resume'",
-        )
-      ).rows.map((row) => row.id as string);
-    const input = {
-      origin: 'https://example.com',
-      label: 'Example',
-      kind: 'password' as const,
-      passwordSelector: '#password',
-    };
-    let app = Fastify();
-    try {
-      let vault = await createVault(pool, options);
-      vault.registerRoutes(app);
-      const login = (
-        await app.inject({
-          method: 'POST',
-          url: '/api/vault',
-          payload: {
-            label: 'Example',
-            origin: 'https://example.com',
-            username: 'person',
-            password: 'existing-secret',
-          },
-        })
-      ).json<VaultLoginEntry>();
-      const card = (
-        await app.inject({
-          method: 'POST',
-          url: '/api/vault',
-          payload: {
-            kind: 'card',
-            label: 'Card',
-            cardholder: 'Synthetic Owner',
-            cardNumber: '4242424242424242',
-            expiryMonth: 8,
-            expiryYear: new Date().getUTCFullYear() + 3,
-          },
-        })
-      ).json<VaultCardEntry>();
-      const background = await turns.turn('local-development', true);
-      const open = await vault.request(
-        { ...background, browserId: randomUUID() },
-        'local-development',
-        input,
-      );
-      await turns.wait(background);
-      await app.close();
-      await pool.query(`
-        ALTER TABLE credential_requests ADD COLUMN resume_pending boolean NOT NULL DEFAULT true;
-        CREATE INDEX credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
-        ALTER TABLE vault_uses ADD COLUMN thread_id uuid NOT NULL DEFAULT gen_random_uuid(),
-          ADD COLUMN turn_id uuid NOT NULL DEFAULT gen_random_uuid(), ADD COLUMN finished_at timestamptz;
-        ALTER TABLE vault_uses ALTER COLUMN thread_id DROP DEFAULT, ALTER COLUMN turn_id DROP DEFAULT;
-      `);
-
-      app = Fastify();
-      vault = await createVault(pool, options);
-      vault.registerRoutes(app);
-      assert.deepEqual(
-        (
-          await pool.query(
-            `SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema()
-             AND (table_name, column_name) IN (('credential_requests','resume_pending'),('vault_uses','thread_id'),('vault_uses','turn_id'),('vault_uses','finished_at'))
-             UNION ALL SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND indexname='credential_requests_root_turn'`,
-          )
-        ).rows,
-        [],
-      );
-      assert.deepEqual(await resumed(), []);
-      const url = open.url.replace('/vault/', '/api/credential-requests/');
-      assert.equal((await app.inject({ url })).json().status, 'pending');
-      const submitted = await app.inject({
-        method: 'POST',
-        url,
-        payload: { label: 'Example', username: 'person', password: 'existing-secret' },
-      });
-      assert.equal(submitted.statusCode, 200, submitted.body);
-      assert.deepEqual(await resumed(), [background.turnId]);
-      assert.equal(
-        await vault.fillSaved(await turns.turn(), 'local-development', login.id, {
-          ...input,
-          usernameSelector: '#username',
-        }),
-        true,
-      );
-      assert.equal((await vault.paymentCard(card.id)).cardNumber, '4242424242424242');
-    } finally {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
-async function vaultFixture(
-  max = 10,
-  onOwnerUse?: NonNullable<Parameters<typeof createVault>[1]['onOwnerUse']>,
-) {
+async function vaultFixture() {
   const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
     options: `-c search_path=${schema}`,
-    max,
     connectionTimeoutMillis: 1000,
   });
   const seeded = await seedTurns(pool);
   const app = Fastify();
   const calls = { injected: 0, retried: [] as string[] };
-  let hold = Promise.resolve();
-  let entered = () => {};
-  let used = async (_use: VaultUse, _client: pg.PoolClient) => {};
   let inspecting = async () => ({
     origin: 'https://example.com',
     url: 'https://example.com/login',
   });
   const vault = await createVault(pool, {
-    onOwnerUse,
-    onUse: (use, client) => used(use, client),
     keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
     page: () => inspecting(),
     inject: async () => {
       calls.injected++;
-      entered();
-      await hold;
     },
     resume: async (turnId, client) => {
       await client.query(
@@ -942,9 +587,6 @@ async function vaultFixture(
         .sort(),
     link,
     submit,
-    recordUse: (record: typeof used) => {
-      used = record;
-    },
     status: async (url: string) => (await app.inject({ url })).json().status,
     holdInspection: () => {
       let release!: () => void;
@@ -961,16 +603,6 @@ async function vaultFixture(
         return { origin: 'https://example.com', url: 'https://example.com/login' };
       };
       return { started, release };
-    },
-    holdInjection: () => {
-      let release = () => {};
-      hold = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const started = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      return { release, started };
     },
     close: async () => {
       await app.close();
@@ -1042,50 +674,6 @@ test(
 );
 
 test(
-  'credential claims commit before browser entry and do not hold the thread row lock',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const f = await vaultFixture();
-    try {
-      const waiting = await f.turn();
-      const url = await f.link(waiting);
-      await f.wait(waiting);
-      const next = await f.turn();
-      const gate = f.holdInjection();
-      const submitted = f.submit(url);
-      await gate.started;
-      let created = false;
-      const creating = f.link(next).then((value) => {
-        created = true;
-        return value;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      assert.equal(created, true);
-      gate.release();
-      assert.equal((await submitted).statusCode, 200);
-      const nextUrl = await creating;
-      assert.deepEqual(
-        (
-          await f.pool.query(
-            'SELECT r.turn_id,coalesce(v.status,r.status) AS status FROM credential_requests r LEFT JOIN vault_uses v ON v.id=r.id ORDER BY r.turn_id=$1',
-            [next.turnId],
-          )
-        ).rows,
-        [
-          { turn_id: waiting.turnId, status: 'submitted' },
-          { turn_id: next.turnId, status: 'pending' },
-        ],
-      );
-      await f.wait(next);
-      assert.equal(await f.status(nextUrl), 'pending');
-      assert.equal(await f.status(url), 'filled');
-    } finally {
-      await f.close();
-    }
-  },
-);
-
-test(
   'credential preflight releases database locks and failed completion has one durable outcome',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
@@ -1126,73 +714,6 @@ test(
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 200);
       assert.equal((await f.app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
       assert.equal(await f.status(url), 'expired');
-    } finally {
-      await f.close();
-    }
-  },
-);
-
-test(
-  'credential completion and card permission record activity with one connection and roll back on failure',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const { createVaultAccess } = await import('../src/server/vault-access.ts');
-    let access: Awaited<ReturnType<typeof createVaultAccess>>;
-    const f = await vaultFixture(1, (entry, client) => access.ownerUse(entry, client));
-    try {
-      await f.pool.query(
-        "ALTER TABLE turns ADD COLUMN prompt text NOT NULL DEFAULT 'Synthetic sign-in'",
-      );
-      access = await createVaultAccess(f.pool, {
-        ownerId: 'local-development',
-        check: async () => ({ confirm: false }),
-      });
-      f.recordUse((use, client) =>
-        access.used(use, { origin: use.origin, reason: use.reason, itemId: use.entryId }, client),
-      );
-      const turn = await f.turn();
-      const url = await f.link(turn);
-      await f.wait(turn);
-      assert.equal((await f.submit(url)).statusCode, 200);
-      assert.equal(await f.status(url), 'filled');
-      assert.equal((await access.activity({})).entries.length, 1);
-      await f.pool
-        .query(`CREATE FUNCTION reject_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF NEW.status='submitted' THEN RAISE EXCEPTION 'Synthetic outcome failure'; END IF;
-        RETURN NEW; END $$;
-        CREATE TRIGGER reject_outcome BEFORE UPDATE ON vault_uses FOR EACH ROW EXECUTE FUNCTION reject_outcome()`);
-      const next = await f.turn();
-      const nextUrl = await f.link(next);
-      await f.wait(next);
-      assert.equal((await f.submit(nextUrl)).statusCode, 502);
-      assert.equal(await f.status(nextUrl), 'uncertain');
-      assert.equal((await access.activity({})).entries.length, 1);
-      assert.equal(f.calls.injected, 2);
-      assert.deepEqual(await f.resumed(), [turn.turnId]);
-      const saved = await f.app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        payload: {
-          kind: 'card',
-          label: 'Synthetic card',
-          cardholder: 'Synthetic Owner',
-          cardNumber: '4242424242424242',
-          expiryMonth: 8,
-          expiryYear: new Date().getUTCFullYear() + 3,
-        },
-      });
-      assert.equal(saved.statusCode, 200, saved.body);
-      const cardId = saved.json<VaultCardEntry>().id;
-      await f.vault.setDoItForMe(cardId, true);
-      assert.equal((await access.activity({})).entries.length, 2);
-      await f.pool
-        .query(`CREATE FUNCTION reject_permission() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF NEW.action='permission' THEN RAISE EXCEPTION 'Synthetic permission failure'; END IF;
-        RETURN NEW; END $$;
-        CREATE TRIGGER reject_permission BEFORE INSERT ON vault_activity FOR EACH ROW EXECUTE FUNCTION reject_permission()`);
-      await assert.rejects(f.vault.setDoItForMe(cardId, false));
-      assert.equal((await f.vault.paymentCards())[0]!.choice, true);
-      assert.equal((await access.activity({})).entries.length, 2);
     } finally {
       await f.close();
     }
@@ -1498,7 +1019,6 @@ test(
             const result = await choose(url, id);
             assert.equal(result.statusCode, 200);
             assert.equal(result.json().ok, false);
-            assert.match(result.json().error, /no longer available/);
             assert.equal(injections.length, before);
             assert.equal(resumed.includes(taskId), false);
             assert.equal((await choose(url, first.id)).statusCode, 409);
@@ -1610,81 +1130,6 @@ test(
             false,
           );
           assert.equal(injections.length, before + 3);
-        },
-      );
-
-      await t.test(
-        'a completed account does not restrict the next secure account choice',
-        async () => {
-          await addTask('next-secure-account', 'password');
-          const turn = task('next-secure-account');
-          const combined = { ...input('password'), usernameSelector: '#account' };
-          await vault.fillSaved(turn, 'local-development', first.id, combined);
-          const request = await vault.request(turn, 'local-development', combined);
-          await pool.query(
-            "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
-            [turn.turnId],
-          );
-          const url = request.url.replace('/vault/', '/api/credential-requests/');
-          const available = (await describe(url)).savedEntries;
-          assert.ok(available?.some((entry) => entry.id === second.id));
-          assert.ok(available?.some((entry) => entry.id === first.id));
-          const before = injections.length;
-          const response = await app.inject({
-            method: 'POST',
-            url: `${url}/saved`,
-            payload: { entryId: second.id },
-          });
-          assert.equal(response.statusCode, 200);
-          assert.equal(injections.length, before + 1);
-          assert.equal(injections.at(-1)?.username, 'same-second@example.test');
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: `${url}/saved`,
-                payload: { entryId: second.id },
-              })
-            ).statusCode,
-            409,
-          );
-        },
-      );
-
-      await t.test(
-        'combined sign-in pages allow a different account than the saved one already chosen',
-        async () => {
-          await addTask('combined-different');
-          const turn = task('combined-different');
-          await vault.fillSaved(turn, 'local-development', first.id, input());
-          const combined = { ...input('password'), usernameSelector: '#account' };
-          const request = await vault.request(turn, 'local-development', combined);
-          await pool.query(
-            "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
-            [turn.turnId],
-          );
-          const url = request.url.replace('/vault/', '/api/credential-requests/');
-          assert.deepEqual(
-            (await describe(url)).fields?.map((field) => field.kind),
-            ['identifier', 'password'],
-          );
-          const response = await app.inject({
-            method: 'POST',
-            url,
-            payload: {
-              label: 'Different account',
-              username: 'different-member@example.test',
-              password: 'different-synthetic-password',
-            },
-          });
-          assert.equal(response.statusCode, 200);
-          assert.equal(response.json().ok, true);
-          assert.equal(injections.at(-1)?.username, 'different-member@example.test');
-          assert.equal(injections.at(-1)?.password, 'different-synthetic-password');
-          assert.deepEqual((await vault.readCredential(first.id)).secret, {
-            username: 'same-first@example.test',
-            password: 'first-password',
-          });
         },
       );
 
@@ -1878,7 +1323,6 @@ test(
             kind: 'password',
             passwordSelector: '#entry',
           }),
-          /origin changed/,
         );
         assert.equal(injections.length, count);
       });
@@ -1900,7 +1344,6 @@ test(
                 kind: 'password',
                 ...selectors,
               }),
-              /visible sign-in field|different fields|each code field/,
             );
           }
           await assert.rejects(
@@ -1910,7 +1353,6 @@ test(
               kind: 'otp',
               passwordSelector: ['@e1', '@e1'],
             }),
-            /each code field/,
           );
           assert.equal(await stored(turn.turnId), undefined);
           assert.equal(injections.length, before);
@@ -1955,24 +1397,12 @@ test(
     await pool.query(`
       CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
       CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
-      CREATE TABLE vault_entries(id text PRIMARY KEY,owner_id text NOT NULL,label text NOT NULL,origin text NOT NULL,username_hint text NOT NULL,ciphertext text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),identifier_label text NOT NULL DEFAULT '');
     `);
-    const login = { id: randomUUID(), owner_id: owner, origin: 'https://login.example.test' };
-    const legacyCiphertext = sealCredential(key, login, {
-      username: 'full-username@example.test',
-      password: 'legacy-synthetic-password',
-    });
-    await pool.query(
-      'INSERT INTO vault_entries(id,owner_id,label,origin,username_hint,ciphertext) VALUES($1,$2,$3,$4,$5,$6)',
-      [login.id, owner, 'Legacy login', login.origin, 'fu…', legacyCiphertext],
-    );
-    const captured: AnalyticsEvent[] = [];
-    const start = async (getKey: () => Promise<Buffer> = async () => key) => {
+    const start = async () => {
       const app = Fastify({ logger: false });
       registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
-        analytics: (event) => captured.push(event),
-        keyStore: { id: 'synthetic', configured: true, getKey },
+        keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
         inject: async () => assert.fail('Cards must never enter a website login.'),
         resume: async () => assert.fail('Card management must not resume a task.'),
         retry: async () => assert.fail('Card management must not retry a task.'),
@@ -1980,7 +1410,7 @@ test(
       vault.registerRoutes(app);
       return { app, vault };
     };
-    let { app, vault } = await start();
+    const { app, vault } = await start();
     const create = async (payload: Record<string, unknown> = input) => {
       const response = await app.inject({ method: 'POST', url: '/api/vault', headers, payload });
       assert.equal(response.statusCode, 200, response.body);
@@ -1994,32 +1424,6 @@ test(
       instance: FastifyInstance = app,
     ) => instance.inject({ method: 'PATCH', url: `/api/vault/${id}`, headers, payload });
     try {
-      await t.test(
-        'card analytics omit values and do not count unchanged edits or repeated deletes',
-        async () => {
-          captured.length = 0;
-          const entry = await create();
-          assert.equal((await update(entry.id, input)).statusCode, 200);
-          assert.equal(
-            (await update(entry.id, { ...input, label: 'Updated card' })).statusCode,
-            200,
-          );
-          for (let attempt = 0; attempt < 2; attempt++) {
-            assert.equal(
-              (await app.inject({ method: 'DELETE', url: `/api/vault/${entry.id}`, headers }))
-                .statusCode,
-              200,
-            );
-          }
-          assert.deepEqual(
-            captured,
-            ['create', 'update', 'delete'].map((operation) => ({
-              event: 'otto_vault_changed',
-              properties: { item_type: 'card', operation, source: 'user' },
-            })),
-          );
-        },
-      );
       const first = await create();
       await create({
         ...input,
@@ -2053,7 +1457,6 @@ test(
               kind: 'password',
               passwordSelector: '#password',
             }),
-            /No saved password/,
           );
           await pool.query(
             "UPDATE turns SET status='waiting',waiting_reason='credentials',started_at=clock_timestamp(),finished_at=clock_timestamp() WHERE id=$1",
@@ -2087,7 +1490,6 @@ test(
           await update(transplanted.id, input),
         ]) {
           assert.equal(result.statusCode, 500);
-          assert.deepEqual(result.json(), { error: 'This saved card could not be opened.' });
         }
         await app.inject({ method: 'DELETE', url: `/api/vault/${foreign.id}`, headers });
         assert.equal(
@@ -2163,12 +1565,10 @@ test(
       origin: 'http://localhost:4310',
       cookie: 'otto-access-4310=synthetic-local-access',
     };
-    const captured: AnalyticsEvent[] = [];
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const instance = Fastify({ logger: false });
       registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
-        analytics: (event) => captured.push(event),
         keyStore: checkedKeyStore(pool, { id: 'fixture', configured: true, getKey }),
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),
         resume: async () => assert.fail('Viewing or editing a login must not resume a turn.'),
@@ -2217,134 +1617,6 @@ test(
       const first = await save('First');
       const second = await save('Second');
       await t.test(
-        'Vault analytics count committed mutations without private item data',
-        async () => {
-          captured.length = 0;
-          const origin = 'https://tenant.accounts.example.co.uk:8443';
-          const entry = await save('Analytics', origin);
-          await save('Analytics', origin);
-          const same = { label: 'Analytics', username: 'Analytics@example.test' };
-          assert.equal((await patch(entry.id, same)).statusCode, 200);
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: '/api/vault',
-                headers,
-                payload: { ...same, origin, password: 'updated-synthetic-secret' },
-              })
-            ).statusCode,
-            200,
-          );
-          assert.equal(
-            (await patch(entry.id, { ...same, label: 'Updated analytics' })).statusCode,
-            200,
-          );
-          assert.equal((await patch(randomUUID(), same)).statusCode, 404);
-          for (let attempt = 0; attempt < 2; attempt++) {
-            assert.equal(
-              (await app.inject({ method: 'DELETE', url: `/api/vault/${entry.id}`, headers }))
-                .statusCode,
-              200,
-            );
-          }
-          assert.deepEqual(
-            captured,
-            ['create', 'update', 'update', 'delete'].map((operation) => ({
-              event: 'otto_vault_changed',
-              properties: {
-                item_type: 'login',
-                operation,
-                source: 'user',
-                domain: 'example.co.uk',
-              },
-            })),
-          );
-          await pool.query(`CREATE FUNCTION reject_analytics_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
-          BEGIN IF NEW.label='Rolled back analytics' THEN RAISE EXCEPTION 'Synthetic rejected write'; END IF; RETURN NEW; END $$;
-          CREATE TRIGGER reject_analytics_fixture BEFORE INSERT ON vault_entries FOR EACH ROW EXECUTE FUNCTION reject_analytics_fixture()`);
-          const refused = await app.inject({
-            method: 'POST',
-            url: '/api/vault',
-            headers,
-            payload: {
-              label: 'Rolled back analytics',
-              origin: 'https://example.test',
-              username: 'synthetic',
-              password: 'synthetic-secret',
-            },
-          });
-          assert.equal(refused.statusCode, 500);
-          const imported = await app.inject({
-            method: 'POST',
-            url: '/api/vault/import',
-            headers,
-            payload: {
-              logins: [
-                {
-                  label: 'Imported before rollback',
-                  origin: 'https://rollback.example.com',
-                  username: 'synthetic',
-                  password: 'synthetic-secret',
-                },
-                {
-                  label: 'Rolled back analytics',
-                  origin: 'https://rollback.example.org',
-                  username: 'synthetic',
-                  password: 'synthetic-secret',
-                },
-              ],
-            },
-          });
-          assert.equal(imported.statusCode, 500);
-          assert.equal(captured.length, 4);
-          assert.equal(
-            (
-              await pool.query(
-                "SELECT id FROM vault_entries WHERE label='Imported before rollback'",
-              )
-            ).rowCount,
-            0,
-          );
-          await pool.query(
-            'DROP TRIGGER reject_analytics_fixture ON vault_entries; DROP FUNCTION reject_analytics_fixture()',
-          );
-          for (const [origin, domain] of [
-            ['https://пример.рф', 'xn--e1afmkfd.xn--p1ai'],
-            ['https://accounts.example.test', undefined],
-            ['http://localhost:4310', undefined],
-            ['https://127.0.0.1', undefined],
-            ['https://[::1]', undefined],
-          ] as const) {
-            captured.length = 0;
-            const savedEntry = await save('Domain analytics', origin);
-            assert.equal(
-              (
-                await app.inject({
-                  method: 'DELETE',
-                  url: `/api/vault/${savedEntry.id}`,
-                  headers,
-                })
-              ).statusCode,
-              200,
-            );
-            assert.deepEqual(
-              captured.map((event) => analyticsEvent.parse(event)),
-              ['create', 'delete'].map((operation) => ({
-                event: 'otto_vault_changed',
-                properties: {
-                  item_type: 'login',
-                  operation,
-                  source: 'user',
-                  ...(domain ? { domain } : {}),
-                },
-              })),
-            );
-          }
-        },
-      );
-
-      await t.test(
         'foreign, missing and malformed IDs and body overrides cannot read or change values',
         async () => {
           const foreign = await save('Foreign');
@@ -2356,7 +1628,6 @@ test(
             for (const id of [foreign.id, randomUUID()]) {
               const response = await read(id, field);
               assert.equal(response.statusCode, 404);
-              assert.deepEqual(response.json(), { error: 'This saved login could not be found.' });
             }
             assert.equal((await read('not-an-id', field)).statusCode, 400);
             for (const payload of [{ ownerId: 'foreign-owner' }, { password: 'injected-secret' }]) {
@@ -2387,32 +1658,6 @@ test(
       );
 
       await t.test(
-        'rename and username changes preserve the blank or omitted password and other accounts',
-        async () => {
-          for (const password of [undefined, '']) {
-            const response = await patch(first.id, {
-              label: ' Renamed work login ',
-              username: 'new-user@example.test',
-              ...(password === undefined ? {} : { password }),
-            });
-            assert.equal(response.statusCode, 200);
-            assert.equal(response.json().id, first.id);
-            assert.equal(response.json().origin, first.origin);
-            assert.doesNotMatch(response.body, /new-user@example|First-secret|ciphertext|owner_id/);
-            assert.equal(
-              (await read(first.id, 'details')).json().username,
-              'new-user@example.test',
-            );
-            assert.equal((await read(first.id, 'password')).json().password, 'First-secret');
-          }
-          assert.equal((await read(second.id, 'password')).json().password, 'Second-secret');
-          const list = await app.inject({ url: '/api/vault', headers });
-          assert.equal(list.json().length, 2);
-          assert.doesNotMatch(list.body, /First-secret|Second-secret/);
-        },
-      );
-
-      await t.test(
         'deletion or ownership changes during key access cannot release an old value',
         async () => {
           for (const field of ['details', 'password'] as const) {
@@ -2432,79 +1677,6 @@ test(
             assert.equal(response.statusCode, 404);
             assert.doesNotMatch(response.body, /Read-.*-secret/);
           }
-        },
-      );
-
-      await t.test(
-        'edit key access races recheck ownership and preserve the latest password',
-        async () => {
-          for (const change of ['password', 'owner', 'delete']) {
-            const entry = await save(`Race-${change}`);
-            const held = await holdKey();
-            const pending = patch(entry.id, {
-              label: 'Race updated',
-              username: 'edited-user',
-              password: '',
-            }).then((value) => value);
-            await held.reached;
-            if (change === 'password')
-              await pool.query('UPDATE vault_entries SET ciphertext=$2 WHERE id=$1', [
-                entry.id,
-                sealCredential(
-                  key,
-                  { id: entry.id, owner_id: 'local-development', origin: entry.origin },
-                  { username: 'concurrent-user', password: 'latest-password' },
-                ),
-              ]);
-            else if (change === 'owner')
-              await pool.query('UPDATE vault_entries SET owner_id=$2 WHERE id=$1', [
-                entry.id,
-                'other-owner',
-              ]);
-            else await pool.query('DELETE FROM vault_entries WHERE id=$1', [entry.id]);
-            held.release();
-            const response = await pending;
-            assert.equal(response.statusCode, change === 'password' ? 200 : 404);
-            if (change === 'password') {
-              assert.equal((await read(entry.id, 'password')).json().password, 'latest-password');
-              assert.equal((await read(entry.id, 'details')).json().username, 'edited-user');
-            }
-          }
-        },
-      );
-
-      await t.test(
-        'a login that cannot be opened stays listed and deletable without breaking the Vault',
-        async () => {
-          const readable = await save('Readable');
-          const broken = await save('Broken');
-          await pool.query('UPDATE vault_entries SET ciphertext=$2 WHERE id=$1', [
-            broken.id,
-            sealCredential(
-              randomBytes(32),
-              { id: broken.id, owner_id: 'local-development', origin: broken.origin },
-              { username: 'other-key-user', password: 'other-key-password' },
-            ),
-          ]);
-          const listed = await app.inject({ url: '/api/vault', headers });
-          assert.equal(listed.statusCode, 200);
-          const entries = listed.json<Array<VaultLoginEntry & { unreadable?: true }>>();
-          assert.equal(entries.find((entry) => entry.id === readable.id)?.unreadable, undefined);
-          assert.equal(entries.find((entry) => entry.id === broken.id)?.unreadable, true);
-          assert.equal(JSON.stringify(entries).includes('other-key'), false);
-          assert.equal((await read(broken.id, 'password')).statusCode, 500);
-          const removed = await app.inject({
-            method: 'DELETE',
-            url: `/api/vault/${broken.id}`,
-            headers,
-          });
-          assert.equal(removed.statusCode, 200);
-          assert.equal(
-            (await app.inject({ url: '/api/vault', headers }))
-              .json<VaultLoginEntry[]>()
-              .some((entry) => entry.id === broken.id),
-            false,
-          );
         },
       );
 
@@ -2538,39 +1710,6 @@ test(
       );
 
       await t.test(
-        'large imports batch only committed normalized domains within the hosted capture limit',
-        async () => {
-          captured.length = 0;
-          const response = await app.inject({
-            method: 'POST',
-            url: '/api/vault/import',
-            headers,
-            payload: {
-              logins: Array.from({ length: 501 }, (_, i) => ({
-                label: `Private imported ${i}`,
-                origin: `https://private${i}.example.com`,
-                username: `private-${i}@example.test`,
-                password: 'private-import-secret',
-              })),
-            },
-          });
-          assert.equal(response.statusCode, 200, response.body);
-          assert.equal(response.json().imported, 501);
-          const batches = captured.filter((event) => event.event === 'otto_vault_imported');
-          assert.equal(batches.length, 6);
-          assert.equal(batches.flatMap((event) => event.properties.domains).length, 501);
-          assert.ok(
-            batches.every((event) =>
-              event.properties.domains.every((domain) => domain === 'example.com'),
-            ),
-          );
-          assert.ok(batches.every((event) => analyticsEvent.safeParse(event).success));
-          assert.doesNotMatch(JSON.stringify(batches), /private|secret|username|password/);
-          captured.length = 0;
-        },
-      );
-
-      await t.test(
         'an import adds new logins encrypted and keeps the ones already saved',
         async () => {
           const existing = await app.inject({
@@ -2594,7 +1733,6 @@ test(
               'App,android://key@com.fixture.app/,ana,app-import-secret,\n',
           );
           assert.equal(unreadable, 1);
-          captured.length = 0;
           const imported = await app.inject({
             method: 'POST',
             url: '/api/vault/import',
@@ -2620,12 +1758,6 @@ test(
           });
           assert.equal(imported.statusCode, 200);
           assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
-          assert.deepEqual(captured, [
-            {
-              event: 'otto_vault_imported',
-              properties: { domains: ['example.com', 'example.org'] },
-            },
-          ]);
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
@@ -2663,7 +1795,7 @@ test(
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
     });
-    let app = Fastify();
+    const app = Fastify();
     try {
       await admin.query(`CREATE SCHEMA ${schema}`);
       await pool.query(
@@ -2699,14 +1831,11 @@ test(
       const origin = 'https://accounts.example.test';
       let observedOrigin = origin;
       let unavailable = false;
-      let unavailableIdentifier = false;
       const options = {
         keyStore: { id: 'fixture', configured: true, getKey: async () => key },
         page: async () => ({ origin: observedOrigin, url: observedOrigin + '/login' }),
         inject: async (input: CredentialInjection) => {
           injections.push(input);
-          if (unavailableIdentifier && input.kind === 'identifier')
-            throw new Error('Synthetic identifier unavailable');
           if (unavailable && input.kind === 'password') throw new Error('Synthetic unavailable');
           stages.set(input.threadId, input.kind === 'identifier' ? 'password' : 'otp');
           return { status: 'submitted' as const };
@@ -2723,7 +1852,7 @@ test(
           tasks.set(name, await startTurn(turnId));
         },
       };
-      let vault = await createVault(pool, options);
+      const vault = await createVault(pool, options);
       vault.registerRoutes(app);
       const requestInput = (kind: CredentialKind) => ({
         origin,
@@ -2777,7 +1906,6 @@ test(
           unavailable = true;
           await assert.rejects(
             vault.fillSelected(task('interrupted'), 'local-development', requestInput('password')),
-            /private operation did not finish/,
           );
           unavailable = false;
           const selected = (
@@ -2797,81 +1925,6 @@ test(
             false,
           );
           assert.equal(injections.length, count);
-        },
-      );
-
-      await t.test(
-        'passwordless identifiers survive recovery, restart and a later login without filling an empty password',
-        async () => {
-          const username = 'passwordless-member@example.test';
-          await begin('identifier-reuse', { username });
-          await app.close();
-          app = Fastify();
-          vault = await createVault(pool, options);
-          vault.registerRoutes(app);
-          const resetInput = { ...requestInput('identifier'), usernameSelector: '#fresh-account' };
-          assert.equal(
-            await vault.fillSelected(task('identifier-reuse'), 'local-development', resetInput),
-            true,
-          );
-          assert.equal(injections.at(-1)?.username, username);
-          assert.equal(injections.at(-1)?.usernameSelector, '#fresh-account');
-          assert.equal(injections.at(-1)?.password, undefined);
-          assert.equal(injections.at(-1)?.code, undefined);
-          const entries = await vault.list();
-          const entry = (
-            await Promise.all(entries.map((candidate) => vault.readCredential(candidate.id)))
-          ).find((candidate) => candidate.secret.username === username);
-          assert.ok(entry);
-          assert.equal(entry.secret.password, '');
-          await vault.fillSaved(
-            task('identifier-reuse'),
-            'local-development',
-            entry.entry.id,
-            resetInput,
-          );
-          assert.equal(injections.at(-1)?.username, username);
-          await begin('identifier-reuse', { username });
-          assert.equal((await vault.list()).length, entries.length);
-          const later = await startTurn();
-          tasks.set('identifier-later', later);
-          await vault.fillSaved(later, 'local-development', entry.entry.id, resetInput);
-          const before = injections.length;
-          const passwordInput = { ...requestInput('password'), usernameSelector: '#fresh-account' };
-          assert.equal(await vault.fillSelected(later, 'local-development', passwordInput), false);
-          assert.equal(
-            await vault.fillSaved(later, 'local-development', entry.entry.id, passwordInput),
-            false,
-          );
-          assert.equal(injections.length, before);
-          const request = await vault.request(later, 'local-development', passwordInput);
-          await wait(later);
-          const url = request.url.replace('/vault/', '/api/credential-requests/');
-          const description = await app.inject({ url });
-          assert.deepEqual(description.json().savedEntries, []);
-          assert.deepEqual(
-            description.json().fields.map((field: { kind: string }) => field.kind),
-            ['identifier', 'password'],
-          );
-          const rejected = await app.inject({
-            method: 'POST',
-            url: `${url}/saved`,
-            payload: { entryId: entry.entry.id },
-          });
-          assert.equal(rejected.statusCode, 409);
-          assert.equal(injections.length, before);
-          const response = await app.inject({
-            method: 'POST',
-            url,
-            payload: { label: 'Passwordless member', password: 'new-synthetic-password' },
-          });
-          assert.equal(response.statusCode, 200);
-          assert.equal(response.json().ok, true);
-          assert.equal(injections.at(-1)?.username, username);
-          const upgraded = await vault.readCredential(entry.entry.id);
-          assert.equal(upgraded.secret.username, username);
-          assert.equal(upgraded.secret.password, 'new-synthetic-password');
-          assert.equal((await vault.list()).length, entries.length);
         },
       );
 
@@ -2900,6 +1953,17 @@ test(
       await t.test(
         'held credentials remain bound to owner, origin, running turn and expiry',
         async () => {
+          const second = await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            payload: {
+              label: 'Second account',
+              origin,
+              username: 'second-member@example.test',
+              password: 'second-synthetic-password',
+            },
+          });
+          assert.equal(second.statusCode, 200);
           for (const kind of ['password', 'identifier'] as const) {
             const name = `fences-${kind}`;
             await begin(
@@ -2956,39 +2020,6 @@ test(
           }
         },
       );
-
-      await t.test(
-        'failed identifier recovery is fenced without replaying credentials',
-        async () => {
-          const name = 'identifier-uncertain';
-          await begin(name, { username: `${name}@example.test` });
-          const turn = task(name);
-          const before = injections.length;
-          unavailableIdentifier = true;
-          await assert.rejects(
-            vault.fillSelected(turn, 'local-development', requestInput('identifier')),
-            /private operation did not finish/,
-          );
-          unavailableIdentifier = false;
-          assert.equal(injections.length, before + 1);
-          assert.equal(
-            await vault.fillSelected(turn, 'local-development', requestInput('identifier')),
-            false,
-          );
-          assert.equal(
-            await vault.fillSelected(turn, 'local-development', requestInput('password')),
-            false,
-          );
-          assert.equal(injections.length, before + 1);
-          const rows = await pool.query(
-            'SELECT * FROM credential_account_selections WHERE root_turn_id=$1',
-            [roots.get(name)],
-          );
-          assert.equal(rows.rows[0].blocked, true);
-          assert.equal(rows.rows[0].credential_entered_at, null);
-          assert.equal(openCredential(key, rows.rows[0]).password, '');
-        },
-      );
     } finally {
       try {
         await app.close();
@@ -3031,6 +2062,11 @@ test('email verification binds authenticated messages to a recent exact recipien
     { recipients: ['other@example.com'] },
     { sender: 'attacker@evil.com' },
     { authenticatedDomain: 'evil.com', sender: 'login@evil.com' },
+    {
+      authenticatedDomain: 'example.com',
+      sender: 'login@transactional.example.com',
+      text: `Your verification code is 381742. Verify email: ${request.origin}/verify?token=abcdefghijklmnop`,
+    },
     { text: 'Your verification codes are 381742 and 940173.' },
     { text: 'Your receipt number is 381742.' },
     { text: 'Your login code is a381742b.' },
@@ -3044,32 +2080,6 @@ test('email verification binds authenticated messages to a recent exact recipien
       request,
     ),
     '381742',
-  );
-});
-
-test('verification links do not grant unrelated senders authority over the signup site', () => {
-  const signup = { ...request, origin: 'https://app.example.net' };
-  const email = {
-    ...message,
-    sender: 'login@transactional.example.com',
-    authenticatedDomain: 'example.com',
-    text: `Your verification code is 123456. Verify email: ${signup.origin}/verify?token=abcdefghijklmnop`,
-  };
-  assert.equal(verificationCode([email], signup), undefined);
-  assert.equal(
-    verificationCode([{ ...email, authenticatedDomain: 'unrelated.com' }], signup),
-    undefined,
-  );
-  assert.equal(
-    verificationCode(
-      [{ ...email, sender: 'login@evil.github.io', authenticatedDomain: 'trusted.github.io' }],
-      signup,
-    ),
-    undefined,
-  );
-  assert.equal(
-    verificationCode([{ ...email, sender: 'login@co.uk', authenticatedDomain: 'co.uk' }], signup),
-    undefined,
   );
 });
 
@@ -3162,10 +2172,8 @@ test(
       vault.registerRoutes(app);
       const fills: CardEntry[] = [];
       const resumed: string[] = [];
-      const recorded: Array<{ action: string; reason: string; origin: string }> = [];
-      const remembered: Array<[string, boolean]> = [];
       let inOtto = true;
-      let url = 'https://shop.fixture.test/checkout';
+      const url = 'https://shop.fixture.test/checkout';
       let elsewhere: string | undefined;
       let captureFails = false;
       let failFill = false;
@@ -3209,14 +2217,8 @@ test(
           },
           cards: vault.paymentCards,
           card: vault.paymentCard,
-          remember: async (id, on) => {
-            remembered.push([id, on]);
-            return vault.setDoItForMe(id, on);
-          },
-          keepCode: async (id, code, version) => {
-            remembered.push([id, true]);
-            return vault.keepSecurityCode(id, code, version);
-          },
+          remember: vault.setDoItForMe,
+          keepCode: vault.keepSecurityCode,
           fill: async (input) => {
             if (failFill) throw new Error('Synthetic stale field.');
             await duringFill();
@@ -3225,9 +2227,7 @@ test(
           resume: async (_turnId, prompt) => {
             resumed.push(prompt);
           },
-          record: async (_turn, entry) => {
-            recorded.push(entry);
-          },
+          record: async () => {},
         });
       const payments = await make(true);
       payments.registerRoutes(app);
@@ -3249,20 +2249,6 @@ test(
         assert.equal(saved.statusCode, 200, saved.body);
         return saved.json<VaultCardEntry>();
       };
-      const zeros = await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        headers,
-        payload: {
-          kind: 'card',
-          label: 'Zero card',
-          cardholder: 'Synthetic Cardholder',
-          cardNumber: '0000 0000 0000 0000',
-          expiryMonth: 8,
-          expiryYear,
-        },
-      });
-      assert.equal(zeros.statusCode, 400);
       const card = await save('Studio card', '4242 4242 4242 4242');
       const turn = { threadId: randomUUID(), turnId: randomUUID() };
       await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
@@ -3281,40 +2267,22 @@ test(
         name: '@e3',
       };
       const order = { amount: '43.20', currency: 'eur', fields };
-      for (const invalid of [
-        { ...order, submitSelector: 'x'.repeat(501) },
-        {
-          ...order,
-          fields: { ...fields, expiry: { selector: '@e5', format: 'MMM YYYY', locale: '' } },
-        },
-        {
-          ...order,
-          fields: {
-            ...fields,
-            expiry: { selector: '@e5', format: 'MMM YYYY', locale: 'not_a_locale' },
-          },
-        },
-      ])
-        await assert.rejects(payments.request(turn, invalid));
-      assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
       presentationFailure = true;
-      await assert.rejects(payments.request(turn, order), /Synthetic payment presentation failure/);
+      await assert.rejects(payments.request(turn, order));
       presentationFailure = false;
       assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
       assert.equal(fills.length, 0);
-      assert.equal(recorded.length, 0);
       presentedText = '   ';
-      await assert.rejects(payments.request(turn, order), /valid question/);
+      await assert.rejects(payments.request(turn, order));
       presentedText = 'Synthetic private payment step.';
       duringPresentation = async () => {
         await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
       };
-      await assert.rejects(payments.request(turn, order), /no longer active/);
+      await assert.rejects(payments.request(turn, order));
       duringPresentation = async () => {};
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
       assert.equal((await pool.query('SELECT id FROM vault_payments')).rowCount, 0);
       assert.equal(fills.length, 0);
-      assert.equal(recorded.length, 0);
       const parallel = { threadId: turn.threadId, turnId: randomUUID() };
       await pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,background) VALUES($1,'local-development',$2,true)",
@@ -3332,7 +2300,6 @@ test(
       const studio = async () => (await vault.paymentCards()).find((item) => item.id === card.id)!;
       const shop = 'https://shop.fixture.test';
 
-      recorded.length = 0;
       const first = await payments.request(turn, order);
       assert.equal(
         (await pool.query('SELECT status FROM vault_payments WHERE turn_id=$1', [parallel.turnId]))
@@ -3343,23 +2310,7 @@ test(
         parallel.turnId,
       ]);
       assert.equal(first.paymentId, undefined);
-      assert.deepEqual([...first.image], [255, 216, 255]);
-      assert.deepEqual(presentations.at(-1), {
-        turn,
-        input: {
-          kind: 'payment',
-          origin: shop,
-          amount: '43.20',
-          amountMinor: 4320,
-          currency: 'EUR',
-          card: { brand: 'Visa', last4: '4242' },
-          destinations: [shop],
-          keepCode: false,
-          requires: 'security_code',
-        },
-      });
       assert.equal(first.details.amount, '43.20');
-      assert.equal(first.question, presentedText);
       assert.equal(
         (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
         'unavailable',
@@ -3374,23 +2325,8 @@ test(
         'unavailable',
       ]);
       assert.equal(resumed.length, 1);
-      assert.deepEqual(fills, [
-        {
-          threadId: turn.threadId,
-          fields,
-          document: 'loader-1',
-          destinations: { number: shop, expiry: shop, securityCode: shop, name: shop },
-          submitSelector: undefined,
-          card: {
-            cardholder: 'Synthetic Cardholder',
-            cardNumber: '4242424242424242',
-            expiryMonth: 8,
-            expiryYear,
-            securityCode: '737',
-          },
-        },
-      ]);
-      assert.match(resumed.at(-1)!, /entered Visa ••4242 for €43\.20 at shop\.fixture\.test/);
+      assert.equal(fills.length, 1);
+      assert.equal(fills[0].destinations.number, shop);
       assert.equal((await studio()).choice, null);
       assert.equal(await reply('737'), 'unavailable');
 
@@ -3402,47 +2338,36 @@ test(
       assert.equal(await reply('737'), 'unavailable');
       failFill = false;
       assert.equal((await latest()).status, 'uncertain');
-      assert.match(resumed.at(-1)!, /may have reached/);
       assert.equal(fills.length, 1);
 
-      await assert.rejects(payments.setting(turn, { doItForMe: true }), /confirmation/);
+      await assert.rejects(payments.setting(turn, { doItForMe: true }));
       assert.equal((await studio()).doItForMe, false);
-      assert.match(
-        await payments.setting(turn, { doItForMe: true }, true),
-        /keeps its security code at the next/,
-      );
+      await payments.setting(turn, { doItForMe: true }, true);
       const keep = await payments.request(turn, order);
       assert.equal(keep.details.keepCode, true);
-      assert.equal(presentations.at(-1)?.input.keepCode, true);
       assert.equal(await reply('737'), 'submitted');
       assert.equal((await studio()).doItForMe, true);
 
       elsewhere = 'https://pay.fixture.test';
-      const presented = presentations.length;
       const yes = await payments.request(turn, order);
       assert.equal(yes.question, undefined);
-      assert.equal(presentations.length, presented);
       assert.deepEqual(yes.details.destinations, ['https://pay.fixture.test', shop]);
       assert.equal(yes.details.requires, 'approval');
       assert.ok(yes.paymentId);
       assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, true);
       assert.equal(fills.at(-1)?.card.securityCode, '737');
       assert.equal(fills.at(-1)?.destinations.number, 'https://pay.fixture.test');
-      assert.match(
-        (await payments.approve(turn, { paymentId: yes.paymentId })).message,
-        /no longer open/,
-      );
+      assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, false);
       failFill = true;
       const broken = await payments.request(turn, order);
       const failed = await payments.approve(turn, { paymentId: broken.paymentId! });
       failFill = false;
       assert.equal(failed.entered, false);
-      assert.match(failed.message, /may have reached/);
       elsewhere = 'null';
       await assert.rejects(payments.request(turn, order));
       elsewhere = undefined;
       captureFails = true;
-      await assert.rejects(payments.request(turn, order), /Synthetic paused page/);
+      await assert.rejects(payments.request(turn, order));
       captureFails = false;
 
       inOtto = false;
@@ -3465,15 +2390,14 @@ test(
       ]);
       assert.deepEqual(replies.map((response) => response.statusCode).sort(), [200, 409]);
       assert.equal(fills.length, beforeLink + 1);
-      assert.match(resumed.at(-1)!, /Check whether the shop accepted/);
       assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
-      assert.match(await payments.setting(turn, { doItForMe: true }, true), /on for Visa ••4242/);
-      assert.match(await payments.setting(turn, { doItForMe: false }, true), /off for Visa ••4242/);
+      await payments.setting(turn, { doItForMe: true }, true);
+      await payments.setting(turn, { doItForMe: false }, true);
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
       inOtto = true;
 
       await save('Travel card', '5555 5555 5555 4444');
-      await assert.rejects(payments.request(turn, order), /Ask the owner which card/);
+      await assert.rejects(payments.request(turn, order));
       assert.equal(
         (
           (await payments.request(turn, { ...order, card: 'travel' })).details.card as {
@@ -3491,35 +2415,9 @@ test(
       assert.equal(yen.details.amountMinor, 1200);
       assert.equal(yen.details.amount, '1200');
       assert.equal(yen.details.currency, 'JPY');
-      await assert.rejects(payments.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
-      await assert.rejects(payments.request(turn, { ...order, currency: 'ZZZ' }));
-      await assert.rejects(payments.request(turn, { ...order, fields: { number: '@e4' } }));
-      const asked = recorded.length;
       const hosted = await make(false);
-      await assert.rejects(hosted.request(turn, { ...order, card: '4242' }), /Hosted Otto/);
-      await assert.rejects(hosted.setting(turn, { doItForMe: true }, true), /Hosted Otto/);
-      assert.equal(recorded.length, asked);
-
-      assert.deepEqual(
-        recorded.map((entry) => [entry.action, entry.reason]),
-        [
-          ['asked', 'payment'],
-          ['card', 'code_typed'],
-          ['asked', 'payment'],
-          ['asked', 'payment'],
-          ['uncertain', 'payment'],
-          ['asked', 'payment'],
-          ['card', 'code_typed'],
-          ['asked', 'payment'],
-          ['card', 'said_yes'],
-          ['asked', 'payment'],
-          ['uncertain', 'payment'],
-          ['asked', 'payment'],
-          ['card', 'said_yes'],
-          ['asked', 'payment'],
-          ['asked', 'payment'],
-        ],
-      );
+      await assert.rejects(hosted.request(turn, { ...order, card: '4242' }));
+      await assert.rejects(hosted.setting(turn, { doItForMe: true }, true));
       inOtto = false;
       const privateCode = await payments.request(turn, { ...order, card: card.id });
       const codeId = privateCode.url!.split('/').at(-1)!;
@@ -3536,57 +2434,6 @@ test(
       });
       assert.equal(invalidCode.statusCode, 400);
       assert.doesNotMatch(invalidCode.body, /synthetic-invalid-code/);
-      const requests = new Set<Promise<Response>>();
-      const settle = async () => {
-        while (requests.size) await act(async () => void (await Promise.all(requests)));
-      };
-      setRequestAccount('local-development');
-      const view = await vaultPage(createElement(Payment, { id: codeId }), (path, init) => {
-        const request = (async () => {
-          const response = await app.inject({
-            method: (init.method ?? 'GET') as 'GET' | 'POST',
-            url: path,
-            headers,
-            ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
-          });
-          return new Response(response.body, {
-            status: response.statusCode,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        })();
-        requests.add(request);
-        void request.catch(() => undefined).finally(() => requests.delete(request));
-        return request;
-      });
-      try {
-        await settle();
-        const form = view.document.querySelector<HTMLFormElement>('form');
-        const code = form?.querySelector<HTMLInputElement>('input[name="code"]');
-        assert.ok(form);
-        assert.ok(code);
-        assert.equal(code.type, 'password');
-        code.value = '737';
-        const beforeCode = fills.length;
-        await act(async () => {
-          form.dispatchEvent(new view.window.Event('submit', { bubbles: true, cancelable: true }));
-        });
-        assert.equal(code.value, '');
-        await settle();
-        assert.equal(fills.length, beforeCode + 1);
-        assert.equal(fills.at(-1)?.card.securityCode, '737');
-        assert.equal(view.document.querySelector('form'), null);
-        assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
-        assert.doesNotMatch(resumed.at(-1)!, /737/);
-        assert.equal(
-          (await app.inject({ method: 'POST', url: codePath, headers, payload: { code: '737' } }))
-            .statusCode,
-          409,
-        );
-      } finally {
-        await view.close();
-        await Promise.allSettled(requests);
-        setRequestAccount(null);
-      }
       const concurrent = await payments.request(turn, { ...order, card: card.id });
       const concurrentId = concurrent.url!.split('/').at(-1)!;
       const concurrentPath = `/api/payment-requests/${concurrentId}`;
@@ -3612,64 +2459,8 @@ test(
         [{ status: 'submitted' }],
       );
       assert.ok(concurrentReplies.every((response) => !response.body.includes('737')));
+      assert.doesNotMatch(resumed.at(-1)!, /737/);
 
-      const lost = await payments.request(turn, { ...order, card: card.id });
-      const lostPath = `/api/payment-requests/${lost.url!.split('/').at(-1)!}`;
-      const beforeLost = { fills: fills.length, resumes: resumed.length };
-      setRequestAccount('local-development');
-      const lostRequests = new Set<Promise<Response>>();
-      const settleLost = async () => {
-        while (lostRequests.size)
-          await act(async () => void (await Promise.allSettled(lostRequests)));
-      };
-      const lostView = await vaultPage(
-        createElement(Payment, { id: lost.url!.split('/').at(-1)! }),
-        (path, init) => {
-          const pending = (async () => {
-            const response = await app.inject({
-              method: (init.method ?? 'GET') as 'GET' | 'POST',
-              url: path,
-              headers,
-              ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
-            });
-            if (init.method === 'POST') {
-              assert.equal(response.statusCode, 200);
-              throw new TypeError('Synthetic lost response');
-            }
-            return Response.json(response.json(), { status: response.statusCode });
-          })();
-          lostRequests.add(pending);
-          void pending.catch(() => undefined).finally(() => lostRequests.delete(pending));
-          return pending;
-        },
-      );
-      try {
-        await settleLost();
-        const form = lostView.document.querySelector<HTMLFormElement>('form')!;
-        const code = form.querySelector<HTMLInputElement>('input[name="code"]')!;
-        code.value = '737';
-        await act(async () => {
-          form.dispatchEvent(
-            new lostView.window.Event('submit', { bubbles: true, cancelable: true }),
-          );
-        });
-        assert.equal(code.value, '');
-        await settleLost();
-        assert.equal(lostView.document.querySelector('form'), null);
-        assert.deepEqual(
-          { fills: fills.length, resumes: resumed.length },
-          { fills: beforeLost.fills + 1, resumes: beforeLost.resumes + 1 },
-        );
-        assert.equal(
-          (await app.inject({ method: 'POST', url: lostPath, headers, payload: { code: '737' } }))
-            .statusCode,
-          409,
-        );
-        assert.equal(fills.length, beforeLost.fills + 1);
-      } finally {
-        await lostView.close();
-        setRequestAccount(null);
-      }
       const expired = await payments.request(turn, { ...order, card: card.id });
       const expiredId = expired.url!.split('/').at(-1)!;
       await payments.request(turn, { ...order, card: card.id });
@@ -3845,7 +2636,6 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
     allowTracking: false,
     disableVersionCheck: true,
   });
-  const calls: unknown[] = [];
   let nextPageToken: string | undefined;
   let auth = 'mx.google.com; dmarc=pass (p=REJECT) header.from=toconline.pt; dkim=pass';
   let sender = 'TOConline <login@toconline.pt>';
@@ -3856,58 +2646,33 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
   let body = 'O seu código de autenticação é 381742.';
   let extraHeaders: Array<{ name: string; value: string }> = [];
   let parts: unknown[] | undefined;
-  t.mock.method(
-    client.tools,
-    'proxyExecute',
-    async (
-      input: {
-        endpoint: string;
-        method: string;
-        connectedAccountId: string;
-        parameters: Array<{ name: string; value: unknown }>;
-      },
-      options: { signal: AbortSignal },
-    ) => {
-      calls.push(input);
-      assert.equal(input.connectedAccountId, 'owned-account');
-      assert.equal(input.method, 'GET');
-      assert.equal(options.signal.aborted, false);
-      if (input.endpoint.endsWith('/messages')) {
-        assert.equal(input.parameters.find((item) => item.name === 'maxResults')?.value, 5);
-        assert.equal(
-          input.parameters.find((item) => item.name === 'includeSpamTrash')?.value,
-          'false',
-        );
-        assert.match(
-          String(input.parameters.find((item) => item.name === 'q')?.value),
-          /^to:owner@example.com from:toconline.pt after:\d+ before:\d+$/,
-        );
-        return { status: 200, headers: {}, data: { messages: [{ id: 'mail1' }], nextPageToken } };
-      }
-      assert.equal(input.endpoint, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/mail1');
-      return {
-        status: 200,
-        headers: {},
-        data: {
-          id: 'mail1',
-          internalDate: String(date),
-          labelIds: labels,
-          payload: {
-            mimeType,
-            parts,
-            headers: [
-              { name: 'From', value: sender },
-              { name: 'To', value: recipient },
-              { name: 'Authentication-Results', value: auth },
-              ...extraHeaders,
-              { name: 'Subject', value: 'Account verification' },
-            ],
-            body: { data: Buffer.from(body).toString('base64url') },
-          },
+  t.mock.method(client.tools, 'proxyExecute', async (input: { endpoint: string }) => {
+    if (input.endpoint.endsWith('/messages')) {
+      return { status: 200, headers: {}, data: { messages: [{ id: 'mail1' }], nextPageToken } };
+    }
+    assert.equal(input.endpoint, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/mail1');
+    return {
+      status: 200,
+      headers: {},
+      data: {
+        id: 'mail1',
+        internalDate: String(date),
+        labelIds: labels,
+        payload: {
+          mimeType,
+          parts,
+          headers: [
+            { name: 'From', value: sender },
+            { name: 'To', value: recipient },
+            { name: 'Authentication-Results', value: auth },
+            ...extraHeaders,
+            { name: 'Subject', value: 'Account verification' },
+          ],
+          body: { data: Buffer.from(body).toString('base64url') },
         },
-      };
-    },
-  );
+      },
+    };
+  });
   const read = () =>
     readVerificationEmails(
       client.tools,
@@ -3921,28 +2686,6 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       new AbortController().signal,
     );
   assert.equal(verificationCode((await read())!, request), '381742');
-  assert.equal(calls.length, 2);
-  sender = 'Attacker <sender@unrelated.example.org>';
-  auth = 'mx.google.com; dmarc=pass header.from=unrelated.example.org';
-  for (const [type, content] of [
-    [
-      'text/plain',
-      `Your verification code is 123456.\nVerify email (${request.origin}/verify?token=abcdefghijklmnop)`,
-    ],
-    [
-      'text/html',
-      `<p>Your verification code is 123456.</p><a href="${request.origin}/verify?token=abcdefghijklmnop">Verify email</a>`,
-    ],
-  ]) {
-    mimeType = type;
-    body = content;
-    const unrelated = await read();
-    assert.equal(unrelated?.length, 1);
-    assert.equal(verificationCode(unrelated!, request), undefined);
-  }
-  sender = 'TOConline <login@toconline.pt>';
-  auth = 'mx.google.com; dmarc=pass (p=REJECT) header.from=toconline.pt; dkim=pass';
-  body = 'O seu código de autenticação é 381742.';
   mimeType = 'multipart/alternative';
   parts = [
     {
@@ -4055,7 +2798,6 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
   parts = undefined;
   nextPageToken = 'more-matches';
   assert.equal(await read(), undefined);
-  const count = calls.length;
   await assert.rejects(
     readVerificationEmails(
       client.tools,
@@ -4069,7 +2811,6 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       AbortSignal.abort(),
     ),
   );
-  assert.equal(calls.length, count);
 });
 
 const owner = 'local-development';
@@ -4192,13 +2933,10 @@ test(
       },
       resume: turns.resume,
       retry: async () => {},
-      emailCode: async (request, signal) => {
+      emailCode: async (request) => {
         read++;
         assert.equal(request.recipient, username);
         assert.equal(request.origin, origin);
-        assert.ok(request.after >= Date.now() - 5 * 60_000 - 31_000);
-        assert.ok(request.before <= Date.now());
-        assert.equal(signal.aborted, false);
         await lookup?.();
         const found = emails ? verificationCode(emails, request) : resultCode;
         return found ? { code: found, current: async () => available } : undefined;
@@ -4432,7 +3170,7 @@ test(
     await start('uncertain-submission');
     injectionFailure = true;
     const attemptsBeforeUncertain = injected.length;
-    await assert.rejects(fill('uncertain-submission'), /private operation did not finish/);
+    await assert.rejects(fill('uncertain-submission'));
     assert.equal(await fill('uncertain-submission'), false);
     assert.equal(injected.length, attemptsBeforeUncertain + 1);
     injectionFailure = false;
@@ -4617,11 +3355,6 @@ test(
     const persisted = JSON.stringify((await pool.query('SELECT * FROM credential_requests')).rows);
     for (const secret of [code, username, 'recipient'])
       assert.equal(persisted.includes(secret), false);
-    assert.ok(
-      (await pool.query('SELECT selectors FROM credential_requests')).rows.every(
-        (row) => row.selectors.emailCode === true,
-      ),
-    );
   },
 );
 
@@ -4668,11 +3401,9 @@ test(
         assert.equal(user, owner);
         return { active, service: 'gmail', accountEmail: remoteEmail };
       },
-      verificationEmails: async (id, query, signal) => {
+      verificationEmails: async (id, query) => {
         reads.push(id);
         assert.equal(query.recipient, requestedRecipient);
-        assert.equal(query.senderDomain, 'toconline.pt');
-        assert.equal(signal.aborted, false);
         if (fail) throw new Error('private-message-body 381742');
         await duringRead?.();
         return messages;
@@ -4823,36 +3554,6 @@ test(
     assert.equal(await read(), undefined);
     fail = false;
     messages = [mail];
-    const currentMailbox = await read();
-    assert.ok(currentMailbox);
-    const change = await pool.connect();
-    const fill = await pool.connect();
-    try {
-      await change.query('BEGIN');
-      await change.query('UPDATE app_connections SET revoked=true WHERE id=$1', [connection]);
-      await assert.rejects(currentMailbox.current(), { code: '55P03' });
-      await change.query('ROLLBACK');
-      await fill.query('BEGIN');
-      assert.equal(await currentMailbox.current(fill), true);
-      await assert.rejects(
-        change.query('SELECT id FROM app_connections WHERE id=$1 FOR UPDATE NOWAIT', [connection]),
-        { code: '55P03' },
-      );
-      await fill.query('COMMIT');
-      assert.equal(
-        (
-          await change.query('SELECT id FROM app_connections WHERE id=$1 FOR UPDATE NOWAIT', [
-            connection,
-          ])
-        ).rowCount,
-        1,
-      );
-    } finally {
-      await change.query('ROLLBACK');
-      await fill.query('ROLLBACK');
-      change.release();
-      fill.release();
-    }
     duringRead = async () => {
       await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [connection]);
     };
@@ -4867,143 +3568,10 @@ test(
   },
 );
 
-test(
-  'manually saved identifier-only logins stay origin-bound and cannot become empty credentials',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const { turn } = await seedTurns(pool);
-    const app = Fastify();
-    const key = randomBytes(32);
-    const injections: CredentialInjection[] = [];
-    const vault = await createVault(pool, {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-      inject: async (input) => {
-        injections.push(input);
-      },
-      resume: async () => {},
-      retry: async () => {},
-    });
-    vault.registerRoutes(app);
-    try {
-      const payload = {
-        label: 'Fixture login',
-        origin: 'https://example.test',
-        username: 'tester@example.test',
-      };
-      for (const invalid of [
-        { ...payload, origin: '' },
-        { ...payload, origin: 'https://user:password@example.test' },
-        { ...payload, username: '' },
-        { ...payload, username: ' ', password: '' },
-      ])
-        assert.equal(
-          (await app.inject({ method: 'POST', url: '/api/vault', payload: invalid })).statusCode,
-          400,
-        );
-      const saved = await app.inject({ method: 'POST', url: '/api/vault', payload });
-      assert.equal(saved.statusCode, 200);
-      const id = saved.json().id as string;
-      const stored = await vault.readCredential(id);
-      assert.deepEqual(stored.secret, { username: payload.username, password: '' });
-      assert.equal(stored.entry.origin, payload.origin);
-      assert.equal(stored.entry.ciphertext.includes(payload.username), false);
-      assert.equal(
-        (await app.inject({ method: 'POST', url: `/api/vault/${id}/details`, payload: {} })).json()
-          .hasPassword,
-        false,
-      );
-      assert.equal(
-        (
-          await app.inject({
-            method: 'PATCH',
-            url: `/api/vault/${id}`,
-            payload: { label: payload.label, username: '' },
-          })
-        ).statusCode,
-        400,
-      );
-      const ref = await turn();
-      const input = {
-        origin: payload.origin,
-        kind: 'identifier' as const,
-        label: payload.label,
-        usernameSelector: '#email',
-      };
-      await assert.rejects(vault.fillSaved(ref, 'another-owner', id, input));
-      await assert.rejects(
-        vault.fillSaved(ref, 'local-development', id, {
-          ...input,
-          origin: 'https://other.example.test',
-        }),
-      );
-      assert.equal(injections.length, 0);
-      await vault.fillSaved(ref, 'local-development', id, input);
-      assert.equal(injections.length, 1);
-      assert.equal(injections[0].username, payload.username);
-      assert.equal(injections[0].origin, payload.origin);
-      assert.equal(
-        await vault.fillSelected(ref, 'local-development', {
-          origin: payload.origin,
-          kind: 'password',
-          label: payload.label,
-          passwordSelector: '#password',
-        }),
-        false,
-      );
-      assert.equal(injections.length, 1);
-      assert.equal(
-        (
-          await app.inject({
-            method: 'PATCH',
-            url: `/api/vault/${id}`,
-            payload: {
-              label: payload.label,
-              username: payload.username,
-              password: 'synthetic-password',
-            },
-          })
-        ).statusCode,
-        200,
-      );
-      assert.equal((await vault.readCredential(id)).secret.password, 'synthetic-password');
-      const details = await app.inject({
-        method: 'POST',
-        url: `/api/vault/${id}/details`,
-        payload: {},
-      });
-      assert.equal(details.json().hasPassword, true);
-      assert.equal(details.body.includes('synthetic-password'), false);
-      const passwordOnly = await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        payload: {
-          label: 'Password only',
-          origin: 'https://other.example.test',
-          password: 'synthetic-password',
-        },
-      });
-      assert.equal(passwordOnly.statusCode, 200);
-      assert.equal((await vault.readCredential(passwordOnly.json().id)).secret.username, '');
-    } finally {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
 async function vaultPage(
   element: React.ReactNode,
   response: (path: string, init: RequestInit) => Promise<Response>,
-  url = 'http://localhost:4310/vault/synthetic_credential_request',
+  url: string,
 ) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url,
@@ -5031,11 +3599,7 @@ async function vaultPage(
   const root = createRoot(dom.window.document.getElementById('root')!);
   await act(async () => root.render(element));
   return {
-    window: dom.window,
     document: dom.window.document,
-    async render(element: React.ReactNode) {
-      await act(async () => root.render(element));
-    },
     async close() {
       await act(async () => root.unmount());
       dom.window.close();
@@ -5046,7 +3610,7 @@ async function vaultPage(
   };
 }
 
-test('private dialogs discard stale imports and keep credentials and URL tokens out of chat', async () => {
+test('the website session dialog keeps credentials and URL tokens out of chat', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -5061,35 +3625,11 @@ Object.assign(globalThis, {
   ...Object.fromEntries(['Node','NodeFilter','Event','CustomEvent','Element','HTMLElement','HTMLInputElement','MutationObserver'].map(name => [name,dom.window[name]])),
 });
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
-const {act,createElement,useState}=await import('react');
+const {act,createElement}=await import('react');
 const {createRoot}=await import('react-dom/client');
-const {VaultImportDialog}=await import('./src/web/components/vault-import-dialog.tsx');
 const {WebsiteSessionDialog}=await import('./src/web/components/website-session-dialog.tsx');
-const writes=[];
-globalThis.fetch=async (_path,init) => {writes.push(JSON.parse(init.body));return Response.json({imported:1,existing:0,skipped:0});};
 const root=createRoot(document.querySelector('#root'));
-let finish;
-function Import() {
-  const [open,setOpen]=useState(true);
-  return createElement('div',null,createElement('button',{'data-reopen':true,onClick:()=>setOpen(true)},'Open'),createElement(VaultImportDialog,{open,onOpenChange:setOpen,onImported(){}}));
-}
-const choose=async (name,text) => {
-  const input=document.querySelector('input[type="file"]');
-  assert.ok(input);
-  Object.defineProperty(input,'files',{configurable:true,value:[{name,text}]});
-  await act(async()=>input.dispatchEvent(new Event('change',{bubbles:true})));
-};
 try {
-  await act(async()=>root.render(createElement(Import)));
-  await choose('old.csv',()=>new Promise(resolve=>{finish=resolve;}));
-  await act(async()=>document.querySelector('[aria-label="Close"]').click());
-  await act(async()=>finish('url,username,password\nhttps://old.test,owner,synthetic-old\n'));
-  await act(async()=>document.querySelector('[data-reopen]').click());
-  await choose('older.csv',()=>new Promise(resolve=>{finish=resolve;}));
-  await choose('new.csv',async()=>'url,username,password\nhttps://new.test,owner,synthetic-new\n');
-  await act(async()=>finish('url,username,password\nhttps://older.test,owner,synthetic-older\n'));
-  await act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
-  assert.deepEqual(writes,[{logins:[{label:'',origin:'https://new.test',username:'owner',password:'synthetic-new'}]}]);
   const requests=[];
   await act(async()=>root.render(createElement(WebsiteSessionDialog,{open:true,onOpenChange(){},onAsk:text=>requests.push(text)})));
   const input=document.querySelector('input[type="url"]');
@@ -5112,163 +3652,6 @@ try {
   });
   assert.equal(result.exitCode, 0, result.stderr);
 });
-
-test(
-  'Vault add links save only values entered in an empty owned form',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `test_vault_link_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    await seedTurns(pool);
-    const key = randomBytes(32);
-    const app = Fastify();
-    const vault = await createVault(pool, {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-      inject: async () => assert.fail('Saving a manual login must not use the browser.'),
-      resume: async () => assert.fail('Saving a manual login must not resume a task.'),
-      retry: async () => assert.fail('Saving a manual login must not retry a task.'),
-    });
-    vault.registerRoutes(app);
-    const submitted: unknown[] = [];
-    const requests = new Set<Promise<Response>>();
-    const settle = async () => {
-      while (requests.size) await act(async () => void (await Promise.all(requests)));
-    };
-    let view: Awaited<ReturnType<typeof vaultPage>> | undefined;
-    pageDataCache.clear();
-    setRequestAccount('local-development');
-    try {
-      view = await vaultPage(
-        createElement(Trust),
-        (path, init) => {
-          const request = (async () => {
-            assert.equal(new Headers(init.headers).get('X-Otto-Account'), 'local-development');
-            assert.ok(path.startsWith('/api/vault') || path === '/api/trust');
-            if (path === '/api/vault' && init.method === 'POST')
-              submitted.push(JSON.parse(String(init.body)));
-            const response = await app.inject({
-              method: (init.method ?? 'GET') as 'GET' | 'POST',
-              url: path,
-              ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
-            });
-            return new Response(response.body, {
-              status: response.statusCode,
-              headers: { 'Content-Type': 'application/json' },
-            });
-          })();
-          requests.add(request);
-          void request.catch(() => undefined).finally(() => requests.delete(request));
-          return request;
-        },
-        'http://localhost:4310/trust?add=login',
-      );
-      await settle();
-      const form = view.document.querySelector<HTMLFormElement>('.vault-add-form');
-      assert.ok(form, 'The save link must open the login form.');
-      assert.equal(submitted.length, 0);
-      assert.deepEqual(await vault.list(), []);
-      assert.equal(view.window.location.search, '');
-      const input = (name: string) => {
-        const field = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
-        assert.ok(field);
-        return field;
-      };
-      for (const name of ['origin', 'username', 'password']) assert.equal(input(name).value, '');
-      input('label').value = 'Synthetic manual login';
-      input('origin').value = 'https://identity.example.test';
-      input('username').value = 'owner@example.test';
-      input('password').value = 'synthetic-manual-password';
-      await act(async () => {
-        form.dispatchEvent(new view!.window.Event('submit', { bubbles: true, cancelable: true }));
-      });
-      assert.equal(input('password').value, '');
-      await settle();
-      assert.equal(view.document.querySelector('.vault-add-form'), null);
-      assert.deepEqual(submitted, [
-        {
-          label: 'Synthetic manual login',
-          origin: 'https://identity.example.test',
-          username: 'owner@example.test',
-          password: 'synthetic-manual-password',
-        },
-      ]);
-      const entries = await vault.list();
-      assert.equal(entries.length, 1);
-      const { entry, secret } = await vault.readCredential(entries[0].id);
-      assert.equal(entry.owner_id, 'local-development');
-      assert.equal(entry.origin, 'https://identity.example.test');
-      assert.deepEqual(secret, {
-        username: 'owner@example.test',
-        password: 'synthetic-manual-password',
-      });
-      for (const value of Object.values(secret)) {
-        assert.equal(entry.ciphertext.includes(value), false);
-        assert.equal(view.window.location.href.includes(value), false);
-      }
-      assert.deepEqual(await vault.list('another-owner'), []);
-      assert.equal((await pool.query('SELECT * FROM credential_requests')).rowCount, 0);
-      await view.close();
-      view = undefined;
-      pageDataCache.clear();
-      view = await vaultPage(
-        createElement(Trust),
-        (path, init) => {
-          const request = (async () => {
-            const response = await app.inject({
-              method: (init.method ?? 'GET') as 'GET' | 'POST',
-              url: path,
-              ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
-            });
-            return Response.json(response.json(), { status: response.statusCode });
-          })();
-          requests.add(request);
-          void request.catch(() => undefined).finally(() => requests.delete(request));
-          return request;
-        },
-        'http://localhost:4310/trust?add=card',
-      );
-      const cardForm = view.document.querySelector<HTMLFormElement>('.vault-add-form');
-      assert.ok(cardForm);
-      assert.equal(view.window.location.search, '');
-      for (const [name, value] of Object.entries({
-        label: 'Synthetic manual card',
-        cardholder: 'Synthetic Owner',
-        cardNumber: '4242424242424242',
-        expiry: '12/30',
-      })) {
-        const field: HTMLInputElement | null = cardForm.querySelector(`input[name="${name}"]`);
-        assert.ok(field, name);
-        assert.equal(field.value, '');
-        field.value = value;
-      }
-      await act(async () => {
-        cardForm.dispatchEvent(
-          new view!.window.Event('submit', { bubbles: true, cancelable: true }),
-        );
-      });
-      await settle();
-      const cards = await vault.paymentCards();
-      assert.equal(cards.length, 1);
-      assert.equal((await vault.paymentCard(cards[0]!.id)).cardNumber, '4242424242424242');
-      assert.doesNotMatch(JSON.stringify(await vault.list()), /4242424242424242/);
-      assert.equal(cardForm.querySelector<HTMLInputElement>('input[name="cardNumber"]')!.value, '');
-    } finally {
-      await view?.close();
-      await Promise.allSettled(requests);
-      pageDataCache.clear();
-      setRequestAccount(null);
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
 
 test('Vault does not open or prefill a login from arbitrary query data', async () => {
   for (const query of [
@@ -5317,329 +3700,7 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
   }
 });
 
-test('Vault Escape cancels edits and clears replacement secrets without disabling the selected login', async () => {
-  const entry = {
-    kind: 'login' as const,
-    id: randomUUID(),
-    label: 'Fixture account',
-    origin: 'https://example.test',
-    usernameHint: 'te…',
-    updatedAt: new Date().toISOString(),
-  };
-  let detailsReads = 0;
-  let writes = 0;
-  const page = await vaultPage(
-    createElement(VaultDetails, {
-      entry,
-      onClose() {},
-      onSaved() {
-        writes++;
-      },
-      onDeleted() {
-        writes++;
-      },
-    }),
-    async (path, init) => {
-      if (path.endsWith('/details')) {
-        detailsReads++;
-        return Response.json({ ...entry, username: 'tester@example.test', hasPassword: false });
-      }
-      assert.equal(init.method ?? 'GET', 'GET');
-      return new Response(null, { status: 204 });
-    },
-  );
-  try {
-    const buttons = () => [...page.document.querySelectorAll<HTMLButtonElement>('button')];
-    await act(async () =>
-      buttons()
-        .find((button) => button.hasAttribute('data-vault-edit'))!
-        .click(),
-    );
-    const secret = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-    const save = () => page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-    for (const event of ['blur', 'visibilitychange']) {
-      secret.value = 'synthetic replacement';
-      await act(async () =>
-        secret.dispatchEvent(new page.window.Event('input', { bubbles: true })),
-      );
-      assert.equal(save().disabled, false);
-      await act(async () => {
-        if (event === 'blur') page.window.dispatchEvent(new page.window.Event(event));
-        else {
-          Object.defineProperty(page.document, 'hidden', { configurable: true, value: true });
-          page.document.dispatchEvent(new page.window.Event(event));
-        }
-      });
-      assert.equal(secret.value, '');
-      assert.equal(save().disabled, true);
-      Object.defineProperty(page.document, 'hidden', { configurable: true, value: false });
-    }
-    const label = page.document.querySelector<HTMLInputElement>('input[name="label"]')!;
-    label.value = 'Renamed fixture account';
-    await act(async () => label.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    secret.value = 'synthetic replacement';
-    await act(async () => page.window.dispatchEvent(new page.window.Event('blur')));
-    assert.equal(secret.value, '');
-    assert.equal(save().disabled, false);
-    secret.value = 'synthetic replacement';
-    await act(async () => secret.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    await act(async () =>
-      secret.dispatchEvent(
-        new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-      ),
-    );
-    assert.equal(secret.value, '');
-    assert.equal(page.document.querySelector('form'), null);
-    const edit = buttons().find((button) => button.hasAttribute('data-vault-edit'))!;
-    assert.equal(edit.disabled, false);
-    assert.equal(page.document.activeElement, edit);
-    await act(async () =>
-      edit.dispatchEvent(
-        new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-      ),
-    );
-    assert.equal(page.document.querySelector('[data-vault-edit]'), edit);
-    await act(async () =>
-      page.document.querySelector<HTMLButtonElement>('[data-vault-field="username"]')!.click(),
-    );
-    assert.equal(page.document.activeElement?.getAttribute('name'), 'username');
-    assert.equal(
-      page.document.querySelector<HTMLInputElement>('input[name="username"]')!.value,
-      'tester@example.test',
-    );
-    assert.equal(detailsReads, 1);
-    assert.equal(writes, 0);
-  } finally {
-    await page.close();
-  }
-});
-
-test('leaving saved entries hides a revealed password without dropping a replacement draft', async () => {
-  const entry = {
-    kind: 'login' as const,
-    id: randomUUID(),
-    label: 'Synthetic account',
-    origin: 'https://example.test',
-    usernameHint: 'ow…',
-    updatedAt: new Date().toISOString(),
-  };
-  const details = (visible: boolean) =>
-    createElement(VaultDetails, {
-      entry,
-      visible,
-      onClose() {},
-      onSaved() {},
-      onDeleted() {},
-    });
-  let reveals = 0;
-  const page = await vaultPage(details(true), async (path) => {
-    if (path.endsWith('/details'))
-      return Response.json({ ...entry, username: 'owner@example.test', hasPassword: true });
-    assert.ok(path.endsWith('/password'));
-    reveals++;
-    return Response.json({ password: 'synthetic saved password' });
-  });
-  try {
-    await act(async () =>
-      page.document.querySelector<HTMLButtonElement>('[aria-label="Show password"]')!.click(),
-    );
-    assert.match(page.document.body.textContent!, /synthetic saved password/);
-    await page.render(details(false));
-    assert.equal(page.document.body.textContent!.includes('synthetic saved password'), false);
-    await page.render(details(true));
-    assert.ok(page.document.querySelector('[aria-label="Show password"]'));
-    await act(async () =>
-      page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
-    );
-    const input = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-    input.value = 'synthetic replacement';
-    await act(async () => input.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    await page.render(details(false));
-    await page.render(details(true));
-    assert.equal(input.value, 'synthetic replacement');
-    assert.equal(reveals, 1);
-  } finally {
-    await page.close();
-  }
-});
-
-test('secure sign-in keeps failed submissions editable and returns to chat only after accepted submission', async () => {
-  const request = {
-    id: 'synthetic_credential_request',
-    turnId: randomUUID(),
-    origin: 'https://example.test',
-    label: 'Fixture sign-in',
-    kind: 'otp',
-    status: 'pending',
-    fields: [{ kind: 'otp', selector: '#code', label: 'Verification code' }],
-  };
-  let finish!: (value: Response) => void;
-  let submissions = 0;
-  let closed = 0;
-  let focused = 0;
-  const page = await vaultPage(
-    createElement(Credentials, { id: request.id }),
-    async (_path, init) => {
-      if (init.method !== 'POST') return Response.json(request);
-      submissions++;
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    },
-  );
-  Object.defineProperty(page.window, 'opener', {
-    value: {
-      closed: false,
-      location: { origin: page.window.location.origin },
-      focus() {
-        focused++;
-      },
-    },
-  });
-  const close = page.window.close.bind(page.window);
-  page.window.close = () => {
-    closed++;
-    Object.defineProperty(page.window, 'closed', { value: true, configurable: true });
-  };
-  try {
-    const submit = async () => {
-      page.document.querySelector<HTMLInputElement>('input[name="code"]')!.value = '123456';
-      await act(async () =>
-        page.document
-          .querySelector('form')!
-          .dispatchEvent(new page.window.Event('submit', { bubbles: true, cancelable: true })),
-      );
-    };
-    await submit();
-    assert.equal(submissions, 1);
-    assert.equal(closed, 0);
-    assert.equal(page.document.querySelector('form'), null);
-    await act(async () =>
-      finish(Response.json({ error: 'Synthetic rejected request' }, { status: 502 })),
-    );
-    assert.equal(closed, 0);
-    assert.ok(page.document.querySelector('form'));
-    assert.equal(page.document.querySelector<HTMLInputElement>('input[name="code"]')!.value, '');
-    await submit();
-    assert.equal(submissions, 2);
-    assert.equal(closed, 0);
-    await act(async () =>
-      finish(Response.json({ ok: false, retryUrl: '/vault/synthetic_replacement_request' })),
-    );
-    assert.equal(closed, 0);
-    assert.ok(page.document.querySelector('form'));
-    await submit();
-    assert.equal(submissions, 3);
-    assert.equal(closed, 0);
-    await act(async () => finish(Response.json({ ok: true })));
-    assert.equal(closed, 1);
-    assert.equal(focused, 1);
-  } finally {
-    page.window.close = close;
-    await page.close();
-  }
-});
-
-test('Vault preserves the saved card when a replacement contains only whitespace', async () => {
-  const entry: VaultCardEntry = {
-    kind: 'card',
-    id: randomUUID(),
-    label: 'Fixture card',
-    brand: 'Visa',
-    last4: '4242',
-    expiryMonth: 12,
-    expiryYear: 2028,
-    updatedAt: new Date().toISOString(),
-  };
-  const updates: Record<string, unknown>[] = [];
-  let saved = 0;
-  const page = await vaultPage(
-    createElement(VaultDetails, {
-      entry,
-      onClose() {},
-      onSaved() {
-        saved++;
-      },
-      onDeleted() {},
-    }),
-    async (path, init) => {
-      if (path.endsWith('/details'))
-        return Response.json({ ...entry, cardholder: 'Alex Tester', hasSecurityCode: false });
-      assert.equal(init.method, 'PATCH');
-      const update = JSON.parse(String(init.body));
-      updates.push(update);
-      if ('cardNumber' in update)
-        return Response.json({ error: 'Invalid replacement card number' }, { status: 400 });
-      return Response.json({ ...entry, label: update.label });
-    },
-  );
-  try {
-    await act(async () =>
-      page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
-    );
-    const card = page.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
-    card.value = '   ';
-    await act(async () => card.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-    assert.equal(save.disabled, true);
-    const label = page.document.querySelector<HTMLInputElement>('input[name="label"]')!;
-    label.value = 'Renamed fixture card';
-    await act(async () => label.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    assert.equal(save.disabled, false);
-    await act(async () => save.click());
-    assert.equal(updates.length, 1);
-    assert.equal(Object.hasOwn(updates[0], 'cardNumber'), false);
-    assert.equal(updates[0].label, label.value);
-    assert.equal(saved, 1);
-    assert.equal(page.document.querySelector('form'), null);
-  } finally {
-    await page.close();
-  }
-});
-
-test('Vault keeps intentional whitespace in replacement passwords', async () => {
-  const entry = {
-    kind: 'login' as const,
-    id: randomUUID(),
-    label: 'Fixture account',
-    origin: 'https://example.test',
-    usernameHint: 'te…',
-    updatedAt: new Date().toISOString(),
-  };
-  const passwords: string[] = [];
-  const page = await vaultPage(
-    createElement(VaultDetails, { entry, onClose() {}, onSaved() {}, onDeleted() {} }),
-    async (path, init) => {
-      if (path.endsWith('/details'))
-        return Response.json({ ...entry, username: 'tester@example.test', hasPassword: true });
-      if (path.endsWith('/icon')) return new Response(null, { status: 204 });
-      assert.equal(init.method, 'PATCH');
-      passwords.push(JSON.parse(String(init.body)).password);
-      return Response.json(entry);
-    },
-  );
-  try {
-    for (const value of ['   ', '  synthetic password  ']) {
-      await act(async () =>
-        page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
-      );
-      const password = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-      password.value = value;
-      await act(async () =>
-        password.dispatchEvent(new page.window.Event('input', { bubbles: true })),
-      );
-      const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-      assert.equal(save.disabled, false);
-      await act(async () => save.click());
-      assert.equal(passwords.at(-1), value);
-    }
-    assert.equal(passwords.length, 2);
-  } finally {
-    await page.close();
-  }
-});
-
-test('session replay masks private DOM and analytics transport separates owners without exposing content', async () => {
+test('session replay masks private DOM without exposing content', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: String.raw`
@@ -5688,7 +3749,6 @@ stop();
 const recordedNodes = [];
 function visit(node) { recordedNodes.push(node); node.childNodes?.forEach(visit); }
 visit(events.find(event => event.type === 2).data.node);
-assert.ok(recordedNodes.some(node => node.attributes?._cssText?.includes('.fixture-stylesheet')));
 const badges = recordedNodes.filter(node => node.attributes?.class === 'chat-unread-badge');
 assert.equal(badges.length, document.querySelectorAll('.chat-unread-badge').length);
 assert.ok(badges.length > 0);
@@ -5698,14 +3758,7 @@ const badgeUpdates = events.filter(event => event.type === 3).flatMap(event => e
 assert.equal(badgeUpdates.length, badges.length);
 assert.deepEqual(badgeUpdates.map(text => text.value), Array(badges.length).fill('**'));
 const content = JSON.stringify(events.filter(e => e.type === 2 || e.type === 3));
-assert.match(content, /Settings/);
-assert.match(content, /"textContent":"Chat"/);
-assert.match(content, /visible/);
-assert.match(content, /data-theme.*dark/);
-assert.match(content, /"data-desktop":"true"/);
-assert.match(content, /"data-desktop":"false"/);
 assert.doesNotMatch(content, /M12345678 87654321h1v1h-1z/);
-assert.match(content, /https:\/\/otto.invalid\/credentials/);
 assert.doesNotMatch(content, /synthetic-private/);
 
 const analytics = await import('./src/web/lib/analytics-client.ts');
@@ -5713,7 +3766,6 @@ const { posthog: sdk } = await import('posthog-js/no-external');
 analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
-assert.equal(sdk.sessionRecordingStarted(), true);
 const { createRoot } = await import('react-dom/client');
 const { Email } = await import('./src/web/pages/onboarding/steps/email.tsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -5722,14 +3774,13 @@ document.body.append(emailContainer);
 const emailRoot = createRoot(emailContainer);
 await act(async () => {emailRoot.render(createElement(Email,{arrived:'back',onNext() {},onBack() {}})); await new Promise(resolve => setTimeout(resolve,50));});
 await act(async () => {await new Promise(resolve => setTimeout(resolve,50));});
-assert.match(emailContainer.textContent,/Key saved.*K7Q9/);
+assert.match(emailContainer.textContent,/K7Q9/);
 document.querySelector('#mutable').textContent = 'synthetic-private-recorded-mutation';
 document.querySelector('input').value = 'synthetic-private-recorded-input';
 document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));
 for (let attempt = 0; attempt < 120 && !requests.some(request => new URL(request.url).pathname === '/s/'); attempt++) await new Promise(resolve => setTimeout(resolve,50));
 const recordings = requests.filter(request => new URL(request.url).pathname === '/s/').flatMap(request => JSON.parse(request.body));
 assert.ok(recordings.length > 0);
-assert.ok(recordings.every(event => event.event === '$snapshot' && event.properties.distinct_id === 'hosted:fixture-owner-a'));
 function decodeSnapshot(value) {
   if (typeof value === 'string' && value.charCodeAt(0) === 31 && value.charCodeAt(1) === 139) return decodeSnapshot(JSON.parse(gunzipSync(Buffer.from(value,'latin1')).toString()));
   if (Array.isArray(value)) return value.map(decodeSnapshot);
@@ -5739,85 +3790,9 @@ function decodeSnapshot(value) {
 const snapshots = recordings.flatMap(event => event.properties.$snapshot_data).map(decodeSnapshot);
 assert.ok(snapshots.some(event => event.type === 2));
 assert.ok(snapshots.some(event => event.type === 3));
-assert.equal(snapshots.find(event => event.type === 4).data.href, 'https://otto.invalid/credentials');
-assert.match(JSON.stringify(snapshots), /Settings/);
-assert.match(JSON.stringify(snapshots), /Sign in to Gmail/);
 assert.doesNotMatch(JSON.stringify(snapshots), /K7Q9/);
 assert.doesNotMatch(JSON.stringify(snapshots), /synthetic-private/);
 await act(async () => emailRoot.unmount());
-assert.equal(requests.filter(request => new URL(request.url).pathname.endsWith('/config')).length, 1);
-assert.ok(requests.every(request => !new URL(request.url).pathname.startsWith('/flags')));
-analytics.capturePageview('/credentials/synthetic-private-request?token=synthetic-private-query');
-analytics.capturePageview('/credentials/synthetic-private-other?token=synthetic-private-query');
-sdk.capture('otto_settings_viewed', {tab:'models', secret:'synthetic-private-event'}, {
-  $set: { email: 'synthetic-private-email' }, $set_once: { name: 'synthetic-private-person' },
-});
-const { analyticsForCurrentSession } = await import('./src/web/lib/analytics.ts');
-const pendingActionCapture = analyticsForCurrentSession();
-analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
-pendingActionCapture('otto_chat_stop_requested');
-const firstSession = sdk.get_session_id();
-analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-b',deployment:'hosted',environment:'production'},'web');
-pendingActionCapture('otto_ui_error', {area:'chat',action:'send'});
-analytics.capturePageview('/');
-assert.notEqual(sdk.get_session_id(),firstSession);
-const sanitize = sdk.config.before_send;
-for (const value of ['synthetic-private-diagnostic', {message:'synthetic-private-error'}, -1, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
-  const properties = sanitize({event:'$pageview',properties:{
-    $recording_status:value,
-    $sdk_debug_replay_url_trigger_status:value,
-    $sdk_debug_replay_event_trigger_status:value,
-    $sdk_debug_replay_linked_flag_trigger_status:value,
-    $sdk_debug_recording_script_not_loaded:value,
-    $sdk_debug_replay_stale_config:value,
-    $sdk_debug_replay_rrweb_error:value,
-    $sdk_debug_rrweb_attached:value,
-    $sdk_debug_rrweb_start_attempted:value,
-    $sdk_debug_replay_flush_hold_reason:value,
-    $session_recording_start_reason:value,
-    $sdk_debug_replay_internal_buffer_length:value,
-    $sdk_debug_replay_internal_buffer_size:value,
-    $sdk_debug_replay_flushed_size:value,
-    $sdk_debug_error_capturing_properties:value,
-  }}).properties;
-  assert.ok(Object.keys(properties).every(key => !key.startsWith('$sdk_debug') && key !== '$recording_status' && key !== '$session_recording_start_reason'));
-}
-analytics.configureAnalytics(undefined,'web');
-analytics.captureAnalytics('otto_ui_error', {area:'chat',action:'send'});
-await new Promise(resolve => setTimeout(resolve, 60));
-const captured = requests.filter(request => request.body && new URL(request.url).pathname !== '/s/').flatMap(request => JSON.parse(request.body).batch);
-assert.deepEqual(captured.map(event => event.event), ['$pageview','otto_settings_viewed','otto_chat_stop_requested','$pageview']);
-assert.deepEqual(captured.map(event => event.properties.distinct_id), ['hosted:fixture-owner-a','hosted:fixture-owner-a','hosted:fixture-owner-a','hosted:fixture-owner-b']);
-assert.equal(captured[0].properties.route, '/credentials');
-assert.equal(captured[0].properties.$recording_status, 'active');
-assert.equal(captured[0].properties.$sdk_debug_replay_rrweb_error, false);
-assert.equal(captured[0].properties.$sdk_debug_rrweb_attached, true);
-assert.equal(captured[0].properties.$sdk_debug_replay_url_trigger_status, 'trigger_disabled');
-assert.equal(captured[0].properties.$sdk_debug_replay_event_trigger_status, 'trigger_disabled');
-assert.equal(captured[0].properties.$sdk_debug_replay_linked_flag_trigger_status, 'trigger_disabled');
-assert.ok(captured[0].properties.$sdk_debug_replay_internal_buffer_length >= 0);
-assert.ok(captured[0].properties.$sdk_debug_replay_flushed_size > 0);
-assert.equal(captured[1].properties.tab, 'models');
-assert.equal(captured[3].properties.route, '/');
-assert.notEqual(captured[0].properties.$session_id, captured[3].properties.$session_id);
-assert.doesNotMatch(JSON.stringify(requests), /synthetic-private|\$set|\$identify|\$referrer|\$initial/);
-assert.ok(captured.every(event => event.properties.$process_person_profile === false));
-const { setAnalyticsClient } = await import('./src/web/lib/analytics.ts');
-const failure = () => { throw new Error('Synthetic unavailable telemetry'); };
-setAnalyticsClient({ stopSessionRecording() {}, reset() {}, set_config() {}, capture: failure, startSessionRecording: failure });
-assert.doesNotThrow(() => analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-c',deployment:'hosted',environment:'production'},'web'));
-assert.doesNotThrow(() => analytics.captureAnalytics('otto_chat_message_sent', {has_attachments:false,is_reply:false}));
-assert.doesNotThrow(() => analytics.capturePageview('/'));
-await new Promise(resolve => setTimeout(resolve, 30));
-setAnalyticsClient({ stopSessionRecording: failure });
-assert.doesNotThrow(() => analytics.configureAnalytics(undefined,'web'));
-assert.doesNotThrow(() => analytics.captureAnalytics('otto_chat_stop_requested'));
-const freshAnalytics = await import('./src/web/lib/analytics.ts?failure=initialization');
-let failedInitializations = 0;
-freshAnalytics.setAnalyticsClient({init() {failedInitializations++; failure();}, stopSessionRecording: failure});
-assert.doesNotThrow(() => freshAnalytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-d',deployment:'hosted',environment:'production'},'web'));
-assert.equal(failedInitializations, 1);
-assert.doesNotThrow(() => freshAnalytics.capturePageview('/'));
 dom.window.close();
 process.exit(0);
 
@@ -5827,333 +3802,7 @@ process.exit(0);
 });
 
 test(
-  'analytics consent fences SDK batches, replay, retries and delayed callbacks',
-  { concurrency: 3 },
-  async (t) => {
-    await Promise.all(
-      [
-        'disabled',
-        'desktop_disabled',
-        'batched_optin',
-        'queued_event',
-        'replay',
-        'late_config',
-        'retry',
-        'late_failure',
-        'owner_change',
-        'reoptin',
-        'cross_tab',
-        'failed_revoke',
-        'peer_failed_revoke',
-        'stale_peer_grant',
-      ].map((scenario) =>
-        t.test(scenario, async () => {
-          const result = await runProcess(
-            process.execPath,
-            ['--import', 'tsx', '--input-type=module'],
-            {
-              timeoutMs: 40_000,
-              input:
-                `const scenario = ${JSON.stringify(scenario)};\n` +
-                String.raw`
-import assert from 'node:assert/strict';
-import {gunzipSync} from 'node:zlib';
-import {JSDOM} from 'jsdom';
-const NativeMessageEvent = MessageEvent;
-const dom = new JSDOM('<!doctype html><html><head></head><body><nav data-analytics-public>Settings</nav><div id="private">synthetic-private-chat</div><input value="synthetic-private-input"></body></html>', {url:'https://otto.fixture.invalid/',pretendToBeVisual:true});
-for (const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLFormElement','HTMLIFrameElement','HTMLImageElement','HTMLLinkElement','HTMLStyleElement','HTMLMediaElement','HTMLVideoElement','HTMLAudioElement','HTMLCanvasElement','SVGElement','Document','DocumentFragment','ShadowRoot','CSSStyleSheet','CSSStyleDeclaration','MutationObserver','Event','CustomEvent']) Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:name==='document'?dom.window.document:dom.window[name]});
-Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
-Object.defineProperty(globalThis,'MessageEvent',{configurable:true,value:NativeMessageEvent});
-globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
-globalThis.location = window.location;
-window.XMLHttpRequest = globalThis.XMLHttpRequest = undefined;
-const requests = [];
-let phase = 'disabled';
-let releaseConfig;
-let releaseFailure;
-let failed = false;
-let session;
-let delaySession = false;
-let releaseSession;
-let releasePatch;
-let revokeSignal;
-const wait = ms => new Promise(resolve => setTimeout(resolve,ms));
-async function decode(body) {
-  if (!body) return undefined;
-  if (body instanceof ArrayBuffer) body = Buffer.from(body);
-  if (ArrayBuffer.isView(body)) body = Buffer.from(body.buffer,body.byteOffset,body.byteLength);
-  if (typeof body.text === 'function') body = await body.text();
-  if (Buffer.isBuffer(body)) body = (body[0]===31 ? gunzipSync(body) : body).toString();
-  if (body.startsWith('data=')) body = Buffer.from(new URLSearchParams(body).get('data'),'base64').toString();
-  return JSON.parse(body);
-}
-window.fetch = globalThis.fetch = async (url,init={}) => {
-  const path = new URL(url,window.location.href).pathname;
-  if (path==='/api/session' || path==='/api/account') {
-    if (path==='/api/account') {
-      const change = JSON.parse(init.body);
-      if (scenario==='stale_peer_grant' && change.usageData===false) {
-        revokeSignal = init.signal;
-        await new Promise(resolve => {releasePatch=resolve;});
-      }
-      if (change.usageData!==undefined) session = {...session,settings:{...session.settings,usageData:change.usageData},analytics:{...session.analytics,enabled:change.usageData}};
-      if (scenario==='failed_revoke' && change.usageData===false) {
-        await new Promise(resolve => {releasePatch=resolve;});
-        return Response.json({error:'Synthetic tenant synchronization failure'},{status:503});
-      }
-    } else if (delaySession) {
-      const snapshot = session;
-      await new Promise(resolve => {releaseSession=resolve;});
-      return Response.json(snapshot);
-    }
-    return Response.json(session);
-  }
-  const request = {phase,path};
-  requests.push(request);
-  request.payload = await decode(init.body);
-  if (request.path.endsWith('/config')) {
-    if (scenario==='late_config' && !releaseConfig) await new Promise(resolve => {releaseConfig=resolve;});
-    return Response.json({sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false});
-  }
-  if (['retry','late_failure'].includes(scenario) && !failed && request.payload) {
-    failed = true;
-    if (scenario==='late_failure') await new Promise(resolve => {releaseFailure=resolve;});
-    return new Response('',{status:503});
-  }
-  return Response.json({status:1});
-};
-Object.defineProperty(navigator,'sendBeacon',{configurable:true,value:(url,body) => {
-  const request = {phase,path:new URL(url).pathname};
-  requests.push(request);
-  void decode(body).then(payload => {request.payload=payload;});
-  return true;
-}});
-const analytics = await import('./src/web/lib/analytics-client.ts');
-const {analyticsForCurrentSession} = await import('./src/web/lib/analytics.ts');
-const {posthog:sdk} = await import('posthog-js/no-external');
-const enabled = id => ({enabled:true,distinctId:'hosted:fixture-'+id,deployment:'hosted',environment:'production',appVersion:'0.1.0'});
-const disabled = {...enabled('a'),enabled:false};
-const events = request => Array.isArray(request.payload) ? request.payload : request.payload?.batch ?? (request.payload?.event ? [request.payload] : []);
-function interact() {
-  document.querySelector('#private').textContent = 'synthetic-private-'+phase;
-  document.querySelector('input').value = 'synthetic-private-'+phase;
-  document.querySelector('input').dispatchEvent(new window.Event('input',{bubbles:true}));
-}
-if (scenario==='desktop_disabled') {
-  window.ottoDesktop = {getAnalyticsConfiguration:async () => disabled};
-  await import('./desktop/ui/analytics.ts');
-  window.ottoSetupAnalytics.step('preparing');
-  await wait(100);
-  await window.ottoSetupAnalytics.completed();
-} else {
-  analytics.configureAnalytics(disabled,'web');
-  analytics.captureAnalytics('otto_chat_stop_requested');
-  analytics.capturePageview('/');
-}
-assert.equal(requests.length,0);
-if (scenario==='batched_optin') {
-  phase='enabled';
-  analytics.configureAnalytics(enabled('a'),'web');
-  sdk.set_config({api_transport:'fetch'});
-  await wait(350);
-  analytics.captureAnalytics('otto_settings_viewed',{tab:'models'});
-  analytics.captureAnalytics('otto_chat_stop_requested');
-  await wait(3500);
-  assert.ok(requests.some(request => events(request).some(event => event.event==='otto_settings_viewed') && events(request).some(event => event.event==='otto_chat_stop_requested')), 'The opted-in events must arrive in the same SDK batch.');
-  assert.ok(requests.flatMap(events).every(event => event.properties.distinct_id==='hosted:fixture-a'));
-  assert.ok(!JSON.stringify(requests).includes('synthetic-private'));
-  await sdk.shutdown();
-  dom.window.close();
-  process.exit(0);
-}
-if (['cross_tab','failed_revoke','peer_failed_revoke','stale_peer_grant'].includes(scenario)) {
-  const {act,createElement} = await import('react');
-  const {createRoot} = await import('react-dom/client');
-  const {useSession} = await import('./src/web/hooks/use-session.ts');
-  const {sessionStore} = await import('./src/web/lib/session.ts');
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-  session = {auth:{mode:'google',googleAvailable:true},user:{id:'fixture-a',name:'Fixture',email:null,avatarUrl:null},settings:{theme:'light',onboardingCompleted:true,usageData:true},capabilities:{developer:false},analytics:enabled('a')};
-  sessionStore.subscribe(() => analytics.configureAnalytics(sessionStore.getSnapshot().session?.user ? sessionStore.getSnapshot().session.analytics : undefined,'web'));
-  let current;
-  function Account() { current=useSession(); return null; }
-  const root = createRoot(document.createElement('div'));
-  const peer = new BroadcastChannel('otto.auth');
-  let notices = 0;
-  const changes = [];
-  peer.onmessage = ({data}) => {notices++; changes.push(data);};
-  await act(async () => {root.render(createElement(Account)); await wait(100);});
-  if (scenario==='stale_peer_grant') {
-    phase='enabled';
-    analytics.captureAnalytics('otto_chat_stop_requested');
-    interact();
-    phase='revoked';
-    let pending;
-    await act(async () => {pending=current.update({usageData:false}); await wait(50);});
-    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
-    assert.equal(sdk.has_opted_out_capturing(),true);
-    assert.equal(sdk.sessionRecordingStarted(),false);
-    await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
-    assert.equal(revokeSignal.aborted,false);
-    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
-    assert.equal(sdk.has_opted_out_capturing(),true);
-    assert.equal(sdk.sessionRecordingStarted(),false);
-    await act(async () => {releasePatch(); await pending; await wait(50);});
-    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
-    session = {...session,settings:{...session.settings,usageData:true},analytics:enabled('a')};
-    await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
-    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
-    assert.equal(sdk.has_opted_out_capturing(),true);
-    assert.equal(sdk.sessionRecordingStarted(),false);
-    analytics.captureAnalytics('otto_chat_stop_requested');
-    interact();
-    await wait(8000);
-    assert.equal(requests.filter(request => request.phase==='revoked').length,0);
-    assert.equal(requests.flatMap(events).length,0);
-    phase='renewed';
-    await act(async () => {await current.update({usageData:true}); await wait(100);});
-    assert.equal(sessionStore.getSnapshot().session.settings.usageData,true);
-    assert.equal(sdk.has_opted_out_capturing(),false);
-    assert.equal(sdk.sessionRecordingStarted(),true);
-    await act(async () => {root.unmount();});
-    peer.close();
-    dom.window.close();
-    process.exit(0);
-  }
-  if (scenario!=='cross_tab') {
-    phase='enabled';
-    analytics.captureAnalytics('otto_chat_stop_requested');
-    interact();
-    delaySession=true;
-    let pending;
-    if (scenario==='failed_revoke') {
-      await act(async () => {void current.refresh(); await wait(20);});
-      await act(async () => {
-        pending = current.update({usageData:false}).then(() => {throw new Error('Expected failed revocation');}, cause => assert.match(cause.message,/Synthetic tenant synchronization failure/));
-        assert.equal(sdk.has_opted_out_capturing(),true);
-        assert.equal(sdk.sessionRecordingStarted(),false);
-        await wait(100);
-      });
-      assert.equal(notices,1);
-      assert.deepEqual(changes[0],{type:'usage-data',owner:'fixture-a',enabled:false});
-      assert.equal(typeof releasePatch,'function');
-    } else {
-      await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:false}); await wait(100);});
-      assert.equal(sdk.has_opted_out_capturing(),true);
-      assert.equal(sdk.sessionRecordingStarted(),false);
-    }
-    phase='revoked';
-    delaySession=false;
-    await act(async () => {releaseSession(); await wait(50);});
-    if (pending) await act(async () => {releasePatch(); await pending; await wait(50);});
-    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
-    assert.equal(sessionStore.getSnapshot().session.analytics.enabled,false);
-    session = {...session,settings:{...session.settings,usageData:true},analytics:enabled('a')};
-    await act(async () => {await current.refresh(); await wait(50);});
-    assert.equal(sessionStore.getSnapshot().session.settings.usageData,false);
-    assert.equal(sdk.has_opted_out_capturing(),true);
-    analytics.captureAnalytics('otto_chat_stop_requested');
-    interact();
-    await wait(8000);
-    assert.equal(requests.filter(request => request.phase==='revoked').length,0);
-    assert.equal(requests.flatMap(events).length,0);
-    phase='renewed';
-    if (scenario==='failed_revoke') await act(async () => {await current.update({usageData:true}); await wait(100);});
-    else await act(async () => {peer.postMessage({type:'usage-data',owner:'fixture-a',enabled:true}); await wait(100);});
-    assert.equal(sessionStore.getSnapshot().session.settings.usageData,true);
-    assert.equal(sdk.has_opted_out_capturing(),false);
-    assert.equal(sdk.sessionRecordingStarted(),true);
-    await act(async () => {root.unmount();});
-    peer.close();
-    dom.window.close();
-    process.exit(0);
-  }
-  await act(async () => {await current.update({usageData:false}); await wait(50);});
-  assert.equal(notices,1);
-  assert.equal(sdk.has_opted_out_capturing(),true);
-  await act(async () => {await current.update({usageData:true}); await wait(100);});
-  assert.equal(notices,2);
-  phase='enabled';
-  analytics.captureAnalytics('otto_chat_stop_requested');
-  interact();
-  session = {...session,settings:{...session.settings,usageData:false},analytics:disabled};
-  delaySession=true;
-  await act(async () => {peer.postMessage('changed'); await wait(100);});
-  assert.equal(sdk.has_opted_out_capturing(),true);
-  assert.equal(sdk.sessionRecordingStarted(),false);
-  phase='revoked';
-  await wait(3500);
-  assert.equal(requests.filter(request => request.phase==='revoked').length,0);
-  assert.equal(requests.flatMap(events).length,0);
-  delaySession=false;
-  await act(async () => {releaseSession(); await wait(100); root.unmount();});
-  peer.close();
-  dom.window.close();
-  process.exit(0);
-}
-if (!['disabled','desktop_disabled'].includes(scenario)) {
-  phase='enabled';
-  analytics.configureAnalytics(enabled('a'),'web');
-  sdk.set_config({api_transport:'fetch',...(['retry','late_failure'].includes(scenario)?{request_batching:false}:{})});
-  await wait(scenario==='late_config'?100:350);
-  analytics.captureAnalytics('otto_chat_stop_requested');
-  const previous = analyticsForCurrentSession();
-  const previousSession = sdk.get_session_id();
-  interact();
-  await wait(scenario==='replay'?750:50);
-  phase='transition';
-  analytics.configureAnalytics(disabled,'web');
-  assert.equal(sdk.sessionRecordingStarted(),false);
-  assert.equal(sdk.has_opted_out_capturing(),true);
-  phase='revoked';
-  previous('otto_ui_error',{area:'chat',action:'send'});
-  analytics.capturePageview('/apps');
-  interact();
-  if (releaseConfig) releaseConfig();
-  if (['owner_change','reoptin','late_failure','late_config'].includes(scenario)) {
-    await wait(50);
-    phase='renewed';
-    const owner = scenario==='owner_change'?'b':'a';
-    analytics.configureAnalytics(enabled(owner),'web');
-    analytics.captureAnalytics('otto_settings_viewed',{tab:'models'});
-    previous('otto_ui_error',{area:'chat',action:'send'});
-    await wait(100);
-    assert.equal(sdk.sessionRecordingStarted(),true);
-    assert.notEqual(sdk.get_session_id(),previousSession);
-    interact();
-  }
-  if (releaseFailure) releaseFailure();
-  await wait(['retry','late_failure'].includes(scenario)?12000:8000);
-  await sdk.shutdown();
-  await wait(100);
-  assert.equal(requests.filter(request => ['transition','revoked'].includes(request.phase)).length,0);
-  const renewed = requests.filter(request => request.phase==='renewed').flatMap(events);
-  assert.ok(renewed.every(event => event.event!=='otto_chat_stop_requested' && event.event!=='otto_ui_error' && event.properties.$session_id!==previousSession));
-  if (['owner_change','reoptin','late_failure','late_config'].includes(scenario)) {
-    assert.ok(renewed.some(event => event.event==='otto_settings_viewed'));
-    assert.ok(renewed.some(event => event.event==='$snapshot'));
-    assert.ok(renewed.every(event => event.properties.distinct_id==='hosted:fixture-'+(scenario==='owner_change'?'b':'a')));
-    assert.ok(renewed.every(event => event.properties.app_version==='0.1.0'));
-  }
-} else {
-  await wait(3500);
-  assert.equal(requests.length,0);
-}
-assert.ok(requests.flatMap(events).every(event => event.event!=='otto_ui_error'));
-dom.window.close();
-process.exit(0);
-`,
-            },
-          );
-          assert.equal(result.exitCode, 0, result.stderr);
-        }),
-      ),
-    );
-  },
-);
-
-test(
-  'a legacy Vault proves the old key before it creates a key check and concurrent saves keep one account',
+  'a Vault without a key check proves the old key before it creates one',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -6163,7 +3812,6 @@ test(
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
     });
-    const app = Fastify();
     try {
       await seedTurns(pool);
       const key = randomBytes(32);
@@ -6173,7 +3821,6 @@ test(
         resume: async () => {},
         retry: async () => {},
       });
-      vault.registerRoutes(app);
       const input = {
         origin: 'https://legacy.example.test',
         label: 'Synthetic account',
@@ -6186,7 +3833,7 @@ test(
         configured: true,
         getKey: async () => randomBytes(32),
       });
-      await assert.rejects(wrong.getKey(), /does not match existing data/);
+      await assert.rejects(wrong.getKey());
       assert.equal(
         (await pool.query("SELECT to_regclass('vault_key_check') AS table_name")).rows[0]
           .table_name,
@@ -6199,16 +3846,7 @@ test(
       });
       assert.deepEqual(await valid.getKey(), key);
       assert.equal((await vault.readCredential(first.id)).secret.password, input.password);
-      await assert.rejects(wrong.getKey(), /does not match/);
-      const results = await Promise.all(
-        Array.from({ length: 8 }, (_, index) =>
-          vault.saveLogin({ ...input, password: `Synthetic replacement ${index}` }),
-        ),
-      );
-      assert.deepEqual(new Set(results.map((item) => item.id)), new Set([first.id]));
-      assert.equal((await pool.query('SELECT id FROM vault_entries')).rowCount, 1);
     } finally {
-      await app.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();

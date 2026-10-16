@@ -11,7 +11,7 @@ Besides [Composio apps](/connect/apps/), Otto connects to Notion and Linear thro
 
 Notion and Linear connect through their own hosted MCP servers, the same way as any [other MCP server](#connect-another-service). You sign in with OAuth, and you don't need a Composio key. Open **Apps** and select **Connect**.
 
-Otto can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. If Otto can't refresh a sign-in because it expired or was revoked, **Apps** shows **Sign-in required** with **Reconnect** from then on. Connect a Notion or Linear account again if you connected it with an earlier version of Otto.
+Otto can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. If Otto can't refresh a sign-in because it expired or was revoked, **Apps** shows **Sign-in required** with **Reconnect** from then on.
 
 ## Connect another service
 

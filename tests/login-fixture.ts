@@ -12,7 +12,6 @@ export class LoginPage {
   search!: HTMLInputElement;
   next!: HTMLButtonElement;
   entered: string[] = [];
-  closed = false;
   document = 'loader-0';
   isolated: Record<string, unknown> = {};
   focused?: HTMLInputElement;
@@ -195,7 +194,6 @@ export function stagedLoginBrowser() {
     if (command[0] === 'snapshot') data = page.snapshot();
     if (command[0] === 'screenshot') await writeFile(command[1], page.screen());
     if (command[0] === 'close') {
-      page.closed = true;
       page.dom.window.close();
       pages.delete(id);
       await inspectors.get(id)?.close();

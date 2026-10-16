@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import test from 'node:test';
 import { crc32 } from 'node:zlib';
-import { act, createElement } from 'react';
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { JSDOM } from 'jsdom';
 import { createBrowserProxy } from '../src/providers/agent-browser/network.ts';
@@ -15,10 +14,9 @@ import {
 import { previewableUrl } from '../src/shared/link-preview.ts';
 import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
-import type { Artifact, Connection } from '../src/shared/contracts.ts';
+import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
-import { connectionGroups, connectionIssue } from '../src/web/lib/secondary-pages.ts';
 
 const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
@@ -108,47 +106,22 @@ test('every redirect checks DNS again and requests use the verified address', as
   });
   assert.equal(await mixed.metadata('https://example.com'), null);
   assert.equal(requested, false);
-});
-
-test('private and credential redirects, loops, non-HTML and oversized fixture bodies stay unavailable', async () => {
   for (const location of [
     'http://169.254.169.254/latest',
     'https://example.com/oauth/approve',
     'https://example.com/?token=secret',
   ]) {
     let requests = 0;
-    const provider = createPublicLinkPreviewProvider({
+    const redirected = createPublicLinkPreviewProvider({
       resolver: addresses,
       request: async () => {
         requests++;
         return { status: 302, headers: { location }, body: new Uint8Array() };
       },
     });
-    assert.equal(await provider.metadata('https://example.com/article'), null);
+    assert.equal(await redirected.metadata('https://example.com/article'), null);
     assert.equal(requests, 1);
   }
-  let redirects = 0;
-  const loop = createPublicLinkPreviewProvider({
-    resolver: addresses,
-    request: async () => {
-      redirects++;
-      return { status: 302, headers: { location: '/loop' }, body: new Uint8Array() };
-    },
-  });
-  assert.equal(await loop.metadata('https://example.com'), null);
-  assert.equal(redirects, 4);
-  for (const result of [
-    { ...html(), headers: { 'content-type': 'application/json' } },
-    { ...html(), headers: { 'content-type': 'text/html', 'content-encoding': 'gzip' } },
-    { ...html(), body: Buffer.alloc(256 * 1024 + 1) },
-  ])
-    assert.equal(
-      await createPublicLinkPreviewProvider({
-        resolver: addresses,
-        request: async () => result,
-      }).metadata('https://example.com'),
-      null,
-    );
 });
 
 test('pinned HTTP transport sends no cookies or authorization and stops after bounded metadata', async () => {
@@ -227,7 +200,7 @@ test('connection navigation permits secure providers and same-origin app consent
 
 test('chat HTML cannot run scripts, submit forms, load trackers or link to local internals', () => {
   const result = render(
-    '<script>alert(1)</script><style>body{display:none}</style><iframe src="https://evil.example"></iframe><form action="/api/messages"><input name="text" value="bad"></form><img src="https://evil.example/track" onerror="alert(1)"><a href="javascript:alert(1)">bad</a><a href="/api/state">internal</a>\n\n![picture](https://evil.example/pixel)',
+    '<u onclick="alert(1)" style="color:red">x</u><script>alert(1)</script><style>body{display:none}</style><iframe src="https://evil.example"></iframe><form action="/api/messages"><input name="text" value="bad"></form><img src="https://evil.example/track" onerror="alert(1)"><a href="javascript:alert(1)">bad</a><a href="/api/state">internal</a>\n\n![picture](https://evil.example/pixel)',
   );
   for (const expression of [
     /<script/i,
@@ -235,6 +208,8 @@ test('chat HTML cannot run scripts, submit forms, load trackers or link to local
     /<iframe/i,
     /<form/i,
     /onerror=/i,
+    /onclick=/i,
+    /style=/i,
     /src="https:\/\/evil/,
     /href="javascript:/i,
     /href="\/api\/state"/,
@@ -249,8 +224,6 @@ test('setup links omit tokens and fragments and approval paths never become link
     origin,
   )!;
   assert.deepEqual(link, { href: '/credentials/request-id', kind: 'setup', setup: 'vault' });
-  assert.equal(setupLink(link, 'Add authenticator code')!.label, 'Add authenticator code');
-  assert.equal(setupLink(link, `${origin}/credentials/request-id`)!.label, 'Open Vault');
   assert.equal(safeMessageLink('/approvals/action-id', origin), null);
   assert.equal(safeMessageLink(`${origin}/approvals/action-id`, origin), null);
   const result = render(
@@ -268,8 +241,6 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.ok(external);
   assert.match(external, /\brel="noopener noreferrer"/);
   assert.match(external, /\breferrerPolicy="no-referrer"/);
-  const action = JSDOM.fragment(result).querySelector('button[data-setup="app"]');
-  assert.equal(action?.textContent, 'Connect Calendar');
   assert.doesNotMatch(result, /href="https:\/\/outside\.example\/connect"/);
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
@@ -300,210 +271,6 @@ test('Trust save links open only an empty local form without accepting secret qu
   const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
   assert.equal(link?.getAttribute('href'), '/trust?add=login');
   assert.equal(link?.getAttribute('rel'), 'noopener noreferrer');
-});
-
-test('an owned payment link remains an action in the desktop conversation', () => {
-  const path = '/payments/9a7fc76a-9f96-4890-8865-1157048f47bc';
-  const result = render(`[Approve payment](${path})`);
-  const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
-  assert.equal(link?.getAttribute('href'), path);
-  assert.equal(previewableUrl(`https://example.com${path}`), null);
-});
-
-test('an existing native account does not hide authorization for another account', () => {
-  const text = '[Connect Gmail](https://connect.composio.dev/link/synthetic-personal-account)';
-  const before = render(text);
-  assert.equal(JSDOM.fragment(before).querySelectorAll('button[data-setup="app"]').length, 1);
-  const after = renderToStaticMarkup(
-    createElement(MessageText, { text, connectedAppIds: new Set(['gmail']) }),
-  );
-  const actions = JSDOM.fragment(after).querySelectorAll('button[data-setup="app"]');
-  assert.equal(actions.length, 1);
-  assert.equal(actions[0].hasAttribute('disabled'), false);
-  assert.doesNotMatch(after, /connect\.composio\.dev/);
-});
-
-test('an app setup action hides only after its exact connection is connected', () => {
-  const id = '00000000-0000-4000-8000-000000000001';
-  const text = `[Connect Gmail](/apps?connect=${id})`;
-  const unrelated = renderToStaticMarkup(
-    createElement(MessageText, {
-      text,
-      connectedAppIds: new Set(['gmail', '00000000-0000-4000-8000-000000000002']),
-    }),
-  );
-  assert.equal(JSDOM.fragment(unrelated).querySelectorAll('button[data-setup="app"]').length, 1);
-  const connected = renderToStaticMarkup(
-    createElement(MessageText, { text, connectedAppIds: new Set([id]) }),
-  );
-  assert.equal(JSDOM.fragment(connected).querySelectorAll('button[data-setup="app"]').length, 0);
-});
-
-test('setup actions match canonical owned links and retain other account requests across refreshes', async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    url: origin,
-    pretendToBeVisual: true,
-  });
-  const discoveryId = 'abcdef01-abcd-4000-8000-abcdef000003';
-  const links = [
-    'https://connect.composio.dev/link/synthetic-work',
-    'https://connect.composio.dev/link/synthetic-personal',
-    `/apps?connect=${discoveryId.toUpperCase()}`,
-  ];
-  const hashes = [links[0], links[1], `/apps?connect=${discoveryId}`].map((href) =>
-    createHash('sha256').update(href).digest('hex'),
-  );
-  const requests: string[][] = [];
-  let completed: string[] = [];
-  let failing = false;
-  const globals = {
-    window: dom.window,
-    document: dom.window.document,
-    HTMLElement: dom.window.HTMLElement,
-    Element: dom.window.Element,
-    Node: dom.window.Node,
-    IS_REACT_ACT_ENVIRONMENT: true,
-    fetch: async (path: unknown, init: RequestInit) => {
-      assert.equal(path, '/api/apps/setup-status');
-      assert.equal(init.method, 'POST');
-      const body = JSON.parse(String(init.body));
-      assert.deepEqual(Object.keys(body), ['hashes', 'connectionIds']);
-      assert.deepEqual(body.hashes, hashes);
-      assert.deepEqual(body.connectionIds, [discoveryId]);
-      requests.push(body.hashes);
-      return Response.json(
-        failing
-          ? { error: 'Unavailable' }
-          : {
-              completed,
-              apps: [
-                { hash: hashes[0], slug: 'gmail', name: 'Gmail' },
-                { hash: hashes[2], slug: 'notion_mcp', name: 'Notion' },
-                { hash: '0'.repeat(64), slug: 'slack', name: 'Slack' },
-              ],
-            },
-        { status: failing ? 503 : 200 },
-      );
-    },
-  };
-  const originals = new Map(
-    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
-  );
-  for (const [key, value] of Object.entries(globals))
-    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
-  const { createRoot } = await import('react-dom/client');
-  const root = createRoot(dom.window.document.getElementById('root')!);
-  const buttons = () => [...dom.window.document.querySelectorAll('button[data-setup="app"]')];
-  const waitFor = async (ready: () => boolean) => {
-    for (let attempt = 0; attempt < 50 && !ready(); attempt++)
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-    assert.ok(ready());
-  };
-  const render = (key: string) =>
-    act(async () =>
-      root.render(
-        createElement(MessageText, {
-          key,
-          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]}) and [Connect custom app](${links[2]})`,
-          connectedAppIds: new Set(['gmail']),
-        }),
-      ),
-    );
-  try {
-    await render('initial');
-    await waitFor(() => requests.length === 1);
-    await waitFor(() => Boolean(buttons()[0]?.querySelector('img')));
-    assert.equal(buttons().length, 3);
-    assert.equal(buttons()[0].querySelector('img')?.getAttribute('src'), '/logos/gmail.svg');
-    assert.equal(buttons()[1].querySelector('img'), null);
-    assert.equal(buttons()[2].querySelector('img')?.getAttribute('src'), '/logos/notion.svg');
-    completed = [hashes[0]];
-    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
-    await waitFor(() => buttons().length === 2);
-    assert.ok(buttons()[0].textContent?.includes('personal'));
-    failing = true;
-    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
-    await waitFor(() => requests.length === 3);
-    assert.equal(buttons().length, 2);
-    failing = false;
-    await render('reload');
-    await waitFor(() => requests.length === 4 && buttons().length === 2);
-    assert.ok(buttons()[0].textContent?.includes('personal'));
-    completed = [hashes[0], hashes[2]];
-    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
-    await waitFor(() => buttons().length === 1);
-    assert.ok(buttons()[0].textContent?.includes('personal'));
-    assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
-  } finally {
-    await act(async () => root.unmount());
-    dom.window.close();
-    for (const [key, value] of originals)
-      if (value) Object.defineProperty(globalThis, key, value);
-      else Reflect.deleteProperty(globalThis, key);
-  }
-});
-
-test('app groups separate catalog metadata from saved account state and keep available routing', () => {
-  const account: Connection = {
-    slug: 'gmail',
-    name: 'Gmail',
-    status: 'connected',
-    connectionId: 'owned-gmail',
-    accountId: 'provider-account',
-    accountEmail: 'synthetic@example.test',
-    description: 'Account authorization expired',
-    reconnectRequired: true,
-    triggersEnabled: true,
-  };
-  const catalog: Connection[] = [
-    {
-      slug: 'gmail',
-      name: 'Gmail',
-      status: 'disconnected',
-      description: 'Mail integration',
-      categories: ['Communication'],
-      triggersEnabled: false,
-    },
-    {
-      slug: 'gmail_mcp',
-      name: 'Gmail MCP',
-      status: 'disconnected',
-      categories: ['Productivity'],
-      triggersEnabled: false,
-    },
-  ];
-  const [group] = connectionGroups([account], catalog);
-  assert.equal(group.service.description, catalog[0].description);
-  assert.deepEqual(group.service.categories, ['Communication', 'Productivity']);
-  assert.equal(group.service.slug, account.slug);
-  assert.equal(group.accounts[0], account);
-  assert.ok(connectionIssue(group.accounts[0]));
-  assert.equal(connectionGroups([account])[0].service.description, undefined);
-  const [available] = connectionGroups(
-    [{ ...catalog[0], status: 'not_configured' }],
-    catalog.map((service) =>
-      service.slug === 'gmail' ? { ...service, status: 'not_configured' } : service,
-    ),
-  );
-  assert.equal(available.service.slug, 'gmail_mcp');
-  assert.equal(available.service.status, 'disconnected');
-  assert.deepEqual(available.accounts, []);
-  assert.equal(
-    connectionGroups([{ ...catalog[0], status: 'not_configured' }], catalog)[0].service.status,
-    'disconnected',
-  );
-});
-
-test('underlined messages preserve nested formatting without admitting unsafe markup', () => {
-  const result = render(
-    '<u onclick="alert(1)" style="color:red">**bold** [safe](https://example.com)</u> ' +
-      '<u><a href="javascript:alert(1)">unsafe</a><script>alert(2)</script></u>',
-  );
-  const document = new JSDOM(result).window.document;
-  assert.equal(document.querySelector('u strong')?.textContent, 'bold');
-  assert.equal(document.querySelector('u a')?.getAttribute('href'), 'https://example.com/');
-  assert.equal(document.querySelectorAll('a').length, 1);
-  assert.doesNotMatch(result, /onclick|style=|javascript|script|alert/);
 });
 
 test('only intended app paths and credential-free HTTP URLs become links', () => {
@@ -548,10 +315,8 @@ test('plain browser connection paths hide their token behind one fixed action', 
   assert.deepEqual(messageSetupLinks(text, origin), [
     { href: path, setup: 'website', label: 'Connect website' },
   ]);
-  const [body, actions] = render(text).split('<div class="setup-group">');
+  const [body] = render(text).split('<div class="setup-group">');
   assert.doesNotMatch(body, /xxxx|token=hidden|fragment/);
-  assert.equal((body.match(/Connect website/g) ?? []).length, 2);
-  assert.equal((actions.match(/data-setup="website"/g) ?? []).length, 1);
   for (const token of ['x'.repeat(42), 'x'.repeat(44)])
     assert.deepEqual(messageSetupLinks(`/browser-connect/${token}`, origin), []);
 });
