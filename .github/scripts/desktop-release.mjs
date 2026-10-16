@@ -785,7 +785,6 @@ async function draftAll() {
     `${metadata.installer.sha256}  ${metadata.installer.file}\n${metadata.runtime.sha256}  ${metadata.runtime.file}`
   )
     throw new Error('The Windows checksums do not match.');
-  const targets = [];
   for (const target of ['arm64', 'x64']) {
     const environment = {
       ...process.env,
@@ -798,10 +797,6 @@ async function draftAll() {
     );
     environment.OTTO_EXPECTED_RUNTIME_FINGERPRINT = inputs.fingerprint;
     run(process.execPath, [fileURLToPath(import.meta.url), 'stage'], { env: environment });
-    const runtime = JSON.parse(
-      await readFile(join(environment.OTTO_DESKTOP_OUTPUT, 'runtime-release.json'), 'utf8'),
-    );
-    targets.push({ runtime, tag: runtime.releaseTag });
   }
   const tag = `desktop-v${version}`;
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
@@ -809,7 +804,7 @@ async function draftAll() {
   await copyFile(join(windows, 'SHA256SUMS'), sum);
   const download = (file) =>
     `https://github.com/${releaseRepository}/releases/download/${tag}/${file}`;
-  const notes = `### Downloads\n\n- [Mac Intel](${download('Otto-x64.dmg')})\n- [Mac ARM](${download('Otto-arm64.dmg')})\n- [Windows](${download('Otto-Setup-x64.exe')})\n\n### Runtime packs\n\n- [Mac Intel](${`https://github.com/${runtimeRepository}/releases/download/${targets[1].tag}/${targets[1].runtime.archive.file}`})\n- [Mac ARM](${`https://github.com/${runtimeRepository}/releases/download/${targets[0].tag}/${targets[0].runtime.archive.file}`})\n- [Windows](${download('Otto-Runtime-win32-x64.tar.gz')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://otto-docs.pages.dev/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime pack. To install offline, put the compressed runtime pack next to the installer before you run it.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are unsigned.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
+  const notes = `### Downloads\n\n- [Mac Intel](${download('Otto-x64.dmg')})\n- [Mac ARM](${download('Otto-arm64.dmg')})\n- [Windows](${download('Otto-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://otto-docs.pages.dev/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are unsigned.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,

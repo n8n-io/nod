@@ -210,7 +210,6 @@ const definitions = [
 
 const manifest = {
   version: caseVersion,
-  sourceTask: 'https://linear.app/n8n/issue/LAB-585',
   evidenceClass:
     'Controlled Pi bash tool execution against synthetic files in disposable Linux containers; no model or live account.',
   model: null,

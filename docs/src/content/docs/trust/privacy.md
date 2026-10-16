@@ -9,7 +9,7 @@ This page explains where Otto keeps your data, what leaves your computer and to 
 
 By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
 
-Feedback and usage analytics are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
+The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback and usage analytics are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
@@ -33,6 +33,8 @@ flowchart LR
   otto -- direct app actions --> apps
   otto -- your chats --> chat[Telegram, WhatsApp]
   otto -- browsing --> web[Websites]
+  otto -- searches --> search[Web search]
+  otto -- update checks and downloads --> n8n[n8n]:::muted
   otto -. opt-in analytics .-> n8n[n8n]:::muted
   otto -. feedback you send .-> feedback[Configured feedback recipient]:::muted
 ```
@@ -45,7 +47,8 @@ flowchart LR
 | Composio, if you connect apps through it  | Those app connections and the actions Otto sends, in n8n's project or in your own                                                                                                                                                                                                                                    |
 | Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                                                                                                                                                                                          |
 | Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                                                                                                                                                                     |
-| n8n                                       | App requests and results when you use Easy Connect, masked usage analytics if you opt in, and feedback when using the default collector                                                                                                                                                                              |
+| Exa, for web search                       | Otto's search queries. With a ChatGPT plan, OpenAI runs the search instead                                                                                                                                                                                                                                           |
+| n8n                                       | App requests and results when you use Easy Connect. Desktop update checks and downloads, which show your IP address, app version and platform. Masked usage analytics if you opt in, and feedback when using the default collector                                                                                   |
 | Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                                                                                                                                                                                 |
 
 OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
@@ -64,7 +67,7 @@ Analytics have no fields for raw messages, Vault values, full page addresses, na
 
 ## Feedback
 
-The feedback dialog shows who receives your submission. The default is the Otto team at n8n; an operator can set a different HTTPS collector. By default feedback includes a diagnostic report of your recent chat, actions and their results. Select **Review** to read the report first, or untick **Include diagnostic report** to leave it out. Otto removes known secret values from the report before you see it. Feedback is a separate, deliberate submission and does not turn on usage analytics.
+The feedback dialog shows who receives your submission. The default is the Otto team at n8n; an operator can set a different HTTPS collector. By default feedback includes a diagnostic report of your recent chat, actions and their results. Select **Review** to read the report first, or untick **Include diagnostic report** to leave it out. Otto removes known secret values from the report before you see it. From the desktop app, feedback also includes the app version, your platform and your computer's name. Feedback is a separate, deliberate submission and does not turn on usage analytics.
 
 Operators can disable submission and status checks with `OTTO_FEEDBACK_ENABLED=false`. See the [configuration reference](/deploy/configuration/#analytics-and-feedback) for custom collectors and operation without either upstream collector.
 
