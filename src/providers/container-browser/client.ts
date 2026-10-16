@@ -25,6 +25,9 @@ import {
 
 const viewFrameLine = 4 * 1024 * 1024 + 256;
 const observationSchema = z.object({ text: z.string(), url: z.string() }).strict();
+const controls = z
+  .array(z.object({ role: z.string().max(100), name: z.string().max(300) }).strict())
+  .max(3);
 
 export function createBridgeComputer(options: {
   namespace: string;
@@ -360,10 +363,8 @@ export function createBridgeComputer(options: {
         .object({
           origin: z.string().max(2048),
           url: z.string().max(8192),
-          controls: z
-            .array(z.object({ role: z.string().max(100), name: z.string().max(300) }).strict())
-            .max(3)
-            .optional(),
+          controls: controls.optional(),
+          dropTarget: controls.optional(),
           dialog: z.string().max(8192).optional(),
         })
         .strict()

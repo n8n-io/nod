@@ -409,9 +409,10 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       focused?: boolean;
     }) {
       let backendNodeId: number | undefined;
+      let session = page;
       const describe = async (params: Record<string, unknown>) =>
-        ((await send('DOM.describeNode', params, page)) as { node: { backendNodeId: number } }).node
-          .backendNodeId;
+        ((await send('DOM.describeNode', params, session)) as { node: { backendNodeId: number } })
+          .node.backendNodeId;
       if (query.point) {
         const { cssVisualViewport: view } = (await send('Page.getLayoutMetrics', {}, page)) as {
           cssVisualViewport: { clientWidth: number; clientHeight: number };
@@ -438,8 +439,27 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         )) as { nodeId: number };
         if (nodeId) backendNodeId = await describe({ nodeId });
       } else if (query.focused) {
-        const [main] = await tree(page);
+        const hits = (await everyFrame(focusScript, 'focus').catch(() => [])).filter(
+          (item) => item.value,
+        );
+        const hit = hits.length === 1 ? hits[0]! : undefined;
+        if (hit) {
+          session = hit.session;
+          const { result } = (await send(
+            'Runtime.evaluate',
+            {
+              contextId: hit.context,
+              expression: 'globalThis.__ottoFocused',
+              objectGroup: 'otto-control',
+            },
+            session,
+          )) as { result?: { objectId?: string } };
+          if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
+          await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, session);
+        }
+        const [main] = backendNodeId ? [] : await tree(page);
         if (main) {
+          session = page;
           const { result } = (await send(
             'Runtime.evaluate',
             {
@@ -458,7 +478,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       const { nodes } = (await send(
         'Accessibility.getPartialAXTree',
         { backendNodeId, fetchRelatives: true },
-        page,
+        session,
       )) as {
         nodes: Array<{
           nodeId: string;

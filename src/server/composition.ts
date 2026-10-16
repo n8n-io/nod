@@ -689,6 +689,7 @@ async function initializeApplication(
       page: page.url,
       step: step.action,
       ...(page.controls?.length ? { control: page.controls } : {}),
+      ...(page.dropTarget?.length ? { dropTarget: page.dropTarget } : {}),
       ...(page.dialog !== undefined ? { dialog: page.dialog } : {}),
       ...(step.action === 'upload' ? { file: basename(step.path) } : {}),
       ...(typed.length ? { typedOnPage: typed } : {}),
@@ -713,8 +714,13 @@ async function initializeApplication(
     const notRun = () =>
       Object.assign(new BrowserActionError('browser_target_changed'), { notRun: true });
     if (!browserId) throw notRun();
-    const current = await computer.currentPage(browserId).catch(() => undefined);
-    if (current?.origin !== expectOrigin) throw notRun();
+    const current = await computer
+      .currentPage(
+        browserId,
+        command.action === 'accept_dialog' ? (command as BrowserAction) : undefined,
+      )
+      .catch(() => undefined);
+    if (current?.origin !== expectOrigin || current.url !== args.page) throw notRun();
     try {
       const page =
         command.action === 'upload'

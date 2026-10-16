@@ -496,7 +496,9 @@ function pageKey(url: string) {
 }
 
 const commits = (step: BrowserAction) =>
-  ['click', 'press', 'drag', 'accept_dialog', 'evaluate'].includes(step.action) ||
+  ['click', 'press', 'drag', 'accept_dialog', 'evaluate', 'select', 'check', 'uncheck'].includes(
+    step.action,
+  ) ||
   (step.action === 'type' && /[\r\n]/.test(step.text ?? ''));
 
 export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {

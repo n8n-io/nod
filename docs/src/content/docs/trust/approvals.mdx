@@ -59,11 +59,11 @@ If the checker can't answer, Otto requires confirmation. If the model can't writ
 
 ## Browser steps
 
-On websites, the same checker decides each step that could send, submit or change something: a click, a key press, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening pages, reading them, typing into a field and read-only scripts run without a check, because nothing leaves the page until a step submits it.
+On websites, the same checker decides each step that could send, submit or change something: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening pages, reading them, typing into a field without pressing Enter, and read-only scripts run without a check.
 
-The checker sees the website, the page address, the control as the page labels it, any dialog text or file name, and what Otto typed on that page. Following links, searching, filtering, closing a popup, adding to a cart and moving through a form count as reading. Sending, posting, ordering, paying, booking, deleting and changing an account count as acting, and run only when your words ask for them.
+The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Otto typed or chose on that page. It never sees the page's text. Following links, searching, filtering, closing a popup, declining optional cookies, adding to a cart and moving through a form count as reading. Sending, posting, ordering, paying, booking, deleting, accepting cookies, and changing an account or a setting that saves at once count as acting, and run only when your words ask for them.
 
-When it asks, your yes approves that one step. Otto runs it once, only while the browser is still on the same website and the control is still on the page. If the page moved on, nothing runs and Otto looks again. A subagent can't ask you, so it hands the step back to the main task.
+When it asks, your yes approves that one step. Otto runs it once, only while the browser is still on the same page and the control is still there. If the page moved on, nothing runs and Otto looks again. A subagent can't ask you, so it hands the step back to the main task.
 
 ## The confirmation
 

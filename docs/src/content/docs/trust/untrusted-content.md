@@ -43,7 +43,7 @@ Automatic memory learning reads only your own short messages without attachments
 | Payments always need your approval                                               | A website receives whatever Otto submits to it                 |
 
 :::caution
-The server doesn't check what Otto reads or types on a website until a step submits it, or the links it opens or fetches. Text that fools the model could still use those paths.
+The checker sees a browser step's website, control and typed values, never the page text Otto read, and it doesn't check the links Otto opens or fetches. Text that fools the model could still use those paths.
 :::
 
 ## Where this is enforced

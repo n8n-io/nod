@@ -89,6 +89,7 @@ export interface BrowserPage {
   origin: string;
   url: string;
   controls?: BrowserControl[];
+  dropTarget?: BrowserControl[];
   dialog?: string;
 }
 export interface CredentialInput {

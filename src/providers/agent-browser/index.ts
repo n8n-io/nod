@@ -1528,22 +1528,16 @@ export function createAgentBrowserComputer(options: {
     );
   }
 
-  async function stepControls(state: BrowserState, step: BrowserAction) {
-    const ref = referenceOf(step.selector);
+  async function controlsOf(
+    state: BrowserState,
+    target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
+  ) {
+    const ref = referenceOf(target.selector);
     if (ref) return state.refs.has(ref) ? [state.refs.get(ref)!] : [];
-    const point =
-      step.x !== undefined && step.y !== undefined ? { x: step.x, y: step.y } : step.points?.[0];
-    const query = step.selector
-      ? { selector: step.selector }
-      : point
-        ? { point }
-        : step.action === 'press' || step.action === 'type'
-          ? { focused: true }
-          : undefined;
-    if (!query) return [];
+    if (!target.selector && !target.point && !target.focused) return [];
     const devtools = await inspector(state).catch(() => undefined);
     try {
-      return ((await devtools?.controls(query).catch(() => [])) ?? []).map((control) => ({
+      return ((await devtools?.controls(target).catch(() => [])) ?? []).map((control) => ({
         role: control.role,
         name: redactBrowserText(control.name, state.secrets).slice(0, 300),
       }));
@@ -1552,9 +1546,29 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function stepControls(state: BrowserState, step: BrowserAction) {
+    const point =
+      step.x !== undefined && step.y !== undefined ? { x: step.x, y: step.y } : step.points?.[0];
+    const controls = await controlsOf(
+      state,
+      step.selector
+        ? { selector: step.selector }
+        : point
+          ? { point }
+          : { focused: step.action === 'press' || step.action === 'type' },
+    );
+    if (step.action !== 'drag') return { controls };
+    const drop = step.targetSelector
+      ? { selector: step.targetSelector }
+      : step.points && step.points.length > 1
+        ? { point: step.points.at(-1)! }
+        : {};
+    return { controls, dropTarget: await controlsOf(state, drop) };
+  }
+
   async function onTarget(
     state: BrowserState,
-    input: { expectOrigin?: string; selector?: string; action?: string },
+    input: { expectOrigin?: string; selector?: string; targetSelector?: string; action?: string },
     signal?: AbortSignal,
   ) {
     if (!input.expectOrigin) return;
@@ -1562,8 +1576,11 @@ export function createAgentBrowserComputer(options: {
       input.action === 'accept_dialog' && (await openDialog(state, signal))
         ? state.saved.url
         : await currentUrl(state, signal).catch(() => '');
-    const ref = referenceOf(input.selector);
-    if (originOf(at) !== input.expectOrigin || (ref && !state.refs.has(ref)))
+    const refs = [referenceOf(input.selector), referenceOf(input.targetSelector)];
+    if (
+      originOf(at) !== input.expectOrigin ||
+      refs.some((ref) => ref !== undefined && !state.refs.has(ref))
+    )
       throw new BrowserActionError('browser_target_changed');
   }
 
@@ -1588,7 +1605,7 @@ export function createAgentBrowserComputer(options: {
       const url = dialog ? state.saved.url : await currentUrl(state);
       const page = { origin: browserUrl(url).origin, url: redactBrowserUrl(url, state.secrets) };
       if (dialog) return { ...page, dialog: dialog.message.slice(0, 2000) };
-      return step ? { ...page, controls: await stepControls(state, step) } : page;
+      return step ? { ...page, ...(await stepControls(state, step)) } : page;
     });
   }
 

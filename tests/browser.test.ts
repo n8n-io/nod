@@ -3211,6 +3211,25 @@ test('a checked browser step runs only on the page and control the checker saw',
       computer.act('checked', { ...next, selector: '@e9', expectOrigin: 'https://1.1.1.1' }),
       (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
     );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'drag',
+        selector: '@e3',
+        targetSelector: '@e9',
+        expectOrigin: 'https://1.1.1.1',
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    assert.deepEqual(
+      (
+        await computer.currentPage('checked', {
+          action: 'drag',
+          selector: '@e3',
+          targetSelector: '@e2',
+        })
+      ).dropTarget,
+      [{ role: 'button', name: '' }],
+    );
     assert.deepEqual(page().entered, []);
     await computer.act('checked', { ...next, expectOrigin: 'https://1.1.1.1' });
     assert.deepEqual(page().entered, ['synthetic']);
