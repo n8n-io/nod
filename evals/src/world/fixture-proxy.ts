@@ -37,7 +37,8 @@ export async function createFixtureProxy(
   const fingerprint = createHash('sha256')
     .update(new X509Certificate(certificate).publicKey.export({ format: 'der', type: 'spki' }))
     .digest('base64');
-  const https = createHttpsServer({ key: await readFile(key), cert: certificate }, handler);
+  const tls = { key: await readFile(key), cert: certificate };
+  const secure = new Set<ReturnType<typeof createHttpsServer>>();
   const sockets = new Set<Socket>();
   const track = (socket: Socket) => {
     sockets.add(socket);
@@ -45,12 +46,17 @@ export async function createFixtureProxy(
   };
   const proxies = new Map<string, Promise<string>>();
   const servers = new Set<ReturnType<typeof createServer>>();
-  function upstreamProxy(value: string) {
+  function upstreamProxy(value: string, browser: string) {
     const upstream = new URL(value);
     if (upstream.protocol !== 'http:' || upstream.hostname !== '127.0.0.1')
       throw new Error('The fixture proxy requires the production loopback guard.');
     let ready = proxies.get(upstream.href);
     if (ready) return ready;
+    const https = createHttpsServer(tls, (request, response) => {
+      request.headers['x-fixture-browser'] = browser;
+      handler(request, response);
+    });
+    secure.add(https);
     const proxy = createServer((request, response) => {
       if (hermetic) return void response.writeHead(hermetic ? 403 : 503).end();
       const forward = httpRequest(
@@ -118,7 +124,11 @@ export async function createFixtureProxy(
       const values = [...args];
       const proxyIndex = values.indexOf('--proxy');
       if (proxyIndex >= 0) {
-        values[proxyIndex + 1] = await upstreamProxy(values[proxyIndex + 1]);
+        const session = values.indexOf('--session');
+        values[proxyIndex + 1] = await upstreamProxy(
+          values[proxyIndex + 1],
+          session >= 0 ? values[session + 1] : '',
+        );
         const flags = values.indexOf('--args');
         if (flags < 0) throw new Error('Browser arguments were missing.');
         values[flags + 1] += `,--ignore-certificate-errors-spki-list=${fingerprint}`;
@@ -130,7 +140,7 @@ export async function createFixtureProxy(
       await Promise.all(
         [...servers].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
       );
-      https.close();
+      for (const server of secure) server.close();
     },
   };
 }

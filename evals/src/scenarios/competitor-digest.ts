@@ -71,7 +71,12 @@ function screenshotted(run: Run, since: number, action: RegExp) {
     )
       continue;
     const shown = run.visits
-      .filter((visit) => visit.at <= call.at && targets.includes(`${visit.host}${visit.path}`))
+      .filter(
+        (visit) =>
+          visit.browser === call.browser &&
+          visit.at <= call.at &&
+          targets.includes(`${visit.host}${visit.path}`),
+      )
       .at(-1);
     if (shown) seen.add(`${shown.host}${shown.path}`);
   }

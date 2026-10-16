@@ -5,6 +5,7 @@ import { runProcess } from '../../../src/providers/process.ts';
 
 export interface Visit {
   host: string;
+  browser?: string;
   method: string;
   path: string;
   query: string;
@@ -107,6 +108,9 @@ export async function serveSites(sites: Record<string, Site>, address = '127.0.0
     const url = new URL(request.url ?? '/', `https://${host}`);
     visits.push({
       host,
+      ...(typeof request.headers['x-fixture-browser'] === 'string' && {
+        browser: request.headers['x-fixture-browser'],
+      }),
       method: request.method ?? 'GET',
       path: url.pathname,
       query: url.search,

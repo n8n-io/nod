@@ -5,9 +5,11 @@ import type { Interaction, Session } from './session.ts';
 import { approvalOrder, type Stack } from './stack.ts';
 import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
+import { browserSessionId } from '../../src/providers/agent-browser/index.ts';
 
 export interface ToolCall {
   turnId?: string;
+  browser?: string;
   name: string;
   input: any;
   output: string;
@@ -121,6 +123,7 @@ function capturedTools(stack: Stack) {
       if (started.has(id)) continue;
       const call: ToolCall = {
         turnId,
+        browser: event.execution?.browserId && browserSessionId(event.execution.browserId),
         name: event.name,
         input: event.input,
         output: '',
@@ -311,6 +314,24 @@ export async function collect(options: {
     .map((m) => m.text);
   const files = await session.workspace.list();
   const filePath = (path: string) => path.replace(/^\/workspace\//, '');
+  const sharedPaths = new Set(
+    tools
+      .filter((call) => call.name === 'share_file' && !call.isError)
+      .map((call) => String(call.input?.path ?? '').replace(/^\.\//, ''))
+      .filter((path) => /\.(md|txt|csv|tsv|json|html?|ics|ya?ml|xml)$/i.test(path))
+      .map((path) =>
+        path.startsWith('/workspace/') ? path : files.find((file) => file.endsWith(`/${path}`)),
+      )
+      .filter((path): path is string => Boolean(path)),
+  );
+  const sharedText = (
+    await Promise.all(
+      [...sharedPaths].map(async (path) => {
+        const text = (await session.workspace.read(filePath(path)))?.toString('utf8');
+        return text ? `--- ${path} ---\n${clip(text, 6000)}` : '';
+      }),
+    )
+  ).filter(Boolean);
   const run: Run = {
     task: options.task,
     messages,
@@ -375,6 +396,9 @@ export async function collect(options: {
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'
         }.`,
         `Workspace files: ${files.length ? files.join(', ') : 'none'}.`,
+        ...(sharedText.length
+          ? [`Text of files shared with the user:\n${sharedText.join('\n')}`]
+          : []),
         `Actions the user approved or declined (the server runs these itself, so they never appear as tool calls): ${approvals.length ? approvals.map((item) => `${item.action} ${item.status} ${JSON.stringify(item.args).slice(0, 220)}`).join('; ') : 'none'}.`,
         `Saved memory: ${memory.slice(0, 700)}`,
         failedTurns.length
