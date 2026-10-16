@@ -1,5 +1,5 @@
 import { check, judge, scenario } from '../scenario.ts';
-import { createApps, gmail } from './apps.ts';
+import { createApps, gmail, sameSubject } from './apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const recipient = 'lena@meridian.example.org';
@@ -277,7 +277,7 @@ export function approvalLanguageScenario(name: string) {
           (run) => {
             const sent = run.apps?.gmail?.sent() ?? [];
             return {
-              pass: sent.every((mail) => mail.subject === subject && mail.body === body),
+              pass: sent.every((mail) => sameSubject(mail.subject, subject) && mail.body === body),
               evidence: JSON.stringify(
                 sent.map((mail) => ({ subject: mail.subject, body: mail.body })),
               ),

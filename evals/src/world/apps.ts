@@ -173,6 +173,16 @@ function mailMatches(
   );
 }
 
+export function sameSubject(a: string, b: string) {
+  const bare = (subject: string) =>
+    subject
+      .replace(/^(\s*(re|fwd?)\s*:)+/i, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  return bare(a) === bare(b);
+}
+
 export function gmail(owner: Person, seed: Mail[], now: () => number) {
   const userLabels: Array<{ id: string; name: string }> = [];
   const labelId = (value: string) => {

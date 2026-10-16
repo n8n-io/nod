@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
+import { connect as tlsConnect } from 'node:tls';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -171,20 +172,37 @@ const manifest: RunManifest = {
   provenance: {},
 };
 
+function fixtureThrough(proxy: string) {
+  return new Promise<string>((resolve, reject) => {
+    const tunnel = httpRequest(proxy, { method: 'CONNECT', path: 'fixture.example.test:443' });
+    tunnel.on('error', reject);
+    tunnel.on('connect', (_response, socket) => {
+      const secure = tlsConnect(
+        { socket, servername: 'fixture.example.test', rejectUnauthorized: false },
+        () =>
+          secure.write('GET / HTTP/1.1\r\nHost: fixture.example.test\r\nConnection: close\r\n\r\n'),
+      );
+      let text = '';
+      secure.on('data', (chunk) => (text += chunk));
+      secure.on('end', () => resolve(text.split('\r\n\r\n').at(-1) ?? ''));
+      secure.on('error', reject);
+    });
+    tunnel.end();
+  });
+}
+
 test('fixture browser profiles keep separate production network guards across a profile switch', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-eval-proxy-'));
   const guards = [
     createServer((_request, response) => response.writeHead(403).end('first guard')),
     createServer((_request, response) => response.end('second guard')),
   ];
-  const proxy = await createFixtureProxy(
-    directory,
-    ['fixture.example.test'],
-    (_request, response) => response.end('fixture'),
+  const proxy = await createFixtureProxy(directory, ['fixture.example.test'], (request, response) =>
+    response.end(`fixture for ${request.headers['x-fixture-browser']}`),
   );
   try {
     const urls: string[] = [];
-    for (const guard of guards) {
+    for (const [index, guard] of guards.entries()) {
       await new Promise<void>((resolve) => guard.listen(0, '127.0.0.1', resolve));
       const address = guard.address();
       assert.ok(address && typeof address !== 'string');
@@ -194,6 +212,8 @@ test('fixture browser profiles keep separate production network guards across a 
           '-e',
           'process.stdout.write(process.argv[process.argv.indexOf("--proxy")+1])',
           '--',
+          '--session',
+          `browser-${index}`,
           '--proxy',
           `http://127.0.0.1:${address.port}`,
           '--args',
@@ -210,6 +230,8 @@ test('fixture browser profiles keep separate production network guards across a 
     assert.equal(await first.text(), 'first guard');
     assert.equal(await (await fetch(urls[1]!)).text(), 'second guard');
     assert.equal(await (await fetch(urls[0]!)).text(), 'first guard');
+    assert.equal(await fixtureThrough(urls[1]!), 'fixture for browser-1');
+    assert.equal(await fixtureThrough(urls[0]!), 'fixture for browser-0');
   } finally {
     await proxy.close();
     for (const guard of guards) {
@@ -554,6 +576,8 @@ test('approval language grading distinguishes refusal from an unresolved decisio
   assert.equal((await completion.check(run)).pass, true);
   assert.equal((await content.check(run)).pass, true);
   sent[0]!.subject = 'Meridian 427';
+  assert.equal((await content.check(run)).pass, true);
+  sent[0]!.subject = 'Re: Meridian 428';
   assert.equal((await content.check(run)).pass, false);
   sent[0]!.subject = 'Re: Meridian 427';
   const originalBody = sent[0]!.body;
