@@ -4,25 +4,17 @@ import { isDeepStrictEqual } from 'node:util';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const scope = Object.fromEntries(
-  [
-    'core',
-    'desktop',
-    'n8n',
-    'cloudflare',
-    'evals',
-    'images',
-    'network',
-    'e2b',
-    'mac',
-    'windows',
-  ].map((name) => [name, false]),
+  ['core', 'desktop', 'n8n', 'cloudflare', 'evals', 'images', 'network', 'e2b'].map((name) => [
+    name,
+    false,
+  ]),
 );
 const full = () =>
   Object.keys(scope).forEach((name) => {
     scope[name] = true;
   });
 const core = () =>
-  ['core', 'desktop', 'cloudflare', 'evals', 'images', 'windows'].forEach((name) => {
+  ['core', 'desktop', 'cloudflare', 'evals', 'images'].forEach((name) => {
     scope[name] = true;
   });
 let base = process.env.CI_DIFF_BASE;
@@ -79,15 +71,8 @@ else {
     }
     if (path.startsWith('desktop/')) {
       scope.desktop = true;
-      if (!path.startsWith('desktop/test/')) scope.windows = true;
       if (/^desktop\/runtime\/|^desktop\/test\/runtime-assets\.test\.mjs$/.test(path))
         scope.network = true;
-      if (
-        /^desktop\/(main\/updates\.mjs|scripts\/(check-native-updates|release-tools|runtime-inputs|patch-osx-sign|build-app)\.mjs|pnpm-lock\.yaml|package\.json)$/.test(
-          path,
-        )
-      )
-        scope.mac = true;
       if (path === 'desktop/main/updates.mjs') scope.n8n = true;
       if (path === 'desktop/scripts/check-browser-image.mjs') scope.images = true;
       continue;
@@ -111,13 +96,11 @@ else {
       continue;
     }
     if (
-      /^\.github\/(scripts\/(prepare-desktop-release|desktop-release|with-apple-signing)\.mjs|workflows\/(prepare-desktop-release|desktop-release|desktop-updates|windows-preview)\.yml)$/.test(
+      /^\.github\/(scripts\/(prepare-desktop-release|desktop-release|with-apple-signing)\.mjs|workflows\/(prepare-desktop-release|desktop-release)\.yml)$/.test(
         path,
       )
     ) {
       scope.desktop = true;
-      if (path.includes('with-apple-signing') || path.includes('desktop-updates')) scope.mac = true;
-      if (path.includes('windows-preview')) scope.windows = true;
       continue;
     }
     if (

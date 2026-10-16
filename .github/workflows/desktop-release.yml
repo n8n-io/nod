@@ -307,6 +307,8 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
           pnpm run build
+      - name: Verify native updates, signature rejection and profile preservation
+        run: node desktop/scripts/check-native-updates.mjs
       - name: Download the verified runtime descriptor
         if: matrix.runtime_reused != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -367,6 +369,15 @@ jobs:
       - name: Clean signing material after interruption
         if: always()
         run: node .github/scripts/with-apple-signing.mjs --cleanup
+
+      - name: Save native update acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-update-acceptance-${{ matrix.arch }}
+          path: .local/native-update-acceptance/*.json
+          if-no-files-found: error
+          retention-days: 7
 
   windows-runtime:
     name: Build the Windows runtime
@@ -433,6 +444,8 @@ jobs:
         with:
           name: desktop-windows-runtime
           path: .local/windows-runtime-assets
+      - name: Check Windows workspace paths
+        run: pnpm exec tsx --test --test-name-pattern="workspace paths cannot|workspace artifact reads" tests/sandbox.test.ts
       - run: |
           pnpm run build
           node desktop/scripts/build-windows.mjs

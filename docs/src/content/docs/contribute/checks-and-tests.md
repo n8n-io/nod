@@ -103,24 +103,26 @@ flowchart TD
   files[Changed files] --> scope{{Select checks}}:::accent
   scope -- docs and Markdown only --> light[Formatting<br/>and secrets]:::muted
   scope -- src, tests, packages --> core[Full app checks]:::go
-  scope -- desktop --> desk[Desktop and<br/>Windows checks]
+  scope -- desktop --> desk[Desktop tests]
   scope -- evals or deployment --> area[That area's checks]
   scope -- unknown file type --> all[Every check]:::go
 ```
 
-| You change                                                         | CI also runs                                                                                                                                       |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs/`, Markdown files, `LICENSE` or `NOTICE`                     | Nothing more. This is the light path. A `docs/` change also runs the **Docs** workflow, which builds the site and checks its internal links.       |
-| Only a release's version, manifest and changelog                   | The release metadata and source check. Installers are built after merge.                                                                           |
-| `src/`, `public/` or `tests/`                                      | `pnpm run check`, the build, integration tests, image checks, and the desktop, Cloudflare, eval and Windows checks                                 |
-| Root package files, lockfile or Dockerfiles                        | All of the above, plus the E2B computer isolation and n8n delivery checks                                                                          |
-| Computer providers, `src/ports`, `src/shared` or `deployment/e2b/` | The `src/` checks plus the E2B computer isolation check                                                                                            |
-| `desktop/`                                                         | Desktop tests. Changes outside `desktop/test/` also run Windows build acceptance, and updater and build tooling changes run Mac update acceptance. |
-| `evals/`                                                           | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                           |
-| `deployment/cloudflare/`                                           | Adapter checks, both Wrangler dry runs and the image builds                                                                                        |
-| `deployment/n8n/`                                                  | The n8n delivery contract tests                                                                                                                    |
+| You change                                                         | CI also runs                                                                                                                                 |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/`, Markdown files, `LICENSE` or `NOTICE`                     | Nothing more. This is the light path. A `docs/` change also runs the **Docs** workflow, which builds the site and checks its internal links. |
+| Only a release's version, manifest and changelog                   | The release metadata and source check. Installers are built after merge.                                                                     |
+| `src/`, `public/` or `tests/`                                      | `pnpm run check`, the build, integration tests, image checks, and the desktop, Cloudflare and eval checks                                    |
+| Root package files, lockfile or Dockerfiles                        | All of the above, plus the E2B computer isolation and n8n delivery checks                                                                    |
+| Computer providers, `src/ports`, `src/shared` or `deployment/e2b/` | The `src/` checks plus the E2B computer isolation check                                                                                      |
+| `desktop/`                                                         | Desktop tests                                                                                                                                |
+| `evals/`                                                           | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                     |
+| `deployment/cloudflare/`                                           | Adapter checks, both Wrangler dry runs and the image builds                                                                                  |
+| `deployment/n8n/`                                                  | The n8n delivery contract tests                                                                                                              |
 
-A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The release workflow still builds and verifies all three installers after the version pull request merges, whatever CI selected. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/otto/blob/main/.github/scripts/ci-scope.mjs).
+A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/otto/blob/main/.github/scripts/ci-scope.mjs).
+
+CI does not package desktop apps on pull requests or normal merges to `main`. Only **Build desktop release** packages the apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks Windows workspace paths, installation, startup and updates. A failed check blocks publication. See [Desktop releases](/contribute/desktop-releases/).
 
 ## Related resources
 
