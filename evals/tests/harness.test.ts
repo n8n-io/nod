@@ -1799,10 +1799,17 @@ test('fake remote MCP servers sign in and answer through Otto’s own MCP client
       (await transport.listTools(endpoint, headers)).map((tool) => tool.name),
       ['save_note'],
     );
-    await transport.callTool(endpoint, headers, 'save_note', { text: 'hi' });
+    const result = (await transport.callTool(endpoint, headers, 'save_note', { text: 'hi' })) as {
+      content: Array<{ text: string }>;
+    };
+    assert.deepEqual(JSON.parse(result.content[0].text), { saved: 'hi' });
     assert.deepEqual(
-      recorder.writes.map((write: { slug: string; kind: string }) => [write.slug, write.kind]),
-      [['save_note', 'create']],
+      recorder.writes.map((write: { slug: string; kind: string; args: unknown }) => [
+        write.slug,
+        write.kind,
+        write.args,
+      ]),
+      [['save_note', 'create', { text: 'hi' }]],
     );
   } finally {
     unroute();

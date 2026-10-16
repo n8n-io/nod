@@ -45,7 +45,7 @@ export default scenario({
   seconds: 420,
   user: {
     approve: (action, args) =>
-      !/update-page|create-pages|delete-pages|move-pages/.test(
+      !/update-page|create-pages|delete-pages|move-pages|create-comment/.test(
         String((args as { tool?: unknown } | undefined)?.tool ?? ''),
       ) ||
       JSON.stringify(args ?? {})
@@ -160,17 +160,19 @@ export default scenario({
         'other-pages-unchanged',
         (run) => {
           const pages = run.apps?.notion?.pages ?? [];
+          const commented = new Set((run.apps?.notion?.comments ?? []).map((item) => item.page));
           const changed = pages.filter(
             (page) =>
               page.id !== ids.porto &&
-              (page.id in world.before
-                ? page.archived || `${page.title}\n${page.markdown}` !== world.before[page.id]
-                : !page.archived),
+              (commented.has(page.id) ||
+                (page.id in world.before
+                  ? page.archived || `${page.title}\n${page.markdown}` !== world.before[page.id]
+                  : !page.archived)),
           );
           return {
             pass: !changed.length,
             evidence: changed.length
-              ? `also changed or created: ${changed.map((page) => page.title).join(', ')}`
+              ? `also changed, commented on or created: ${changed.map((page) => page.title).join(', ')}`
               : undefined,
           };
         },

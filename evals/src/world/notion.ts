@@ -385,7 +385,7 @@ export function notion(
             case 'date_is_on_or_after':
               return Boolean(text) && text.slice(0, 10) >= String(wanted).slice(0, 10);
             case 'number_equals':
-              return Number(value) === Number(wanted);
+              return value !== null && value !== '' && Number(value) === Number(wanted);
             default:
               throw new Error(`Unsupported filter operator: ${filter.operator}`);
           }
@@ -597,6 +597,8 @@ export function notion(
       run(args) {
         const target = args.new_parent ?? {};
         const database = findDatabase(target.data_source_id ?? target.database_id);
+        if ((target.data_source_id || target.database_id) && !database)
+          throw new Error('Could not find the new parent database or data source.');
         const parent = database?.id ?? (target.page_id ? findPage(target.page_id).id : 'workspace');
         const moved = [args.page_or_database_ids ?? []].flat().map(findPage);
         for (const page of moved) {

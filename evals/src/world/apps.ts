@@ -153,7 +153,9 @@ function mailMatches(
         return mail.at < instant(value);
       case 'category':
         return (
-          mail.labels.includes(`CATEGORY_${value.toUpperCase()}`) ||
+          mail.labels.includes(
+            value === 'primary' ? 'CATEGORY_PERSONAL' : `CATEGORY_${value.toUpperCase()}`,
+          ) ||
           (value === 'primary' && !mail.labels.some((label) => label.startsWith('CATEGORY_')))
         );
       case 'newer_than':

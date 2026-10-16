@@ -159,7 +159,7 @@ const lines = (text: string) =>
       line
         .trim()
         .replace(/^#{1,6}\s+/, '')
-        .replace(/\*{1,2}|_{2}/g, '')
+        .replace(/\*{1,2}|_{1,2}/g, '')
         .replace(/\\(?=[^\w\s])/g, '')
         .trim(),
     )

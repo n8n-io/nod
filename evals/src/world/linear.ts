@@ -45,7 +45,8 @@ function after(value: unknown, now: number) {
     /^-?P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/i.exec(text);
   if (duration) {
     const [, y, m, w, d, h, min] = duration.map((part) => Number(part ?? 0));
-    return now - ((y * 365 + m * 30 + w * 7 + d) * 86_400_000 + h * 3_600_000 + min * 60_000);
+    const span = (y * 365 + m * 30 + w * 7 + d) * 86_400_000 + h * 3_600_000 + min * 60_000;
+    return text.startsWith('-') ? now - span : now + span;
   }
   const at = Date.parse(text);
   if (Number.isNaN(at)) throw new Error(`Invalid date or duration: ${text}`);
@@ -138,11 +139,11 @@ export function linear(
     if (!found) throw new Error(`Project not found: ${value}`);
     return found;
   };
-  const issue = (value: unknown) => {
+  const issue = (value: unknown, archived = false) => {
     const found = issues.find(
       (item) => fold(item.id) === fold(value) || fold(item.identifier) === fold(value),
     );
-    if (!found || found.archived) throw new Error(`Issue not found: ${value}`);
+    if (!found || (found.archived && !archived)) throw new Error(`Issue not found: ${value}`);
     return found;
   };
   const stateOf = (item: Stored) => teamOf(item).states.find((entry) => entry.name === item.state)!;
@@ -297,7 +298,7 @@ export function linear(
       description:
         'Retrieve detailed information about an issue by ID or identifier (e.g., LIN-123).',
       inputSchema: obj({ id: str('Issue ID or identifier (e.g., LIN-123)') }, ['id']),
-      run: (args) => view(issue(args.id), true),
+      run: (args) => view(issue(args.id, true), true),
     },
     {
       name: 'save_issue',
@@ -373,7 +374,7 @@ export function linear(
       description: 'List comments on a Linear issue.',
       inputSchema: obj({ issueId: str('Issue ID or identifier (e.g., LIN-123)') }, ['issueId']),
       run: (args) => ({
-        comments: issue(args.issueId).comments.map((comment) => ({
+        comments: issue(args.issueId, true).comments.map((comment) => ({
           body: comment.body,
           author: person(comment.user)?.name ?? comment.user,
           createdAt: iso(comment.at),
@@ -388,7 +389,7 @@ export function linear(
           body: str('Content as Markdown.'),
           issueId: str('Issue ID or identifier (e.g., LIN-123)'),
         },
-        ['body'],
+        ['body', 'issueId'],
       ),
       write: 'post',
       run(args) {
