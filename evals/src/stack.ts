@@ -112,6 +112,7 @@ export async function startStack(options: {
   environment: Record<string, string | undefined>;
 }): Promise<Stack> {
   const { model, environment } = options;
+  const typesafe = environment.TYPESAFE_API_KEY?.trim();
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const schema = `eval_${suffix}`;
   const bossSchema = `eval_boss_${suffix}`;
@@ -365,7 +366,7 @@ export async function startStack(options: {
             ).createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
           }
         : {}),
-      ...(model.provider !== 'anthropic' &&
+      ...((typesafe || model.provider !== 'anthropic') &&
       existsSync(join(appSource, 'src/providers/decisions.ts'))
         ? {
             decisions: (
@@ -373,10 +374,13 @@ export async function startStack(options: {
                 'src/providers/decisions.ts',
               )
             ).createDecisionModel({
-              resolve: async () => ({
-                provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
-                key: model.apiKey,
-              }),
+              resolve: async () =>
+                typesafe
+                  ? { provider: 'typesafe', key: typesafe }
+                  : {
+                      provider: model.provider === 'openrouter' ? 'openrouter' : 'openai',
+                      key: model.apiKey,
+                    },
             }),
           }
         : {}),
