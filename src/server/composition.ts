@@ -983,7 +983,13 @@ async function initializeApplication(
           (await computer
             .act(
               turn.browserId,
-              { action: 'evaluate', script: 'document.body.innerText', readOnly: true },
+              {
+                action: 'evaluate',
+                script: 'document.body.innerText',
+                readOnly: true,
+                expectOrigin: request.page.origin,
+                expectUrl: request.page.url,
+              },
               signal,
             )
             .then(

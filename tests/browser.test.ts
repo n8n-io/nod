@@ -3255,6 +3255,14 @@ test('a checked browser step is described from its snapshot and runs only on tha
       }),
       (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
     );
+    const fresh = await computer.act('checked', { action: 'snapshot' });
+    const relabelled = /textbox "Delete account" \[ref=(e\d+)\]/.exec(fresh.text)?.[1];
+    assert.ok(relabelled);
+    assert.deepEqual(
+      (await computer.currentPage('checked', { action: 'click', selector: `@${relabelled}` }))
+        .controls,
+      [{ role: 'textbox', name: 'Delete account' }],
+    );
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
