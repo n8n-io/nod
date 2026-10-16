@@ -180,8 +180,9 @@ test(
             if (control) {
               await assert.rejects(
                 computer.download!(id, input),
-                (error) =>
-                  error instanceof BrowserActionError && error.code === 'browser_download_control',
+                (error: Error) =>
+                  error.cause instanceof BrowserActionError &&
+                  error.cause.code === 'browser_download_control',
               );
               assert.equal(fixture.authenticatedDownloads(), before);
               await computer.act(id, { action: 'click', selector: control });
