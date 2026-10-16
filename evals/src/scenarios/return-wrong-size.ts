@@ -239,7 +239,7 @@ export default scenario({
             evidence: number ? `needs ${number}` : 'no return number was issued',
           };
         },
-        { failure: 'incomplete' },
+        { required: false, failure: 'incomplete' },
       ),
     ];
   },

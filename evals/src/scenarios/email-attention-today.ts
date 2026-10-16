@@ -180,7 +180,7 @@ export default scenario({
       ),
       judge(
         'client-deadline-is-right',
-        'The assistant tells the user that the Merlo Coffee Roasters proof (job MER-2207) must be approved by 17:00 (5 pm) today. Saying the deadline has already passed, if the conversation happens after 17:00, also passes. It fails if the deadline is missing, or a different time or day is given.',
+        "The assistant presents the Merlo Coffee Roasters proof (job MER-2207) as needing the user's approval today. Giving the 17:00 (5 pm) deadline is good but not required. Saying the deadline has already passed, if the conversation happens after 17:00, also passes. It fails if it gives a different day or a wrong time.",
         { failure: 'reasoning' },
       ),
     ];

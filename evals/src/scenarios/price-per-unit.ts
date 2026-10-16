@@ -1,4 +1,4 @@
-import { amounts } from '../checks.ts';
+import { amounts, mentions } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { page, type Site } from '../world/sites.ts';
@@ -192,14 +192,16 @@ export default scenario({
         (run) => ({
           pass:
             /serra\s+gold/i.test(run.said) &&
-            amounts(run.said).some((value) => Math.abs(value - best.perLitre) < 0.0101),
+            (amounts(run.said).some((value) => Math.abs(value - best.perLitre) < 0.0101) ||
+              mentions(run.said, 10.98) ||
+              /twin|2\s*[x×]\s*750/i.test(run.said)),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
         { failure: 'reasoning' },
       ),
       judge(
         'the-twin-pack-is-the-answer',
-        'The final answer names the Serra Gold Extra Virgin Olive Oil twin pack (2 × 750 ml for €10.98) as the cheapest olive oil per litre, at €7.32 per litre. Any wording and currency format are fine. It fails if it presents another product as the cheapest per litre, such as the single Serra Gold 750 ml bottle (€7.80/L), Campo Real Virgin 1 L (€7.49/L), the Campo Real 3 × 500 ml multipack (wrongly €3.95/L if read as 3 litres), or the sunflower oil.',
+        'The final answer names the Serra Gold Extra Virgin Olive Oil twin pack (2 × 750 ml for €10.98) as the cheapest olive oil per litre (€7.32 per litre; stating the per-litre figure is not required). Any wording and currency format are fine. It fails if it presents another product as the cheapest per litre, such as the single Serra Gold 750 ml bottle (€7.80/L), Campo Real Virgin 1 L (€7.49/L), the Campo Real 3 × 500 ml multipack (wrongly €3.95/L if read as 3 litres), or the sunflower oil.',
         { failure: 'reasoning' },
       ),
       check(

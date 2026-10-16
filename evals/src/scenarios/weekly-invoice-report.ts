@@ -1,3 +1,4 @@
+import { mentions } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, sheets } from '../world/apps.ts';
@@ -111,6 +112,15 @@ const invoices: Invoice[] = [
 const unpaid = invoices.filter((invoice) => invoice.status !== 'Paid');
 const paid = invoices.filter((invoice) => invoice.status === 'Paid');
 const named = (number: string) => new RegExp(`\\bINV[-\\s]?${number.slice(4)}\\b`, 'i');
+const included = (invoice: Invoice, text: string) =>
+  named(invoice.number).test(text) ||
+  text
+    .split('\n')
+    .some(
+      (line) =>
+        line.toLowerCase().includes(invoice.client.split(' ')[0].toLowerCase()) &&
+        mentions(line, Number(invoice.amount)),
+    );
 
 function expand(field: string, min: number, max: number) {
   const found = new Set<number>();
@@ -283,7 +293,7 @@ export default scenario({
       ),
       check('lists-every-unpaid-invoice', (run) => {
         const text = scheduledText(run);
-        const missing = unpaid.filter((invoice) => !named(invoice.number).test(text));
+        const missing = unpaid.filter((invoice) => !included(invoice, text));
         return {
           pass: !missing.length,
           evidence: missing.length

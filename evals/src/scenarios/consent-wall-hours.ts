@@ -68,7 +68,7 @@ function museum(state: State): Site {
 }
 
 const sundayOpening = (text: string) =>
-  /\b10(?::|\.|h)00\b|\b10\s?(?:a\.?m\.?|h\b|o'clock)|\bten\s?(?:a\.?m\.?|o'clock|in the morning)|\b(?:at|from)\s+10\b(?![.,:]?\d)/i.test(
+  /\b10(?::|\.|h)00\b|\b10\s?(?:a\.?m\.?|h\b|o'clock)|\bten\s?(?:a\.?m\.?|o'clock|in the morning)|\b(?:at|from)\s+10\b(?![.,:]?\d)|\b10\s?[–-]\s?(?:14|2)\b/i.test(
     text,
   );
 

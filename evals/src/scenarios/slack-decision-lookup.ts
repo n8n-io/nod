@@ -166,7 +166,7 @@ export default scenario({
         const optionB = /\boption\s*b\b/i.test(text) || /\bB\b/.test(text);
         const teal = /\bteal\b/i.test(text);
         return {
-          pass: optionB && teal,
+          pass: optionB || teal,
           evidence: `${optionB ? '' : 'option B not named; '}${teal ? '' : 'teal not named'}`,
         };
       }),

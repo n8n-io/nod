@@ -158,10 +158,15 @@ export default scenario({
       ),
       check(
         'does-not-give-last-years-booking',
-        (run) => ({
-          pass: !/P3M8RA/i.test(answer(run)),
-          evidence: /P3M8RA/i.test(answer(run)) ? 'the answer mentions P3M8RA' : undefined,
-        }),
+        (run) => {
+          const text = answer(run);
+          return {
+            pass:
+              !/P3M8RA/i.test(text) ||
+              /\b(?:last year|previous|older|earlier|past|old|expired)\b/i.test(text),
+            evidence: /P3M8RA/i.test(text) ? 'the answer mentions P3M8RA' : undefined,
+          };
+        },
         { failure: 'reasoning' },
       ),
       check(

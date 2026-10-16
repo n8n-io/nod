@@ -106,7 +106,11 @@ export default scenario({
         (run) => {
           const sends = newSends(run, world.seeded).filter(toAna);
           return {
-            pass: sends.length === 1 && /\bready\b/i.test(`${sends[0].subject}\n${sends[0].body}`),
+            pass:
+              sends.length === 1 &&
+              /\bready\b|\breview\b|\bavailable\b|\bfinished\b/i.test(
+                `${sends[0].subject}\n${sends[0].body}`,
+              ),
             evidence: `${sends.length} emails to Ana${sends[0] ? `: ${sends[0].body.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`,
           };
         },

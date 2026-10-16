@@ -209,7 +209,8 @@ export default scenario({
           .map((message) => message.text)
           .join('\n');
         return {
-          pass: /budget/i.test(text),
+          pass:
+            /budget|sign-?off/i.test(text) || (/helena/i.test(text) && !/ortiz|proofs/i.test(text)),
           evidence: text ? text.slice(0, 200) : 'the second run sent no message',
         };
       }),

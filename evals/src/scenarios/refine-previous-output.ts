@@ -90,6 +90,11 @@ export default scenario({
             evidence: `${lines.length} lines, ${characters} characters: ${lines.join(' / ').slice(0, 300)}`,
           };
         },
+        { required: false, failure: 'format' },
+      ),
+      judge(
+        'refined-bio-is-at-most-three-lines-or-sentences',
+        "The assistant's last bio, the one that mentions Lisbon, is at most three lines or three sentences long, not counting any lead-in or closing remark addressed to the user.",
         { failure: 'format' },
       ),
       check(

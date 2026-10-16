@@ -114,8 +114,8 @@ export default scenario({
         'gives-alfamas-current-wait',
         (run) => ({
           pass: run.said
-            .split('\n')
-            .some((line) => /alfama/i.test(line) && mentions(line, alfama.wait)),
+            .split(/\n\s*\n/)
+            .some((paragraph) => /alfama/i.test(paragraph) && mentions(paragraph, alfama.wait)),
           evidence: run.final.slice(0, 300),
         }),
         { failure: 'reasoning' },

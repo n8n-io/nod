@@ -189,7 +189,7 @@ export default scenario({
         (run) => {
           const page = notes(run, world.seed);
           return {
-            pass: Boolean(page && /harborline/i.test(page.title)),
+            pass: Boolean(page && /harborline/i.test(`${page.title}\n${page.markdown}`)),
             evidence: page
               ? `"${page.title}"`
               : `new pages elsewhere: ${

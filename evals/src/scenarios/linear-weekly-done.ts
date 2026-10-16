@@ -302,7 +302,12 @@ export default scenario({
   expect(world) {
     const issue = (identifier: string) =>
       world.tracker.issues.find((item) => item.identifier === identifier)!;
-    const absent = (id: string, identifiers: string[], failure: 'reasoning' | 'scope') =>
+    const absent = (
+      id: string,
+      identifiers: string[],
+      failure: 'reasoning' | 'scope',
+      required = true,
+    ) =>
       check(
         id,
         (run) => {
@@ -312,7 +317,7 @@ export default scenario({
             evidence: found.length ? `mentioned ${found.join(', ')}` : undefined,
           };
         },
-        { failure },
+        { required, failure },
       );
     return [
       check(
@@ -326,7 +331,12 @@ export default scenario({
         },
         { failure: 'incomplete' },
       ),
-      absent('leaves-out-older-completions', older, 'reasoning'),
+      absent('leaves-out-older-completions', older, 'reasoning', false),
+      judge(
+        'older-completions-not-presented-as-this-week',
+        'The assistant does not present MOB-73 "Dark mode for the settings screen" or MOB-76 "Upgrade the Firebase SDK" as finished in the last 7 days. Not mentioning them passes, and so does mentioning them as completed earlier. It fails if either is listed among this week\'s finished work.',
+        { failure: 'reasoning' },
+      ),
       absent('leaves-out-web-team', web, 'scope'),
       noWrites('create', 'update', 'post', 'delete'),
       judge(

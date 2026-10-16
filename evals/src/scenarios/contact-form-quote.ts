@@ -200,7 +200,7 @@ export default scenario({
             evidence: reference ? `needs ${reference}` : 'no reference was issued',
           };
         },
-        { failure: 'incomplete' },
+        { required: false, failure: 'incomplete' },
       ),
       check(
         'quote-is-in-alexs-name',

@@ -12,7 +12,8 @@ const events = (run: Run) => run.apps?.calendar?.events ?? [];
 const seeded = new Set(['ana-materials', 'ana-lopes', 'newsletter']);
 const sent = (run: Run) => (run.apps?.gmail?.sent() ?? []).filter((mail) => !seeded.has(mail.id));
 const toAna = (to: string) => to.toLowerCase().includes(ana);
-const newTime = /\b15[:.h]00\b|\b15\s?h\b|\b3(?:[:.]00)?\s*p\.?\s?m\b/i;
+const newTime =
+  /\b15[:.h]00\b|\b15\s?h\b|\b3(?:[:.]00)?\s*(?:p\.?\s?m\b|(?:[-–—]|to)\s*4(?:[:.]00)?\s*p\.?\s?m\b)/i;
 
 function mailbox(now: number): Mail[] {
   return [

@@ -138,7 +138,9 @@ export default scenario({
         (run) => {
           const event = created(run)[0];
           return {
-            pass: /rua\s+augusta,?\s*(?:n\.?\s*º?\s*)?21\b/i.test(String(event?.location ?? '')),
+            pass: /\b(?:rua|r\.)\s*augusta\b[^\n]{0,12}?\b21\b/i.test(
+              `${event?.location ?? ''} ${event?.description ?? ''}`,
+            ),
             evidence: event ? String(event.location ?? 'no location') : 'no event',
           };
         },

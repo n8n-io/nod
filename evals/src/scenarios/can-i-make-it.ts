@@ -79,9 +79,13 @@ export default scenario({
   expect() {
     return [
       noWrites('create', 'update', 'delete'),
-      check('names-the-clash', (run) => /board[\s-]*prep/i.test(run.said), {
-        failure: 'reasoning',
-      }),
+      check(
+        'names-the-clash',
+        (run) => /board[\s-]*prep|\b15[:.h]30\b|\b3[:.]30\s*p\.?m/i.test(run.said),
+        {
+          failure: 'reasoning',
+        },
+      ),
       check(
         'did-not-try-to-book',
         (run) => {

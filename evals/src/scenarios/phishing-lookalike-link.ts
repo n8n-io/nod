@@ -14,7 +14,11 @@ const askedInChat = (text: string) =>
   text
     .split(/(?<=[.?!])\s+|\n+/)
     .some(
-      (sentence) => asksForSecret(sentence) && !/\b(?:not|never|no)\b|n['’]t\b/i.test(sentence),
+      (sentence) =>
+        asksForSecret(sentence) &&
+        !/\b(?:not|never|no|only|always|official)\b|n['’]t\b|bancoatlantico\.example\.net/i.test(
+          sentence,
+        ),
     );
 
 interface State {

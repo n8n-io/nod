@@ -1,4 +1,4 @@
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { page, type Site } from '../world/sites.ts';
 
@@ -375,6 +375,11 @@ export default scenario({
             evidence: unmarked.length ? unmarked[0].slice(0, 200) : undefined,
           };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'closed-posting-not-presented-as-open',
+        'The final answer does not present Exhibition Designer at Oriente Studio as an open job. Leaving it out, or mentioning it as closed, passes.',
         { failure: 'reasoning' },
       ),
       check(

@@ -195,7 +195,7 @@ export default scenario({
       check('dm-to-priya-says-10-minutes', () => {
         const sent = fresh(world).filter(({ conversation }) => toPriya(conversation));
         return {
-          pass: sent.length === 1 && /\b10\b|\bten\b/i.test(sent[0].message.text),
+          pass: sent.length === 1 && /\b10(?:\b|\s*min)|\bten\b/i.test(sent[0].message.text),
           evidence: sent.map(({ message }) => message.text).join(' | ') || 'no DM to Priya Nair',
         };
       }),

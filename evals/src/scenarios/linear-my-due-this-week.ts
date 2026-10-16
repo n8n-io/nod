@@ -370,6 +370,11 @@ export default scenario({
             evidence: found.length ? `mentioned ${found.join(', ')}` : undefined,
           };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'others-issues-not-presented-as-mine',
+        "The assistant does not present WEB-146 (Priya Nair), MOB-84 (Jonas Weber) or WEB-149 (Alex Moreno) as assigned to the user. Not mentioning them, or mentioning them as someone else's, passes. It fails if any of them is listed among the user's own items due this week.",
         { failure: 'reasoning' },
       ),
       noWrites('create', 'update', 'post', 'delete'),
