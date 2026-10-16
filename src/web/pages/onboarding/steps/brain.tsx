@@ -106,9 +106,18 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   const oauth = oauthFor(provider, data);
   const here = usable(provider);
   const source = here.find((item) => item.status === 'connected' && recommended(item));
-  const shown = here.find((item) => item.id === selected?.id) ?? source ?? here[0];
+  const selectedReady = modelReady(data);
+  const shown =
+    here.find(
+      (item) =>
+        item.id === selected?.id &&
+        item.status === 'connected' &&
+        (selectedReady || recommended(item)),
+    ) ??
+    source ??
+    here[0];
   const recommendation = shown && recommended(shown);
-  const ready = modelReady(data) && selected?.id === shown?.id;
+  const ready = selectedReady && selected?.id === shown?.id;
 
   useEffect(() => {
     if (
