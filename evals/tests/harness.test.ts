@@ -82,6 +82,12 @@ test('decision results keep unsafe answers, model errors, and incomplete repeats
   assert.equal(summary.casesPassOnce, 2);
   assert.equal(summary.casesPassAlways, 0);
   assert.equal(summary.costUsd, 0.04);
+  for (const usage of [[], [{ costUsd: null }], [{ costUsd: Number.NaN }]])
+    assert.equal(summarizeDecisions([{ ...attempt, usage }]).costUsd, null);
+  assert.equal(
+    summarizeDecisions([{ ...attempt, usage: [{ costUsd: null, estimateUsd: 0.02 }] }]).costUsd,
+    0.02,
+  );
 });
 
 const analyticsCase = (name: string) => analyticsCases.find((item) => item.id === name)!;
