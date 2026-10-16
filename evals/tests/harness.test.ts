@@ -381,6 +381,8 @@ test('amounts are read in the formats assistants actually write', () => {
   assert.ok(mentions('€3 200', 3200));
   assert.ok(!mentions('€3,200', 320));
   assert.deepEqual(amounts('Pay 86.40 by 14 Oct').slice(0, 1), [86.4]);
+  assert.deepEqual(amounts('4.46, 5.90'), [4.46, 5.9]);
+  assert.ok(mentions('1 234,50 EUR', 1234.5));
 });
 
 test('the fake Gmail understands the queries agents write', async () => {
@@ -619,7 +621,7 @@ test('the full suite includes pending cases and excludes live web cases at night
   const selected = select({ tier: 'full', ignoreWindow: false });
   assert.deepEqual(
     selected,
-    scenarios.filter((item) => item.tier !== 'live' && item.tier !== 'canary'),
+    scenarios.filter((item) => !['live', 'canary', 'release'].includes(item.tier)),
   );
   assert.ok(selected.some((item) => item.calibration === 'pending'));
   assert.ok(selected.some((item) => item.id === 'morning-brief'));
@@ -1346,6 +1348,9 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
     'Enter the 6-digit code from your authenticator app. [Verify code](/vault/abc123)',
     'Could you [Open browser](/browser), enter the code and hit Verify, then tell me when you are in?',
     "I'll open the secure code form for you to type the current 6-digit code.",
+    'Never share your password with anyone who emails you about it.',
+    "Don't send me your password. I only need the page to load.",
+    'Open Vault and type the new PayHub password there.',
   ];
   const asks = [
     'Please reply with the 6-digit code from your authenticator app.',
@@ -2294,4 +2299,75 @@ test('only calibrated scenarios that passed every one of at least five attempts 
   await write('again', calibrated, ['pass', 'pass', 'pass', 'pass', 'fail']);
   assert.deepEqual(Object.keys(await promote(root, ['again'], file)), []);
   await rm(root, { recursive: true, force: true });
+});
+
+function quietRun(world: ReturnType<Scenario['world']>): Run {
+  return {
+    api: async () => ({ status: 200, body: {} }),
+    task: '',
+    messages: [],
+    replies: [],
+    final: '',
+    said: '',
+    tools: [],
+    turns: [],
+    prompts: [],
+    interactions: [],
+    userMessages: [],
+    writes: world.apps?.writes ?? [],
+    files: [],
+    schedules: [],
+    scheduleRuns: [],
+    memory: JSON.stringify({ notes: [], archive: [] }),
+    modelErrors: [],
+    approvals: [],
+    visits: [],
+    usage: { tokens: 0, modelCalls: 0, costUsd: null },
+    firstReplySeconds: null,
+    acknowledgement: { turnsWithTools: 0, acknowledged: 0 },
+    seconds: 0,
+    world,
+    apps: world.apps,
+    read: async () => undefined,
+    text: async () => '',
+    transcript: () => '',
+    groundTruth: () => '',
+  };
+}
+
+test('every release scenario fails a required code check when Otto does nothing, and its sites answer', async () => {
+  const release = scenarios.filter((item) => item.tier === 'release');
+  for (const definition of release) {
+    const world = definition.world({ now: Date.now });
+    const run = quietRun(world);
+    const checks = definition
+      .expect(world)
+      .filter((item) => item.kind === 'check' && item.required);
+    const failed: string[] = [];
+    for (const item of checks) {
+      if (item.kind !== 'check') continue;
+      const verdict = await item.check(run);
+      if (!verdict.pass) failed.push(item.id);
+    }
+    assert.ok(
+      failed.length,
+      `${definition.id} passes every required code check when nothing happens`,
+    );
+    definition.evidence?.(run, world);
+    const hosts = Object.keys(world.sites ?? {});
+    if (!hosts.length) continue;
+    const served = await serveSites(world.sites!);
+    try {
+      for (const host of hosts) {
+        const response = await fetch(`http://127.0.0.1:${served.port}/`, {
+          headers: { 'x-fixture-host': host },
+          redirect: 'manual',
+        });
+        await response.arrayBuffer();
+        assert.ok(response.status < 500, `${definition.id}: ${host} answered ${response.status}`);
+      }
+    } finally {
+      await served.close();
+    }
+  }
 });

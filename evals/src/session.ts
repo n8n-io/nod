@@ -10,7 +10,7 @@ export interface Interaction {
   text: string;
   reply?: string;
   action?: string;
-  requestKind?: 'otp' | 'payment';
+  requestKind?: 'otp' | 'payment' | 'password';
   at: number;
 }
 
@@ -132,6 +132,40 @@ export function createSession(options: {
     return (result.rows[0]?.text as string | undefined) ?? '';
   }
 
+  async function credentialForm(text: string) {
+    const token = /\]\(\/vault\/([A-Za-z0-9_-]{20,})\)/.exec(text)?.[1];
+    if (!token) return undefined;
+    const response = await stack.request(`/api/credential-requests/${token}`);
+    if (!response.ok) return undefined;
+    const request = await response.json();
+    return request.status === 'pending' && request.kind !== 'otp'
+      ? {
+          token,
+          kind: request.kind as string,
+          label: request.label as string | undefined,
+          fields: (request.fields ?? []) as Array<{ kind: string }>,
+        }
+      : undefined;
+  }
+
+  async function pendingFor(turn: { id: string; waiting_reason: string }, text: string) {
+    const approval = (
+      await pool.query(
+        `SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY ${await approvalOrder(pool)} DESC LIMIT 1`,
+        [turn.id],
+      )
+    ).rows[0];
+    if (approval) return { kind: 'approval' as const, approval, text };
+    if (turn.waiting_reason === 'credentials') {
+      const form = await credentialForm(text);
+      if (form && user.signIn) return { kind: 'form' as const, form, text };
+      if (form) return { kind: 'question' as const, text };
+      const state = await (await stack.request('/api/state')).json();
+      return { kind: 'secret' as const, request: state.verificationRequests?.[0], text };
+    }
+    return { kind: 'question' as const, text };
+  }
+
   async function waiting(scheduled = false) {
     const id = await thread();
     const turn = (
@@ -141,23 +175,32 @@ export function createSession(options: {
       )
     ).rows[0];
     if (turn?.status !== 'waiting') return undefined;
-    const approval = (
+    return pendingFor(turn, await lastAssistantText());
+  }
+
+  async function waitingTask() {
+    const id = await thread();
+    const turn = (
       await pool.query(
-        `SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY ${await approvalOrder(pool)} DESC LIMIT 1`,
+        "SELECT id,waiting_reason FROM turns WHERE thread_id=$1 AND status='waiting' AND background AND source IN ('task','user') ORDER BY created_at, id LIMIT 1",
+        [id],
+      )
+    ).rows[0];
+    if (!turn) return undefined;
+    const message = (
+      await pool.query(
+        "SELECT id,text FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC, id DESC LIMIT 1",
         [turn.id],
       )
     ).rows[0];
-    const text = await lastAssistantText();
-    if (approval) return { kind: 'approval' as const, approval, text };
-    if (turn.waiting_reason === 'credentials') {
-      const state = await (await stack.request('/api/state')).json();
-      return { kind: 'secret' as const, request: state.verificationRequests?.[0], text };
-    }
-    return { kind: 'question' as const, text };
+    return {
+      ...(await pendingFor(turn, (message?.text as string | undefined) ?? '')),
+      replyTo: message?.id as string | undefined,
+    };
   }
 
   async function respond(scheduled = false): Promise<boolean> {
-    const pending = await waiting(scheduled);
+    const pending = (await waiting(scheduled)) ?? (scheduled ? undefined : await waitingTask());
     if (!pending) return false;
     const at = Date.now();
     if (pending.kind === 'approval') {
@@ -185,6 +228,19 @@ export function createSession(options: {
       await post('/api/messages', {
         text: reply,
         replyToMessageId: pending.approval.confirmation_message_id,
+      });
+      return true;
+    }
+    if (pending.kind === 'form') {
+      const { form } = pending;
+      const login = user.signIn!;
+      interactions.push({ kind: 'secret', requestKind: 'password', text: pending.text, at });
+      await post(`/api/credential-requests/${form.token}`, {
+        ...(form.label ? { label: form.label } : {}),
+        ...(form.kind === 'identifier' || form.fields.some((field) => field.kind === 'identifier')
+          ? { username: login.username }
+          : {}),
+        ...(form.kind === 'password' ? { password: login.password } : {}),
       });
       return true;
     }
@@ -218,7 +274,10 @@ export function createSession(options: {
     }
     interactions.push({ kind: 'question', text: pending.text, reply, at });
     userMessages.push({ at, text: reply });
-    await post('/api/messages', { text: reply });
+    await post('/api/messages', {
+      text: reply,
+      ...('replyTo' in pending && pending.replyTo ? { replyToMessageId: pending.replyTo } : {}),
+    });
     return true;
   }
 

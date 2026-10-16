@@ -170,6 +170,7 @@ export async function promote(root: string, labels: string[], file = gateFile) {
       item.stance === 'regression' &&
       item.calibration !== 'pending' &&
       item.tier !== 'canary' &&
+      item.tier !== 'release' &&
       mine.length >= 5 &&
       mine.every((attempt) => attempt.fingerprint === current && attempt.status === 'pass');
     if (proven)

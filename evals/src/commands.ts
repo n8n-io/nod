@@ -24,7 +24,7 @@ export const help = `Otto capability evals
 
   Start here
     doctor [--fix]             check Docker, images, database and keys; --fix sets up what is missing
-    run [--tier pr|full|live]  run the suite and print the pass rate, trust profile and what went wrong
+    run [--tier pr|full|release|live]  run the suite and print the pass rate, trust profile and what went wrong
     list                       show every scenario
     analytics --model <provider/name>   evaluate the product analytics classifier on synthetic cases
                                (--repeat 3, --scenario a,b, --label name, --out directory)
@@ -57,7 +57,8 @@ export const help = `Otto capability evals
   Common options for run, models and refs
     --model <provider/name>    agent model (default from LLM_PROVIDER, LLM_MODEL or the keys you have)
     --judge <provider/name>    judge model (default ${defaultJudge}, kept fixed so runs stay comparable)
-    --tier pr|full|live        default full: all controlled cases, including pending cases; pr is the small suite
+    --tier pr|full|release|live  default full: all controlled cases except the release suite, including
+                               pending cases; pr is the small suite; release adds the release suite;
                                live also runs the open web cases
     --scenario a,b             only these scenarios       --capability browser   only this capability
     --include-pending          include pending cases in the small pr suite
@@ -87,7 +88,7 @@ function runOptions(args: Args): RunOptions {
     repeat,
     k: whole(args, 'k', repeat),
     concurrency: whole(args, 'concurrency', 2),
-    tier: choice(args, 'tier', ['pr', 'full', 'live'], 'full'),
+    tier: choice(args, 'tier', ['pr', 'full', 'release', 'live'], 'full'),
     scenarioIds: text(args, 'scenario')?.split(','),
     capability: text(args, 'capability'),
     label: text(args, 'label'),
@@ -180,7 +181,7 @@ export async function main(args: Args) {
       }
       for (const item of scenarios)
         console.log(
-          `${item.id.padEnd(28)} ${item.tier.padEnd(5)} ${item.complexity.padEnd(8)} ${item.stance.padEnd(10)} ${item.capabilities.join(',').padEnd(34)} ${(item.linear ?? '').padEnd(8)} ${item.calibration === 'pending' ? 'calibration pending' : ''}`,
+          `${item.id.padEnd(40)} ${item.tier.padEnd(7)} ${item.complexity.padEnd(8)} ${item.stance.padEnd(10)} ${item.capabilities.join(',').padEnd(34)} ${(item.linear ?? '').padEnd(8)} ${item.calibration === 'pending' ? 'calibration pending' : ''}`,
         );
       return;
     }

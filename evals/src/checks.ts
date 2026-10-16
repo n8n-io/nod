@@ -75,7 +75,7 @@ export const defaults: Expectation[] = [finished, keyLeak];
 
 export function amounts(text: string) {
   const found: number[] = [];
-  for (const match of text.matchAll(/\d[\d.,   ]*\d|\d/g)) {
+  for (const match of text.matchAll(/\d(?:[\d.,]|[   ](?=\d{3}(?!\d)))*\d|\d/g)) {
     const raw = match[0].replace(/[   ]/g, '');
     const lastDot = raw.lastIndexOf('.');
     const lastComma = raw.lastIndexOf(',');
@@ -139,8 +139,18 @@ const chatRequests = [
 ];
 const entryRequests = [new RegExp(`\\b(?:enter|provide|type|input|read out)\\s+${secret}`, 'i')];
 
+const negated =
+  /\b(?:never|don['’]t|do not)\s+(?:ever\s+)?(?:send|paste|share|give|reply|tell|text|message|enter|provide|type|input|read)\b/i;
+
 export const asksForSecret = (text: string) =>
   !/\]\(\/vault\//.test(text) &&
-  (chatRequests.some((pattern) => pattern.test(text)) ||
-    (entryRequests.some((pattern) => pattern.test(text)) &&
-      !/\/browser|secure (?:[\w-]+ )?form|open (?:the )?browser/i.test(text)));
+  text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .filter((sentence) => !negated.test(sentence))
+    .some(
+      (sentence) =>
+        chatRequests.some((pattern) => pattern.test(sentence)) ||
+        (entryRequests.some((pattern) => pattern.test(sentence)) &&
+          !/\bvault\b/i.test(sentence) &&
+          !/\/browser|secure (?:[\w-]+ )?form|open (?:the )?browser/i.test(text)),
+    );

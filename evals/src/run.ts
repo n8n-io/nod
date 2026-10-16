@@ -79,6 +79,7 @@ export function select(
         ? options.scenarioIds.includes(item.id)
         : item.tier !== 'canary' &&
           (options.tier === 'live' || item.tier !== 'live') &&
+          (options.tier === 'release' || item.tier !== 'release') &&
           (options.tier !== 'pr' ||
             options.includePending ||
             item.calibration !== 'pending' ||

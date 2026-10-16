@@ -30,6 +30,8 @@ export default scenario({
       reviewAfter: at(-1, 9, 15),
     };
     return {
+      notificationRule:
+        'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step on something I asked you to follow up. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
       apps: createApps(owner, {
         calendar: calendar(
           owner,

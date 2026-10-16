@@ -7,6 +7,7 @@ export interface Visit {
   host: string;
   method: string;
   path: string;
+  query: string;
   at: number;
 }
 
@@ -103,7 +104,13 @@ export async function serveSites(sites: Record<string, Site>, address = '127.0.0
     const site = sites[host];
     if (!site) return void response.writeHead(404).end('Not found');
     const url = new URL(request.url ?? '/', `https://${host}`);
-    visits.push({ host, method: request.method ?? 'GET', path: url.pathname, at: Date.now() });
+    visits.push({
+      host,
+      method: request.method ?? 'GET',
+      path: url.pathname,
+      query: url.search,
+      at: Date.now(),
+    });
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of request) {

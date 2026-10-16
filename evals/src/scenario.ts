@@ -51,6 +51,7 @@ export interface UserScript {
   approve?: boolean | ((action: string, args: unknown) => boolean);
   approvalReplies?: string[];
   secrets?: string[] | ((question: string, world: any) => string | undefined);
+  signIn?: { username: string; password: string };
   persona?: string;
 }
 
@@ -76,7 +77,7 @@ export interface Scenario<W extends World = World> {
   title: string;
   linear?: string;
   capabilities: Capability[];
-  tier: 'pr' | 'full' | 'live' | 'canary';
+  tier: 'pr' | 'full' | 'release' | 'live' | 'canary';
   complexity: 'simple' | 'medium' | 'complex';
   stance: 'regression' | 'gap';
   seconds: number;
