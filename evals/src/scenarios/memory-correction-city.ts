@@ -92,7 +92,9 @@ export default scenario({
       check(
         'lisbon-no-longer-active',
         (run) => {
-          const stale = memory(run).notes.filter((note) => lisbon.test(note.text));
+          const stale = memory(run).notes.filter(
+            (note) => lisbon.test(note.text) && !porto.test(note.text),
+          );
           return {
             pass: !stale.length,
             evidence: stale.length

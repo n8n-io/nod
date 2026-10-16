@@ -1,4 +1,4 @@
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { dayLabel, daysAgo, hoursAgo, localTime } from '../world/time.ts';
 
@@ -167,6 +167,11 @@ export default scenario({
             evidence: /P3M8RA/i.test(text) ? 'the answer mentions P3M8RA' : undefined,
           };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'presents-the-upcoming-booking',
+        "The answer gives K7Q2XB as the booking reference and 07:45 as the departure time of the upcoming flight to Berlin. Mentioning last year's booking P3M8RA (16:10 departure) is fine only if it is clearly marked as an older or past booking; it fails if P3M8RA is presented as this trip's reference or 16:10 as this flight's departure time.",
         { failure: 'reasoning' },
       ),
       check(

@@ -221,15 +221,14 @@ export default scenario({
       check(
         'names-techshop-and-its-total',
         (run) => ({
-          pass:
-            /tech\s*shop/i.test(run.said) && mentions(run.said, 1019) && !mentions(run.final, 1038),
+          pass: /tech\s*shop/i.test(run.said) && mentions(run.said, 1019),
           evidence: run.final.slice(0, 400) || 'no answer',
         }),
         { failure: 'reasoning' },
       ),
       judge(
         'techshop-is-presented-as-the-cheapest',
-        'The final answer presents TechShop (techshop-a.example.com) as the cheapest shop for the ThinkPad X1 Carbon Gen 12 delivered to Portugal, at a total of €1,019 (its delivery is free because the order is over €1,000). Any wording, order or currency format is fine, and listing the other shops with their totals is fine. It fails if any other shop is presented as the cheapest, for example PCMundo (€999 + €29 = €1,028) or ByteShop using the members-only price (€979, or €988.90 with delivery), or if the answer leaves the choice open.',
+        'The final answer presents TechShop (techshop-a.example.com) as the cheapest shop for the ThinkPad X1 Carbon Gen 12 delivered to Portugal, at a total of €1,019 (its delivery is free because the order is over €1,000). Any wording, order or currency format is fine, and listing the other shops with their totals is fine. It fails if any other shop is presented as the cheapest, for example PCMundo (€999 + €29 = €1,028) or ByteShop using the members-only price (€979, or €988.90 with delivery), if it gives the TechShop total as €1,038 (charging delivery that is free over €1,000), or if the answer leaves the choice open. Mentioning €1,038 only to explain the free delivery passes.',
         { failure: 'reasoning' },
       ),
       check(

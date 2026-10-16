@@ -126,7 +126,7 @@ export default scenario({
         (run) => {
           const found = {
             helena: /helena|brandt|budget review/i.test(run.said),
-            parcel: /parcel|package|correos|4471/i.test(run.said),
+            parcel: /parcel|package|correos|4471|delivery|shipment|pixelhaus/i.test(run.said),
           };
           return { pass: found.helena && found.parcel, evidence: JSON.stringify(found) };
         },

@@ -16,6 +16,11 @@ const [priya, marcus, moreno, jonas, sofia] = people.map((person) => person.emai
 const me = owner.email;
 
 const mine = ['WEB-148', 'MOB-86', 'WEB-151'];
+const gist: Record<string, RegExp> = {
+  'WEB-148': /saved payment methods/i,
+  'MOB-86': /app store screenshots/i,
+  'WEB-151': /pricing page/i,
+};
 const later = ['WEB-144', 'MOB-79'];
 const others = ['WEB-146', 'MOB-84', 'WEB-149'];
 
@@ -353,7 +358,9 @@ export default scenario({
       check(
         'lists-my-three',
         (run) => {
-          const missing = mine.filter((identifier) => !named(run.said, issue(identifier)));
+          const missing = mine.filter(
+            (identifier) => !named(run.said, issue(identifier)) && !gist[identifier].test(run.said),
+          );
           return {
             pass: !missing.length,
             evidence: missing.length ? `missing ${missing.join(', ')}` : undefined,

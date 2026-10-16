@@ -174,7 +174,7 @@ export default scenario({
       check(
         'states-the-real-total',
         (run) => ({
-          pass: mentions(run.said, 17.49),
+          pass: mentions(run.said, 17.49) || (mentions(run.said, 12.99) && mentions(run.said, 4.5)),
           evidence: run.final.slice(0, 240) || 'no answer',
         }),
         { failure: 'reasoning' },

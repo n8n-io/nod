@@ -1,5 +1,5 @@
 import { mentions } from '../checks.ts';
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, sheets } from '../world/apps.ts';
 import { daysAgo, inDays, localDate } from '../world/time.ts';
@@ -315,6 +315,11 @@ export default scenario({
                 : undefined,
           };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'presents-only-unpaid-invoices-as-unpaid',
+        `The message from the scheduled run presents as unpaid only ${unpaid.map((invoice) => `${invoice.number} (${invoice.client}, €${invoice.amount}, ${invoice.status})`).join(', ')}. Mentioning a paid invoice (${paid.map((invoice) => invoice.number).join(', ')}) is fine only if it is clearly marked as paid or left out of the list; it fails if any paid invoice is presented as unpaid, outstanding or still owed. Any wording, order or format is fine.`,
         { failure: 'reasoning' },
       ),
     ];

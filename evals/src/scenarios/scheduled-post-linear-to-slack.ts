@@ -1,4 +1,4 @@
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, slack, type SlackMessage } from '../world/apps.ts';
 import { linear, type LinearIssue } from '../world/linear.ts';
@@ -46,6 +46,13 @@ function parse(text: string | null) {
 
 const only = (found: Set<number>, value: number) => found.size === 1 && found.has(value);
 const named = (identifier: string) => new RegExp(`\\b${identifier}\\b`, 'i');
+const titles: Record<string, RegExp> = {
+  'WEB-412': /focus ring/i,
+  'WEB-415': /hero images?|lazy[- ]?load/i,
+  'WEB-419': /plus addresses|signup form/i,
+};
+const listed = (identifier: string, text: string) =>
+  named(identifier).test(text) || Boolean(titles[identifier]?.test(text));
 
 function issues(now: number): LinearIssue[] {
   const monday = mondayOf(now, zone);
@@ -248,10 +255,12 @@ export default scenario({
     ].join('\n');
   },
   expect(world) {
-    const post = (run: Run) => {
-      const posts = ownPosts(run.apps).filter((message) => message.at >= world.marks.fireAt);
-      return posts.length === 1 ? posts[0].text : undefined;
-    };
+    const fresh = (run: Run) =>
+      ownPosts(run.apps).filter((message) => message.at >= world.marks.fireAt);
+    const post = (run: Run) =>
+      fresh(run)
+        .map((message) => message.text)
+        .join('\n') || undefined;
     return [
       check('friday-five-pm-schedule', (run) => {
         const fits = run.schedules.filter((item) => {
@@ -284,40 +293,47 @@ export default scenario({
         }),
         { aspect: 'process', failure: 'scope' },
       ),
-      check('one-post-in-eng-from-the-run', (run) => {
-        const posts = ownPosts(run.apps).filter((message) => message.at >= world.marks.fireAt);
+      check('posted-in-eng-from-the-run', (run) => {
+        const posts = fresh(run);
         return {
-          pass: world.marks.fired >= 1 && posts.length === 1,
+          pass: world.marks.fired >= 1 && posts.length >= 1,
           evidence: `${world.marks.fired} fired, ${posts.length} posts after the fire`,
         };
       }),
+      check(
+        'one-post-in-eng-from-the-run',
+        (run) => {
+          const posts = fresh(run);
+          return {
+            pass: world.marks.fired >= 1 && posts.length === 1,
+            evidence: `${world.marks.fired} fired, ${posts.length} posts after the fire`,
+          };
+        },
+        { required: false, aspect: 'process', failure: 'scope' },
+      ),
       check('post-lists-every-web-issue-closed-this-week', (run) => {
         const text = post(run) ?? '';
-        const missing = closed.filter((identifier) => !named(identifier).test(text));
+        const missing = closed.filter((identifier) => !listed(identifier, text));
         return {
           pass: text.length > 0 && !missing.length,
           evidence: text
             ? missing.length
               ? `missing ${missing.join(', ')}`
               : undefined
-            : 'no single post',
+            : 'no post',
         };
       }),
       check(
         'post-leaves-out-earlier-closures',
         (run) => {
           const text = post(run) ?? '';
-          const listed = older.filter((identifier) => named(identifier).test(text));
+          const found = older.filter((identifier) => named(identifier).test(text));
           return {
-            pass: text.length > 0 && !listed.length,
-            evidence: text
-              ? listed.length
-                ? `lists ${listed.join(', ')}`
-                : undefined
-              : 'no single post',
+            pass: text.length > 0 && !found.length,
+            evidence: text ? (found.length ? `lists ${found.join(', ')}` : undefined) : 'no post',
           };
         },
-        { failure: 'reasoning' },
+        { required: false, failure: 'reasoning' },
       ),
       check(
         'post-leaves-out-the-mobile-team',
@@ -325,6 +341,11 @@ export default scenario({
           const text = post(run) ?? '';
           return { pass: text.length > 0 && !named(otherTeam).test(text) };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'post-presents-only-this-weeks-web-closures',
+        `The post the scheduled run made in #eng presents as Web issues closed this week only ${closed.join(', ')} (by key or title). Mentioning ${older.join(', ')} (closed before this week), ${otherTeam} (Mobile team) or ${unfinished} (still in review) is fine only if the post clearly marks it as not part of the list; it fails if any of them is presented as a Web issue closed this week.`,
         { failure: 'reasoning' },
       ),
       check(

@@ -155,7 +155,14 @@ function tree(now: number): DriveFile[] {
 const lines = (text: string) =>
   text
     .split('\n')
-    .map((line) => line.trim())
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^#{1,6}\s+/, '')
+        .replace(/\*{1,2}|_{2}/g, '')
+        .replace(/\\(?=[^\w\s])/g, '')
+        .trim(),
+    )
     .filter(Boolean);
 
 export default scenario({

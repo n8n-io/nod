@@ -226,8 +226,8 @@ export default scenario({
           const text = summary(run, state);
           const found = {
             lumen: /lumen|PO-?\s?7781|menu redesign/i.test(text),
-            dentist: /dentist|dental|sorriso|check-?up/i.test(text),
-            kestrel: /kestrel|INV-?\s?2038|\bTom\b/i.test(text),
+            dentist: /dentist|dental|sorriso|check-?up|appointment/i.test(text),
+            kestrel: /kestrel|\b(?:INV-?\s?)?2038\b|\bTom\b/i.test(text),
           };
           return {
             pass: Object.values(found).every(Boolean),

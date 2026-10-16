@@ -233,7 +233,12 @@ export default scenario({
           const found = posts();
           return {
             pass:
-              found.length > 0 && found.every(({ message }) => /\bclos|\bshut/i.test(message.text)),
+              found.length > 0 &&
+              found.every(({ message }) =>
+                /\bclos|\bshut|(?:\bnot|n['’]t)\s+(?:be\s+)?open|\bno\s+office\b/i.test(
+                  message.text,
+                ),
+              ),
             evidence: found.map(({ message }) => message.text).join(' | ') || 'no post',
           };
         },

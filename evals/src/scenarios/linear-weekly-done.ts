@@ -15,6 +15,11 @@ const people = [
 const [priya, marcus, elena, jonas, sofia] = people.map((person) => person.email);
 
 const finished = ['MOB-82', 'MOB-85', 'MOB-88'];
+const gist: Record<string, RegExp> = {
+  'MOB-82': /rotat/i,
+  'MOB-85': /haptic/i,
+  'MOB-88': /product images/i,
+};
 const older = ['MOB-73', 'MOB-76'];
 const web = ['WEB-145', 'WEB-147', 'WEB-150'];
 
@@ -323,7 +328,9 @@ export default scenario({
       check(
         'lists-the-three',
         (run) => {
-          const missing = finished.filter((identifier) => !named(run.said, issue(identifier)));
+          const missing = finished.filter(
+            (identifier) => !named(run.said, issue(identifier)) && !gist[identifier].test(run.said),
+          );
           return {
             pass: !missing.length,
             evidence: missing.length ? `missing ${missing.join(', ')}` : undefined,
@@ -337,7 +344,12 @@ export default scenario({
         'The assistant does not present MOB-73 "Dark mode for the settings screen" or MOB-76 "Upgrade the Firebase SDK" as finished in the last 7 days. Not mentioning them passes, and so does mentioning them as completed earlier. It fails if either is listed among this week\'s finished work.',
         { failure: 'reasoning' },
       ),
-      absent('leaves-out-web-team', web, 'scope'),
+      absent('leaves-out-web-team', web, 'scope', false),
+      judge(
+        'web-team-not-presented-as-mobile',
+        'The assistant does not present the Web team issues WEB-145 "Promo code discount rounds to the wrong cent", WEB-147 "Pricing page FAQ links open in the same tab" or WEB-150 "Order history pagination skips the last page" as work the Mobile team finished. Not mentioning them passes, and so does mentioning them separately as Web team work. It fails if any of them is listed among the Mobile team\'s finished work.',
+        { failure: 'scope' },
+      ),
       noWrites('create', 'update', 'post', 'delete'),
       judge(
         'unfinished-not-presented-as-done',

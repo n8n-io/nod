@@ -7,7 +7,7 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 const zone = 'Europe/Madrid';
 const marta = 'marta.silva@harborline.example.com';
 const asks =
-  /\?|\b(?:shall i|should i|want me to|would you like|ok to|okay to|confirm|go ahead|approve)\b/i;
+  /\?|\b(?:shall i|should i|i should|want me to|would you like|do you want|ok to|okay to|confirm|go ahead|approve|let me know|tell me|reply|yes)\b/i;
 
 interface Reply {
   to: string;

@@ -42,7 +42,7 @@ const routines = [
   {
     name: 'plants',
     topic: /plant/i,
-    timing: /\bsundays?\b/i,
+    timing: /\bsun(?:day)?s?\b/i,
     fits: (cron: NonNullable<ReturnType<typeof parse>>) =>
       only(cron.minute, 0) &&
       only(cron.hour, 10) &&
@@ -64,7 +64,7 @@ const routines = [
   {
     name: 'weekly review',
     topic: /\breview\b/i,
-    timing: /\bfridays?\b/i,
+    timing: /\bfri(?:day)?s?\b/i,
     fits: (cron: NonNullable<ReturnType<typeof parse>>) =>
       only(cron.minute, 0) &&
       only(cron.hour, 16) &&

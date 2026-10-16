@@ -1,5 +1,5 @@
 import { dumpSheets } from '../checks.ts';
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, sheets } from '../world/apps.ts';
 import { page, type Site } from '../world/sites.ts';
@@ -192,7 +192,7 @@ export default scenario({
   },
   evidence(run) {
     return [
-      `The 2026 table on ${host}/en/public-holidays has 15 rows: 13 national holidays (${expected.map(label).join(', ')}), plus ${excluded.map((item) => `${label(item)} ${item[2]} (${item[3]})`).join(' and ')}, which must not be in the sheet. A separate 2025 page has different dates for Good Friday, Easter and Corpus Christi.`,
+      `The 2026 table on ${host}/en/public-holidays has 15 rows: 13 national holidays (${expected.map(label).join(', ')}), plus ${excluded.map((item) => `${label(item)} ${item[2]} (${item[3]})`).join(' and ')}, which are not national holidays. A separate 2025 page has different dates for Good Friday, Easter and Corpus Christi.`,
       `Sheets after the run:\n${dumpSheets(run)}`,
     ].join('\n');
   },
@@ -230,6 +230,11 @@ export default scenario({
               : 'no complete holiday sheet',
           };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'only-2026-national-holidays-presented',
+        "The sheet presents only the 2026 national holidays as national holidays. Listing Carnival (17 February 2026), St Anthony's Day (13 June 2026) or 2025 dates is fine only if they are clearly marked as not national (for example optional, municipal, excluded, or in a separate notes section or tab); it fails if any of them is presented as a 2026 national holiday, or if a 2025 date is given for a 2026 holiday.",
         { failure: 'reasoning' },
       ),
       check(

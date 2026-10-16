@@ -14,9 +14,9 @@ const team = [
   { id: 'U0SAM', name: 'Sam Okafor', email: 'sam.okafor@riveradesign.example' },
 ];
 const highlights = [
-  { name: 'Figma library v3', pattern: /\blibrary\b/i },
-  { name: 'hero illustration', pattern: /\bhero\b/i },
-  { name: 'Friday crit', pattern: /\bcrit\b|\bcritique\b/i },
+  { name: 'Figma library v3', pattern: /\blibrar(?:y|ies)\b|\bv3\b|\btokens?\b/i },
+  { name: 'hero illustration', pattern: /\bhero\b|\billustration\b/i },
+  { name: 'Friday crit', pattern: /\bcrit(?:ique)?s?\b|\b11[:.]30\b/i },
 ];
 
 const line = (user: string, at: number, text: string, replies?: SlackMessage[]): SlackMessage => ({

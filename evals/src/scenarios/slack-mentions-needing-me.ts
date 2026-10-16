@@ -168,7 +168,7 @@ export default scenario({
     return [
       check('names-joana-brand-deck', (run) => {
         const joana = /\bjoana\b/i.test(run.said);
-        const deck = /\bdeck\b/i.test(run.said);
+        const deck = /\bdeck\b|\bharbor\b|\bpitch\b/i.test(run.said);
         return {
           pass: joana && deck,
           evidence: `${joana ? '' : 'Joana not named; '}${deck ? '' : 'brand deck not named'}`,

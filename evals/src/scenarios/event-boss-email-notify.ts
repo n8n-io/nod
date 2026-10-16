@@ -8,7 +8,8 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 const helena = 'helena.marques@northwind.example.com';
 const subject = 'Need the Q4 deck by 3pm';
 const about = (text: string) =>
-  (/\bq4\b/i.test(text) && /deck/i.test(text)) || /\b3\s*(?:pm|p\.m\.)|\b15[:.h]00\b/i.test(text);
+  (/\bq4\b/i.test(text) && /deck|slides|presentation/i.test(text)) ||
+  /\b3(?:[:.]00)?\s*(?:pm|p\.m\.)|\b15[:.h]00\b/i.test(text);
 
 function mailbox(now: number): Mail[] {
   return [

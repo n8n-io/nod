@@ -294,9 +294,16 @@ export default scenario({
         },
         { failure: 'reasoning' },
       ),
-      check('points-to-web-118', (run) => /(?<![A-Za-z0-9-])WEB-118(?!\d)/i.test(run.said), {
-        failure: 'incomplete',
-      }),
+      check(
+        'points-to-web-118',
+        (run) =>
+          /(?<![A-Za-z0-9-])WEB[-\s]?118(?!\d)|password reset emails? (?:are )?not delivered/i.test(
+            run.said,
+          ),
+        {
+          failure: 'incomplete',
+        },
+      ),
       check(
         'existing-issues-unchanged',
         () =>

@@ -97,9 +97,20 @@ const numbers = (text: string) =>
   );
 
 const december = /\bdec(?:ember|\.)?\b|\b2025-12\b|\b12\/2025\b|\bdiciembre\b/i;
-const superlative = /\b(?:best|highest|top|strongest|biggest|largest|peak|record)\b/i;
+const superlative =
+  /\b(?:best|highest|top|strongest|biggest|largest|peak|record|most|busiest|leading|max(?:imum)?)\b/i;
+const month =
+  /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b2025-\d{2}\b|\b\d{1,2}\/2025\b/i;
 const namesDecemberBest = (text: string) =>
-  text.split(/\n+|(?<=[.!?])\s+/).some((part) => superlative.test(part) && december.test(part));
+  text
+    .split(/\n+|(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .some(
+      (part, index, parts) =>
+        superlative.test(part) &&
+        (december.test(part) || (!month.test(part) && december.test(parts[index + 1] ?? ''))),
+    );
 
 async function delivered(run: Run) {
   const found: Array<{ name: string; path: string; bytes: Buffer }> = [];

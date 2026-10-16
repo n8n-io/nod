@@ -1,5 +1,5 @@
 import { mentions } from '../checks.ts';
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { page, type Site } from '../world/sites.ts';
 
@@ -128,6 +128,11 @@ export default scenario({
           );
           return { pass: !wrong.length, evidence: wrong[0]?.slice(0, 200) };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'no-other-wait-given-as-alfamas',
+        `The answer does not present another clinic's current wait (${neighbours.map((clinic) => `${clinic.name} ${clinic.wait} min`).join(', ')}) or last week's Alfama average (${alfama.lastWeek} min) as the Alfama clinic's current wait, which is ${alfama.wait} minutes. Mentioning other clinics, last week's averages, or comparisons such as "${alfama.lastWeek - alfama.wait} minutes less than last week" is fine.`,
         { failure: 'reasoning' },
       ),
     ];

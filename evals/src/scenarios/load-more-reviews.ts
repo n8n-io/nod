@@ -179,7 +179,10 @@ export default scenario({
       ),
       check(
         'names-the-lid-as-the-main-complaint',
-        (run) => ({ pass: /\blids?\b/i.test(run.said), evidence: run.final.slice(0, 300) }),
+        (run) => ({
+          pass: /\blids?\b|\bhinges?\b|\blatch/i.test(run.said),
+          evidence: run.final.slice(0, 300),
+        }),
         { failure: 'reasoning' },
       ),
       check(

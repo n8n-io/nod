@@ -181,7 +181,7 @@ export default scenario({
         'reports-the-document-request',
         (run) => {
           const payslips =
-            /pay\s?-?slips?|payroll|salary (?:slips?|statements?)|proof of (?:income|earnings)|n[óo]minas?/i.test(
+            /pay\s?-?(?:slips?|stubs?|statements?)|wage\s?slips?|payroll|salary (?:slips?|statements?)|proof of (?:income|earnings)|n[óo]minas?/i.test(
               run.said,
             );
           const id =

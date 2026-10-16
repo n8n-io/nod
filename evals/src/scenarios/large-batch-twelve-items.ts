@@ -1,5 +1,5 @@
 import { dumpSheets, mentions } from '../checks.ts';
-import { check, scenario } from '../scenario.ts';
+import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, gmail, sheets, type Mail } from '../world/apps.ts';
 import { daysAgo, localDate } from '../world/time.ts';
@@ -309,6 +309,11 @@ export default scenario({
               : `${rows.length} rows`,
           };
         },
+        { required: false, failure: 'reasoning' },
+      ),
+      judge(
+        'old-order-not-recorded-as-a-purchase',
+        `The Purchases sheet does not record the ${old.shop} order (${old.order}, ${euro(old.total)}, ${old.days} days old) as one of the orders from the last 30 days. A note or separate tab that clearly marks it as excluded or outside the 30 days is fine; it fails if it appears as an ordinary purchase row.`,
         { failure: 'reasoning' },
       ),
       check(
