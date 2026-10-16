@@ -66,6 +66,7 @@ test(
     let beforeConfirmation = async () => {};
     let decisionsEnabled = true;
     let decisionCost: number | undefined;
+    let checkCost: number | undefined;
     let refusedDecision = '';
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
@@ -223,7 +224,7 @@ test(
         onboardingCurator: {
           id: 'fixture',
           configured: true,
-          curate: async ({ task, input }) => {
+          curate: async ({ task, input }, _signal, report) => {
             if ('purpose' in input && input.purpose === 'confirmation') {
               await beforeConfirmation();
               return { text: confirmationText };
@@ -233,6 +234,8 @@ test(
               return { valid: confirmationValid };
             }
             if (task === 'review' && !('purpose' in input)) fallbackChecks.push(input);
+            if (task === 'review' && 'action' in input && checkCost !== undefined)
+              report?.({ id: randomUUID(), model: 'fixture', costUsd: checkCost });
             return task === 'review' && 'reply' in input
               ? {
                   answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
@@ -394,7 +397,11 @@ test(
           assert.equal(card.args.website, 'https://bank.example.test');
           assert.deepEqual(card.args.control, [{ role: 'button', name: 'Authorize payment' }]);
           assert.deepEqual(
-            decisionInputs.findLast((item) => item.name === 'run')?.input.action.arguments.control,
+            (
+              fallbackChecks as Array<{
+                action?: { name: string; arguments: { control?: unknown } };
+              }>
+            ).findLast((item) => item.action?.name === 'OTTO_browser')?.action?.arguments.control,
             [{ role: 'button', name: 'Authorize payment' }],
           );
           assert.equal(clicks().length, before);
@@ -1061,11 +1068,11 @@ test(
         },
       );
 
-      await t.test('decision costs stop later tools at the task check-in', async () => {
+      await t.test('trust check costs stop later tools at the task check-in', async () => {
         const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
         assert.equal(reset.statusCode, 200, reset.body);
         const before = executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length;
-        const inputs = decisionInputs.length;
+        const checks = fallbackChecks.length;
         const text = `Read the synthetic inbox three times ${randomUUID()}`;
         asked.add(text);
         batches.set(text, {
@@ -1080,7 +1087,7 @@ test(
           'INSERT INTO spending_limits(owner_id,task_usd) VALUES($1,1) ON CONFLICT(owner_id) DO UPDATE SET task_usd=excluded.task_usd',
           [ownerId],
         );
-        decisionCost = 0.6;
+        checkCost = 0.6;
         try {
           const response = await request('POST', '/api/messages', { text });
           assert.equal(response.statusCode, 200, response.body);
@@ -1090,7 +1097,7 @@ test(
             executedApps.filter((action) => action === 'GMAIL_FETCH_EMAILS').length,
             before + 2,
           );
-          assert.equal(decisionInputs.length, inputs + 2);
+          assert.equal(fallbackChecks.length, checks + 2);
           const rows = (
             await pool.query('SELECT cost_usd FROM model_usage WHERE turn_id=$1', [turnId])
           ).rows;
@@ -1099,7 +1106,7 @@ test(
             [0.6, 0.6],
           );
         } finally {
-          decisionCost = undefined;
+          checkCost = undefined;
           await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
         }
       });
