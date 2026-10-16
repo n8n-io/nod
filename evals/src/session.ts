@@ -63,15 +63,17 @@ export function createSession(options: {
   const userMessages: Array<{ at: number; text: string }> = [];
   let secretIndex = 0;
   let approvalIndex = 0;
+  const answeredRequests = new Set<string>();
   let threadId: string | undefined;
 
-  async function post(path: string, body: unknown) {
+  async function post(path: string, body: unknown, allowed: number[] = []) {
     const response = await stack.request(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
     const text = await response.text();
+    if (!response.ok && allowed.includes(response.status)) return undefined;
     if (!response.ok)
       throw new Error(`POST ${path} failed (${response.status}): ${text.slice(0, 300)}`);
     return text ? JSON.parse(text) : {};
@@ -162,7 +164,9 @@ export function createSession(options: {
         if (form && user.signIn) return { kind: 'form' as const, form, text };
         if (form) return { kind: 'question' as const, text };
         const state = await (await stack.request('/api/state')).json();
-        const request = state.verificationRequests?.[0];
+        const request = (state.verificationRequests ?? []).find(
+          (item: { id: string }) => !answeredRequests.has(item.id),
+        );
         if (request || Date.now() - started > 30_000)
           return { kind: 'secret' as const, request, text };
         const still = await pool.query(
@@ -269,7 +273,12 @@ export function createSession(options: {
         text: pending.text,
         at,
       });
-      await post('/api/messages', { text: value, verificationRequestId: pending.request.id });
+      answeredRequests.add(pending.request.id);
+      await post(
+        '/api/messages',
+        { text: value, verificationRequestId: pending.request.id },
+        [409],
+      );
       return true;
     }
     const scripted = user.answers?.find((answer) => answer.when.test(pending.text));
