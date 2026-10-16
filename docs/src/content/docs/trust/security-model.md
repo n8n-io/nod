@@ -9,14 +9,14 @@ This page sets out who Otto trusts with what, which rules the server enforces, a
 
 ## Who holds what authority
 
-| Part             | What it can do                                                                         | What it's trusted with                                                                                                                                                           |
-| ---------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| You              | Ask for work, approve actions, choose accounts, change permissions                     | Everything                                                                                                                                                                       |
-| Otto server      | Hold keys, check policy, decrypt values, record every use                              | Keys and secret values                                                                                                                                                           |
-| Browser provider | Check field origins and pages, enter values, submit                                    | Secret values during entry                                                                                                                                                       |
-| Model            | Plan, choose accounts, fields and buttons                                              | Account names, statuses and website results                                                                                                                                      |
-| Checker          | Decide each app action and browser step from your messages or a schedule's instruction | Your recent messages and the action. For a browser step, the website, page address, control label, dialog text or file name, and what Otto typed or chose; never the page's text |
-| Website          | Receive what's submitted to its origin                                                 | The values entered on it                                                                                                                                                         |
+| Part             | What it can do                                                                                     | What it's trusted with                                                                                                                                                                                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You              | Ask for work, approve actions, choose accounts, change permissions                                 | Everything                                                                                                                                                                                                                                                     |
+| Otto server      | Hold keys, check policy, decrypt values, record every use                                          | Keys and secret values                                                                                                                                                                                                                                         |
+| Browser provider | Check field origins and pages, enter values, submit                                                | Secret values during entry                                                                                                                                                                                                                                     |
+| Model            | Plan, choose accounts, fields and buttons                                                          | Account names, statuses and website results                                                                                                                                                                                                                    |
+| Checker          | Decide each app action and browser step from your messages or a schedule's or standing instruction | Your recent messages, a schedule's instruction or, for background work, your standing instruction, and the action. For a browser step, the website, page address, control label, dialog text or file name, and what Otto typed or chose; never the page's text |
+| Website          | Receive what's submitted to its origin                                                             | The values entered on it                                                                                                                                                                                                                                       |
 
 ## Trust boundaries
 
@@ -37,10 +37,10 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 ### Authority
 
-- Only your messages, a schedule's instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
+- Only your messages, a schedule's instruction, your standing instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
 - App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
 - A confirmation is bound to the exact action and arguments, and runs once.
-- Background work Otto starts itself only reads and drafts on its own; anything else, including a sign-in or a payment, waits for your yes.
+- Background work Otto starts itself reads and drafts, and does only what your [standing instruction](/trust/approvals/#standing-instructions) asks. Anything else waits for your yes, and a payment always needs your approval.
 
 ### Secrets
 
@@ -82,6 +82,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The model can type any value it knows into a page, including a secret you typed into chat.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click. The trust check judges a browser step from what it does (a click, a key press or a script), the website and page, the control's label when there is one, any dialog text or file name, and what Otto typed. It never sees the page's text, and a deceptive site can mislabel a control.
 - The checker can be wrong, and the model isn't immune to prompt injection.
+- A standing instruction runs for any new email or update that matches it, including one that only claims to come from the sender you named.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
 - In hosted mode, the operator can decrypt stored data.

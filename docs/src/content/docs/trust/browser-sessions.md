@@ -26,10 +26,10 @@ A session opens in one browser at a time. While you're still signing in to it in
 
 ## When the browser stays signed in
 
-| Situation                                      | What happens                                                                                                                                   |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| The chat                                       | Its browser stays signed in. Each new sign-in or saved-session use is checked again                                                            |
-| A scheduled run, background work or a subagent | Starts in its own fresh browser, signed out. It signs in again with a saved login or session, checked as usual; background work asks you first |
+| Situation                                      | What happens                                                                                                                                                                 |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The chat                                       | Its browser stays signed in. Each new sign-in or saved-session use is checked again                                                                                          |
+| A scheduled run, background work or a subagent | Starts in its own fresh browser, signed out. It signs in again with a saved login or session, checked as usual; background work is checked against your standing instruction |
 
 ## Sign out
 

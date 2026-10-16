@@ -10,6 +10,7 @@ Reply with only JSON: {"run": true} or {"run": false}.
 run is false when the user's own words forbid the action or require confirmation before it, including reads and drafts. Otherwise, run is true for an action that only reads, or only prepares something for the user without sending, publishing, sharing or deleting anything, such as a draft.
 For any other action, run is true only when the user's own words ask for this kind of action on this target, and false when there are no user words, the target differs from what the user named, the user asked to be asked first, or it is unclear. A short "yes" counts when it answers the assistant message that proposed this action.
 A change to one of the assistant's own schedules may carry currentSchedule, the schedule as it stands now. The user's words must cover that schedule, not only the identifier being changed or cancelled. Forgetting a memory note (OTTO_memory_forget) carries note, its current text, and the user's words must cover that note. OTTO_memory_control turns memory on or off or clears all of it.
+Work the assistant starts on its own, such as on new email or other activity in a connected app, may carry standingInstruction, the user's notification rule. It counts as the user's words only for what it explicitly asks the assistant to do on its own; asking to be told, flagged or alerted about something is answered by the assistant's own message and asks for no other action. It never covers a change to the assistant's own schedules, notification settings, spending limits or memory. A change to notification settings may carry currentNotificationRule, the rule as it stands now. The new rule becomes the user's standing instruction, so the user's words must cover everything it adds or changes, especially anything it lets the assistant do on its own.
 OTTO_sign_in and OTTO_browser_session are never only reads. For them, run is true only when the user's words need that website or business, such as reading their account there, downloading a document, booking or buying; the user may name the business instead of the website. A denial, a cancellation, a public search or a request to stay signed out does not ask for a sign-in.
 When the arguments also name savedSessionWebsite, the saved sign-in being opened belongs to that other website, and opening it puts the user's session for it in the browser. Then run is true only when the user's words need that saved website as well, not only the website being opened.
 OTTO_browser is one step on a website: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog or running a script. Its arguments give the website and page, the control as the page labels it, where a drag drops, any dialog text, the file, and what the assistant typed or chose on that page. Opening and moving around a website, following links, searching, filtering, sorting, closing a popup, declining optional cookies, adding to a cart or list, and choosing options, ticking boxes or moving to the next step in a form before its final step only read or prepare. Sending, posting, publishing, submitting a form's final step, ordering, paying, transferring, booking, confirming, accepting terms, accepting cookies or tracking, deleting, cancelling, uploading a file, and changing an account, a setting, a preference or saved data do not, including a toggle or choice that saves at once. A step whose effect the control and page leave unclear does not only read.
@@ -72,6 +73,15 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
     const origin = await turnOrigin(turn.turnId);
     if (!origin) throw new Error('This turn is no longer running.');
     const instruction = origin.scheduleInstruction?.trim();
+    const standing =
+      origin.source === 'event'
+        ? (
+            await pool.query<{ notification_rule: string }>(
+              'SELECT notification_rule FROM preferences WHERE owner_id=$1',
+              [ownerId],
+            )
+          ).rows[0]?.notification_rule.trim()
+        : undefined;
     const words =
       origin.source === 'user'
         ? await conversation(turn.threadId, origin.messageId, origin.taskId)
@@ -81,7 +91,7 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
               scheduledFor: origin.scheduledFor,
               timeZone: origin.timeZone,
             }
-          : undefined;
+          : standing && { standingInstruction: standing };
     const answer = await options
       .review(checkInstructions, { ...words, action: { name: action, arguments: args } })
       .catch((error: unknown) => {
