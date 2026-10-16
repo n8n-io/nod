@@ -57,7 +57,7 @@ function recommended(source: ModelConnection) {
   return (
     (subscription && source.models.find((item) => item.id === 'gpt-6-sol')) ||
     source.models.find((item) => item.id === agentModels[source.provider]) ||
-    (subscription ? source.models[0] : undefined)
+    source.models[0]
   );
 }
 

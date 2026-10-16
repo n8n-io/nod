@@ -67,14 +67,34 @@ export function TelegramSetup({
   onSaveId(event: React.FormEvent): void;
 }) {
   const [hasToken, setHasToken] = useState(false);
+  const [tokenError, setTokenError] = useState('');
   const state = telegramState(setup);
+  const disabled = busy || unavailable;
   const candidate = manual ? undefined : state.candidate;
   const current = state.paired ? 5 : candidate ? 4 : state.saved ? 3 : hasToken ? 2 : 1;
   const liveUrl = state.waiting ? pairingUrl : null;
   const steps = ['Create a bot', 'Paste the bot token', 'Open your bot', 'Confirm your account'];
+  const setupError =
+    unavailable && !state.paired
+      ? hosted
+        ? 'Telegram setup is unavailable. Try again later.'
+        : 'Set up the secure key store on this computer to connect Telegram.'
+      : error;
+
+  function verify(event: React.FormEvent) {
+    event.preventDefault();
+    if (disabled) return;
+    if (!fields.botToken?.trim()) {
+      setTokenError('Paste your bot token first.');
+      return;
+    }
+    setTokenError('');
+    onVerify(event);
+  }
+
   return (
     <div className="telegram-setup">
-      {error && <Notice>{error}</Notice>}
+      {setupError && <Notice>{setupError}</Notice>}
       {state.paired ? (
         <div className="telegram-setup-connected" role="status">
           <Check size={20} aria-hidden="true" />
@@ -130,7 +150,7 @@ export function TelegramSetup({
                     </div>
                   )}
                   {active && step === 2 && (
-                    <form className="telegram-setup-content" onSubmit={onVerify}>
+                    <form className="telegram-setup-content" onSubmit={verify}>
                       <p>BotFather sends you a token. Copy its full reply or just the token.</p>
                       <Field
                         label="BotFather message or token"
@@ -143,10 +163,14 @@ export function TelegramSetup({
                           required
                           spellCheck={false}
                           placeholder="123456789:AAF…"
+                          aria-invalid={Boolean(tokenError) || undefined}
                           data-analytics-private
                           value={fields.botToken ?? ''}
-                          disabled={busy || unavailable}
-                          onChange={(event) => onField('botToken', event.target.value)}
+                          disabled={disabled}
+                          onChange={(event) => {
+                            setTokenError('');
+                            onField('botToken', event.target.value);
+                          }}
                           onPaste={(event) => {
                             const text = event.clipboardData.getData('text/plain');
                             if (!/[\r\n]/.test(text)) return;
@@ -158,6 +182,7 @@ export function TelegramSetup({
                               input.selectionEnd ?? input.value.length,
                               'end',
                             );
+                            setTokenError('');
                             onField('botToken', input.value);
                           }}
                         />
@@ -179,15 +204,9 @@ export function TelegramSetup({
                           </Field>
                         </details>
                       )}
-                      {unavailable && (
-                        <p role="alert">
-                          {hosted
-                            ? 'Telegram setup is unavailable. Try again later.'
-                            : 'Set up the secure key store on this computer to save your bot.'}
-                        </p>
-                      )}
+                      {tokenError && <p role="alert">{tokenError}</p>}
                       <div className="telegram-setup-actions">
-                        <Button type="submit" size="sm" disabled={busy || unavailable}>
+                        <Button type="submit" size="sm" disabled={disabled}>
                           {busy ? 'Connecting…' : 'Connect bot'}
                         </Button>
                         <Button
@@ -210,14 +229,20 @@ export function TelegramSetup({
                           <Button
                             size="sm"
                             data-telegram-primary
-                            disabled={busy}
+                            disabled={disabled}
                             onClick={onNewLink}
                           >
                             {busy ? 'Connecting…' : 'Retry connection'}
                           </Button>
                         </>
                       ) : manual ? (
-                        <form className="telegram-setup-content" onSubmit={onSaveId}>
+                        <form
+                          className="telegram-setup-content"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            if (!disabled) onSaveId(event);
+                          }}
+                        >
                           <p>
                             Message{' '}
                             <a
@@ -239,13 +264,14 @@ export function TelegramSetup({
                               required
                               autoFocus
                               placeholder="123456789"
+                              disabled={disabled}
                               data-analytics-private
                               value={fields.allowedUserId ?? ''}
                               onChange={(event) => onField('allowedUserId', event.target.value)}
                             />
                           </Field>
                           <div className="telegram-setup-actions">
-                            <Button type="submit" size="sm" disabled={busy}>
+                            <Button type="submit" size="sm" disabled={disabled}>
                               {busy ? 'Saving…' : 'Save ID'}
                             </Button>
                             <Button
@@ -286,7 +312,7 @@ export function TelegramSetup({
                               <Button
                                 size="sm"
                                 data-telegram-primary
-                                disabled={busy}
+                                disabled={disabled}
                                 onClick={onNewLink}
                               >
                                 {busy ? 'Creating code…' : 'Get a new code'}
@@ -313,10 +339,15 @@ export function TelegramSetup({
                       </p>
                       <p>Only this account will be able to message Otto.</p>
                       <div className="telegram-setup-actions">
-                        <Button size="sm" data-telegram-primary disabled={busy} onClick={onConfirm}>
+                        <Button
+                          size="sm"
+                          data-telegram-primary
+                          disabled={disabled}
+                          onClick={onConfirm}
+                        >
                           {busy ? 'Confirming…' : 'Confirm'}
                         </Button>
-                        <Button variant="ghost" size="sm" disabled={busy} onClick={onNewLink}>
+                        <Button variant="ghost" size="sm" disabled={disabled} onClick={onNewLink}>
                           Not me
                         </Button>
                       </div>

@@ -404,7 +404,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!editing || busy) return;
+    if (!editing || busy || !settings?.ready) return;
     if (editing === 'whatsapp' && step < whatsappSteps.length - 1) {
       setStep((value) => value + 1);
       return;
@@ -416,6 +416,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     } else if (result.ok) close();
   }
   async function telegramAction(action: 'pairing' | 'confirm' | 'user', body: object = {}) {
+    if (busy || !settings?.ready) return;
     if (!(await telegramRequest(action, body))) return;
     setManualId(false);
     setFields({});

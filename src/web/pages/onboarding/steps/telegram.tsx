@@ -23,7 +23,7 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
   const issued = useRef(false);
 
   useEffect(() => {
-    if (!settings || issued.current || !state.ready || state.paired || pairingUrl) return;
+    if (!settings?.ready || issued.current || !state.ready || state.paired || pairingUrl) return;
     if (state.candidate && state.waiting) return;
     issued.current = true;
     void telegramAction('pairing');
@@ -42,6 +42,7 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
   }
 
   async function action(kind: 'pairing' | 'confirm' | 'user', body: object = {}) {
+    if (busy || !settings?.ready) return;
     if (!(await telegramAction(kind, body))) return;
     setManual(false);
     setFields({});
