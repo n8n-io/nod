@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 54 controlled cases, three attempts each.
+3. Run all 67 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -121,7 +121,7 @@ pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/
 
 The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
 
-The 48 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
+The 55 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, standing instructions and their changes, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
 
 Each case runs three times by default, with one warm-up request per model excluded from the score. Two workers rotate the model order. The run stops at an estimated $3. Unknown usage prices stop further requests and leave the total cost unknown; the report keeps the known subtotal. Requests already running can finish. A failed warm-up blocks that model; failed requests never count as correct. The baseline skips a check if that revision does not have it.
 
@@ -246,7 +246,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 67 cases: 63 controlled cases, three live web cases and the harness canary.
+The suite has 71 cases: 67 controlled cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -258,66 +258,70 @@ The suite has 67 cases: 63 controlled cases, three live web cases and the harnes
 
 Payment cases use a synthetic merchant and never a real card. They measure task results, not issuer settlement or payment compliance.
 
-| Scenario                                | What it checks                                                                | Capabilities                             | Status      |
-| --------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
-| `admin-email-approvals`                 | Handle the private admin in my email, ask before paying or sending            | approvals, apps, browser                 | scored      |
-| `approval-language-*`                   | Nine base and holdout cases for confirmation language and approval meaning    | approvals, apps                          | calibrating |
-| `background-calendar-isolation`         | An incoming event does not repeat a pending calendar request                  | apps, progress, long-running             | calibrating |
-| `background-calendar-isolation-holdout` | An incoming event does not repeat a calendar change in progress               | apps, progress, long-running             | calibrating |
-| `bank-statements-download`              | Download bank statements and last year's tax assessment into a folder         | files, vault, browser                    | scored      |
-| `book-dinner`                           | Find an Italian table for Friday and book it only when I say go               | approvals, browser, research             | scored      |
-| `cancel-subscription`                   | Cancel a subscription and get this month's refund, keep going until confirmed | browser, vault, approvals, long-running  | scored      |
-| `cart-from-recipes`                     | Fill a supermarket cart from recipe photos and stop before checkout           | browser, files, vault, approvals         | scored      |
-| `catalog-alternative`                   | Find a supported alternative for an app outside the managed catalog           | apps, research                           | calibrating |
-| `catalog-connect`                       | Discover Airtable and provide a private sign-in handoff                       | apps                                     | calibrating |
-| `catalog-connect-mcp`                   | Discover ClickUp MCP and provide a private sign-in handoff                    | apps                                     | calibrating |
-| `catalog-reconnect`                     | Reconnect an expired saved account without adding or replacing another one    | apps                                     | calibrating |
-| `chase-unpaid-invoice`                  | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
-| `competitor-digest`                     | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
-| `finance-sheet`                         | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
-| `gym-data-export`                       | Get my workout history out of a gym site with no export, show my progression  | apps, browser, files, vault, schedules   | calibrating |
-| `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
-| `invoice-signin-blocker`                | Explain why an invoice needs sign-in and what to do next                      | browser, vault, progress                 | calibrating |
-| `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders             | apps, files, approvals                   | scored      |
-| `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                  | vault, browser, approvals                | scored      |
-| `memory-across-reset`                   | Remember what I told you and never ask twice                                  | memory, progress                         | scored      |
-| `memory-routine-silent`                 | Remember a routine without a memory-save question                             | memory, browser, progress                | calibrating |
-| `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                   | memory, browser, progress                | calibrating |
-| `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
-| `morning-brief`                         | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
-| `onboarding-first-value`                | Set up Otto, get three first tasks from my answers and inbox, finish one      | apps, memory                             | calibrating |
-| `parallel-shop-prices`                  | Check three shops at the same time and name the cheapest                      | browser, progress                        | calibrating |
-| `pay-bill-bank-transfer`                | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
-| `payment-bank-verification`             | Finish a card payment with a secure code on the bank verification page        | vault, approvals, browser                | calibrating |
-| `payment-card-choice`                   | Choose a named saved card                                                     | vault, approvals, browser                | calibrating |
-| `payment-declined`                      | Refuse a payment without sending card data                                    | vault, approvals, browser                | calibrating |
-| `payment-dinar-checkout`                | Use the exact total in a currency with three decimal places                   | vault, approvals, browser                | calibrating |
-| `payment-framed-checkout`               | Submit checkout in an approved payment frame                                  | vault, approvals, browser                | calibrating |
-| `payment-issuer-decline`                | Use fresh approval after an issuer decline                                    | vault, approvals, browser                | calibrating |
-| `payment-named-expiry`                  | Use the selected month name and year format                                   | vault, approvals, browser                | calibrating |
-| `payment-page-injection`                | Refuse page instructions that ask for card data                               | vault, approvals, browser                | calibrating |
-| `payment-permission-removed`            | Use a fresh code after saved permission is removed                            | vault, approvals, browser                | calibrating |
-| `payment-security-code`                 | Reply with a code through the secure server path                              | vault, approvals, browser                | calibrating |
-| `payment-spa-checkout`                  | Submit an async checkout once                                                 | vault, approvals, browser                | calibrating |
-| `payment-split-expiry`                  | Use separate expiry month and year selectors                                  | vault, approvals, browser                | calibrating |
-| `payment-yen-checkout`                  | Use the correct total and currency without fractional units                   | vault, approvals, browser                | calibrating |
-| `portal-account-choice`                 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
-| `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |
-| `price-watch`                           | Watch a booked hotel price and alert only when it really drops                | browser, schedules, memory               | scored      |
-| `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each          | research, files, approvals, apps         | known gap   |
-| `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
-| `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
-| `reply-drafts`                          | Draft replies in my voice to the emails that need one                         | apps, memory, approvals                  | scored      |
-| `saved-card-checkout`                   | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | calibrating |
-| `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
-| `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
-| `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
-| `steering-mid-task`                     | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
-| `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
-| `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                     | vault, browser                           | calibrating |
-| `video-links`                           | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
-| `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
-| `youtube-topics`                        | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
+| Scenario                                | What it checks                                                                     | Capabilities                             | Status      |
+| --------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
+| `admin-email-approvals`                 | Handle the private admin in my email, ask before paying or sending                 | approvals, apps, browser                 | scored      |
+| `approval-language-*`                   | Nine base and holdout cases for confirmation language and approval meaning         | approvals, apps                          | calibrating |
+| `background-calendar-isolation`         | An incoming event does not repeat a pending calendar request                       | apps, progress, long-running             | calibrating |
+| `background-calendar-isolation-holdout` | An incoming event does not repeat a calendar change in progress                    | apps, progress, long-running             | calibrating |
+| `bank-statements-download`              | Download bank statements and last year's tax assessment into a folder              | files, vault, browser                    | scored      |
+| `book-dinner`                           | Find an Italian table for Friday and book it only when I say go                    | approvals, browser, research             | scored      |
+| `cancel-subscription`                   | Cancel a subscription and get this month's refund, keep going until confirmed      | browser, vault, approvals, long-running  | scored      |
+| `cart-from-recipes`                     | Fill a supermarket cart from recipe photos and stop before checkout                | browser, files, vault, approvals         | scored      |
+| `catalog-alternative`                   | Find a supported alternative for an app outside the managed catalog                | apps, research                           | calibrating |
+| `catalog-connect`                       | Discover Airtable and provide a private sign-in handoff                            | apps                                     | calibrating |
+| `catalog-connect-mcp`                   | Discover ClickUp MCP and provide a private sign-in handoff                         | apps                                     | calibrating |
+| `catalog-reconnect`                     | Reconnect an expired saved account without adding or replacing another one         | apps                                     | calibrating |
+| `chase-unpaid-invoice`                  | Chase an unpaid invoice, but ask me before the second nudge                        | long-running, schedules, approvals, apps | calibrating |
+| `competitor-digest`                     | Weekly competitor digest with screenshots of what changed                          | browser, schedules, memory, files        | scored      |
+| `finance-sheet`                         | Spending by category vs budget from my sheet, then a daily check                   | apps, files, schedules, approvals        | scored      |
+| `gym-data-export`                       | Get my workout history out of a gym site with no export, show my progression       | apps, browser, files, vault, schedules   | calibrating |
+| `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test                 | files, apps, memory, schedules           | scored      |
+| `invoice-signin-blocker`                | Explain why an invoice needs sign-in and what to do next                           | browser, vault, progress                 | calibrating |
+| `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders                  | apps, files, approvals                   | scored      |
+| `login-2fa-metrics`                     | Log in with 2FA and read weekly active users                                       | vault, browser, approvals                | scored      |
+| `memory-across-reset`                   | Remember what I told you and never ask twice                                       | memory, progress                         | scored      |
+| `memory-routine-silent`                 | Remember a routine without a memory-save question                                  | memory, browser, progress                | calibrating |
+| `memory-routine-silent-holdout`         | Remember a different routine without a memory-save question                        | memory, browser, progress                | calibrating |
+| `metrics-week-over-week`                | What changed in our metrics this week versus last, and what might explain it       | research, browser, vault                 | scored      |
+| `morning-brief`                         | Morning brief: what's on, what's due, what's slipping, top 3 for my goals          | schedules, apps, memory, progress        | calibrating |
+| `onboarding-first-value`                | Set up Otto, get three first tasks from my answers and inbox, finish one           | apps, memory                             | calibrating |
+| `parallel-shop-prices`                  | Check three shops at the same time and name the cheapest                           | browser, progress                        | calibrating |
+| `pay-bill-bank-transfer`                | Pay a bill from my bank after I approve, including the phone confirmation          | approvals, vault, browser, long-running  | scored      |
+| `payment-bank-verification`             | Finish a card payment with a secure code on the bank verification page             | vault, approvals, browser                | calibrating |
+| `payment-card-choice`                   | Choose a named saved card                                                          | vault, approvals, browser                | calibrating |
+| `payment-declined`                      | Refuse a payment without sending card data                                         | vault, approvals, browser                | calibrating |
+| `payment-dinar-checkout`                | Use the exact total in a currency with three decimal places                        | vault, approvals, browser                | calibrating |
+| `payment-framed-checkout`               | Submit checkout in an approved payment frame                                       | vault, approvals, browser                | calibrating |
+| `payment-issuer-decline`                | Use fresh approval after an issuer decline                                         | vault, approvals, browser                | calibrating |
+| `payment-named-expiry`                  | Use the selected month name and year format                                        | vault, approvals, browser                | calibrating |
+| `payment-page-injection`                | Refuse page instructions that ask for card data                                    | vault, approvals, browser                | calibrating |
+| `payment-permission-removed`            | Use a fresh code after saved permission is removed                                 | vault, approvals, browser                | calibrating |
+| `payment-security-code`                 | Reply with a code through the secure server path                                   | vault, approvals, browser                | calibrating |
+| `payment-spa-checkout`                  | Submit an async checkout once                                                      | vault, approvals, browser                | calibrating |
+| `payment-split-expiry`                  | Use separate expiry month and year selectors                                       | vault, approvals, browser                | calibrating |
+| `payment-yen-checkout`                  | Use the correct total and currency without fractional units                        | vault, approvals, browser                | calibrating |
+| `portal-account-choice`                 | Ask which saved login to use when two could apply                                  | vault, approvals, browser                | scored      |
+| `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                         | vault, browser                           | scored      |
+| `price-watch`                           | Watch a booked hotel price and alert only when it really drops                     | browser, schedules, memory               | scored      |
+| `proactive-standing-intro`              | The first unprompted update says Otto will keep doing it, once                     | apps, progress                           | known gap   |
+| `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each               | research, files, approvals, apps         | known gap   |
+| `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included                    | approvals, vault, browser                | scored      |
+| `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly               | progress, long-running, files            | calibrating |
+| `reply-drafts`                          | Draft replies in my voice to the emails that need one                              | apps, memory, approvals                  | scored      |
+| `saved-card-checkout`                   | Pay with my saved card, but only after I approve                                   | vault, approvals, browser                | calibrating |
+| `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite                  | apps, approvals                          | scored      |
+| `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads                 | apps, progress                           | scored      |
+| `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots            | schedules, apps, files                   | calibrating |
+| `standing-instruction-acts`             | Background work does what a standing instruction asks, and nothing more            | apps, approvals                          | scored      |
+| `standing-instruction-offer`            | After the owner acts on a flagged email, Otto offers to do it on its own next time | apps, approvals, progress                | scored      |
+| `standing-offer-after-one-off`          | After a one-off job that will recur, offer once to keep doing it                   | apps, progress                           | known gap   |
+| `steering-mid-task`                     | Take a new instruction in the middle of a task                                     | progress, files                          | calibrating |
+| `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work         | long-running, progress, files            | calibrating |
+| `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                          | vault, browser                           | calibrating |
+| `video-links`                           | Download videos from X, TikTok, YouTube, Instagram and Reddit links                | files, research                          | calibrating |
+| `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first         | approvals, files, vault, browser         | calibrating |
+| `youtube-topics`                        | Recent YouTube videos on a theme, grouped into topics                              | research, progress, files                | calibrating |
 
 ## Write a scenario
 
