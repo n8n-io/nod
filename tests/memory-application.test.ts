@@ -118,7 +118,12 @@ test(
         workspace: fakeWorkspace(),
         integrations: createIntegrationFixture('http://localhost:4320').provider,
         objectStore: createFilesystemObjectStore(objects),
-        memoryCurator: { id: 'fixture', configured: true, curate: async () => ({}) },
+        memoryCurator: {
+          id: 'fixture',
+          configured: true,
+          curate: async ({ task, input }) =>
+            task === 'review' && 'action' in input ? { run: true } : {},
+        },
         speech: {
           id: 'fixture',
           configured: false,

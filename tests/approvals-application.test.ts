@@ -561,6 +561,44 @@ test(
       );
 
       await t.test(
+        "memory forgets a note or stops saving only after the owner's yes when they didn't ask",
+        async () => {
+          const memory = async () => (await request('GET', '/api/memory')).json();
+          const saved = await request('POST', '/api/memory/notes', {
+            area: 'preferences',
+            text: 'Prefers synthetic green tea.',
+          });
+          assert.equal(saved.statusCode, 200, saved.body);
+          const path = saved.json().path as string;
+          const listed = async () =>
+            (await memory()).notes.some((note: { path: string }) => note.path === path);
+          const forget = await propose('memory_forget', { path });
+          const [approval] = await approvalsFor(forget);
+          assert.equal(approval.status, 'pending');
+          assert.equal(await listed(), true);
+          const confirmed = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(confirmed.statusCode, 200, confirmed.body);
+          await waitFor(confirmed.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(forget))[0].status, 'completed');
+          assert.equal(await listed(), false);
+
+          const text = `Synthetic proposal ${randomUUID()}`;
+          const off = await propose(
+            'memory_control',
+            { enabled: false, quote: text },
+            undefined,
+            text,
+          );
+          assert.equal((await approvalsFor(off))[0].status, 'pending');
+          assert.equal((await memory()).saving, true);
+        },
+      );
+
+      await t.test(
         'schedule confirmations cannot mutate a revision edited after the question was saved',
         async () => {
           for (const action of ['schedule_cancel', 'schedule_update']) {

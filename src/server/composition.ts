@@ -1100,17 +1100,33 @@ async function initializeApplication(
             },
           });
         }
-        await admit?.(false);
-        if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
+        if (action === 'memory_forget' || action === 'memory_control') {
           const origin = await turnOrigin(turn.turnId);
-          return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, {
-              ...provenance,
-              turnId: turn.turnId,
-              ownerRooted: origin?.source === 'user',
-            }),
+          const { input, note } = await personal.reviewMemory(action, args, {
+            ...provenance,
+            turnId: turn.turnId,
+            ownerRooted: origin?.source === 'user',
+          });
+          const verdict = await trust.check(
+            turn,
+            `OTTO_${action}`,
+            note ? { ...input, note } : input,
           );
+          return approvals.request(turn, `OTTO_${action}`, input, {
+            ...provenance,
+            allowed: !verdict.confirm,
+            admit,
+            details: {
+              ...(verdict.confirm ? { reason: verdict.reason } : {}),
+              ...(note ? { note } : {}),
+            },
+          });
         }
+        await admit?.(false);
+        if (action === 'memory_learn')
+          return withTurnLock(turn.turnId, () =>
+            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+          );
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },

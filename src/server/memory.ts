@@ -60,6 +60,13 @@ const settingsInput = z
   .object({ saving: z.boolean().optional(), sensitive: z.boolean().optional() })
   .strict()
   .refine((input) => Object.keys(input).length > 0);
+export const controlInput = z
+  .object({ enabled: z.boolean().optional(), clear: z.boolean().default(false) })
+  .strict()
+  .refine((input) => input.enabled !== undefined || input.clear, {
+    message: 'Choose whether to turn memory on, turn it off or clear it.',
+  });
+export const forgetInput = z.object({ path }).strict();
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode });
 }
@@ -177,21 +184,8 @@ export function createMemoryService(options: {
     });
   }
 
-  async function control(
-    raw: unknown,
-    provenance: { sourceMessageId: string | null; turnId: string },
-  ) {
-    const input = z
-      .object({
-        enabled: z.boolean().optional(),
-        clear: z.boolean().default(false),
-        quote: z.string().trim().min(1),
-      })
-      .strict()
-      .parse(raw);
-    if (input.enabled === undefined && !input.clear)
-      throw new Error('Choose whether to turn memory on, turn it off or clear it.');
-    await currentSource(provenance, input.quote);
+  async function control(raw: unknown) {
+    const input = controlInput.parse(raw);
     const mark = await watermark();
     return edit(
       (tree) => {
@@ -426,6 +420,7 @@ export function createMemoryService(options: {
     context,
     enabled: async () => (await load()).tree.enabled,
     learn,
+    currentSource,
     control,
     forget,
     edit,

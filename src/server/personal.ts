@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
-import type { MemoryService } from './memory.ts';
+import { controlInput, forgetInput, type MemoryService } from './memory.ts';
+import { pathOf } from './memory-tree.ts';
 import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { activeThreadSql } from './thread.ts';
@@ -77,9 +78,35 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       await schedules.validateUpdate(input.id, { enabled: false }, expectedRevision);
       return input;
     }
+    if (action === 'memory_forget') return forgetInput.parse(args);
+    if (action === 'memory_control') return controlInput.parse(args);
     throw Object.assign(new Error('This personal-data action is not available for review.'), {
       statusCode: 400,
     });
+  }
+
+  async function reviewMemory(
+    action: string,
+    args: Record<string, unknown>,
+    provenance: { sourceMessageId: string | null; turnId: string; ownerRooted: boolean },
+  ): Promise<{ input: Record<string, unknown>; note?: string }> {
+    if (!memory) throw new Error('Memory is unavailable.');
+    if (action === 'memory_forget') {
+      if (!provenance.sourceMessageId || !provenance.ownerRooted)
+        throw new Error('Only a request from the owner can forget a note.');
+      const input = forgetInput.parse(args);
+      const tree = await memory.load();
+      const note = [...tree.entries, ...tree.archive].find(
+        (item) => pathOf(item) === input.path,
+      )?.text;
+      return { input, ...(note ? { note } : {}) };
+    }
+    const { quote, ...change } = args;
+    const input = controlInput.parse(change);
+    if (input.clear && !provenance.ownerRooted)
+      throw new Error('Only a request from the owner can clear memory.');
+    await memory.currentSource(provenance, z.string().trim().min(1).parse(quote));
+    return { input };
   }
 
   async function manage(
@@ -89,7 +116,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       sourceMessageId: string | null;
       turnId?: string;
       expectedRevision?: number;
-      ownerRooted?: boolean;
     },
   ) {
     if (action === 'notification_preferences_get') return preferences.get();
@@ -116,25 +142,23 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       if (!memory) throw new Error('Memory is unavailable.');
       return memory.read(args);
     }
-    if (action === 'memory_learn' || action === 'memory_control') {
+    if (action === 'memory_learn') {
       if (!memory) throw new Error('Memory is unavailable.');
-      if ((args as { clear?: unknown }).clear === true && !provenance?.ownerRooted)
-        throw new Error('Only a request from the owner can clear memory.');
-      const source = {
+      return memory.learn(args, {
         sourceMessageId: provenance?.sourceMessageId ?? null,
         turnId: z.uuid().parse(provenance?.turnId),
-      };
-      if (action === 'memory_learn') return memory.learn(args, source);
-      const result = await memory.control(args, source);
+      });
+    }
+    if (action === 'memory_control') {
+      if (!memory) throw new Error('Memory is unavailable.');
+      const result = await memory.control(args);
       if (result.cleared) await pool.query('DROP TABLE IF EXISTS profiles');
       refresh();
       return result;
     }
     if (action === 'memory_forget') {
       if (!memory) throw new Error('Memory is unavailable.');
-      if (!provenance?.sourceMessageId || !provenance.ownerRooted)
-        throw new Error('Only a request from the owner can forget a note.');
-      return memory.forget(args.path);
+      return memory.forget(forgetInput.parse(args).path);
     }
     if (action === 'history_search') {
       const { query, before } = z
@@ -208,6 +232,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     getSchedule: schedules.get,
     manage,
     validateReview,
+    reviewMemory,
     memoryView,
     registerRoutes,
   };

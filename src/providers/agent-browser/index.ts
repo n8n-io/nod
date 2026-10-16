@@ -1156,12 +1156,11 @@ export function createAgentBrowserComputer(options: {
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
-      let target = input.selector ? selector(input.selector) : undefined;
       let url = input.url;
-      if (target) {
+      if (input.selector) {
         const href = await command(
           state,
-          { action: 'getattribute', selector: target, attribute: 'href' },
+          { action: 'getattribute', selector: selector(input.selector), attribute: 'href' },
           { signal },
         );
         if (typeof href.value === 'string' && href.value.trim()) {
@@ -1176,8 +1175,12 @@ export function createAgentBrowserComputer(options: {
           )
             url = new URL(href.value, current).href;
         }
+        if (!url)
+          throw new Error(
+            'This control is not a download link. Click it, then call download without a selector to save the file it starts.',
+          );
       }
-      if (!target && !url) {
+      if (!url) {
         const type = await evaluate(state, 'document.contentType', signal);
         if (type === 'application/pdf') url = current;
         else {
@@ -1221,12 +1224,11 @@ export function createAgentBrowserComputer(options: {
       }
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
-      const anchor = !target ? `otto-download-${randomUUID()}` : undefined;
+      const anchor = `otto-download-${randomUUID()}`;
       try {
-        if (anchor) {
-          await evaluate(
-            state,
-            `(() => {
+        await evaluate(
+          state,
+          `(() => {
             const anchor = document.createElement('a');
             anchor.id = ${JSON.stringify(anchor)};
             anchor.href = ${JSON.stringify(url)};
@@ -1234,13 +1236,11 @@ export function createAgentBrowserComputer(options: {
             anchor.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;background:white;color:black;padding:8px';
             document.documentElement.append(anchor);
           })()`,
-            signal,
-          );
-          target = `#${anchor}`;
-        }
+          signal,
+        );
         await command(
           state,
-          { action: 'download', selector: target, path: resolve(directory, capture.file) },
+          { action: 'download', selector: `#${anchor}`, path: resolve(directory, capture.file) },
           { signal },
         );
         signal?.throwIfAborted();
@@ -1249,7 +1249,7 @@ export function createAgentBrowserComputer(options: {
         return result;
       } finally {
         try {
-          if (anchor && !state.closed && !state.closing)
+          if (!state.closed && !state.closing)
             await evaluate(state, `document.getElementById(${JSON.stringify(anchor)})?.remove()`);
         } finally {
           await capture.cleanup(state.closed);
