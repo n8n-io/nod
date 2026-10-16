@@ -46,7 +46,7 @@ stateDiagram-v2
   gone --> Confirmed: you bring it back
 ```
 
-Replaced and expired notes, and guesses not mentioned again for 60 days, move to **Let go** instead of being deleted. **Let go** keeps the latest 40, so older ones drop off over time. To delete a note right away, select **Forget** or ask Otto to clear its memory.
+Replaced and expired notes, and guesses not mentioned again for 60 days, move to **Let go** instead of being deleted. When memory reaches its size limit, the oldest notes in **Let go** drop off first. To delete a note right away, select **Forget** or ask Otto to clear its memory.
 
 ## Sensitive topics
 
