@@ -153,3 +153,90 @@
 .connection-enabled {
   color: var(--success);
 }
+.connection-onboarding {
+  gap: 24px;
+}
+.connection-onboarding h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 550;
+  letter-spacing: -0.35px;
+}
+.connection-onboarding-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+.connection-onboarding-hero > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.connection-onboarding-content {
+  display: grid;
+  flex: 1;
+  justify-items: start;
+  gap: 22px;
+  min-width: 0;
+}
+.connection-onboarding .connection-onboarding-reason {
+  max-width: 46ch;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.connection-onboarding-content > .connection-managed > .button-primary {
+  min-width: 218px;
+}
+.connection-onboarding-alternative {
+  display: flex;
+  justify-content: center;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.connection-onboarding-alternative > .connection-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+.connection-onboarding-alternative > .connection-link:hover:not(:disabled) {
+  color: var(--link-hover);
+}
+.connection-onboarding-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.connection-onboarding-header > .connection-link {
+  font-size: var(--text-control);
+}
+.connection-onboarding .connection-key {
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .connection-onboarding-hero {
+    gap: 12px;
+  }
+  .connection-onboarding-hero > svg {
+    width: 26px;
+    height: 26px;
+  }
+  .connection-onboarding h2 {
+    font-size: 19px;
+  }
+  .connection-onboarding .connection-onboarding-reason {
+    font-size: var(--text-control);
+  }
+  .connection-onboarding-content > .connection-managed {
+    width: 100%;
+  }
+  .connection-onboarding-content > .connection-managed > .button-primary {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 14px;
+  }
+}

@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Check, LoaderCircle } from 'lucide-react';
+import { Check, KeyRound, LoaderCircle } from 'lucide-react';
 import type { AppSetupStatus, Configuration, Connection } from '../../../../shared/contracts';
 import {
   ConnectionChoice,
   connectionRoutes,
-  connectionStatusText,
   useConnectionChoice,
 } from '../../../components/connection-choice';
-import { Rise } from '../../../components/motion';
+import { OttoGlyph, Rise } from '../../../components/motion';
 import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
@@ -239,7 +238,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     const external = desktopLinksAvailable();
     const popup = external
       ? null
-      : window.open('', 'otto-connect-gmail', 'popup,width=520,height=720');
+      : window.open(
+          '/connection-loading.html?service=gmail',
+          'otto-connect-gmail',
+          'popup,width=520,height=720',
+        );
     try {
       if (popup) popup.opener = null;
     } catch {}
@@ -354,7 +357,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         </Button>
       </div>
     );
-  else
+  else if (!personalSetup)
     status = (
       <div className="ob-email-notes">
         <p>
@@ -376,42 +379,17 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         items={[
           <Bubble>Let’s connect your email.</Bubble>,
           <Bubble>
-            It’s where a lot of your work happens, so it’s the quickest way for me to learn how you
-            work. I can read, sort and draft, and I won’t send anything unless you ask.
+            I can help you read, sort and draft.
+            <br />
+            I’ll only send when you ask.
           </Bubble>,
         ]}
       />
-      <Rise show={revealed >= 3} className="ob-email-card">
-        {personalSetup ? (
-          !(compactSetup && connected) && (
-            <div className="ob-email-choice ob-email-setup">
-              {compactSetup && keyStatus && (
-                <div className="ob-email-summary">
-                  <p>
-                    <Check size={16} aria-hidden="true" />
-                    <span data-analytics-private>
-                      {keyStatus.mode === 'otto'
-                        ? 'Easy Connect enabled'
-                        : connectionStatusText(keyStatus)}
-                    </span>
-                  </p>
-                  <button
-                    type="button"
-                    className="connection-link"
-                    disabled={!!pending}
-                    aria-expanded={setupExpanded}
-                    onClick={() => setSetupExpanded((value) => !value)}
-                  >
-                    {setupExpanded ? 'Hide connection setup' : 'Change connection setup'}
-                  </button>
-                </div>
-              )}
-              {(!compactSetup || setupExpanded) && (
-                <ConnectionChoice state={choice} disabled={!!pending} />
-              )}
-            </div>
-          )
-        ) : (
+      <Rise
+        show={revealed >= 3}
+        className={personalSetup ? 'ob-email-card ob-email-card-personal' : 'ob-email-card'}
+      >
+        {(!personalSetup || !compactSetup || setupExpanded) && (
           <ConnectionChoice state={choice} disabled={!!pending} className="ob-email-choice" />
         )}
         {showGmail && (
@@ -428,7 +406,9 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                   </p>
                 ) : (
                   <p className="ob-email-muted">
-                    Start with one inbox. You can add more apps later.
+                    {personalSetup
+                      ? 'Choose the inbox you want to connect.'
+                      : 'Start with one inbox. You can add more apps later.'}
                   </p>
                 )}
               </div>
@@ -440,7 +420,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
               ) : (
                 gmailState !== 'waiting' && (
                   <Button
-                    variant="outline"
+                    variant={personalSetup ? 'default' : 'outline'}
                     className="ob-gmail-connect"
                     disabled={!canConnect || gmailState === 'opening'}
                     onClick={() => void connect()}
@@ -448,7 +428,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                     {gmailState === 'opening' && (
                       <LoaderCircle size={16} className="spin" aria-hidden="true" />
                     )}
-                    Connect
+                    {personalSetup ? 'Connect Gmail' : 'Connect'}
                   </Button>
                 )
               )}
@@ -469,6 +449,38 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                 {error}
               </p>
             )}
+          </div>
+        )}
+        {personalSetup && compactSetup && keyStatus && (
+          <div
+            className={
+              connected ? 'ob-email-summary ob-email-summary-connected' : 'ob-email-summary'
+            }
+          >
+            {!connected && (
+              <p ref={choice.view.savedKey} tabIndex={-1}>
+                {keyStatus.mode === 'otto' ? (
+                  <OttoGlyph size={16} mode="still" />
+                ) : (
+                  <KeyRound size={16} aria-hidden="true" />
+                )}
+                <span>
+                  {keyStatus.mode === 'otto' ? 'Using Easy Connect' : 'Using your Composio key'}
+                </span>
+              </p>
+            )}
+            <button
+              ref={(node) => {
+                choice.view.tiles.current.otto = node;
+              }}
+              type="button"
+              className="connection-link"
+              disabled={!!pending}
+              aria-expanded={setupExpanded}
+              onClick={() => setSetupExpanded((value) => !value)}
+            >
+              {setupExpanded ? 'Done' : connected ? 'Change connection' : 'Change'}
+            </button>
           </div>
         )}
       </Rise>

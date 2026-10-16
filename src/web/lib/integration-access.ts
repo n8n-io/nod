@@ -25,7 +25,9 @@ function nativeAccessUrl(value: string) {
 
 export function startIntegrationAccess(): IntegrationAccessAttempt {
   const native = desktopLinksAvailable();
-  const popup = native ? null : window.open('about:blank', '_blank', 'popup,width=520,height=720');
+  const popup = native
+    ? null
+    : window.open('/connection-loading.html', '_blank', 'popup,width=520,height=720');
   const controller = new AbortController();
   let attempt: AccessStart | undefined;
   let finished = false;

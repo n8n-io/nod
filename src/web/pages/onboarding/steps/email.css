@@ -6,13 +6,12 @@
   border-radius: var(--dialog-radius);
   background: var(--surface);
 }
+.ob-email-card-personal {
+  padding: 28px;
+}
 .ob-email-choice:not(:last-child) {
   padding-bottom: 24px;
   border-bottom: 1px solid var(--border);
-}
-.ob-email-setup {
-  display: grid;
-  gap: 12px;
 }
 .ob-email-summary {
   display: flex;
@@ -20,7 +19,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px 16px;
-  font-size: var(--text-control);
+  padding-top: 17px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 13px;
 }
 .ob-email-summary > p {
   display: flex;
@@ -30,10 +32,22 @@
 }
 .ob-email-summary > p > svg {
   flex-shrink: 0;
-  color: var(--success);
 }
 .ob-email-summary > p > span {
   overflow-wrap: anywhere;
+}
+.ob-email-summary > p:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.ob-email-summary > .connection-link {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: inherit;
+}
+.ob-email-summary-connected {
+  padding-top: 0;
+  border-top: 0;
 }
 .ob-email-retry {
   display: flex;
@@ -65,12 +79,24 @@
 .ob-email-tile > img {
   display: block;
 }
+.ob-email-card-personal .ob-email-tile {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--dialog-radius);
+}
+.ob-email-card-personal .ob-email-tile > img {
+  width: 30px;
+  height: 30px;
+}
 .ob-email-title {
   flex: 1 1 200px;
   min-width: 0;
 }
 .ob-email-name {
   font-weight: 500;
+}
+.ob-email-card-personal .ob-email-name {
+  font-size: 18px;
 }
 .ob-email-muted {
   color: var(--muted-foreground);
@@ -115,5 +141,12 @@
 @media (max-width: 640px) {
   .ob-email-card {
     padding: 16px;
+  }
+  .ob-email-card-personal {
+    padding: 20px;
+  }
+  .ob-email-card-personal .ob-gmail-connect {
+    width: 100%;
+    margin-top: 8px;
   }
 }

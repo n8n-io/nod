@@ -167,7 +167,9 @@ export function useConnectionChoice(
       setRemovingAccess(false);
       setChoice(next === status.mode ? undefined : next);
     });
-    keyField.current?.focus();
+    if (area === 'onboarding')
+      (next === 'own' ? (keyField.current ?? savedKey.current) : tiles.current.otto)?.focus();
+    else keyField.current?.focus();
   }
 
   function edit(value: boolean) {
@@ -306,6 +308,9 @@ export function ConnectionChoice({
   const confirmLocked = locked || view.checking;
   const changing = mode !== status.mode;
   const unknown = !view.linked && !view.checking;
+  const onboarding = area === 'onboarding' && status.switchable;
+  const changingSetup =
+    changing && (integrationAccessReady(status) || unknown || !!view.linked?.length);
   const detaching =
     changing &&
     status.mode === 'otto' &&
@@ -378,19 +383,29 @@ export function ConnectionChoice({
           />
           <Button
             type="submit"
-            variant="outline"
+            variant={onboarding ? 'default' : 'outline'}
             disabled={confirmLocked || !status.keyWritable}
             aria-describedby={warning ? `${id}-warning` : undefined}
           >
             {switching && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-            {switching ? 'Checking' : changing ? 'Save and switch' : 'Save'}
+            {onboarding
+              ? switching
+                ? 'Checking your key…'
+                : changingSetup
+                  ? 'Save and switch'
+                  : 'Save key'
+              : switching
+                ? 'Checking'
+                : changing
+                  ? 'Save and switch'
+                  : 'Save'}
           </Button>
         </div>
         <p className="connection-muted">
           <a href="https://platform.composio.dev" target="_blank" rel="noreferrer">
             Get a key from Composio
           </a>
-          . It’s encrypted and never shown to the AI.
+          {area !== 'onboarding' && '. It’s encrypted and never shown to the AI.'}
         </p>
         {!status.keyWritable && (
           <p className="connection-error">
@@ -416,7 +431,17 @@ export function ConnectionChoice({
     );
   else if (status.managed)
     panel = (
-      <div className="connection-managed">
+      <div
+        className="connection-managed"
+        ref={
+          onboarding
+            ? (node) => {
+                view.tiles.current.otto =
+                  node?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? null;
+              }
+            : undefined
+        }
+      >
         {status.managed.state === 'enabled' && status.managed.email && (
           <p className="connection-identity" data-analytics-private>
             <GoogleMark />
@@ -426,7 +451,9 @@ export function ConnectionChoice({
         {signingIn ? (
           <div className="connection-saved" role="status">
             <LoaderCircle size={16} className="spin" aria-hidden="true" />
-            <p>Finish signing in in your browser.</p>
+            <p>
+              {onboarding ? 'Continue in the Google window.' : 'Finish signing in in your browser.'}
+            </p>
             <Button variant="ghost" size="sm" onClick={view.cancelSignIn}>
               Cancel
             </Button>
@@ -447,7 +474,7 @@ export function ConnectionChoice({
                   </p>
                 )}
                 <Button
-                  variant="outline"
+                  variant={onboarding ? 'default' : 'outline'}
                   disabled={confirmLocked}
                   aria-describedby={warning ? `${id}-warning` : undefined}
                   onClick={() => void view.apply()}
@@ -492,8 +519,7 @@ export function ConnectionChoice({
           </>
         ) : (
           <>
-            {(area !== 'onboarding' ||
-              !['revoked', 'sign_in_required'].includes(status.managed.state)) && (
+            {(area !== 'onboarding' || status.managed.state === 'unavailable') && (
               <p className="connection-muted">
                 {status.managed.state === 'denied'
                   ? 'Easy Connect isn’t enabled for this email. You can use your own Composio key.'
@@ -505,7 +531,7 @@ export function ConnectionChoice({
               </p>
             )}
             <Button
-              variant="outline"
+              variant={onboarding ? 'default' : 'outline'}
               disabled={locked || status.managed.state === 'unavailable'}
               onClick={view.signIn}
             >
@@ -519,11 +545,11 @@ export function ConnectionChoice({
             )}
           </>
         )}
-        <p className="connection-muted">
-          {area === 'onboarding'
-            ? 'You’ll connect Gmail next.'
-            : 'Google sign-in enables Easy Connect. Each app asks for its own permissions.'}
-        </p>
+        {area !== 'onboarding' && (
+          <p className="connection-muted">
+            Google sign-in enables Easy Connect. Each app asks for its own permissions.
+          </p>
+        )}
       </div>
     );
   else if (changing)
@@ -544,8 +570,8 @@ export function ConnectionChoice({
     );
 
   return (
-    <div className={cn('connection-choice', className)}>
-      {status.switchable && (
+    <div className={cn('connection-choice', onboarding && 'connection-onboarding', className)}>
+      {status.switchable && !onboarding && (
         <div className="connection-modes" role="group" aria-label="How Otto connects your apps">
           {modes.map((item) => (
             <button
@@ -579,7 +605,72 @@ export function ConnectionChoice({
       {(area !== 'onboarding' || !status.switchable) && (
         <p className="connection-muted">{connectionRoutes[mode]}</p>
       )}
-      {panel}
+      {onboarding ? (
+        mode === 'otto' ? (
+          <>
+            <div className="connection-onboarding-hero">
+              <OttoGlyph size={34} mode="still" />
+              <div className="connection-onboarding-content">
+                <div>
+                  <h2>
+                    {status.managed?.state === 'denied'
+                      ? 'This account can’t use Easy Connect'
+                      : status.managed?.state === 'revoked'
+                        ? 'Sign in again to use Easy Connect'
+                        : status.managed?.state === 'enabled'
+                          ? 'Easy Connect'
+                          : 'Use Easy Connect'}
+                  </h2>
+                  {status.managed?.state !== 'enabled' && (
+                    <p className="connection-onboarding-reason">
+                      {status.managed?.state === 'denied'
+                        ? 'Try another Google account or use your own Composio key.'
+                        : status.managed?.state === 'revoked'
+                          ? 'Continue with your Google account.'
+                          : 'Google verifies your account so you can use Otto’s app connections.'}
+                    </p>
+                  )}
+                </div>
+                {panel}
+              </div>
+            </div>
+            <div className="connection-onboarding-alternative">
+              <button
+                ref={(node) => {
+                  view.tiles.current.own = node;
+                }}
+                type="button"
+                className="connection-link"
+                disabled={locked}
+                onClick={() => view.pick('own')}
+              >
+                <KeyRound size={20} aria-hidden="true" />
+                Use my Composio key
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="connection-onboarding-header">
+              <h2>My Composio key</h2>
+              <button
+                ref={(node) => {
+                  view.tiles.current.otto = node;
+                }}
+                type="button"
+                className="connection-link"
+                disabled={locked}
+                onClick={() => view.pick('otto')}
+              >
+                Use Easy Connect
+              </button>
+            </div>
+            {panel}
+          </>
+        )
+      ) : (
+        panel
+      )}
       {view.notice && (
         <p role="status" className="connection-warning">
           {view.notice}
