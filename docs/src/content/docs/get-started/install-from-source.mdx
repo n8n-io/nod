@@ -53,15 +53,9 @@ Nothing to do. Otto creates a key and keeps it in the macOS Keychain item `dev.o
 </TabItem>
 <TabItem label="Linux" icon="linux">
 
-Create the settings file and a random key before the first start.
+Nothing to do for a fresh install. Otto creates a private key at `OTTO_DATA_ROOT/vault/master-key` (`.local/vault/master-key` by default). Keep it with your backup; saved credentials can't be read without it.
 
-```sh title="Terminal"
-cp .env.example .env
-chmod 600 .env
-sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
-```
-
-Keep a copy of `OTTO_VAULT_KEY` somewhere safe. Saved credentials can't be read without it.
+You can instead set `OTTO_VAULT_KEY` yourself. If encrypted data already exists, restore its original key rather than generating a new one. See [Vault configuration](/deploy/configuration/#vault).
 
 </TabItem>
 </Tabs>
@@ -89,13 +83,13 @@ Otto serves one person on `127.0.0.1` with no account login. Don't expose it to 
 
 ## Run Otto day to day
 
-| To             | Do this                                                                                                                                |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop Otto      | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                   |
-| Update Otto    | Stop it, run `git pull` and `pnpm install --frozen-lockfile`, then `pnpm start`.                                                       |
-| Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.          |
-| Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `.env`, or in the Keychain item `dev.otto.vault` on macOS. |
-| Back up        | Stop Otto, then copy your data folder (`.local/` or `OTTO_DATA_ROOT`), the Docker volumes and the Vault key.                           |
+| To             | Do this                                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop Otto      | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                                                                  |
+| Update Otto    | Stop it, run `git pull` and `pnpm install --frozen-lockfile`, then `pnpm start`.                                                                                                      |
+| Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.                                                         |
+| Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `vault/master-key` on Linux, the macOS Keychain item `dev.otto.vault`, or your explicit `OTTO_VAULT_KEY`. |
+| Back up        | Stop Otto, then copy your data folder (`.local/` or `OTTO_DATA_ROOT`), the Docker volumes and the Vault key.                                                                          |
 
 :::caution
 There's no tested restore procedure yet. Keep your Vault key with your backup, or your saved credentials can't be read.

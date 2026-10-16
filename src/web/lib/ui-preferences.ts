@@ -1,4 +1,4 @@
-type UiPreference = 'otto.sidebar' | 'otto.chat-layout' | `otto.feedback.intro.${string}`;
+type UiPreference = 'otto.sidebar' | 'otto.chat-layout';
 
 export function readUiPreference(key: UiPreference) {
   try {

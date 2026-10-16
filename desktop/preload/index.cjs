@@ -11,7 +11,6 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   status: () => ipcRenderer.invoke('otto:status'),
   getSettings: () => ipcRenderer.invoke('otto:settings:get'),
   saveSettings: (input) => ipcRenderer.invoke('otto:settings:save', input),
-  revealKey: (field) => ipcRenderer.invoke('otto:settings:reveal', field),
   getPreferences: () => ipcRenderer.invoke('otto:preferences:get'),
   setTheme: (theme) => ipcRenderer.invoke('otto:preferences:theme', theme),
   prepare: (options) => ipcRenderer.invoke('otto:prepare', options),

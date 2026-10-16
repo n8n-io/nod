@@ -9,14 +9,14 @@ This page sets out who Otto trusts with what, which rules the server enforces, a
 
 ## Who holds what authority
 
-| Part             | What it can do                                                        | What it's trusted with                            |
-| ---------------- | --------------------------------------------------------------------- | ------------------------------------------------- |
-| You              | Ask for work, approve actions, choose accounts, change permissions    | Everything                                        |
-| Otto server      | Hold keys, check policy, decrypt values, record every use             | Keys and secret values                            |
-| Browser provider | Check field origins and pages, enter values, submit                   | Secret values during entry                        |
-| Model            | Plan, choose accounts, fields and buttons                             | Account names, statuses and website results       |
-| Checker          | Decide each app action from your messages or a schedule's instruction | Your recent messages and the action, nothing else |
-| Website          | Receive what's submitted to its origin                                | The values entered on it                          |
+| Part             | What it can do                                                                         | What it's trusted with                                                                                                                                                           |
+| ---------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You              | Ask for work, approve actions, choose accounts, change permissions                     | Everything                                                                                                                                                                       |
+| Otto server      | Hold keys, check policy, decrypt values, record every use                              | Keys and secret values                                                                                                                                                           |
+| Browser provider | Check field origins and pages, enter values, submit                                    | Secret values during entry                                                                                                                                                       |
+| Model            | Plan, choose accounts, fields and buttons                                              | Account names, statuses and website results                                                                                                                                      |
+| Checker          | Decide each app action and browser step from your messages or a schedule's instruction | Your recent messages and the action. For a browser step, the website, page address, control label, dialog text or file name, and what Otto typed or chose; never the page's text |
+| Website          | Receive what's submitted to its origin                                                 | The values entered on it                                                                                                                                                         |
 
 ## Trust boundaries
 
@@ -80,7 +80,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The server and browser provider can read secret values. There's no isolated key service or hardware-backed key release.
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
 - The model can type any value it knows into a page, including a secret you typed into chat.
-- Once signed in, Otto can act anywhere on that website. Vault doesn't review each click, and the trust check covers app actions only.
+- Once signed in, Otto can act anywhere on that website. Vault doesn't review each click. The trust check judges a browser step from what it does (a click, a key press or a script), the website and page, the control's label when there is one, any dialog text or file name, and what Otto typed. It never sees the page's text, and a deceptive site can mislabel a control.
 - The checker can be wrong, and the model isn't immune to prompt injection.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.

@@ -6,8 +6,64 @@
   border-radius: var(--dialog-radius);
   background: var(--surface);
 }
+.ob-email-card-personal {
+  padding: 28px;
+}
+.ob-email-choice:not(:last-child) {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.ob-email-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-top: 17px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.ob-email-summary > p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ob-email-summary > p > svg {
+  flex-shrink: 0;
+}
+.ob-email-summary > p > span {
+  overflow-wrap: anywhere;
+}
+.ob-email-summary > p:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.ob-email-summary > .connection-link {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: inherit;
+}
+.ob-email-summary-connected {
+  padding-top: 0;
+  border-top: 0;
+}
+.ob-email-retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: var(--text-control);
+}
+.ob-email-gmail {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
 .ob-email-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
 }
@@ -23,12 +79,24 @@
 .ob-email-tile > img {
   display: block;
 }
+.ob-email-card-personal .ob-email-tile {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--dialog-radius);
+}
+.ob-email-card-personal .ob-email-tile > img {
+  width: 30px;
+  height: 30px;
+}
 .ob-email-title {
-  flex: 1;
+  flex: 1 1 200px;
   min-width: 0;
 }
 .ob-email-name {
   font-weight: 500;
+}
+.ob-email-card-personal .ob-email-name {
+  font-size: 18px;
 }
 .ob-email-muted {
   color: var(--muted-foreground);
@@ -46,117 +114,14 @@
   font-weight: 500;
   animation: ob-step-in 260ms ease-out;
 }
-.ob-email-step {
+.ob-email-notes {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 16px;
-}
-.ob-email-badge {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--control);
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  font-weight: 600;
-  transition:
-    background 200ms ease,
-    color 200ms ease;
-}
-.ob-email-badge[data-state='active'] {
-  background: var(--primary);
-  color: var(--primary-foreground);
-}
-.ob-email-badge[data-state='done'] {
-  background: var(--success-soft);
-  color: var(--success);
-}
-.ob-email-body {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-.ob-email-label {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  min-height: 28px;
-}
-.ob-email-label > p {
-  font-weight: 500;
-}
-.ob-email-link,
-.ob-email-change {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: var(--text-control);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-.ob-email-link {
-  color: var(--link);
-}
-.ob-email-link:hover {
-  color: var(--link-hover);
-}
-.ob-email-change {
-  color: var(--muted-foreground);
-}
-.ob-email-change:hover {
-  color: var(--foreground);
-}
-.ob-email-explain {
-  display: grid;
-  gap: 8px;
-  padding: 12px 16px;
-  border-radius: var(--card-radius);
-  background: var(--surface-subtle);
-  color: var(--text-secondary);
-  font-size: var(--text-control);
-  line-height: 1.55;
-  animation: ob-step-in 200ms ease-out;
-}
-.ob .ob-email-explain a {
-  display: inline-flex;
-  align-items: center;
   gap: 4px;
-  justify-self: start;
-  font-weight: 500;
-}
-.ob-email-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.ob-email-form > .input {
-  flex: 1 1 240px;
-  min-width: 0;
+  font-size: var(--text-control);
 }
 .ob-email-error {
   color: var(--error);
   font-size: var(--text-control);
-}
-.ob-email-saved {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: var(--text-control);
-}
-.ob-email-connect {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 16px;
-}
-.ob-email-connect > .ob-email-muted {
-  flex: 1 1 200px;
 }
 .ob-email-waiting {
   display: flex;
@@ -168,8 +133,20 @@
   color: var(--text-secondary);
 }
 .ob-email-waiting > p {
-  flex: 1;
+  flex: 1 1 200px;
 }
 .ob-email-done > strong {
   font-weight: 500;
+}
+@media (max-width: 640px) {
+  .ob-email-card {
+    padding: 16px;
+  }
+  .ob-email-card-personal {
+    padding: 20px;
+  }
+  .ob-email-card-personal .ob-gmail-connect {
+    width: 100%;
+    margin-top: 8px;
+  }
 }

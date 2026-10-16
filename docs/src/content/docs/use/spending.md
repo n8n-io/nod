@@ -79,10 +79,6 @@ Or tell Otto, for example "Check in when a task passes $20".
 Otto finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Otto ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.**
 :::
 
-## See the cost of one reply
-
-Hover over Otto's final reply, or move keyboard focus to it, to see the estimated model cost of that request. **Price unavailable** means part of the usage has no price.
-
 ## Check usage from Telegram or WhatsApp
 
 Send `/usage` for the same summary. It doesn't use the model or cost anything. Telegram also receives this month's statement as a PDF.

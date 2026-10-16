@@ -12,7 +12,12 @@ import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { Artifact, MessageReaction } from '../shared/contracts.ts';
-import type { BrowserConnectionRequest, RuntimeContext, RuntimeResult } from '../ports/agent.ts';
+import type {
+  BrowserConnectionRequest,
+  BrowserStep,
+  RuntimeContext,
+  RuntimeResult,
+} from '../ports/agent.ts';
 import { appConfirmation } from '../ports/agent.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import { defaultPreferences, isQuietTime } from './preferences.ts';
@@ -102,6 +107,10 @@ export interface ThreadDependencies {
   taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
   taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
   startTurn?: (turn: TurnRef) => Promise<void>;
+  turnFinished?: (
+    turn: TurnRef & { source: TurnSource; background: boolean },
+    outcome: string,
+  ) => void;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -138,6 +147,11 @@ export interface ThreadDependencies {
     signal: AbortSignal,
     launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
+  browserStep: (
+    turn: TurnRef,
+    request: BrowserStep,
+    signal: AbortSignal,
+  ) => ReturnType<NonNullable<RuntimeContext['browserStep']>>;
   reactToMessage?: (
     input: AgentReactionInput,
   ) => ReturnType<NonNullable<RuntimeContext['reactToMessage']>>;
@@ -1238,6 +1252,24 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           }),
         ),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
+      browserStep: fenced((request: BrowserStep) =>
+        dependencies.browserStep(
+          ref,
+          request.step.action === 'upload' && taskContext
+            ? {
+                ...request,
+                step: {
+                  ...request.step,
+                  path: posix.resolve(
+                    `/workspace/${threadId}/tasks/${taskContext.id}`,
+                    request.step.path,
+                  ),
+                },
+              }
+            : request,
+          signal,
+        ),
+      ),
       ...(dependencies.requestPayment
         ? {
             requestPayment: fenced((input: unknown) =>
@@ -1377,6 +1409,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       },
     });
     running.delete(turnId);
+    dependencies.turnFinished?.(
+      { ...ref, source: turn.source, background: Boolean(turn.background) },
+      outcome,
+    );
   }
 }
 

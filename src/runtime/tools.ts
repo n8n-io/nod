@@ -1,7 +1,11 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { appConfirmation, type SkillLibrary } from '../ports/agent.ts';
-import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
+import { appConfirmation, type BrowserStep, type SkillLibrary } from '../ports/agent.ts';
+import {
+  BrowserActionError,
+  type BrowserAction,
+  type BrowserObservation,
+} from '../ports/computer.ts';
 import { fileBytes } from '../shared/files.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
@@ -482,6 +486,21 @@ function pageText(page: BrowserObservation) {
   return `URL: ${page.url}\n${page.text}`;
 }
 
+function pageKey(url: string) {
+  try {
+    const page = new URL(url);
+    return `${page.origin}${page.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+const commits = (step: BrowserAction) =>
+  ['click', 'press', 'drag', 'accept_dialog', 'evaluate', 'select', 'check', 'uncheck'].includes(
+    step.action,
+  ) ||
+  (step.action === 'type' && /[\r\n]/.test(step.text ?? ''));
+
 export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   const { context, computer, pause, confirm } = turn;
   const { browserId } = turn.execution;
@@ -498,6 +517,64 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   const link = async (url: unknown, text: unknown) => {
     await pause('question', actionLink(url, text));
     return 'Waiting for the user to sign in.';
+  };
+  let typedPage = '';
+  let typed: string[] = [];
+  let pressing = false;
+  const observed = (
+    step: { action: string; text?: string; key?: string },
+    page: BrowserObservation,
+  ) => {
+    const key = pageKey(page.url);
+    const same = typedPage === key || !typedPage;
+    if (key !== typedPage) {
+      typedPage = key;
+      typed = [];
+    }
+    const pressed =
+      step.action === 'press' && [...(step.key ?? '')].length === 1 ? step.key : undefined;
+    if (same && pressed)
+      typed = pressing
+        ? [...typed.slice(0, -1), `${typed.at(-1) ?? ''}${pressed}`.slice(0, 500)]
+        : [...typed, pressed].slice(-10);
+    else if (same && ['fill', 'type', 'select'].includes(step.action) && step.text)
+      typed = [...typed, step.text.slice(0, 500)].slice(-10);
+    pressing = same && Boolean(pressed);
+    return pageText(page);
+  };
+  const check = async (
+    step: BrowserStep['step'],
+  ): Promise<{ expectOrigin?: string; expectUrl?: string } | { output: unknown }> => {
+    if (!context.browserStep) return {};
+    const page = await computer.currentPage(
+      browserId,
+      step.action === 'upload' ? { action: 'click', selector: step.selector } : step,
+    );
+    signal.throwIfAborted();
+    if (
+      step.action === 'press' &&
+      [...(step.key ?? '')].length === 1 &&
+      step.key!.trim() &&
+      ['textbox', 'searchbox', 'spinbutton'].includes(page.controls?.[0]?.role ?? '')
+    )
+      return {};
+    const verdict = await context.browserStep({
+      step,
+      page,
+      typed: pageKey(page.url) === typedPage ? typed : [],
+      subagent: Boolean(turn.execution.parentRunId),
+    });
+    signal.throwIfAborted();
+    if (verdict === 'run') return { expectOrigin: page.origin, expectUrl: page.url };
+    if (verdict === 'refused')
+      throw new Error(
+        "This step needs the owner's yes, and a subagent cannot ask. Stop and return it to the parent agent with the website, the control and what it would submit.",
+      );
+    if (appConfirmation in verdict)
+      return {
+        output: await confirm({ requiresConfirmation: true, question: verdict[appConfirmation] }),
+      };
+    return { output: verdict.result };
   };
   return [
     ...(skills
@@ -566,15 +643,28 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
         if (!context.readWorkspaceFile) throw new Error('Browser file upload is unavailable.');
         if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
         const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
-        return pageText(
+        const checked = await check({ action, selector: rest.selector, path: rest.path });
+        if ('output' in checked) return checked.output;
+        return observed(
+          { action },
           await computer.upload(
             browserId,
-            { selector: rest.selector, name: basename(rest.path), bytes },
+            { selector: rest.selector, name: basename(rest.path), bytes, ...checked },
             signal,
           ),
         );
       }
-      return pageText(await computer.act(browserId, { action, ...rest } as BrowserAction, signal));
+      const step = { action, ...rest } as BrowserAction;
+      if (action === 'evaluate' && context.browserStep)
+        try {
+          return observed(step, await computer.act(browserId, { ...step, readOnly: true }, signal));
+        } catch (error) {
+          if (!(error instanceof BrowserActionError && error.code === 'browser_script_writes'))
+            throw error;
+        }
+      const checked = commits(step) ? await check(step) : {};
+      if ('output' in checked) return checked.output;
+      return observed(step, await computer.act(browserId, { ...step, ...checked }, signal));
     }),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);

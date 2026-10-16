@@ -2,7 +2,7 @@ import { feedbackLimits } from '../../shared/feedback';
 import { desktopFeedbackScreenshot } from './desktop';
 
 const privateContent =
-  '[data-analytics-private], .browser-handoff, .pending-attachments, input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"]:not(.feedback-intro), [role="alertdialog"], iframe, webview';
+  '[data-analytics-private], .browser-handoff, .pending-attachments, input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"], [role="alertdialog"], iframe, webview';
 
 let capturedFonts = '';
 
@@ -79,11 +79,7 @@ function cloneViewport() {
     if (++count > 12_000 || performance.now() - started > 350)
       throw new Error('The page is too large to capture.');
     if (!(source instanceof Element)) return source.cloneNode(false);
-    if (
-      source.matches(
-        'script, style, link, iframe, webview, object, embed, source, video, audio, .feedback-intro',
-      )
-    )
+    if (source.matches('script, style, link, iframe, webview, object, embed, source, video, audio'))
       return null;
     const computed = window.getComputedStyle(source);
     if (computed.display === 'none' || computed.visibility === 'hidden') return null;

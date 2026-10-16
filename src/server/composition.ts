@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/agent.ts';
+import {
+  appConfirmation,
+  type Agent,
+  type BrowserStep,
+  type RuntimeObservation,
+} from '../ports/agent.ts';
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
@@ -15,7 +20,13 @@ import {
 } from './analytics.ts';
 import { captureConnectionInventory } from './analytics-connections.ts';
 import { createConversationAnalytics } from './conversation-analytics.ts';
-import type { Computer, Workspace } from '../ports/computer.ts';
+import {
+  BrowserActionError,
+  type BrowserAction,
+  type Computer,
+  type Workspace,
+} from '../ports/computer.ts';
+import { fileBytes } from '../shared/files.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
@@ -34,6 +45,7 @@ import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
+import { createComposioProxy } from '../providers/composio/proxy.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
@@ -52,10 +64,12 @@ import { createCloudflareRuntimeTransport } from '../providers/runtime-host/clou
 import { createLocalRuntimeTransport } from '../providers/runtime-host/local.ts';
 import { createComputerShutdownConfirmation } from '../providers/runtime-host/computer-shutdown.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
+import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
-import { createIntegrationKeyService, registerIntegrationKeyRoutes } from './integration-key.ts';
+import { createIntegrationKeyService } from './integration-key.ts';
+import { createIntegrationAccess } from './integration-access.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -70,7 +84,7 @@ import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
-import { createCommunication } from './communication.ts';
+import { createCommunication, publicText } from './communication.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
@@ -148,6 +162,7 @@ export interface ApplicationAdapters {
   observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
+  integrationAccess?: ReturnType<typeof createIntegrationAccess>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
   confirmComputerShutdown?(): Promise<void>;
@@ -158,6 +173,7 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
+  standbyIntegrations?: IntegrationProvider[];
   keyStore: CredentialKeyStore;
   memoryCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
@@ -194,9 +210,16 @@ export function createDefaultAdapters(
     pool,
     env.OTTO_VAULT_KEY
       ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-      : process.platform === 'darwin'
-        ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
-        : createEnvironmentKeyStore(),
+      : runtimeMode !== 'local' || desktopMode
+        ? createEnvironmentKeyStore()
+        : process.platform === 'darwin'
+          ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
+          : process.platform === 'linux'
+            ? createFilesystemKeyStore({
+                dataRoot,
+                canCreate: async () => !(await sealedDataExists(pool)),
+              })
+            : createEnvironmentKeyStore(),
   );
   const models = createModelService({
     database: pool,
@@ -253,23 +276,46 @@ export function createDefaultAdapters(
     googledocs: env.COMPOSIO_DOCS_AUTH_CONFIG_ID,
     slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
   };
-  const integrations = createComposioProvider({
-    apiKey: env.COMPOSIO_API_KEY,
+  const environmentKey = desktopMode ? undefined : env.COMPOSIO_API_KEY?.trim() || undefined;
+  const integrationProxy = environmentKey
+    ? undefined
+    : createComposioProxy({
+        dataRoot,
+        ownerId,
+        url: !desktopMode || env.OTTO_DESKTOP_USER_DATA ? env.OTTO_COMPOSIO_PROXY_URL : undefined,
+        ...(runtimeMode === 'tenant'
+          ? { identitySecret: parseCredentialKey(env.OTTO_VAULT_KEY || '') }
+          : {}),
+      });
+  const ownIntegrations = createComposioProvider({
+    apiKey: environmentKey,
     webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
     webhooksVerified: runtimeMode === 'tenant' && env.OTTO_COMPOSIO_WEBHOOKS === 'gateway',
     webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });
-  const integrationKey =
-    runtimeMode === 'local' && !desktopMode
-      ? createIntegrationKeyService({
-          database: pool,
-          ownerId,
-          keyStore,
-          provider: integrations,
-          changed: refresh,
+  const integrationAccess =
+    integrationProxy && runtimeMode !== 'tenant'
+      ? createIntegrationAccess({
+          proxy: integrationProxy,
+          origin: publicOrigin,
+          desktop: desktopMode,
         })
       : undefined;
+  const integrationKey = createIntegrationKeyService({
+    ownerId,
+    keyStore,
+    provider: ownIntegrations,
+    fixed: environmentKey ? 'own' : runtimeMode === 'tenant' ? 'otto' : undefined,
+    managed: integrationAccess,
+  });
+  const ottoIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
+  const integrations = ottoIntegrations
+    ? new Proxy(ownIntegrations, {
+        get: (_, key) =>
+          Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
+      })
+    : ownIntegrations;
   const computerProvider = env.COMPUTER_PROVIDER || 'docker';
   if (
     !['docker', 'e2b', 'cloudflare'].includes(computerProvider) ||
@@ -337,7 +383,8 @@ export function createDefaultAdapters(
       : {}),
     initialize: async () => {
       await models.initialize();
-      await integrationKey?.initialize();
+      await integrationProxy?.initialize();
+      await integrationKey.initialize();
       await allocations?.initialize();
       await databaseObjects?.initialize();
     },
@@ -391,7 +438,9 @@ export function createDefaultAdapters(
       voice: env.TTS_VOICE,
     }),
     integrations,
-    ...(integrationKey ? { integrationKey } : {}),
+    ...(ottoIntegrations ? { standbyIntegrations: [ownIntegrations, ottoIntegrations] } : {}),
+    integrationKey,
+    integrationAccess,
     keyStore,
     memoryCurator: modelCurator,
     analyticsCurator: selectedCurator,
@@ -617,6 +666,11 @@ async function initializeApplication(
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
+    briefInbox:
+      runtimeMode === 'tenant'
+        ? undefined
+        : (read, stop) => onboardingSuggestions.briefInbox(read, stop),
+    standbyProviders: adapters.standbyIntegrations,
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
@@ -664,34 +718,120 @@ async function initializeApplication(
     submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
     refresh,
   });
+  const browserStepArgs = ({ step, page, typed }: BrowserStep) => {
+    const {
+      timeZone: _timeZone,
+      locale: _locale,
+      expectOrigin: _expectOrigin,
+      readOnly: _readOnly,
+      expectUrl: _expectUrl,
+      ...command
+    } = step as BrowserAction;
+    return {
+      website: page.origin,
+      page: page.url,
+      step: step.action,
+      ...(page.controls?.length ? { control: page.controls } : {}),
+      ...(page.dropTarget?.length ? { dropTarget: page.dropTarget } : {}),
+      ...(page.dialog !== undefined ? { dialog: page.dialog } : {}),
+      ...(step.action === 'upload' ? { file: basename(step.path) } : {}),
+      ...(typed.length ? { typedOnPage: typed } : {}),
+      command,
+    };
+  };
+  const replayBrowserStep = async (
+    args: Record<string, unknown>,
+    provenance: { threadId: string; turnId: string },
+  ) => {
+    const command = args.command as Omit<BrowserAction, 'action'> & {
+      action: BrowserAction['action'] | 'upload';
+      path?: string;
+    };
+    const expectOrigin = String(args.website);
+    const browserId = (
+      await pool.query<{ session_id: string }>(
+        'SELECT session_id FROM turns WHERE id=$1 AND owner_id=$2',
+        [provenance.turnId, ownerId],
+      )
+    ).rows[0]?.session_id;
+    const notRun = () =>
+      Object.assign(new BrowserActionError('browser_target_changed'), { notRun: true });
+    if (!browserId) throw notRun();
+    const current = await computer
+      .currentPage(
+        browserId,
+        command.action === 'accept_dialog' ? (command as BrowserAction) : undefined,
+      )
+      .catch(() => undefined);
+    if (
+      current?.origin !== expectOrigin ||
+      current.url !== args.page ||
+      current.dialog !== args.dialog
+    )
+      throw notRun();
+    try {
+      const page =
+        command.action === 'upload'
+          ? await computer.upload(browserId, {
+              selector: String(command.selector),
+              name: basename(String(command.path)),
+              bytes: await workspace.readArtifact(
+                provenance.threadId,
+                String(command.path),
+                fileBytes,
+              ),
+              expectOrigin,
+              expectUrl: String(args.page),
+            })
+          : await computer.act(browserId, {
+              ...(command as BrowserAction),
+              expectOrigin,
+              expectUrl: String(args.page),
+            });
+      return { url: page.url, page: page.text };
+    } catch (error) {
+      if (error instanceof BrowserActionError && error.code === 'browser_target_changed')
+        throw notRun();
+      throw error;
+    }
+  };
   const approvals = await createApprovals(
     (action, args, provenance) =>
-      action === 'OTTO_vault_allow'
-        ? vaultAccess.allow(args)
-        : action === 'OTTO_payment_setting'
-          ? payments.setting(provenance, args, true)
-          : action === 'OTTO_payment_approve'
-            ? payments.approve(provenance, args)
-            : action === 'OTTO_limits_update'
-              ? ledger.setLimits(args)
-              : action.startsWith('OTTO_')
-                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                : (async () => {
-                    const result = await integrations.executeApproved(ownerId, action, args, {
-                      threadId: provenance.threadId,
-                      turnId: provenance.turnId,
-                    });
-                    await ledger.action(provenance.turnId, action);
-                    return (
-                      await saveIntegrationFiles(result, async (file) => {
-                        const name = `${randomUUID()}-${basename(file.name)}`;
-                        await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                        return name;
-                      })
-                    ).value;
-                  })(),
+      action === 'OTTO_browser'
+        ? replayBrowserStep(args, provenance)
+        : action === 'OTTO_vault_allow'
+          ? vaultAccess.allow(args)
+          : action === 'OTTO_payment_setting'
+            ? payments.setting(provenance, args, true)
+            : action === 'OTTO_payment_approve'
+              ? payments.approve(provenance, args)
+              : action === 'OTTO_limits_update'
+                ? ledger.setLimits(args)
+                : action.startsWith('OTTO_')
+                  ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                  : (async () => {
+                      const result = await integrations.executeApproved(ownerId, action, args, {
+                        threadId: provenance.threadId,
+                        turnId: provenance.turnId,
+                      });
+                      await ledger.action(provenance.turnId, action);
+                      return (
+                        await saveIntegrationFiles(result, async (file) => {
+                          const name = `${randomUUID()}-${basename(file.name)}`;
+                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                          return name;
+                        })
+                      ).value;
+                    })(),
     async (action, args, expectedRevision) => {
-      if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
+      if (
+        [
+          'OTTO_browser',
+          'OTTO_vault_allow',
+          'OTTO_payment_approve',
+          'OTTO_payment_setting',
+        ].includes(action)
+      )
         return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
       else if (action.startsWith('OTTO_')) {
@@ -737,6 +877,10 @@ async function initializeApplication(
           (channel) => channel.provider === 'telegram' && channel.enabled && channel.allowedUserId,
         ),
       ),
+    apps: async () =>
+      (await integrations.connectedApps())
+        .filter((app) => app.status === 'connected')
+        .map((app) => app.name),
   });
   const localConsent = await localAccounts?.readConsent(ownerId);
   analytics.setUsageData(
@@ -863,6 +1007,7 @@ async function initializeApplication(
       taskLedger: tasks.read,
       task: tasks.execute,
       startTurn: tasks.inherit,
+      turnFinished: (turn, outcome) => void onboardingSuggestions.afterTurn(turn, outcome),
       connections: async (...args) => {
         const result = await integrations.manageConnections(...args);
         if (!('url' in result) || !('name' in result) || typeof result.name !== 'string')
@@ -875,6 +1020,48 @@ async function initializeApplication(
           next: 'connect_account_then_continue',
         });
         return { ...result, message };
+      },
+      browserStep: async (turn, request, signal) => {
+        const args = browserStepArgs(request);
+        const verdict = await trust.check(turn, 'OTTO_browser', args);
+        if (!verdict.confirm) return 'run';
+        if (request.subagent) return 'refused';
+        const visible =
+          turn.browserId &&
+          (await computer
+            .act(
+              turn.browserId,
+              {
+                action: 'evaluate',
+                script: 'document.body.innerText',
+                readOnly: true,
+                expectOrigin: request.page.origin,
+                expectUrl: request.page.url,
+              },
+              signal,
+            )
+            .then(
+              (page) => {
+                try {
+                  return JSON.parse(page.text.slice(page.text.indexOf('\n') + 1)) as unknown;
+                } catch {
+                  return undefined;
+                }
+              },
+              () => undefined,
+            ));
+        const result = await approvals.request(turn, 'OTTO_browser', args, {
+          signal,
+          details: {
+            reason: verdict.reason,
+            ...(typeof visible === 'string' && visible.trim()
+              ? { pageText: publicText(visible.slice(0, 20_000)) }
+              : {}),
+          },
+        });
+        return result && typeof result === 'object' && 'requiresConfirmation' in result
+          ? { [appConfirmation]: String(result.question) }
+          : { result };
       },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
@@ -1120,9 +1307,8 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app);
-  if (adapters.integrationKey) adapters.integrationKey.register(app);
-  else if (runtimeMode === 'local' && desktopMode)
-    registerIntegrationKeyRoutes(app, adapters.integrations);
+  adapters.integrationKey?.register(app, integrations);
+  adapters.integrationAccess?.register(app);
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });
@@ -1476,7 +1662,7 @@ export async function createGatewayApplication(
         listOwners: tenants.listOwners,
         hasOwner: async (owner) => Boolean(await tenants.get(owner)),
         integrations: createComposioProvider({
-          apiKey: env.COMPOSIO_API_KEY,
+          apiKey: env.COMPOSIO_API_KEY?.trim() || undefined,
           webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
         }),
       }),

@@ -620,13 +620,21 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     if (!provenance) return { instruction: prompt, sourceMessageId: null };
     if (!provenance.sourceMessageId) return { instruction: null, sourceMessageId: null };
     const row = (
-      await client.query<{ text: string }>(
-        "SELECT text FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' AND ($3::uuid IS NULL OR turn_id=$3) FOR SHARE",
+      await client.query<{ text: string; offered: boolean }>(
+        `SELECT m.text,EXISTS(
+           SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
+           WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND offer.suggestions IS NOT NULL AND task->>'title'=m.text
+         ) AS offered
+         FROM messages m WHERE m.id=$1 AND m.owner_id=$2 AND m.role='user' AND ($3::uuid IS NULL OR m.turn_id=$3)
+         FOR SHARE OF m`,
         [provenance.sourceMessageId, ownerId, provenance.turnId ?? null],
       )
     ).rows[0];
     if (!row) throw invalid('The schedule instruction is unavailable.');
-    return { instruction: row.text, sourceMessageId: provenance.sourceMessageId };
+    return {
+      instruction: row.offered ? null : row.text,
+      sourceMessageId: provenance.sourceMessageId,
+    };
   }
 
   async function create(raw: unknown, provenance?: ScheduleProvenance) {

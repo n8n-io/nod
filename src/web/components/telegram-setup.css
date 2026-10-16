@@ -1,0 +1,190 @@
+.telegram-setup {
+  min-width: 0;
+}
+
+.telegram-setup-steps {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.telegram-setup-steps > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.telegram-setup-marker {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--control);
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  font-weight: 500;
+}
+
+.telegram-setup-steps > li[data-state='active'] .telegram-setup-marker {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.telegram-setup-steps > li[data-state='done'] .telegram-setup-marker {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.telegram-setup-step > strong {
+  display: block;
+  font-size: var(--text-control);
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.telegram-setup-steps > li[data-state='next'] .telegram-setup-step > strong {
+  color: var(--muted-foreground);
+}
+
+.telegram-setup-content {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  padding: 12px 0 4px;
+}
+
+.telegram-setup-content > .field,
+.telegram-setup-content > details,
+.telegram-setup-content > form {
+  justify-self: stretch;
+}
+
+.telegram-setup-content > form {
+  padding: 0;
+}
+
+.telegram-setup p {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.telegram-setup p strong,
+.telegram-setup p code {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.telegram-setup a:not(.button) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.telegram-setup-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.telegram-setup-qr {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--input-radius);
+  line-height: 0;
+}
+
+.telegram-setup-link > div:not(.telegram-setup-qr) {
+  display: grid;
+  flex: 1 1 140px;
+  justify-items: start;
+  gap: 12px;
+}
+
+.telegram-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.telegram-setup-advanced > summary {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  cursor: pointer;
+}
+
+.telegram-setup-advanced[open] > .field {
+  margin-top: 12px;
+}
+
+.telegram-setup-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.telegram-setup-waiting > svg {
+  flex-shrink: 0;
+  animation: spin 1s linear infinite;
+}
+
+.telegram-setup-manual {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.telegram-setup-manual:hover:not(:disabled) {
+  color: var(--foreground);
+}
+
+.telegram-setup p.telegram-setup-identity {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--input-radius);
+  background: var(--accent-soft);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.telegram-setup-connected {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.telegram-setup-connected > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--success);
+}
+
+.telegram-setup-connected > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.telegram-setup-connected strong {
+  font-size: var(--text-control);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .telegram-setup-waiting > svg {
+    animation: none;
+  }
+}

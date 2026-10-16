@@ -186,7 +186,7 @@ for (const size of [16, 32, 64, 128, 256, 512, 1024]) {
     '-z',
     String(size),
     String(size),
-    join(root, 'public', 'otto-logo.png'),
+    join(desktop, 'assets', 'otto-macos.png'),
     '--out',
     join(iconset, filename),
   ]);
