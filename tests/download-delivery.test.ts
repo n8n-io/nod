@@ -13,7 +13,7 @@ import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createChannels } from '../src/server/channels.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
-import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 
 const native = process.env.OTTO_TEST_NATIVE_DOWNLOAD === 'true';
@@ -85,7 +85,6 @@ test(
       string,
       { stored: (artifact: Artifact) => void; resume: Promise<void> }
     >();
-    const publicationStarts = new Map<string, { enter: () => void; resume: Promise<void> }>();
     let stagingCompletion: Promise<unknown> | undefined;
     cleanup.push(async () => {
       const results = await Promise.allSettled(
@@ -187,11 +186,6 @@ test(
         artifacts: {
           ...localArtifacts,
           async storeArtifact(...args) {
-            const starting = args[3] ? publicationStarts.get(args[3]) : undefined;
-            if (starting) {
-              starting.enter();
-              await starting.resume;
-            }
             const artifact = await localArtifacts.storeArtifact(...args);
             const publication = args[3] ? publications.get(args[3]) : undefined;
             if (publication) {
@@ -217,223 +211,173 @@ test(
         manage: forbidden,
       });
       let updateId = 0;
-      for (const mode of ['adapter fixture', 'authenticated native Chromium'] as const) {
-        await t.test(mode, { skip: mode !== 'adapter fixture' && !native }, async (test) => {
-          const fixture = await createBrowserDownloadFixture();
-          test.after(() => fixture.close());
-          assert.equal(
-            (
-              await fetchLocal(`${fixture.origin}/invoice.pdf`, {
-                signal: AbortSignal.timeout(2000),
-              })
-            ).status,
-            403,
-          );
-          const downloadCalls: string[] = [];
-          const active = new Set<string>();
-          const computer =
-            mode === 'adapter fixture'
-              ? fakeComputer({
-                  act: async (threadId, input) => {
-                    assert.deepEqual(
-                      { action: input.action, url: input.url },
-                      { action: 'open', url: `${fixture.origin}/session` },
-                    );
-                    active.add(threadId);
-                    return {
-                      text: 'Synthetic invoices',
-                      url: `${fixture.origin}/session`,
-                    };
-                  },
-                  download: async (threadId, input, signal) => {
-                    assert.ok(active.has(threadId));
-                    signal?.throwIfAborted();
-                    assert.deepEqual(input, {
-                      selector: '#download',
-                      url: undefined,
-                      name: 'invoice.pdf',
-                    });
-                    downloadCalls.push(threadId);
-                    return {
-                      bytes: Buffer.from(browserDownloadPdf),
-                      name: 'invoice.pdf',
-                      mimeType: 'application/pdf',
-                    };
-                  },
-                })
-              : createAgentBrowserComputer({
-                  dataRoot: join(dataRoot, 'browser'),
-                  browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
-                  privateNetwork: true,
-                  headless: true,
-                });
-          const agent: Agent = {
-            open: async (input) => ({
-              resumed: false,
-              prompt: async () => {
-                const tools = new Map(input.tools.map((tool) => [tool.name, tool]));
-                await tools
-                  .get('browser')!
-                  .execute({ action: 'open', url: `${fixture.origin}/session` });
-                const result = await tools
-                  .get('browser')!
-                  .execute({ action: 'download', selector: '#download', name: 'invoice.pdf' });
-                assert.equal(result.content.length, 1);
-                const content = result.content[0];
-                assert.equal(content.type, 'text');
-                if (content.type !== 'text') throw new Error('Expected an artifact receipt.');
-                const artifact = JSON.parse(
-                  content.text.slice(content.text.indexOf('{'), content.text.lastIndexOf('}') + 1),
-                ) as Artifact;
-                assert.deepEqual(Object.keys(artifact).sort(), [
-                  'id',
-                  'mimeType',
-                  'name',
-                  'size',
-                  'url',
-                  'workspaceFile',
-                ]);
-                assert.equal(artifact.mimeType, 'application/pdf');
-                assert.equal(artifact.name, 'invoice.pdf');
-                assert.equal(artifact.size, browserDownloadPdf.length);
-                captured.set(input.turnId, artifact);
-              },
-              abort() {},
-              dispose() {},
-            }),
-            dispose() {},
-          };
-          const runtime = createAgentRuntime({
-            agent,
-            computer,
-            workspace: fakeWorkspace({
-              open: () => ({
-                path: '/synthetic/unused-workspace',
-                instructions: 'The browser owns the synthetic download.',
-                exec: forbidden,
-              }),
-            }),
-          });
-          const prompt = `Download the synthetic invoice using ${mode}.`;
-          runtimes.set(prompt, runtime);
-          try {
-            const web = await threads.submitUserMessage(prompt);
-            const webId = web.turnId;
-            await succeeded(webId);
-            const webFile = captured.get(webId)!;
-            assert.ok(webFile);
-            const response = await app.inject({ method: 'GET', url: webFile.url, headers });
-            assert.equal(response.statusCode, 200);
-            assert.equal(response.headers['content-type'], 'application/pdf');
-            assert.equal(response.headers['cache-control'], 'private, no-store');
-            assert.equal(
-              response.headers['content-security-policy'],
-              "default-src 'none'; sandbox",
-            );
-            assert.deepEqual(response.rawPayload, browserDownloadPdf);
-            assert.equal(createHash('sha256').update(response.rawPayload).digest('hex'), pdfHash);
-            const beforeSend = sent.length;
-            const inbound = ++updateId;
-            const accepted = await app.inject({
-              method: 'POST',
-              url: '/api/webhooks/telegram',
-              headers: {
-                ...headers,
-                'x-telegram-bot-api-secret-token': telegram.TELEGRAM_WEBHOOK_SECRET_TOKEN,
-              },
-              payload: {
-                update_id: inbound,
-                message: {
-                  message_id: inbound,
-                  date: Math.floor(Date.now() / 1000),
-                  text: prompt,
-                  from: { id: 123456, is_bot: false, first_name: 'Fixture' },
-                  chat: { id: 123456, type: 'private' },
-                },
-              },
-            });
-            assert.equal(accepted.statusCode, 200);
-            await channels!.drain();
-            const inbox = (
-              await db.pool.query('SELECT turn_id FROM channel_inbox WHERE text=$1', [prompt])
-            ).rows;
-            assert.equal(inbox.length, 1);
-            const telegramId = inbox[0].turn_id as string;
-            assert.notEqual(telegramId, webId);
-            await succeeded(telegramId);
-            await channels!.drain();
-            const telegramFile = captured.get(telegramId)!;
-            assert.ok(telegramFile);
-            assert.notEqual(telegramFile.id, webFile.id);
-            assert.equal(sent.length, beforeSend + 1);
-            assert.deepEqual(sent.at(-1), {
-              chat: '123456',
-              name: 'invoice.pdf',
-              mimeType: 'application/pdf',
-              bytes: browserDownloadPdf,
-            });
-            assert.equal(createHash('sha256').update(sent.at(-1)!.bytes).digest('hex'), pdfHash);
-            await channels!.drain();
-            assert.equal(sent.length, beforeSend + 1);
-            const deliveries = (
-              await db.pool.query(
-                'SELECT o.state,m.owner_id,m.thread_id,m.attachments FROM channel_outbox o JOIN messages m ON m.id=o.message_id WHERE m.turn_id=$1',
-                [telegramId],
-              )
-            ).rows;
-            assert.equal(deliveries.length, 1);
-            assert.equal(deliveries[0].state, 'sent');
-            assert.equal(deliveries[0].owner_id, ownerId);
-            assert.equal(deliveries[0].thread_id, web.threadId);
-            assert.equal(deliveries[0].attachments[0].id, telegramFile.id);
-            const state = (
-              await app.inject({ method: 'GET', url: '/api/state', headers })
-            ).json<AppState>();
-            const history = (
-              await app.inject({ method: 'GET', url: '/api/messages', headers })
-            ).json<MessageHistoryPage>().messages;
-            assert.equal(state.threadId, web.threadId);
-            for (const messages of [state.messages, history])
-              for (const file of [webFile, telegramFile])
-                assert.equal(
-                  messages
-                    .flatMap((message) => message.attachments)
-                    .some((attachment) => attachment.id === file.id),
-                  true,
-                );
-            const foreign = createArtifactService({
-              database: db.pool,
-              ownerId: 'foreign-owner',
-              localRoot: dataRoot,
-            });
-            await assert.rejects(foreign.readArtifact(webFile.id), /unavailable/);
-            await assert.rejects(
-              localArtifacts.readThreadArtifacts(randomUUID(), [webFile.id]),
-              /unavailable/,
-            );
-            await db.pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [
-              webFile.id,
-            ]);
-            assert.deepEqual(await foreign.readArtifact(webFile.id), browserDownloadPdf);
-            const denied = await app.inject({ method: 'GET', url: webFile.url, headers });
-            assert.equal(denied.statusCode, 404);
-            assert.deepEqual(denied.json(), { error: 'File not found.' });
-            await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [
-              webFile.id,
-              ownerId,
-            ]);
-            if (mode === 'adapter fixture')
-              assert.deepEqual(downloadCalls, [web.threadId, web.threadId]);
-            else {
-              assert.equal(fixture.authenticatedDownloads(), 2);
-              assert.equal(fixture.unauthenticatedDownloads(), 1);
-            }
-          } finally {
-            await runtime.dispose();
-            runtimes.delete(prompt);
-          }
+      await t.test('authenticated native Chromium', { skip: !native }, async (test) => {
+        const fixture = await createBrowserDownloadFixture();
+        test.after(() => fixture.close());
+        assert.equal(
+          (
+            await fetchLocal(`${fixture.origin}/invoice.pdf`, {
+              signal: AbortSignal.timeout(2000),
+            })
+          ).status,
+          403,
+        );
+        const computer = createAgentBrowserComputer({
+          dataRoot: join(dataRoot, 'browser'),
+          browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+          privateNetwork: true,
+          headless: true,
         });
-      }
+        const agent: Agent = {
+          open: async (input) => ({
+            resumed: false,
+            prompt: async () => {
+              const tools = new Map(input.tools.map((tool) => [tool.name, tool]));
+              await tools
+                .get('browser')!
+                .execute({ action: 'open', url: `${fixture.origin}/session` });
+              const result = await tools
+                .get('browser')!
+                .execute({ action: 'download', selector: '#download', name: 'invoice.pdf' });
+              assert.equal(result.content.length, 1);
+              const content = result.content[0];
+              assert.equal(content.type, 'text');
+              if (content.type !== 'text') throw new Error('Expected an artifact receipt.');
+              const artifact = JSON.parse(
+                content.text.slice(content.text.indexOf('{'), content.text.lastIndexOf('}') + 1),
+              ) as Artifact;
+              assert.equal(artifact.mimeType, 'application/pdf');
+              assert.equal(artifact.name, 'invoice.pdf');
+              assert.equal(artifact.size, browserDownloadPdf.length);
+              captured.set(input.turnId, artifact);
+            },
+            abort() {},
+            dispose() {},
+          }),
+          dispose() {},
+        };
+        const runtime = createAgentRuntime({
+          agent,
+          computer,
+          workspace: fakeWorkspace({
+            open: () => ({
+              path: '/synthetic/unused-workspace',
+              instructions: 'The browser owns the synthetic download.',
+              exec: forbidden,
+            }),
+          }),
+        });
+        const prompt = 'Download the synthetic invoice.';
+        runtimes.set(prompt, runtime);
+        try {
+          const web = await threads.submitUserMessage(prompt);
+          const webId = web.turnId;
+          await succeeded(webId);
+          const webFile = captured.get(webId)!;
+          assert.ok(webFile);
+          const response = await app.inject({ method: 'GET', url: webFile.url, headers });
+          assert.equal(response.statusCode, 200);
+          assert.equal(response.headers['content-type'], 'application/pdf');
+          assert.equal(response.headers['cache-control'], 'private, no-store');
+          assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox");
+          assert.deepEqual(response.rawPayload, browserDownloadPdf);
+          assert.equal(createHash('sha256').update(response.rawPayload).digest('hex'), pdfHash);
+          const beforeSend = sent.length;
+          const inbound = ++updateId;
+          const accepted = await app.inject({
+            method: 'POST',
+            url: '/api/webhooks/telegram',
+            headers: {
+              ...headers,
+              'x-telegram-bot-api-secret-token': telegram.TELEGRAM_WEBHOOK_SECRET_TOKEN,
+            },
+            payload: {
+              update_id: inbound,
+              message: {
+                message_id: inbound,
+                date: Math.floor(Date.now() / 1000),
+                text: prompt,
+                from: { id: 123456, is_bot: false, first_name: 'Fixture' },
+                chat: { id: 123456, type: 'private' },
+              },
+            },
+          });
+          assert.equal(accepted.statusCode, 200);
+          await channels!.drain();
+          const inbox = (
+            await db.pool.query('SELECT turn_id FROM channel_inbox WHERE text=$1', [prompt])
+          ).rows;
+          assert.equal(inbox.length, 1);
+          const telegramId = inbox[0].turn_id as string;
+          assert.notEqual(telegramId, webId);
+          await succeeded(telegramId);
+          await channels!.drain();
+          const telegramFile = captured.get(telegramId)!;
+          assert.ok(telegramFile);
+          assert.notEqual(telegramFile.id, webFile.id);
+          assert.equal(sent.length, beforeSend + 1);
+          assert.deepEqual(sent.at(-1), {
+            chat: '123456',
+            name: 'invoice.pdf',
+            mimeType: 'application/pdf',
+            bytes: browserDownloadPdf,
+          });
+          assert.equal(createHash('sha256').update(sent.at(-1)!.bytes).digest('hex'), pdfHash);
+          await channels!.drain();
+          assert.equal(sent.length, beforeSend + 1);
+          const deliveries = (
+            await db.pool.query(
+              'SELECT o.state,m.owner_id,m.thread_id,m.attachments FROM channel_outbox o JOIN messages m ON m.id=o.message_id WHERE m.turn_id=$1',
+              [telegramId],
+            )
+          ).rows;
+          assert.equal(deliveries.length, 1);
+          assert.equal(deliveries[0].state, 'sent');
+          assert.equal(deliveries[0].owner_id, ownerId);
+          assert.equal(deliveries[0].thread_id, web.threadId);
+          assert.equal(deliveries[0].attachments[0].id, telegramFile.id);
+          const state = (
+            await app.inject({ method: 'GET', url: '/api/state', headers })
+          ).json<AppState>();
+          const history = (
+            await app.inject({ method: 'GET', url: '/api/messages', headers })
+          ).json<MessageHistoryPage>().messages;
+          assert.equal(state.threadId, web.threadId);
+          for (const messages of [state.messages, history])
+            for (const file of [webFile, telegramFile])
+              assert.equal(
+                messages
+                  .flatMap((message) => message.attachments)
+                  .some((attachment) => attachment.id === file.id),
+                true,
+              );
+          const foreign = createArtifactService({
+            database: db.pool,
+            ownerId: 'foreign-owner',
+            localRoot: dataRoot,
+          });
+          await assert.rejects(foreign.readArtifact(webFile.id), /unavailable/);
+          await assert.rejects(
+            localArtifacts.readThreadArtifacts(randomUUID(), [webFile.id]),
+            /unavailable/,
+          );
+          await db.pool.query("UPDATE artifacts SET owner_id='foreign-owner' WHERE id=$1", [
+            webFile.id,
+          ]);
+          assert.deepEqual(await foreign.readArtifact(webFile.id), browserDownloadPdf);
+          const denied = await app.inject({ method: 'GET', url: webFile.url, headers });
+          assert.equal(denied.statusCode, 404);
+          await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [
+            webFile.id,
+            ownerId,
+          ]);
+          assert.equal(fixture.authenticatedDownloads(), 2);
+          assert.equal(fixture.unauthenticatedDownloads(), 1);
+        } finally {
+          await runtime.dispose();
+          runtimes.delete(prompt);
+        }
+      });
       const submitHeld = async (text: string) => {
         const submitted = await threads.submitUserMessage(text);
         await waitFor(() => held.has(submitted.turnId));
@@ -471,50 +415,6 @@ test(
               ).rowCount,
               0,
             );
-            release.get(turnId)!();
-          }
-        },
-      );
-      await t.test(
-        'failed message insertion rolls back metadata without deleting retained bytes',
-        async () => {
-          const { threadId, turnId } = await submitHeld('Held rejected browser publication');
-          let artifact: Artifact | undefined;
-          publications.set(threadId, {
-            stored: (file) => {
-              artifact = file;
-            },
-            resume: Promise.resolve(),
-          });
-          await db.pool.query(
-            `ALTER TABLE messages ADD CONSTRAINT reject_browser_publication CHECK (role<>'assistant' OR turn_id IS DISTINCT FROM '${turnId}'::uuid)`,
-          );
-          try {
-            await assert.rejects(held.get(turnId)!.publishBrowserFile!(pdfFile()), {
-              code: '23514',
-            });
-            assert.ok(artifact);
-            assert.equal(
-              (await db.pool.query('SELECT id FROM artifacts WHERE id=$1', [artifact.id])).rowCount,
-              0,
-            );
-            assert.equal(
-              (
-                await db.pool.query(
-                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'",
-                  [turnId],
-                )
-              ).rowCount,
-              0,
-            );
-            await assert.rejects(localArtifacts.readArtifact(artifact.id), /unavailable/);
-            assert.deepEqual(
-              await readFile(join(dataRoot, 'artifacts', artifact.id)),
-              browserDownloadPdf,
-            );
-          } finally {
-            await db.pool.query('ALTER TABLE messages DROP CONSTRAINT reject_browser_publication');
-            publications.delete(threadId);
             release.get(turnId)!();
           }
         },

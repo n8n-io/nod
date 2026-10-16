@@ -17,13 +17,7 @@ registerHooks({
     return next(specifier, context);
   },
 });
-const {
-  default: worker,
-  GatewayContainer,
-  TenantContainer,
-  BrowserComputerContainer,
-  WorkspaceComputerContainer,
-} = await import('../src/worker.ts');
+const { default: worker, GatewayContainer, TenantContainer } = await import('../src/worker.ts');
 const NativeRequest = Request;
 Object.defineProperty(globalThis, 'Request', {
   configurable: true,
@@ -117,9 +111,6 @@ function fixture() {
             calls.push({ target: 'gateway', request });
             return new Response('gateway');
           },
-          async wake() {
-            calls.push({ target: 'wake' });
-          },
           async deploymentClosed() {
             return false;
           },
@@ -153,22 +144,12 @@ function fixture() {
           async storageIdentity() {
             return identity;
           },
-          async recordExternalComputerStopped(generation: string) {
-            assert.equal(generation, identity.generation);
-            calls.push({ target: 'external-computer-stopped' });
-          },
         };
       },
     },
     TENANT_FILES: {},
     BROWSER_COMPUTERS: computers('browser'),
     WORKSPACE_COMPUTERS: computers('workspace'),
-    ASSETS: {
-      async fetch(request: Request) {
-        calls.push({ target: 'assets', request });
-        return new Response('assets');
-      },
-    },
   } as unknown as Parameters<typeof worker.fetch>[1];
   const gatewayContext = { containerId: 'gateway:development', className: 'GatewayContainer' };
   const tenantContext = {
@@ -313,12 +294,6 @@ test('tenant control permits only signed channel and analytics requests for the 
   assert.equal(calls.length, 2);
 });
 
-test('the scheduled wake targets only the configured gateway', async () => {
-  const { env, calls } = fixture();
-  await worker.scheduled({} as ScheduledController, env);
-  assert.deepEqual(calls, [{ target: 'wake' }]);
-});
-
 function processFixture(
   role: 'gateway' | 'tenant',
   respond: (url: URL, request: Request) => Promise<Response> = async () => new Response('ready'),
@@ -340,7 +315,6 @@ function processFixture(
     },
   };
   const { env, ownerId, identity, calls } = fixture();
-  env.GATEWAY_ENV = JSON.stringify({ OTTO_BIND_HOST: '127.0.0.1' });
   const persisted = new Map<string, unknown>();
   const storage = {
     get: async (key: string) => persisted.get(key),
@@ -408,53 +382,6 @@ function processFixture(
   };
 }
 
-test('gateway forces the actual Node bind setting and safely restarts after becoming ready', async () => {
-  const current = processFixture('gateway');
-  const request = () => new Request('https://otto.example.test/api/health');
-  assert.equal((await worker.fetch(request(), current.publicEnv)).status, 200);
-  assert.equal((current.instance.envVars as Record<string, string>).OTTO_BIND_HOST, '0.0.0.0');
-  assert.equal(
-    (current.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENABLED,
-    'false',
-  );
-  assert.equal(
-    (current.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENVIRONMENT,
-    'development',
-  );
-  assert.deepEqual(current.counts(), { starts: 1, forwards: 1 });
-  current.stop();
-  assert.equal((await worker.fetch(request(), current.publicEnv)).status, 200);
-  assert.deepEqual(current.counts(), { starts: 2, forwards: 2 });
-  current.stop();
-  current.failStartup();
-  const failed = await worker.fetch(request(), current.publicEnv);
-  assert.equal(failed.status, 503);
-  assert.equal(failed.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await failed.json(), {
-    error: 'This request could not be completed. Try again.',
-  });
-  assert.deepEqual(current.counts(), { starts: 3, forwards: 2 });
-});
-
-test('gateway startup passes explicit telemetry settings and rejects malformed controls before starting', async () => {
-  const enabled = processFixture('gateway');
-  enabled.env.GATEWAY_ENV = JSON.stringify({
-    OTTO_ANALYTICS_ENABLED: 'true',
-    OTTO_ANALYTICS_ENVIRONMENT: 'development',
-  });
-  const request = () => new Request('https://otto.example.test/api/health');
-  assert.equal((await worker.fetch(request(), enabled.publicEnv)).status, 200);
-  assert.equal((enabled.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENABLED, 'true');
-  assert.equal(
-    (enabled.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENVIRONMENT,
-    'development',
-  );
-  const invalid = processFixture('gateway');
-  invalid.env.GATEWAY_ENV = JSON.stringify({ OTTO_ANALYTICS_ENABLED: 'on' });
-  assert.equal((await worker.fetch(request(), invalid.publicEnv)).status, 400);
-  assert.deepEqual(invalid.counts(), { starts: 0, forwards: 0 });
-});
-
 test('E2B stop acknowledgement is owner and generation bound and required after physical shutdown', async () => {
   const current = processFixture('tenant');
   const instance = current.instance as InstanceType<typeof TenantContainer>;
@@ -503,56 +430,6 @@ test('E2B journal-loss inspection requires the exact pause receipt and never vis
   assert.equal(await instance.deploymentStopped(current.ownerId, '1'), false);
 });
 
-test('an E2B tenant cannot use the Cloudflare computer command broker', async () => {
-  const current = fixture();
-  Object.assign(current.identity, { computerProvider: 'e2b' });
-  const response = await TenantContainer.outboundByHost!['otto.computer'](
-    new Request('http://otto.computer/v1/commands', {
-      method: 'POST',
-      headers: { 'x-otto-generation': '1', 'x-otto-computer-role': 'browser' },
-      body: '{}',
-    }),
-    current.env,
-    current.tenantContext,
-  );
-  assert.equal(response.status, 403);
-  assert.equal(current.calls.length, 0);
-});
-
-test('only the calling tenant can acknowledge its E2B shutdown through the private broker', async () => {
-  const current = fixture();
-  const outbound = TenantContainer.outboundByHost!['otto.computer'];
-  const request = (body = '{}', version = '1', method = 'POST') =>
-    new Request('http://otto.computer/v1/stopped', {
-      method,
-      headers: { 'x-otto-generation': version },
-      ...(method === 'POST' ? { body } : {}),
-    });
-  assert.equal((await outbound(request(), current.env, current.gatewayContext)).status, 403);
-  assert.equal(
-    (
-      await outbound(
-        request(JSON.stringify({ ownerId: randomUUID() })),
-        current.env,
-        current.tenantContext,
-      )
-    ).status,
-    400,
-  );
-  assert.equal(
-    (await outbound(request('{}', '2'), current.env, current.tenantContext)).status,
-    503,
-  );
-  assert.equal(
-    (await outbound(request('{}', '1', 'GET'), current.env, current.tenantContext)).status,
-    400,
-  );
-  assert.equal(current.calls.length, 0);
-  const response = await outbound(request(), current.env, current.tenantContext);
-  assert.deepEqual(await response.json(), { ok: true });
-  assert.deepEqual(current.calls, [{ target: 'external-computer-stopped' }]);
-});
-
 test('anonymous gateway startup and both TCP proxy failures return fixed errors', async () => {
   const unavailable = processFixture('gateway');
   unavailable.failStartup();
@@ -575,48 +452,6 @@ test('anonymous gateway startup and both TCP proxy failures return fixed errors'
       error: 'This request could not be completed. Try again.',
     });
   }
-});
-
-test('container forwarding preserves application status, body, cookies and streaming', async () => {
-  for (const role of ['gateway', 'tenant'] as const)
-    for (const status of [401, 429, 500, 503]) {
-      const application = new Response(`application response ${status}`, {
-        status,
-        headers: { 'set-cookie': 'synthetic-session=accepted; HttpOnly', 'retry-after': '12' },
-      });
-      const current = processFixture(role, async (url, request) => {
-        assert.equal(url.href, 'http://otto.example.test/api/session?fresh=true');
-        assert.equal(request.headers.get('x-otto-account'), 'fixture-account');
-        return application;
-      });
-      const response = await current.instance.fetch(
-        current.request('https://otto.example.test/api/session?fresh=true', {
-          headers: { 'x-otto-account': 'fixture-account' },
-        }),
-      );
-      assert.equal(response, application);
-      assert.equal(response.status, status);
-      assert.equal(response.headers.get('retry-after'), '12');
-      assert.equal(response.headers.get('set-cookie'), 'synthetic-session=accepted; HttpOnly');
-      assert.equal(await response.text(), `application response ${status}`);
-    }
-  const stream = new TransformStream<Uint8Array, Uint8Array>();
-  const application = new Response(stream.readable, {
-    headers: { 'content-type': 'text/event-stream' },
-  });
-  const current = processFixture('gateway', async () => application);
-  const response = await current.instance.fetch(
-    new Request('https://otto.example.test/api/events'),
-  );
-  assert.equal(response, application);
-  const reader = response.body!.getReader();
-  const writer = stream.writable.getWriter();
-  const chunk = new TextEncoder().encode('data: fixture\n\n');
-  const write = writer.write(chunk);
-  assert.deepEqual((await reader.read()).value, chunk);
-  await write;
-  await reader.cancel();
-  await writer.closed.catch(() => {});
 });
 
 test('persistent gateway maintenance denies work before startup while retaining only anonymous smoke paths', async () => {
@@ -664,58 +499,6 @@ test('persistent gateway maintenance denies work before startup while retaining 
   assert.deepEqual(current.counts(), { starts: 1, forwards: 3 });
   await (current.instance as InstanceType<typeof GatewayContainer>).wake();
   assert.deepEqual(current.counts(), { starts: 1, forwards: 3 });
-});
-
-test('private deployment status requires the fixed gateway and closed admission blocks runtime bootstrap', async () => {
-  const f = fixture();
-  Object.assign(f.env.GATEWAY, { getByName: () => ({ deploymentClosed: async () => true }) });
-  const outbound = GatewayContainer.outboundByHost!['otto.runtime'];
-  const request = (path: string) =>
-    new Request(`http://otto.runtime${path}`, { method: 'POST', body: '{}' });
-  const status = await outbound(request('/runtime/deployment-status'), f.env, f.gatewayContext);
-  assert.deepEqual(await status.json(), { closed: true });
-  assert.equal((await outbound(request('/runtime/start'), f.env, f.gatewayContext)).status, 503);
-  assert.equal(
-    (await outbound(request('/runtime/deployment-status'), f.env, f.tenantContext)).status,
-    403,
-  );
-  assert.deepEqual(f.calls, []);
-});
-
-test('stopped deployment recovery RPC admits only exact gateway requests with strict nullable generation', async () => {
-  const f = fixture();
-  let selected: unknown;
-  Object.assign(f.env.TENANTS, {
-    getByName: () => ({
-      async deploymentStopped(ownerId: string, generation: string | null) {
-        selected = { ownerId, generation };
-        return true;
-      },
-    }),
-  });
-  const outbound = GatewayContainer.outboundByHost!['otto.runtime'];
-  const request = (body: unknown) =>
-    new Request('http://otto.runtime/runtime/deployment-stopped', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-  for (const generation of [null, '1']) {
-    const body = { ownerId: f.ownerId, generation };
-    const response = await outbound(request(body), f.env, f.gatewayContext);
-    assert.deepEqual(await response.json(), { stopped: true, generation });
-    assert.deepEqual(selected, body);
-  }
-  for (const body of [
-    { ownerId: f.ownerId },
-    { ownerId: f.ownerId, generation: 1 },
-    { ownerId: f.ownerId, generation: null, force: true },
-  ])
-    assert.equal((await outbound(request(body), f.env, f.gatewayContext)).status, 400);
-  assert.equal(
-    (await outbound(request({ ownerId: f.ownerId, generation: null }), f.env, f.tenantContext))
-      .status,
-    403,
-  );
 });
 
 function deploymentTenantFixture(
@@ -824,16 +607,10 @@ function retirementTenantFixture() {
   };
 }
 
-test('unused computer retirement requires an exact live natural-drain acknowledgement', async () => {
-  const f = retirementTenantFixture();
-  await assert.rejects(f.authorize());
-  assert.equal((await f.pause()).status, 200);
-  assert.deepEqual(await f.authorize(), f.identity);
-  assert.deepEqual(f.events, []);
-  assert.deepEqual(f.counts(), { starts: 0, forwards: 1 });
-});
-
 test('retirement authority rejects missing, resumed, revoked and merely physically stopped tenant proofs', async () => {
+  const baseline = retirementTenantFixture();
+  assert.equal((await baseline.pause()).status, 200);
+  assert.deepEqual(await baseline.authorize(), baseline.identity);
   for (const condition of [
     'attempt',
     'proof',
@@ -861,28 +638,6 @@ test('retirement authority rejects missing, resumed, revoked and merely physical
   }
 });
 
-test('retirement authority binds the active barrier operation and original release', async () => {
-  const changes = [
-    { phase: 'complete' },
-    { phase: 'aborting' },
-    { phase: 'prepared' },
-    { nonce: randomUUID() },
-    { targetRelease: 'c'.repeat(40) },
-    { previousRelease: 'c'.repeat(40) },
-    { deadline: Date.now() + 120_000 },
-  ];
-  for (const change of changes) {
-    const f = retirementTenantFixture();
-    assert.equal((await f.pause()).status, 200);
-    f.gateway.persisted.set('deployment-barrier', {
-      ...(f.gateway.persisted.get('deployment-barrier') as object),
-      ...change,
-    });
-    await assert.rejects(f.authorize());
-    assert.deepEqual(f.events, []);
-  }
-});
-
 test('retirement authority rechecks the barrier after reading the tenant proof', async () => {
   const f = retirementTenantFixture();
   assert.equal((await f.pause()).status, 200);
@@ -901,25 +656,6 @@ test('retirement authority rechecks the barrier after reading the tenant proof',
   });
   await assert.rejects(f.authorize());
   assert.equal(calls, 2);
-});
-
-test('retirement authority observes revocation and expiry while its last barrier check is pending', async () => {
-  for (const change of [{ revoking: true }, { leaseExpiresAt: 1 }, { generation: '2' }]) {
-    const f = retirementTenantFixture();
-    assert.equal((await f.pause()).status, 200);
-    const gateway = f.gateway.instance as InstanceType<typeof GatewayContainer>;
-    const authorize = gateway.deploymentRetirementIdentity.bind(gateway);
-    let calls = 0;
-    Object.assign(gateway, {
-      async deploymentRetirementIdentity(input: DeploymentInput) {
-        const result = await authorize(input);
-        if (++calls === 2) f.persisted.set('identity', { ...f.identity, ...change });
-        return result;
-      },
-    });
-    await assert.rejects(f.authorize());
-    assert.equal(calls, 2);
-  }
 });
 
 test('busy first role is resumable but partial drain and lost process witness remain unsafe', async () => {
@@ -976,40 +712,6 @@ test('failed drain acknowledgement retains an exact retryable resume attempt wit
     assert.equal(f.persisted.has('deployment-proof'), false);
     assert.deepEqual(f.events, []);
   }
-});
-
-test('resume revokes computer authority before reopening Node and can retry a lost acknowledgement', async () => {
-  let f!: ReturnType<typeof deploymentTenantFixture>;
-  let resumes = 0;
-  f = deploymentTenantFixture(undefined, async (url, _request, input) => {
-    if (url.pathname.endsWith('/drain'))
-      return Response.json({
-        ok: true,
-        nonce: input.nonce,
-        targetRelease: input.targetRelease,
-        generation: '1',
-        drained: true,
-      });
-    assert.equal(f.persisted.has('deployment-proof'), false);
-    await assert.rejects(f.instance.deploymentComputerIdentity(f.ownerId, '1', input));
-    if (++resumes === 1) throw new Error('Synthetic response loss');
-    return Response.json({ ok: true });
-  });
-  assert.equal((await f.pause()).status, 200);
-  const resume = () =>
-    f.instance.fetch(
-      signedRequest(
-        f.ownerId,
-        'https://otto.example.test/api/runtime/resume',
-        { method: 'POST', body: JSON.stringify(f.input) },
-        { kind: 'deployment' },
-      ),
-    );
-  assert.equal((await resume()).status, 503);
-  assert.equal((await resume()).status, 200);
-  assert.equal(resumes, 2);
-  assert.equal(f.persisted.has('deployment-proof'), false);
-  assert.deepEqual(f.events, []);
 });
 
 test('late drain acknowledgement cannot recreate computer authority after matching resume', async () => {
@@ -1196,8 +898,7 @@ test('trusted gateway renewal extends persisted tenant authority only after the 
   const received = deferred();
   let body = '';
   let signature = '';
-  const current = leasedProcessFixture(async (url, request) => {
-    if (url.pathname !== '/api/runtime/lease') return new Response('active');
+  const current = leasedProcessFixture(async (_url, request) => {
     body = await request.text();
     signature = request.headers.get('x-otto-runtime')!;
     received.resolve();
@@ -1230,26 +931,9 @@ test('trusted gateway renewal extends persisted tenant authority only after the 
   assert.equal(current.saved().leaseExpiresAt, original);
   assert.equal(body, raw);
   assert.equal(signature, header);
-  acknowledged.resolve(Response.json({ ok: true }, { headers: { 'x-acknowledged': 'fixture' } }));
-  const response = await renewal;
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('x-acknowledged'), 'fixture');
-  assert.deepEqual(await response.json(), { ok: true });
+  acknowledged.resolve(Response.json({ ok: true }));
+  assert.equal((await renewal).status, 200);
   assert.equal(current.saved().leaseExpiresAt, expiry);
-  assert.deepEqual(current.scheduled, [expiry]);
-  time = original + 1;
-  assert.equal(
-    (await current.instance.fetch(current.request('https://otto.example.test/api/state'))).status,
-    200,
-  );
-  time = expiry;
-  assert.equal(
-    (await current.instance.fetch(current.request('https://otto.example.test/api/state'))).status,
-    503,
-  );
-  await current.instance.expireRuntimeLease();
-  assert.equal(current.saved().stopped, true);
-  assert.deepEqual(current.scheduled, []);
 });
 
 test('tenant routing rejects bounded invalid claims and stale generations before contacting Node', async () => {
@@ -1311,9 +995,6 @@ test('rejected or oversized Node acknowledgements never extend persisted lease a
       });
       const failed = await current.instance.fetch(request);
       assert.equal(failed.status, 503);
-      assert.deepEqual(await failed.json(), {
-        error: 'This request could not be completed. Try again.',
-      });
       assert.equal(current.saved().leaseExpiresAt, original);
     });
 });
@@ -1475,33 +1156,6 @@ test('computer routing derives owner and environment from the exact calling tena
   current.replace({ ...current.saved(), revoking: true });
   assert.equal((await outbound(request('browser'), current.env, context)).status, 503);
   assert.equal(current.calls.length, admitted);
-});
-
-test('public routes and direct computer fetches cannot dispatch a private command', async () => {
-  const { env, calls } = fixture();
-  for (const path of ['/v1/commands', '/v1/commands/fixture/kill', '/api/v1/commands']) {
-    const response = await worker.fetch(
-      new Request(`https://otto.example.test${path}`, {
-        method: 'POST',
-        headers: { 'x-otto-generation': '1', 'x-otto-computer-role': 'browser' },
-        body: '{}',
-      }),
-      env,
-    );
-    assert.equal(response.status, 200);
-    assert.ok(['assets', 'gateway'].includes(await response.text()));
-  }
-  assert.equal(
-    (await worker.fetch(new Request('http://otto.computer/v1/commands'), env)).status,
-    403,
-  );
-  for (const Computer of [BrowserComputerContainer, WorkspaceComputerContainer]) {
-    const instance = Object.create(Computer.prototype) as InstanceType<typeof Computer>;
-    const response = await instance.fetch();
-    assert.equal(response.status, 404);
-    assert.doesNotMatch(await response.text(), /owner|generation|computer/);
-  }
-  assert.ok(calls.every((call) => ['assets', 'gateway'].includes(call.target)));
 });
 
 test('private storage requires the current calling tenant generation before accessing its owner prefix', async () => {

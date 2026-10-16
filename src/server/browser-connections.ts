@@ -111,14 +111,6 @@ export async function createBrowserConnections(
       created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE browser_connections ADD COLUMN IF NOT EXISTS browser_id uuid;
-    ALTER TABLE browser_connections DROP COLUMN IF EXISTS updated_at;
-    DO $$ BEGIN
-      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
-        AND table_name='browser_connections' AND column_name='thread_id') THEN
-        UPDATE browser_connections SET browser_id=COALESCE(browser_id,thread_id);
-        ALTER TABLE browser_connections DROP COLUMN thread_id;
-      END IF;
-    END $$;
     CREATE INDEX IF NOT EXISTS browser_connections_owner ON browser_connections(owner_id,origin);
   `);
   const browser = options.computer;

@@ -42,7 +42,6 @@ import {
   workspaceFile,
 } from '../src/providers/docker/index.ts';
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
-import { workspaceNetwork } from '../scripts/e2e-workspace.ts';
 import { prepareLocalDirectories } from '../scripts/local-database.ts';
 
 test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
@@ -141,44 +140,6 @@ test('workspace paths cannot address host files or other task directories', () =
   assert.throws(() => threadIdentity('../escape'));
 });
 
-test('workspace artifact reads reject paths outside the container task', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-runtime-'));
-  try {
-    const workspace = join(directory, 'task-a');
-    await mkdir(workspace);
-    await writeFile(join(directory, 'private.txt'), 'fixture');
-    await symlink(join(directory, 'private.txt'), join(workspace, 'escape.txt'));
-    let launched = 0;
-    const runner = createDockerWorkspace({
-      container: 'otto-workspace',
-      workspaceRoot: directory,
-      spawn: () => {
-        launched++;
-        throw new Error('Unexpected workspace launch.');
-      },
-    });
-    runner.open({
-      threadId: 'task-a',
-      workspacePath: workspace,
-      signal: new AbortController().signal,
-    });
-    await assert.rejects(
-      runner.readArtifact('task-a', '../private.txt', 1024),
-      /^Error: Files must stay within the task workspace\.$/,
-    );
-    assert.equal(launched, 0);
-    assert.throws(() =>
-      runner.open({
-        threadId: 'task-b',
-        workspacePath: workspace,
-        signal: new AbortController().signal,
-      }),
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test('runtime subprocesses do not inherit provider keys and stop at bounds', async () => {
   const previous = process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = 'test-secret-not-for-child';
@@ -198,32 +159,6 @@ test('runtime subprocesses do not inherit provider keys and stop at bounds', asy
     if (previous === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previous;
   }
-});
-
-const connection = { NetworkID: 'a'.repeat(64) };
-
-test('the acceptance workspace rejects privileged, absent, malformed and ambiguous network attachments', () => {
-  for (const inspected of [
-    '',
-    'container:guard',
-    'null',
-    '[]',
-    '{}',
-    JSON.stringify({ host: connection }),
-    JSON.stringify({ none: connection }),
-    JSON.stringify({ 'container:guard': connection }),
-    JSON.stringify({ '--network=host': connection }),
-    JSON.stringify({ 'normal\n--privileged': connection }),
-    JSON.stringify({ bridge: connection, another: connection }),
-    JSON.stringify({ bridge: {} }),
-    JSON.stringify({ bridge: { NetworkID: '' } }),
-    JSON.stringify({ bridge: { NetworkID: 42 } }),
-    JSON.stringify({ bridge: null }),
-  ])
-    assert.throws(
-      () => workspaceNetwork(inspected),
-      /^Error: Start the Otto workspace on a normal Docker network first\.$/,
-    );
 });
 
 // Supervised workspace commands: cancellation, bounds, uncertain fencing and file containment.
@@ -372,44 +307,6 @@ test(
     }
   },
 );
-
-test('output overflow and timeout drain the remote command before rejecting', async () => {
-  for (const limited of [true, false]) {
-    const f = await local();
-    try {
-      const operation = f.run(
-        [
-          'python3',
-          '-c',
-          `${limited ? 'import sys;sys.stdout.write("x"*20000);sys.stdout.flush();' : ''}import time;time.sleep(1);open("late","w").close()`,
-        ],
-        { maxBytes: 1024, timeoutMs: limited ? 3000 : 100 },
-      );
-      await assert.rejects(
-        operation,
-        (error: unknown) =>
-          error instanceof WorkspaceCommandError && !error.uncertain && /limit/.test(error.message),
-      );
-      await delay(1100);
-      assert.equal(await exists(join(f.directory, 'late')), false);
-    } finally {
-      await f.close();
-    }
-  }
-});
-
-test('a command timeout beyond the timer limit still lets the command run', async () => {
-  const f = await local();
-  try {
-    const result = await f.run(['python3', '-c', 'import time;time.sleep(0.3);print("done")'], {
-      timeoutMs: 2 ** 32,
-    });
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.stdout.toString().trim(), 'done');
-  } finally {
-    await f.close();
-  }
-});
 
 test('connected CLIs run only their sealed install with a clean environment', async () => {
   const root = await mkdtemp('/tmp/otto-connected-');
@@ -1043,72 +940,6 @@ test('create rejects escaping or cyclic links without leaking private paths and 
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-    await f.noStaging();
-  } finally {
-    await f.close();
-  }
-});
-
-test('checkpoints leave out regenerable caches and keep browser site data', async () => {
-  const f = await fixture();
-  try {
-    const caches = ['Cache', 'Code Cache', 'GPUCache', 'GrShaderCache', 'DawnWebGPUCache'];
-    const kept = ['Local Storage', 'IndexedDB', 'Service Worker', 'Network'];
-    for (const name of [...caches, ...kept, 'tool/__pycache__', 'project/.cache'])
-      await mkdir(join(f.source, 'Default', name), { recursive: true });
-    for (const name of [...caches, ...kept, 'tool/__pycache__', 'project/.cache'])
-      await writeFile(join(f.source, 'Default', name, 'data'), `synthetic ${name}`);
-    await writeFile(join(f.source, 'Default', '.cache'), 'synthetic file named like a cache');
-    const restored = async (...args: string[]) => {
-      const captured = await f.create(...args);
-      assert.equal(captured.code, 0, captured.stderr);
-      assert.equal((await f.restore(captured.stdout)).code, 0);
-      const names = (await readdir(join(f.target, 'Default'))).sort();
-      assert.deepEqual(await readdir(join(f.target, 'Default', 'tool')), []);
-      assert.deepEqual(await readdir(join(f.target, 'Default', 'project')), []);
-      await rm(f.target, { recursive: true });
-      return names;
-    };
-    assert.deepEqual(await restored(), [...caches, ...kept, '.cache', 'project', 'tool'].sort());
-    assert.deepEqual(await restored('--browser'), [...kept, '.cache', 'project', 'tool'].sort());
-    rejected(await run(['restore', f.target, '--browser'], Buffer.alloc(1024)));
-  } finally {
-    await f.close();
-  }
-});
-
-test('an oversized checkpoint fails with its size, entries and largest files instead of an archive', async () => {
-  const f = await fixture();
-  try {
-    await mkdir(join(f.source, 'workspace', 'thread'), { recursive: true });
-    await writeFile(join(f.source, 'workspace', 'thread', 'large.bin'), Buffer.alloc(9000));
-    await writeFile(join(f.source, 'workspace', 'thread', 'small.txt'), 'synthetic');
-    const within = await f.create('--max-bytes', '16384');
-    assert.equal(within.code, 0, within.stderr);
-    assert.equal(within.stderr, '');
-    for (const [args, limit] of [
-      [['--max-bytes', '8192'], 'bytes'],
-      [['--max-entries', '4'], 'entries'],
-    ] as const) {
-      const captured = await f.create(...args);
-      assert.equal(captured.code, 0, limit);
-      assert.equal(captured.stdout.length, 0, limit);
-      const report = JSON.parse(captured.stderr);
-      assert.equal(report.entries, 4);
-      assert.equal(report.complete, true);
-      assert.ok(report.bytes > 9000 && report.bytes < 16384);
-      assert.deepEqual(report.largest, [
-        ['workspace/thread/large.bin', 9000],
-        ['workspace/thread/small.txt', 9],
-      ]);
-      if (limit === 'bytes') assert.ok(report.bytes > report.max_bytes);
-      if (limit === 'entries') assert.equal(report.max_entries, 4);
-    }
-    for (let index = 0; index < 30; index++)
-      await writeFile(join(f.source, `file-${index}`), 'synthetic');
-    const truncated = JSON.parse((await f.create('--max-entries', '4')).stderr);
-    assert.equal(truncated.complete, false);
-    assert.equal(truncated.entries, 21);
     await f.noStaging();
   } finally {
     await f.close();

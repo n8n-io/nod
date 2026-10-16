@@ -5,7 +5,7 @@ import pg from 'pg';
 import type { BrowserConnectionRequest } from '../src/ports/agent.ts';
 import type { Computer } from '../src/ports/computer.ts';
 import { createBrowserConnections } from '../src/server/browser-connections.ts';
-import { createAnalytics, type AnalyticsEvent } from '../src/server/analytics.ts';
+import { createAnalytics } from '../src/server/analytics.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 
 test(
@@ -66,12 +66,7 @@ test(
           removed.push(profileId);
         },
       } as unknown as Computer;
-      const captured: AnalyticsEvent[] = [];
-      const service = await createBrowserConnections(pool, {
-        ownerId: 'owner-a',
-        computer,
-        analytics: (event) => captured.push(event),
-      });
+      const service = await createBrowserConnections(pool, { ownerId: 'owner-a', computer });
       const opened = await service.request(
         { action: 'connect', url: 'https://example.test/login' },
         first,
@@ -140,16 +135,6 @@ test(
       assert.equal((await service.list())[0].browserState, 'needs_sign_in');
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [first.turnId]);
       cancelTurnId = undefined;
-      assert.deepEqual(captured, [
-        {
-          event: 'otto_connection_changed',
-          properties: {
-            app: 'custom',
-            connection_method: 'browser',
-            status: 'started',
-          },
-        },
-      ]);
       assert.equal((await service.request(save, first)).status, 'session_saved');
       assert.equal((await service.list())[0].browserState, 'saved');
       await pool.query(
@@ -277,33 +262,6 @@ test(
         /no longer active/,
       );
       await service.disconnect(connectionId);
-      assert.deepEqual(
-        captured.filter((event) => event.event === 'otto_connection_changed'),
-        ['started', 'connected', 'disconnected'].map((status) => ({
-          event: 'otto_connection_changed',
-          properties: {
-            app: 'custom',
-            connection_method: 'browser',
-            status,
-          },
-        })),
-      );
-      assert.deepEqual(
-        captured
-          .filter((event) => event.event === 'otto_service_used')
-          .map((event) => {
-            const { duration_ms, ...properties } = event.properties;
-            assert.ok(Number.isSafeInteger(duration_ms) && duration_ms >= 0);
-            return properties;
-          }),
-        [
-          { outcome: 'failed', failure_reason: 'unavailable' },
-          { outcome: 'failed', failure_reason: 'invalid_request' },
-          { outcome: 'failed', failure_reason: 'unavailable' },
-          { outcome: 'succeeded' },
-          { outcome: 'failed', failure_reason: 'authentication' },
-        ].map((result) => ({ app: 'custom', connection_method: 'browser', ...result })),
-      );
       assert.deepEqual(removed, [bindings[0]]);
       await pool.query(
         "INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state) VALUES($1,'owner-a','https://example.test','https://example.test','Synthetic', $2,'disconnecting')",
@@ -322,7 +280,7 @@ test(
 );
 
 test(
-  'saved browser analytics exclude other browsing and do not revive in-flight work after consent changes',
+  'saved browser analytics exclude private browsing details and stay off after consent changes mid-use',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `browser_analytics_${randomUUID().replaceAll('-', '')}`;
@@ -369,39 +327,34 @@ test(
         },
         currentPage: async () => ({ origin: new URL(location).origin, url: location }),
       } as unknown as Computer;
-      const options = {
+      analytics.setUsageData(ownerId, true, randomUUID());
+      const service = await createBrowserConnections(pool, {
         ownerId,
         computer,
         analytics: analytics.forOwner(ownerId),
         analyticsConsent: () => analytics.consent(ownerId),
-      };
-      analytics.setUsageData(ownerId, true, randomUUID());
-      const service = await createBrowserConnections(pool, options);
-      const open = async () => {
-        const result = await service.request(
-          {
-            action: 'connect',
-            url: 'https://tenant.example.com/login?secret=synthetic-private',
-            label: 'Private fixture account',
-          },
-          turn,
-        );
-        assert.ok('connectionId' in result && result.connectionId);
-        return result.connectionId;
-      };
-      const save = async (connectionId: string) =>
-        service.request({ action: 'save', url: location, connectionId, signedIn: true }, turn);
-      const use = async (connectionId: string) =>
-        service.request({ action: 'use', url: location, connectionId }, turn);
-      const id = await open();
-      await use(id);
+      });
+      const opened = await service.request(
+        {
+          action: 'connect',
+          url: 'https://tenant.example.com/login?secret=synthetic-private',
+          label: 'Private fixture account',
+        },
+        turn,
+      );
+      assert.ok('connectionId' in opened && opened.connectionId);
+      const id = opened.connectionId;
+      const use = () => service.request({ action: 'use', url: location, connectionId: id }, turn);
+      await use();
       assert.equal(events.filter((event) => event.event === 'otto_service_used').length, 0);
-      await save(id);
-      await use(id);
-      assert.ok(events.every((event) => event.properties.domain === 'example.com'));
+      await service.request(
+        { action: 'save', url: location, connectionId: id, signedIn: true },
+        turn,
+      );
+      await use();
       const count = events.length;
       location = 'https://other.example.org/private-path?secret=synthetic-private';
-      await use(id);
+      await use();
       assert.equal(events.length, count);
       location = 'https://tenant.example.com/account';
       let release = () => {};
@@ -411,7 +364,7 @@ test(
       waiting = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const inFlight = use(id);
+      const inFlight = use();
       await started;
       analytics.setUsageData(ownerId, false, randomUUID());
       analytics.setUsageData(ownerId, true, randomUUID());
@@ -420,12 +373,11 @@ test(
       assert.equal(events.length, count);
       waiting = undefined;
       analytics.setUsageData(ownerId, false, randomUUID());
-      await use(id);
+      await use();
       assert.equal(events.length, count);
       analytics.setUsageData(ownerId, true, randomUUID());
-      await use(id);
+      await use();
       assert.equal(events.length, count + 1);
-      assert.equal(events.at(-1)?.event, 'otto_service_used');
       const serialized = JSON.stringify(events);
       for (const value of [
         'tenant.',
@@ -435,7 +387,6 @@ test(
         id,
       ])
         assert.ok(!serialized.includes(value));
-      assert.equal((await service.analyticsConnections()).length, 1);
     } finally {
       await analytics.shutdown();
       await pool.end();

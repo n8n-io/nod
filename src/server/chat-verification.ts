@@ -14,7 +14,6 @@ interface VerificationInput {
   threadId?: string;
   replyToMessageId?: string;
   verificationRequestId?: string;
-  forceNew?: boolean;
   receiptOnly?: boolean;
   attachmentIds?: string[];
   persistOrdinary?: (client: PoolClient) => Promise<void>;
@@ -116,7 +115,7 @@ export async function createChatVerification(
     if (reply.kind === 'ordinary' && !codes.payment && !input.verificationRequestId) return;
     if (!codes.otp && !codes.payment && input.verificationRequestId)
       throw conflict('Send the code by itself.');
-    const incompatible = Boolean(input.attachmentIds?.length || input.forceNew);
+    const incompatible = Boolean(input.attachmentIds?.length);
     if (incompatible && input.verificationRequestId)
       throw conflict('Send the verification code by itself in the sign-in conversation.');
     const channel = input.channel ?? 'web';

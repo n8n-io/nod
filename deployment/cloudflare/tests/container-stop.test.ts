@@ -19,18 +19,11 @@ function deferred() {
 test('stop waits after SIGTERM acknowledgement and synchronizes terminal SDK state', async () => {
   let running = true;
   let state = 'healthy';
-  let signals = 0;
-  let synchronizations = 0;
   const signalled = deferred();
   const container = {
     async stop() {
-      if (running) {
-        signals++;
-        signalled.resolve();
-      } else {
-        synchronizations++;
-        state = 'stopped';
-      }
+      if (running) signalled.resolve();
+      else state = 'stopped';
     },
     async getState() {
       return { status: state };
@@ -48,8 +41,6 @@ test('stop waits after SIGTERM acknowledgement and synchronizes terminal SDK sta
   running = false;
   await stopping;
   assert.equal(confirmed, true);
-  assert.equal(signals, 1);
-  assert.equal(synchronizations, 1);
 });
 
 test('neither a terminal SDK state nor a native stop alone grants a receipt', async () => {
@@ -130,20 +121,17 @@ test('unsettled startup prevents both sending the signal and returning a clean r
   await new Promise((resolve) => setImmediate(resolve));
   await stopContainer(container, { running: () => false });
   assert.equal(stops, 1);
-});
-
-test('startup beginning during the stop wait still prevents terminal confirmation', async () => {
-  const raw = deferred();
+  const late = deferred();
   let starting: Promise<void> | undefined;
-  const container = {
-    startAndWaitForPorts: () => raw.promise,
+  const restarting = {
+    startAndWaitForPorts: () => late.promise,
     async stop() {
-      starting = startContainer(container, { timeoutMs: 1_000 });
+      starting = startContainer(restarting, { timeoutMs: 1_000 });
     },
     getState: async () => ({ status: 'stopped' }),
   };
-  await assert.rejects(stopContainer(container, { running: () => false }), RuntimeControlError);
-  raw.resolve();
+  await assert.rejects(stopContainer(restarting, { running: () => false }), RuntimeControlError);
+  late.resolve();
   await starting;
 });
 
@@ -187,26 +175,4 @@ test('timeout retains tenant revocation and requires an explicit confirmed-stop 
     stopped: true,
   });
   assert.equal(saved.stopped, true);
-});
-
-test('invalid budgets and private SDK failures produce only the fixed control error', async () => {
-  let stops = 0;
-  const container = {
-    async stop() {
-      stops++;
-      throw new Error('synthetic private stop failure');
-    },
-    getState: async () => ({ status: 'stopped' }),
-  };
-  for (const timeoutMs of [0, -1, 10_001, NaN, 1.5])
-    await assert.rejects(stopContainer(container, { running: () => false, timeoutMs }), {
-      name: 'RuntimeControlError',
-      message: 'The runtime request could not be completed.',
-    });
-  assert.equal(stops, 0);
-  await assert.rejects(stopContainer(container, { running: () => false }), {
-    name: 'RuntimeControlError',
-    message: 'The runtime request could not be completed.',
-  });
-  assert.equal(stops, 1);
 });

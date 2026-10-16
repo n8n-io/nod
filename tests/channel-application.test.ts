@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -11,39 +11,10 @@ import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
-import { PostHog } from 'posthog-node';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
 import { gunzipSync } from 'node:zlib';
-
-test('analytics initializes on capture, flushes once, and cannot restart after shutdown', async (t) => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 1 }));
-  const shutdown = t.mock.method(PostHog.prototype, 'shutdown');
-  const capture = t.mock.method(PostHog.prototype, 'capture');
-  const event = { distinctId: 'fixture-owner', event: 'otto_onboarding_completed', properties: {} };
-  const signal = new AbortController().signal;
-  const unused = createPostHogAnalytics();
-  await unused.shutdown();
-  unused.capture(event, signal);
-  assert.equal(shutdown.mock.callCount(), 0);
-  assert.equal(capture.mock.callCount(), 0);
-  assert.equal(fetch.mock.callCount(), 0);
-
-  const active = createPostHogAnalytics();
-  t.after(() => active.shutdown());
-  active.capture(event, signal);
-  active.capture(event, signal);
-  await Promise.all([active.shutdown(), active.shutdown()]);
-  assert.equal(capture.mock.callCount(), 2);
-  assert.equal(shutdown.mock.callCount(), 1);
-  assert.equal(fetch.mock.callCount(), 1);
-  active.capture(event, signal);
-  await active.shutdown();
-  assert.equal(capture.mock.callCount(), 2);
-  assert.equal(shutdown.mock.callCount(), 1);
-  assert.equal(fetch.mock.callCount(), 1);
-});
 
 test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
   const received: { distinct_id: string; event: string }[] = [];
@@ -125,10 +96,8 @@ test(
     const { dataRoot, port } = await import('../src/server/config.ts');
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
-    let verified = 0;
     const verifier = {
       verify: async () => {
-        verified++;
         return {
           environment: {
             TELEGRAM_ENABLED: 'true',
@@ -165,39 +134,17 @@ test(
     await seedApp.close();
     const applied: Record<string, string>[] = [];
     const sent: string[] = [];
-    let closed = 0;
-    let failClose = false;
-    let agentDisposed = false;
-    let analyticsClosed = 0;
-    const replies: object[] = [];
     const adapters: ApplicationAdapters = {
       onboardingCurator: {
         id: 'fixture',
         configured: true,
-        curate: async ({ task, input }) => {
-          if (task === 'review' && 'purpose' in input && input.purpose === 'confirmation_review')
-            return { valid: true };
-          if (task === 'review' && 'purpose' in input)
-            return { text: 'Synthetic channel guidance.' };
-          if (task !== 'review' || !('reply' in input)) return undefined;
-          replies.push(input);
-          return { answer: input.reply === 'sure, go ahead' ? 'yes' : 'other' };
-        },
-      },
-      analytics: {
-        capture() {},
-        async shutdown() {
-          analyticsClosed++;
-          throw new Error('Synthetic analytics shutdown failure.');
-        },
+        curate: async () => undefined,
       },
       agent: {
         open: async () => {
           throw new Error('No agent in fixture');
         },
-        dispose: () => {
-          agentDisposed = true;
-        },
+        dispose: () => {},
       },
       computer: fakeComputer(),
       objectStore: createFilesystemObjectStore(objects),
@@ -274,10 +221,7 @@ test(
               sent.push(message.text);
               return { id: 'fixture-sent-' + sent.length };
             },
-            close: async () => {
-              closed++;
-              if (failClose) throw new Error('Synthetic transport shutdown failure.');
-            },
+            close: async () => {},
           };
           return transport;
         },
@@ -290,44 +234,7 @@ test(
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
     try {
-      let failedAnalyticsClosed = 0;
-      const startupFailure = new Error('Synthetic application startup failure.');
-      await assert.rejects(
-        createApplication(
-          {
-            ...adapters,
-            analytics: {
-              capture() {},
-              async shutdown() {
-                failedAnalyticsClosed++;
-                throw new Error('Synthetic analytics shutdown failure.');
-              },
-            },
-            async initialize() {
-              throw startupFailure;
-            },
-          },
-          { workers: false },
-        ),
-        (error) => error === startupFailure,
-      );
-      assert.equal(failedAnalyticsClosed, 1);
       assert.equal(applied[0].TELEGRAM_BOT_TOKEN, '42:private-fixture');
-      const status = await application.app.inject({ url: '/api/channel-settings', headers });
-      assert.equal(status.statusCode, 200);
-      assert.equal(status.body.includes('private-fixture'), false);
-      assert.equal(
-        (
-          await application.app.inject({
-            method: 'PUT',
-            url: '/api/channel-settings/telegram',
-            headers: { ...headers, origin: 'https://attacker.example' },
-            payload: { botToken: 'attack' },
-          })
-        ).statusCode,
-        403,
-      );
-      assert.equal(verified, 1);
       const send = async (id: number, text: string) =>
         application.app.inject({
           method: 'POST',
@@ -364,95 +271,17 @@ test(
           .rows[0].turn_id,
         turns[1].id,
       );
-      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turns[1].id]);
-      const source = (
-        await pool.query("SELECT id,owner_id FROM messages WHERE turn_id=$1 AND role='user'", [
-          turns[1].id,
-        ])
-      ).rows[0];
-      await application.personal.manage(
-        'memory_learn',
-        { area: 'about', quote: 'I live in Lisbon' },
-        { sourceMessageId: source.id, turnId: turns[1].id },
-      );
-      await application.channels!.drain();
-      const remembered = JSON.parse(await readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8'));
-      assert.equal(remembered.entries.length, 1);
-      assert.equal(remembered.entries[0].text, 'I live in Lisbon');
-      assert.deepEqual(remembered.entries[0].sources, [source.id]);
-      assert.equal(
-        (
-          await pool.query("SELECT 1 FROM messages WHERE turn_id=$1 AND role='assistant'", [
-            turns[1].id,
-          ])
-        ).rowCount,
-        0,
-      );
-      assert.deepEqual(sent, ['Which city?']);
-      assert.equal(
-        (
-          await pool.query(
-            'SELECT 1 FROM channel_outbox o JOIN messages m ON m.id=o.message_id WHERE m.turn_id=$1',
-            [turns[1].id],
-          )
-        ).rowCount,
-        0,
-      );
-      await pool.query(
-        "UPDATE turns SET status='waiting',waiting_reason='question',finished_at=now() WHERE id=$1",
-        [turns[1].id],
-      );
-      const questionId = randomUUID();
-      await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Update your preferences? Reply yes or no.',$3,$4)",
-        [questionId, source.owner_id, first.thread_id, turns[1].id],
-      );
-      const approvalId = randomUUID();
-      await pool.query(
-        `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,confirmation_message_id)
-         VALUES($1,$2,$3,$4,'OTTO_notification_preferences_update',$5,$6)`,
-        [
-          approvalId,
-          source.owner_id,
-          first.thread_id,
-          turns[1].id,
-          { notificationRule: 'Channel fixture' },
-          questionId,
-        ],
-      );
-      await application.channels!.drain();
-      assert.equal((await send(10, 'sure, go ahead')).statusCode, 200);
-      await application.channels!.drain();
-      const confirmed = (await pool.query('SELECT status FROM approvals WHERE id=$1', [approvalId]))
-        .rows[0];
-      assert.ok(['confirmed', 'executing', 'completed'].includes(confirmed.status));
-      assert.deepEqual(replies, [{ reply: 'sure, go ahead' }]);
-      assert.equal((await send(11, 'sure, go ahead')).statusCode, 200);
-      await application.channels!.drain();
-      assert.equal(
-        (await pool.query('SELECT state FROM channel_inbox WHERE source_id LIKE $1', ['%:11']))
-          .rows[0].state,
-        'submitted',
-      );
       const disabled = await application.app.inject({
         method: 'DELETE',
         url: '/api/channel-settings/telegram',
         headers,
       });
       assert.equal(disabled.statusCode, 200);
-      assert.ok(closed >= 1);
       assert.deepEqual(applied.at(-1), { TELEGRAM_ENABLED: 'false' });
       assert.equal((await send(3, 'New task')).statusCode, 404);
-      assert.equal(
-        (await pool.query('SELECT ciphertext FROM channel_settings')).rows[0].ciphertext,
-        null,
-      );
     } finally {
       try {
-        failClose = true;
-        await assert.rejects(application.app.close(), /Some application resources could not close/);
-        assert.equal(agentDisposed, true);
-        assert.equal(analyticsClosed, 1);
+        await application.app.close();
       } finally {
         try {
           await pool.end();

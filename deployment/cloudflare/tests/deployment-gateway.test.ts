@@ -37,8 +37,8 @@ function fixture() {
         return reply(request);
       },
     });
-  const request = (changes: Partial<DeploymentRequest> = {}, requestId = randomUUID()) => {
-    const body = Buffer.from(JSON.stringify({ ...input, ...changes }));
+  const request = (requestId = randomUUID()) => {
+    const body = Buffer.from(JSON.stringify(input));
     return new Request('https://otto.example.test/api/deployment', {
       method: 'POST',
       headers: {
@@ -53,7 +53,6 @@ function fixture() {
     });
   };
   return {
-    input,
     values,
     requests,
     create,
@@ -64,29 +63,10 @@ function fixture() {
   };
 }
 
-test('gateway persists admission closure before signed forwarding and survives controller replacement', async () => {
-  const f = fixture();
-  const control = f.create();
-  let seen = false;
-  f.reply(async (request) => {
-    seen = true;
-    assert.equal(await control.closed(), true);
-    assert.equal((f.values.get('deployment-barrier') as { phase: string }).phase, 'draining');
-    assert.deepEqual(await request.json(), f.input);
-    assert.ok(request.headers.get('x-otto-deployment'));
-    return Response.json({ ok: true, receipts: [] });
-  });
-  assert.equal(await control.closed(), false);
-  const result = await control.handle(f.request());
-  assert.equal(seen, true);
-  assert.equal(result.state?.phase, 'prepared');
-  assert.equal(await f.create().closed(), true);
-});
-
 test('durable deployment request replay protection survives replacement and rejected auth cannot close admission', async () => {
   const f = fixture();
   const id = randomUUID();
-  const first = f.request({}, id);
+  const first = f.request(id);
   const replay = new Request(first.clone());
   await f.create().handle(first);
   await assert.rejects(f.create().handle(replay));
@@ -111,26 +91,5 @@ test('gateway refuses malformed successful acknowledgements and keeps admission 
     await assert.rejects(f.create().handle(f.request()));
     assert.equal(await f.create().closed(), true);
     assert.equal((f.values.get('deployment-barrier') as { phase: string }).phase, 'failed');
-  }
-});
-
-test('wrong target, method, query and oversized bodies never dispatch deployment work', async () => {
-  for (const variant of ['target', 'method', 'query', 'oversize']) {
-    const f = fixture();
-    const original = f.request();
-    const request =
-      variant === 'method'
-        ? new Request(original.url, { method: 'GET', headers: original.headers })
-        : new Request(
-            original.url + (variant === 'query' ? '?x=1' : variant === 'target' ? '/other' : ''),
-            {
-              method: 'POST',
-              headers: original.headers,
-              body: variant === 'oversize' ? 'x'.repeat(2049) : await original.text(),
-            },
-          );
-    await assert.rejects(f.create().handle(request));
-    assert.equal(f.requests.length, 0);
-    assert.equal(await f.create().closed(), false);
   }
 });

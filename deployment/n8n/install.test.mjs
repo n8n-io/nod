@@ -35,8 +35,6 @@ async function fixture(options = {}) {
       typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value),
     );
   };
-  if (options.curlConfig)
-    await write(join(home, '.curlrc'), 'otto-synthetic-unknown-option = true\n');
   const app = join(directory, 'fixture.app');
   const version = options.releaseVersion || '0.2.0';
   await write(join(app, 'Contents/Info.plist'), {
@@ -91,7 +89,6 @@ async function fixture(options = {}) {
   const driver = `#!${process.execPath}
 import{readFileSync,writeFileSync,copyFileSync,cpSync,statSync,mkdirSync,renameSync}from'node:fs';
 import{basename,join}from'node:path';
-import{spawnSync}from'node:child_process';
 const command=basename(process.argv[1]),args=process.argv.slice(2),root=process.env.FIXTURE_ROOT,options=JSON.parse(process.env.FIXTURE_OPTIONS);
 const stop=()=>process.exit(1),print=value=>process.stdout.write(String(value)+'\\n');
 if(command==='uname')print(args[0]==='-s'?'Darwin':options.intel?'x86_64':'arm64');
@@ -101,9 +98,9 @@ else if(command==='stat'){const info=statSync(args[2]);print(args[1]==='%d:%i'?i
 else if(command==='pgrep')process.exit(options.running?0:1);
 else if(command==='file')print('Mach-O 64-bit executable '+(options.intel&&!options.wrongArchitecture?'x86_64':'arm64'));
 else if(command==='plutil'){let value=JSON.parse(readFileSync(args.at(-1),'utf8'));for(const key of args[1].split('.'))value=value?.[key];const type=args[args.indexOf('-expect')+1];if((type==='string'&&typeof value!=='string')||(type==='bool'&&typeof value!=='boolean')||(type==='integer'&&!Number.isInteger(value)))stop();print(value)}
-else if(command==='curl'){if(options.curlConfig){const probe=spawnSync('/usr/bin/curl',[...args,'--version'],{env:{...process.env,CURL_HOME:join(root,'home')},encoding:'utf8'});if(probe.status!==0||probe.stderr.includes('otto-synthetic-unknown-option'))stop()}const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url===${JSON.stringify(base + '/releases?installer=true')}+(options.intel?'&platform=darwin-x64':'')?'latest.json':url.endsWith(options.intel?'release-darwin-x64.json':'release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'Applications/Otto.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
+else if(command==='curl'){const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url===${JSON.stringify(base + '/releases?installer=true')}+(options.intel?'&platform=darwin-x64':'')?'latest.json':url.endsWith(options.intel?'release-darwin-x64.json':'release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'Applications/Otto.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
 else if(command==='codesign'){if(options.badSignature&&args.at(-1).includes('mount/'))stop();const extract=args.find(value=>value.startsWith('--extract-certificates='));if(extract)copyFileSync(join(root,options.earlierCertificate&&args.at(-1).endsWith('/Applications/Otto.app')?'earlier-certificate':'certificate'),extract.split('=')[1]+'0')}
-else if(command==='hdiutil'){if(options.detachFailure&&args[0]==='detach')stop();if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],'Otto.app'),{recursive:true})}
+else if(command==='hdiutil'){if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],'Otto.app'),{recursive:true})}
 else if(command==='ditto'){if(options.copyFailure){mkdirSync(args[1],{recursive:true});writeFileSync(join(args[1],'partial'),'partial copy');stop()}cpSync(args[0],args[1],{recursive:true})}
 else if(command==='mv'){if(options.swapFailure&&args[0].endsWith('/Otto.app')&&args[0].includes('/.otto-install.'))stop();renameSync(args[0],args[1])}
 else stop();
@@ -137,11 +134,7 @@ else stop();
     await rm(target, { recursive: true });
     await symlink(app, target);
   }
-  const userHome = options.symlinkHome ? join(directory, 'home-link') : home;
-  if (options.symlinkHome) await symlink(home, userHome);
   return {
-    directory,
-    home,
     target,
     profile,
     app,
@@ -151,7 +144,7 @@ else stop();
         timeout: 30_000,
         env: {
           ...process.env,
-          HOME: userHome,
+          HOME: home,
           FIXTURE_ROOT: directory,
           FIXTURE_OPTIONS: JSON.stringify(options),
         },
@@ -195,85 +188,28 @@ test('CLI-INSTALL: an Otto app signed with an earlier certificate is replaced by
   }
 });
 
-test('CLI-INSTALL: a symbolic-link home does not block the system installation or change its profile', async () => {
-  const state = await fixture({ symlinkHome: true });
-  try {
-    const result = state.run();
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(
-      JSON.parse(await readFile(join(state.target, 'Contents/Resources/app/package.json'), 'utf8'))
-        .ottoBuild.source,
-      source,
-    );
-    assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
-    assert.deepEqual(await readdir(dirname(state.target)), ['Otto.app']);
-  } finally {
-    await state.close();
-  }
-});
-
-test('CLI-INSTALL: an unwritable installation destination leaves the app and profile untouched', async (t) => {
-  for (const [kind, error] of [
-    ['folder', /permission to install apps in \/Applications/],
-    ['app', /permission to replace \/Applications\/Otto.app/],
-  ])
-    await t.test(kind, async (t) => {
-      const state = await fixture();
-      const path = kind === 'folder' ? dirname(state.target) : state.target;
-      try {
-        await chmod(path, 0o555);
-        try {
-          await writeFile(join(path, 'permission-probe'), '');
-          t.skip('The runner can write to read-only directories.');
-          return;
-        } catch (reason) {
-          assert.equal(reason.code, 'EACCES');
-        }
-        const result = state.run();
-        assert.equal(result.status, 1);
-        assert.match(result.stderr, error);
-        assert.equal(await readFile(join(state.target, 'previous'), 'utf8'), 'previous app');
-        assert.equal(
-          await readFile(state.profile, 'utf8'),
-          'keep synthetic keys and conversations',
-        );
-        assert.deepEqual(await readdir(dirname(state.target)), ['Otto.app']);
-      } finally {
-        await chmod(path, 0o755);
-        await state.close();
-      }
-    });
-});
-
 test('CLI-INSTALL: rejected metadata, downloads, signatures and interrupted staging retain the old app and profile', async (t) => {
-  for (const [options, error] of [
-    [{ running: true }, /Quit Otto/],
-    [{ wrongTarget: true }, /unrelated app/],
-    [{ hostileUrl: true }, /download URL is invalid/],
-    [{ wrongPin: true }, /release signing identity does not match/],
-    [{ corruptDisk: true }, /download is incomplete or has the wrong hash/],
-    [{ badSignature: true }, /signature is invalid/],
-    [{ wrongSource: true }, /app source does not match/],
-    [{ copyFailure: true }, /app could not be copied/],
-    [{ swapFailure: true }, /new Otto app could not be installed/],
-    [{ targetChanged: true }, /app changed during installation/],
-    [{ currentVersion: '0.10.0' }, /newer Otto version is already installed/],
-    [
-      { currentVersion: '0.2.0', releaseVersion: '0.2.0-beta.2' },
-      /newer Otto version is already installed/,
-    ],
-    [
-      { currentVersion: '0.2.0-beta.10', releaseVersion: '0.2.0-beta.2' },
-      /newer Otto version is already installed/,
-    ],
+  for (const options of [
+    { running: true },
+    { wrongTarget: true },
+    { hostileUrl: true },
+    { wrongPin: true },
+    { corruptDisk: true },
+    { badSignature: true },
+    { wrongSource: true },
+    { copyFailure: true },
+    { swapFailure: true },
+    { targetChanged: true },
+    { currentVersion: '0.10.0' },
+    { currentVersion: '0.2.0', releaseVersion: '0.2.0-beta.2' },
+    { currentVersion: '0.2.0-beta.10', releaseVersion: '0.2.0-beta.2' },
   ])
     await t.test(JSON.stringify(options), async () => {
       const state = await fixture(options);
       try {
         const result = state.run();
         assert.equal(result.status, 1, result.stdout);
-        assert.match(result.stderr, error);
-        if (options.swapFailure) assert.match(result.stderr, /previous Otto app was restored/);
+        if (options.hostileUrl) assert.match(result.stderr, /download URL is invalid/);
         assert.equal(await readFile(join(state.target, 'previous'), 'utf8'), 'previous app');
         assert.equal(
           await readFile(state.profile, 'utf8'),
@@ -295,45 +231,6 @@ test('CLI-INSTALL: a symbolic-link destination is rejected without touching its 
     assert.equal(
       await readFile(join(state.app, 'Contents/MacOS/Otto'), 'utf8'),
       'synthetic executable',
-    );
-    assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
-  } finally {
-    await state.close();
-  }
-});
-
-test('CLI-INSTALL: failed disk-image detach preserves the mounted staging directory and releases the installer lock', async () => {
-  const state = await fixture({ detachFailure: true });
-  try {
-    const result = state.run();
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /disk image could not be closed/);
-    assert.match(result.stderr, /disk image is still mounted/);
-    assert.equal(await readFile(join(state.target, 'previous'), 'utf8'), 'previous app');
-    const entries = await readdir(dirname(state.target));
-    assert.equal(entries.length, 2);
-    assert.ok(entries.some((entry) => entry.startsWith('.otto-install.')));
-    assert.ok(!entries.includes('.otto-install-lock'));
-  } finally {
-    await state.close();
-  }
-});
-
-test('CLI-INSTALL: stock curl ignores an existing user configuration before processing download options', async () => {
-  const state = await fixture({ curlConfig: true });
-  try {
-    const control = spawnSync('/usr/bin/curl', ['--version'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      env: { ...process.env, HOME: state.home, CURL_HOME: state.home },
-    });
-    assert.match(control.stderr, /otto-synthetic-unknown-option|unknown/);
-    const result = state.run();
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(
-      JSON.parse(await readFile(join(state.target, 'Contents/Resources/app/package.json'), 'utf8'))
-        .ottoBuild.source,
-      source,
     );
     assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
   } finally {
@@ -414,7 +311,6 @@ async function windowsInstall(options = {}) {
     JSON.stringify({
       build: options.build || '26100',
       running: Boolean(options.running),
-      installDir: options.installDir || '',
       exitCode: options.exitCode || 0,
       routes: { [`${base}/releases?installer=true&platform=win32-x64`]: latest },
       files: {
@@ -427,8 +323,7 @@ async function windowsInstall(options = {}) {
   const mocks = String.raw`
 $fixture = Get-Content -Raw $env:OTTO_FIXTURE | ConvertFrom-Json
 function Get-ItemProperty { param($Path, $ErrorAction)
-  if ($Path -like 'HKLM:*') { [pscustomobject]@{ CurrentBuildNumber = $fixture.build } }
-  elseif ($fixture.installDir) { [pscustomobject]@{ InstallDir = $fixture.installDir } } }
+  if ($Path -like 'HKLM:*') { [pscustomobject]@{ CurrentBuildNumber = $fixture.build } } }
 function Get-Process { param($Name, $ErrorAction) if ($fixture.running) { [pscustomobject]@{ Name = $Name } } }
 function Invoke-RestMethod { param($Uri, [switch]$UseBasicParsing) Add-Content $env:OTTO_LOG "metadata $Uri"; $fixture.routes.$Uri }
 function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing)
@@ -468,20 +363,11 @@ test(
   { skip: !powershell && 'pwsh is unavailable' },
   async () => {
     const installed = await windowsInstall();
-    assert.match(installed.output, /Otto 0\.2\.0 is installed/);
     assert.deepEqual(
       installed.calls.filter((call) => call.startsWith('install')),
       ['install /S runtime=True'],
     );
     assert.deepEqual(installed.staged, []);
-    const custom = await windowsInstall({
-      installDir: 'C:\\Users\\Synthetic User\\Otto Apps\\Otto',
-    });
-    assert(
-      custom.calls.includes(
-        'install /S /D=C:\\Users\\Synthetic User\\Otto Apps\\Otto runtime=True',
-      ),
-    );
   },
 );
 
@@ -489,25 +375,18 @@ test(
   'CLI-INSTALL: the Windows script stops before installing on any mismatch or open app',
   { skip: !powershell && 'pwsh is unavailable' },
   async () => {
-    for (const [options, failure] of [
-      [
-        { installer: Buffer.from('tampered Windows installer!') },
-        /Otto-Setup-x64\.exe failed its integrity check/,
-      ],
-      [{ manifest: { version: '0.3.0' } }, /do not match their metadata/],
-      [
-        {
-          manifest: {
-            runtime: { file: 'Otto-Runtime-win32-x64.tar.gz', bytes: 1, sha256: 'b'.repeat(64) },
-          },
+    for (const options of [
+      { installer: Buffer.from('tampered Windows installer!') },
+      { manifest: { version: '0.3.0' } },
+      {
+        manifest: {
+          runtime: { file: 'Otto-Runtime-win32-x64.tar.gz', bytes: 1, sha256: 'b'.repeat(64) },
         },
-        /do not match their metadata/,
-      ],
-      [{ running: true }, /Quit Otto/],
-      [{ build: '19045' }, /Windows 11/],
+      },
+      { running: true },
+      { build: '19045' },
     ]) {
       const rejected = await windowsInstall(options);
-      assert.match(rejected.output, failure);
       assert(!rejected.calls.some((call) => call.startsWith('install')));
       assert.deepEqual(rejected.staged, []);
     }

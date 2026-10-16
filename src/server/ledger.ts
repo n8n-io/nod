@@ -56,8 +56,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
   const activeTurn = new AsyncLocalStorage<string>();
   const activeExecution = new AsyncLocalStorage<ExecutionScope>();
   async function initialize() {
-    await pool.query(`DROP TABLE IF EXISTS provider_usage;
-    CREATE TABLE IF NOT EXISTS model_usage (
+    await pool.query(`CREATE TABLE IF NOT EXISTS model_usage (
       id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
       cost_usd double precision, created_at timestamptz NOT NULL DEFAULT now()
     );

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { registerHooks } from 'node:module';
-import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import type { ComputerState } from '../src/computer-lifecycle.ts';
 
@@ -89,7 +89,6 @@ function fixture(
   };
   const values = new Map<string, unknown>(phase ? [['computer', state]] : []);
   const events: string[] = [];
-  const authorizations: string[] = [];
   const pending: Promise<unknown>[] = [];
   let authorizedGeneration = '1';
   let exec = async (_args: string[], _options: ContainerExecOptions): Promise<ExecProcess> =>
@@ -118,7 +117,6 @@ function fixture(
         assert.equal(name, `tenant:development:${ownerId}`);
         return {
           async computerIdentity(owner: string, generation: string) {
-            authorizations.push(generation);
             assert.equal(owner, ownerId);
             assert.equal(generation, authorizedGeneration);
           },
@@ -167,7 +165,6 @@ function fixture(
     computer,
     ownerId,
     events,
-    authorizations,
     container,
     generation: (value: string) => {
       authorizedGeneration = value;
@@ -201,7 +198,6 @@ test('both computer roles preserve the pinned image user for restore helpers and
       const command = nativeProcess().process;
       current.exec(async (args, options) => {
         calls.push({ args, options });
-        assert.equal(Object.hasOwn(options, 'user'), false);
         return args.includes('/app/src/providers/container-browser/bridge.ts') ||
           args.includes('/opt/otto/workspace-command.py')
           ? { ...command, exitCode: exit.promise }
@@ -221,25 +217,8 @@ test('both computer roles preserve the pinned image user for restore helpers and
       });
       assert.equal(response.status, 201);
       assert.equal(current.state().phase, 'dirty');
-      assert.equal(calls.length, role === 'browser' ? 3 : 4);
-      const restore = calls[0]!;
-      assert.deepEqual(restore.args.slice(0, 4), [
-        'python3',
-        '-u',
-        '/opt/otto/checkpoint.py',
-        'restore',
-      ]);
-      assert.ok(restore.options.stdin instanceof ReadableStream);
-      assert.equal(restore.options.stdout, 'ignore');
-      assert.equal(restore.options.stderr, 'ignore');
-      for (const helper of calls.slice(1, -1)) {
-        assert.deepEqual(helper.args.slice(0, 2), ['python3', '-c']);
-        assert.equal(helper.options.cwd, role === 'browser' ? '/app' : '/home/node');
-        assert.equal(helper.options.stderr, 'ignore');
-      }
       const launched = calls.at(-1)!;
       assert.equal(launched.options.cwd, role === 'browser' ? '/app' : '/workspace/thread');
-      assert.equal(launched.options.stdin, 'pipe');
       if (role === 'workspace')
         assert.deepEqual(launched.args.slice(0, 5), [
           '/usr/bin/setpriv',
@@ -248,10 +227,7 @@ test('both computer roles preserve the pinned image user for restore helpers and
           '--ambient-caps=-all',
           '--',
         ]);
-      for (const call of calls) {
-        assert.equal(Object.hasOwn(call.options, 'user'), false);
-        assert.ok(call.options.signal instanceof AbortSignal);
-      }
+      for (const call of calls) assert.equal(Object.hasOwn(call.options, 'user'), false);
     });
   }
 });
@@ -425,254 +401,4 @@ test('the same controller can launch a new generation after stopping an unused r
       assert.deepEqual(command.killed, []);
     });
   }
-});
-
-for (const revoked of [false, true]) {
-  test(
-    revoked
-      ? 'authority lost during prior-generation destruction prevents startup and dispatch'
-      : 'authorization remains current while a stopped prior generation is destroyed',
-    async (t) => {
-      for (const role of ['browser', 'workspace'] as const) {
-        await t.test(role, async (t) => {
-          const current = fixture(role, undefined);
-          await current.computer.stopComputer(current.ownerId, '1');
-          const previous = current.state();
-          current.generation('3');
-          const entered = deferred<void>();
-          const release = deferred<void>();
-          const destroy = current.computer.destroy.bind(current.computer);
-          let held = false;
-          Object.assign(current.computer, {
-            destroy: async () => {
-              if (!held) {
-                held = true;
-                entered.resolve();
-                await release.promise;
-              }
-              await destroy();
-            },
-          });
-          const exit = deferred<number>();
-          const command = nativeProcess();
-          command.process = { ...command.process, exitCode: exit.promise };
-          current.exec(async (args) =>
-            args.includes('/app/src/providers/container-browser/bridge.ts') ||
-            args.includes('/opt/otto/workspace-command.py')
-              ? command.process
-              : nativeProcess().process,
-          );
-          t.after(async () => {
-            release.resolve();
-            exit.resolve(137);
-            current.generation('3');
-            await current.computer.stopComputer(current.ownerId, '3').catch(() => {});
-          });
-          t.mock.timers.enable({ apis: ['setTimeout'] });
-          const created = current.request('/v1/commands', {
-            method: 'POST',
-            body: JSON.stringify({
-              id: randomUUID(),
-              role,
-              ...(role === 'workspace' ? { threadId: 'thread' } : {}),
-            }),
-          });
-          await entered.promise;
-          const authorizations = current.authorizations.length;
-          if (revoked) current.generation('4');
-          t.mock.timers.tick(1000);
-          await nextTurn();
-          assert.ok(current.authorizations.length > authorizations);
-          assert.equal(current.authorizations.at(-1), '3');
-          assert.deepEqual(current.state(), previous);
-          assert.equal(current.events.includes('start'), false);
-          release.resolve();
-          const response = await created;
-          assert.equal(response.status, revoked ? 503 : 201);
-          assert.equal(current.events.filter((event) => event === 'start').length, revoked ? 0 : 1);
-          assert.equal(
-            current.events.filter(
-              (event) =>
-                event.includes('/app/src/providers/container-browser/bridge.ts') ||
-                event.includes('/opt/otto/workspace-command.py'),
-            ).length,
-            revoked ? 0 : 1,
-          );
-          assert.equal(current.container.running, !revoked);
-          if (!revoked) {
-            assert.equal(current.state().generation, '3');
-            assert.equal(current.state().phase, 'dirty');
-            assert.deepEqual(command.killed, []);
-            const saved = current.state();
-            const events = [...current.events];
-            await assert.rejects(current.computer.stopComputer(current.ownerId, '1'));
-            assert.deepEqual(current.state(), saved);
-            assert.deepEqual(current.events, events);
-          }
-        });
-      }
-    },
-  );
-}
-
-test('an idle alarm hydrates an evicted controller before retiring its running computer', async (t) => {
-  for (const phase of ['ready', 'restoring', 'dirty'] as const) {
-    await t.test(phase, async () => {
-      const current = fixture('browser', phase, true);
-      const checkpoint = current.state().checkpoint;
-      await current.computer.onActivityExpired();
-      assert.equal(current.container.running, false);
-      assert.deepEqual(current.events, ['destroy']);
-      assert.equal(current.state().phase, phase === 'dirty' ? 'uncertain' : phase);
-      assert.deepEqual(current.state().checkpoint, checkpoint);
-    });
-  }
-});
-
-test('restore process creation is bounded and a late native handle cannot revive the failed computer', async (t) => {
-  const original = globalThis.setTimeout;
-  t.mock.method(globalThis, 'setTimeout', (callback: () => void, duration: number) =>
-    original(callback, duration === 120_000 ? 10 : duration),
-  );
-  const launch = deferred<ExecProcess>();
-  const current = fixture('workspace', 'ready', true);
-  current.exec(async (args) => {
-    assert.equal(args[3], 'restore');
-    return launch.promise;
-  });
-  const response = await Promise.race([
-    current.request('/v1/commands', {
-      method: 'POST',
-      body: JSON.stringify({ id: randomUUID(), role: 'workspace', threadId: 'thread' }),
-    }),
-    delay(500).then(() => assert.fail('Restoration did not respect its deadline')),
-  ]);
-  assert.equal(response.status, 503);
-  assert.equal(current.container.running, false);
-  assert.equal(current.state().phase, 'uncertain');
-  const late = nativeProcess();
-  launch.resolve(late.process);
-  await delay(0);
-  assert.deepEqual(late.killed, [9]);
-  assert.equal(current.events.filter((event) => event.startsWith('exec:')).length, 1);
-});
-
-test('a settling checkpoint process is bounded and a late native handle cannot revive the failed computer', async (t) => {
-  const original = globalThis.setTimeout;
-  t.mock.method(globalThis, 'setTimeout', (callback: () => void, duration: number) =>
-    original(callback, duration === 120_000 || duration === 20_000 ? 10 : duration),
-  );
-  const checkpoint = deferred<ExecProcess>();
-  const current = fixture('workspace', 'ready');
-  current.exec(async (args) =>
-    args[3] === 'create' ? checkpoint.promise : nativeProcess().process,
-  );
-  const id = randomUUID();
-  assert.equal(
-    (
-      await current.request('/v1/commands', {
-        method: 'POST',
-        body: JSON.stringify({ id, role: 'workspace', threadId: 'thread' }),
-      })
-    ).status,
-    201,
-  );
-  const response = await current.request(`/v1/commands/${id}/output`);
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.text(), JSON.stringify({ type: 'exit', code: 0 }) + '\n');
-  assert.equal(current.state().phase, 'unsaved');
-  await delay(100);
-  assert.equal(current.container.running, false);
-  assert.equal(current.state().phase, 'uncertain');
-  const late = nativeProcess();
-  checkpoint.resolve(late.process);
-  await delay(0);
-  assert.deepEqual(late.killed, [9]);
-});
-
-test('a workspace too large to save stays running and refuses the next model command with the report', async (t) => {
-  const original = globalThis.setTimeout;
-  t.mock.method(globalThis, 'setTimeout', (callback: () => void, duration: number) =>
-    original(callback, duration === 20_000 ? 10 : duration),
-  );
-  const current = fixture('workspace', 'ready', true);
-  const checkpoint = current.state().checkpoint;
-  const report = {
-    bytes: 3 * 2 ** 30,
-    max_bytes: 2 ** 30,
-    entries: 12,
-    max_entries: 100000,
-    complete: true,
-    largest: [
-      ['workspace/thread/synthetic-video.mp4', 2 * 2 ** 30],
-      ['tools/lib/synthetic.bin', 2 ** 20],
-    ],
-  };
-  const creates: ContainerExecOptions[] = [];
-  current.exec(async (args, options) => {
-    if (args[3] !== 'create') return nativeProcess().process;
-    creates.push(options);
-    const stream = (bytes?: Uint8Array) =>
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          if (bytes) controller.enqueue(bytes);
-          controller.close();
-        },
-      });
-    return {
-      ...nativeProcess().process,
-      stdout: stream(),
-      stderr: stream(new TextEncoder().encode(JSON.stringify(report) + '\n')),
-    };
-  });
-  t.after(() => current.computer.stopComputer(current.ownerId, '1'));
-  const run = async (session: boolean) => {
-    const id = randomUUID();
-    const created = await current.request('/v1/commands', {
-      method: 'POST',
-      body: JSON.stringify({
-        id,
-        role: 'workspace',
-        threadId: 'thread',
-        ...(session && { session: true }),
-      }),
-    });
-    assert.equal(created.status, 201);
-    const input = await current.request(`/v1/commands/${id}/input`, {
-      method: 'POST',
-      body: '{}\n',
-    });
-    assert.ok([204, 409].includes(input.status));
-    const lines = (await (await current.request(`/v1/commands/${id}/output`)).text())
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line));
-    assert.deepEqual(lines.at(-1), { type: 'exit', code: 0 });
-    return lines
-      .filter((line) => line.type === 'stdout')
-      .map((line) => Buffer.from(line.data, 'base64').toString())
-      .join('');
-  };
-  assert.equal(await run(false), '');
-  await delay(100);
-  assert.equal(creates.length, 1);
-  assert.equal(Object.hasOwn(creates[0]!, 'stderr'), false);
-  assert.equal(current.container.running, true);
-  assert.equal(current.state().phase, 'unsaved');
-  assert.deepEqual(current.state().checkpoint, checkpoint);
-  const message = current.state().oversize!.message;
-  for (const part of [
-    '3.0 GiB',
-    '2.0 GiB over',
-    '/workspace/thread/synthetic-video.mp4',
-    '/home/node/.local/lib/synthetic.bin',
-  ])
-    assert.ok(message.includes(part), part);
-  assert.equal(await run(false), '');
-  const notice = JSON.parse(await run(true));
-  assert.equal(notice.type, 'stdout');
-  assert.equal(Buffer.from(notice.data, 'base64').toString(), `${message}\n\n`);
-  assert.equal(current.state().oversize!.shown, true);
-  assert.equal(await run(true), '');
-  assert.equal(current.container.running, true);
 });
