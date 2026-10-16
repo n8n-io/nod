@@ -10,7 +10,7 @@ function mailbox(now: number): Mail[] {
   return [
     {
       id: receipt,
-      from: 'Figma <billing@figma.example.com>',
+      from: 'Figma <billing@figma.com>',
       to: owner.email,
       subject: 'Your Figma receipt',
       body: 'Thanks for your payment of €15.00 for Figma Professional (monthly). Receipt #2291-4471.',
@@ -18,7 +18,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'figma-receipt-last-month',
-      from: 'Figma <billing@figma.example.com>',
+      from: 'Figma <billing@figma.com>',
       to: owner.email,
       subject: 'Your Figma receipt',
       body: 'Thanks for your payment of €15.00 for Figma Professional (monthly). Receipt #2291-3980.',
@@ -27,7 +27,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'figma-comment',
-      from: 'Figma <no-reply@figma.example.com>',
+      from: 'Figma <no-reply@figma.com>',
       to: owner.email,
       subject: 'Lena commented on "Meridian brand kit"',
       body: 'Lena: "Can we try the wordmark a touch heavier?"',
@@ -36,7 +36,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'notion-receipt',
-      from: 'Notion <billing@notion.example.com>',
+      from: 'Notion <billing@notion.so>',
       to: owner.email,
       subject: 'Your Notion receipt',
       body: 'Thanks for your payment of €10.00 for Notion Plus (monthly).',

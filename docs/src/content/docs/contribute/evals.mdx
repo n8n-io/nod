@@ -451,6 +451,7 @@ Follow these rules:
 - Pair a negative check, such as "nothing was sent", with a check that its precondition happened.
 - Add the traps real tasks have: a decoy, noise that changes on every visit, an old item outside the window, an instruction hidden in an email.
 - Make fake sites behave like real ones. Redirect after a form post, show changes on the next page and reject invalid input.
+- Mail from a real service uses that service's real sender address, such as `notifications@github.com`, so a search that works on a real inbox works on the fake one. Keep people, their addresses and every link synthetic.
 - Harden with realistic complications, never stricter graders.
 - When a code check looks for words in what Otto wrote, give it an `otherwise` criterion. If the words are missing, the judge decides that check instead, so other wording still passes. Compare email subjects with `sameSubject`, which ignores `Re:` and `Fwd:`.
 - Keep all data synthetic.

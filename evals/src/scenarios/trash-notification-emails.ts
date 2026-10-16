@@ -4,7 +4,7 @@ import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { daysAgo, hoursAgo } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
-const sender = 'LinkedIn <notifications@linkedin-mail.example.com>';
+const sender = 'LinkedIn <notifications@linkedin.com>';
 const footer =
   '\n\nYou are receiving LinkedIn notification emails. Unsubscribe: https://linkedin-mail.example.com/settings/email';
 
@@ -167,7 +167,7 @@ export default scenario({
             [...world.original[id]].sort().join(),
         )
         .join(', ') || 'none'
-    }.\nGround truth: the six LinkedIn notification emails are ${notifications.join(', ')}, all from notifications@linkedin-mail.example.com. Sara Kim is a recruiter writing personally and Linda Park is a friend; both mention LinkedIn but are not notifications.`,
+    }.\nGround truth: the six LinkedIn notification emails are ${notifications.join(', ')}, all from notifications@linkedin.com. Sara Kim is a recruiter writing personally and Linda Park is a friend; both mention LinkedIn but are not notifications.`,
   expect(world) {
     return [
       check('trashed-the-six-notifications', (run) => {

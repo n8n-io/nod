@@ -4,7 +4,7 @@ import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { daysAgo, hoursAgo } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
-const github = 'GitHub <notifications@github-mail.example.com>';
+const github = 'GitHub <notifications@github.com>';
 const footer =
   '\n\n--\nReply to this email directly or view it on GitHub. You are receiving this because you were mentioned or subscribed to this thread.\nUnsubscribe: https://github-mail.example.com/notifications/unsubscribe';
 
@@ -167,7 +167,7 @@ export default scenario({
       )
       .join(
         ' | ',
-      )}\nGround truth: seven unread GitHub notifications from notifications@github-mail.example.com (${unread.join(', ')}) and two already read. Marta Dias's question about her PR, the CircleTrack CI build email and Hugo's brief are not GitHub notifications and were unread.`,
+      )}\nGround truth: seven unread GitHub notifications from notifications@github.com (${unread.join(', ')}) and two already read. Marta Dias's question about her PR, the CircleTrack CI build email and Hugo's brief are not GitHub notifications and were unread.`,
   expect(world) {
     return [
       check('no-github-notification-left-unread', (run) => {

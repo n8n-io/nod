@@ -85,7 +85,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'figma',
-      from: 'Figma <billing@figma.example.com>',
+      from: 'Figma <billing@figma.com>',
       subject: 'Your Figma receipt',
       body: 'Thanks for your payment of €15.00 for Figma Professional (monthly).',
       at: daysAgo(now, 4),

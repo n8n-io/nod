@@ -100,7 +100,7 @@ const newsletters: Array<[string, string, string]> = [
 const notifications: Array<[string, string, string, string]> = [
   [
     'figma',
-    'Figma <billing@figma.example.com>',
+    'Figma <billing@figma.com>',
     'Your Figma receipt',
     'Thanks for your payment of €15.00 for Figma Professional (monthly).',
   ],
@@ -112,7 +112,7 @@ const notifications: Array<[string, string, string, string]> = [
   ],
   [
     'linkedin',
-    'LinkedIn <notifications@linkedin.example.com>',
+    'LinkedIn <notifications@linkedin.com>',
     'You appeared in 12 searches this week',
     'See who is looking at your profile.',
   ],
