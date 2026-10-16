@@ -25,6 +25,8 @@ const browserErrors = {
   browser_target_changed:
     'Otto could not confirm it was still on the page and control it checked, so nothing was done. Take a fresh snapshot and choose the control again.',
   browser_script_writes: 'This script changes the page, so it needs a check before it runs.',
+  browser_download_control:
+    'This control is not a download link. Click it, then download without a selector to save the file it starts.',
 } as const;
 
 export type BrowserErrorCode = keyof typeof browserErrors;

@@ -73,6 +73,8 @@ export interface BrowserDownloadInput {
   selector?: string;
   url?: string;
   name?: string;
+  expectOrigin?: string;
+  expectUrl?: string;
 }
 export interface BrowserDownload {
   bytes: Buffer;

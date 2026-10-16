@@ -3138,7 +3138,7 @@ test(
         await post(quote, { role: 'assistant' }),
       ]) {
         await assert.rejects(memory.learn({ area: 'preferences', quote }, provenance));
-        await assert.rejects(memory.control({ enabled: false, quote }, provenance));
+        await assert.rejects(memory.currentSource(provenance, quote));
       }
       const secret = 'My key is sk-fixturefixture1234.';
       await assert.rejects(memory.learn({ area: 'about', quote: secret }, await post(secret)));
@@ -3160,10 +3160,9 @@ test(
       assert.equal((await memory.load()).archive.length, 1);
       const disable = 'Não guardes mais informações sobre mim.';
       const disableSource = await post(disable);
-      await assert.rejects(
-        memory.control({ enabled: false, quote: 'A different request.' }, disableSource),
-      );
-      await memory.control({ enabled: false, quote: disable }, disableSource);
+      await assert.rejects(memory.currentSource(disableSource, 'A different request.'));
+      await memory.currentSource(disableSource, disable);
+      await memory.control({ enabled: false });
       const reopened = createMemoryService({ pool, ownerId, store });
       assert.equal(await reopened.enabled(), false);
       const before = await reopened.load();
@@ -3183,8 +3182,7 @@ test(
         false,
       );
 
-      const clear = 'Apaga tudo o que guardaste sobre mim.';
-      await reopened.control({ clear: true, quote: clear }, await post(clear));
+      await reopened.control({ clear: true });
       const cleared = await createMemoryService({ pool, ownerId, store }).load();
       assert.deepEqual(cleared.entries, []);
       assert.deepEqual(cleared.archive, []);
@@ -3195,8 +3193,7 @@ test(
         1,
       );
 
-      const enable = 'Du darfst dir meine Angaben wieder merken.';
-      await memory.control({ enabled: true, quote: enable }, await post(enable));
+      await memory.control({ enabled: true });
       assert.equal(await reopened.enabled(), true);
       await reopened.learn({ area: 'preferences', quote: blocked }, await post(blocked));
       assert.deepEqual(
@@ -3233,16 +3230,14 @@ test(
         });
       const pending = learning.reflect();
       await entered;
-      const disable = 'No guardes más información sobre mí.';
-      await memory.control({ enabled: false, quote: disable }, await post(disable));
+      await memory.control({ enabled: false });
       const disabled = await memory.load();
       assert.equal(await learning.reflect(), 0);
       await learning.run();
       assert.equal(calls.length, 1);
       assert.deepEqual(await memory.load(), disabled);
 
-      const enable = 'Puedes volver a recordar mis preferencias.';
-      await memory.control({ enabled: true, quote: enable }, await post(enable));
+      await memory.control({ enabled: true });
       const resumed = await memory.load();
       release({
         ops: [
