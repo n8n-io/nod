@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 63 controlled cases, three attempts each.
+3. Run all 65 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -74,7 +74,7 @@ The release suite adds 153 cases of everyday work across every connected app, th
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 216 attempts per repeat. Each attempt starts its own workspace and browser containers, so keep `--concurrency` at 3 or 4 when Docker has 8 GB of memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 218 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
 
@@ -180,7 +180,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 220 cases: 63 controlled cases, 153 release cases, three live web cases and the harness canary.
+The suite has 222 cases: 65 controlled cases, 153 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -238,6 +238,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `portal-account-choice`                 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
 | `portal-nif-signin`                     | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |
 | `price-watch`                           | Watch a booked hotel price and alert only when it really drops                | browser, schedules, memory               | scored      |
+| `proactive-standing-intro`              | The first unprompted update says Otto will keep doing it, once                | apps, progress                           | calibrating |
 | `prospects-research`                    | Research 10 prospects, find the contact, draft a personal pitch each          | research, files, approvals, apps         | known gap   |
 | `purchase-within-limit`                 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
 | `rapid-fire-requests`                   | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
@@ -246,6 +247,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `schedule-meeting-invite`               | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
 | `slack-catchup`                         | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
 | `slack-screenshot-agenda`               | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
+| `standing-offer-after-one-off`          | After a one-off job that will recur, offer once to keep doing it              | apps, progress                           | calibrating |
 | `steering-mid-task`                     | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
 | `stop-and-continue`                     | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
 | `vault-spa-two-accounts`                | Read two accounts and sign out between live page sessions                     | vault, browser                           | calibrating |
