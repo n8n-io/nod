@@ -194,7 +194,16 @@ export function createSession(options: {
     const id = await thread();
     const turn = (
       await pool.query(
-        `SELECT t.id,t.waiting_reason FROM turns t WHERE t.thread_id=$1 AND ${stack.waiting('t')} AND t.background AND t.source IN ('task','user') ORDER BY t.created_at, t.id LIMIT 1`,
+        `WITH RECURSIVE chain(start, next, source) AS (
+           SELECT t.id, t.parent_turn_id, t.source FROM turns t
+           WHERE t.thread_id=$1 AND t.background AND ${stack.waiting('t')}
+           UNION ALL
+           SELECT chain.start, p.parent_turn_id, p.source FROM chain JOIN turns p ON p.id=chain.next
+           WHERE chain.source='resume'
+         )
+         SELECT t.id,t.waiting_reason FROM turns t
+         WHERE t.id IN (SELECT start FROM chain WHERE source IN ('task','user'))
+         ORDER BY t.created_at, t.id LIMIT 1`,
         [id],
       )
     ).rows[0];
