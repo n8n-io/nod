@@ -34,6 +34,20 @@ const worker = await startContainerBrowserWorker({
     });
     return {
       ...computer,
+      act: async (...args: Parameters<typeof computer.act>) => {
+        try {
+          return await computer.act(...args);
+        } catch (error) {
+          console.error(
+            JSON.stringify({
+              event: 'browser_error',
+              action: (args[1] as { action?: unknown })?.action,
+              message: String(error instanceof Error ? error.message : error).slice(0, 500),
+            }),
+          );
+          throw error;
+        }
+      },
       dispose: async () => {
         try {
           await computer.dispose?.();

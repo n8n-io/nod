@@ -149,7 +149,13 @@ export async function startStack(options: {
   let databasePool: pg.Pool | undefined;
   async function stop() {
     await application?.app.close().catch(() => {});
-    if (browserStarted) await runProcess('docker', ['rm', '-f', browserContainer]).catch(() => {});
+    if (browserStarted) {
+      const logs = await runProcess('docker', ['logs', '--tail', '200', browserContainer]).catch(
+        () => undefined,
+      );
+      if (logs) process.stderr.write(`Browser container output:\n${logs.stdout}${logs.stderr}\n`);
+      await runProcess('docker', ['rm', '-f', browserContainer]).catch(() => {});
+    }
     if (containerStarted) await runProcess('docker', ['rm', '-f', container]).catch(() => {});
     await databasePool?.end().catch(() => {});
     await admin
