@@ -73,16 +73,17 @@ export async function grade(options: {
         });
         for (const verdict of verdicts) {
           const source = list.find((item) => item.id === verdict.id)!;
+          const fallback = group === 'task' && rescued.has(verdict.id);
           checks.push({
             id: verdict.id,
-            kind: group === 'task' && rescued.has(verdict.id) ? 'check' : 'judge',
+            kind: fallback ? 'check' : 'judge',
             group,
             criterion: source.criterion,
-            na: verdict.na || undefined,
+            na: (!fallback && verdict.na) || undefined,
             aspect: source.aspect,
             failure: source.failure,
             required: source.required,
-            pass: verdict.pass,
+            pass: fallback ? verdict.pass && !verdict.na : verdict.pass,
             evidence: verdict.reasoning,
           });
         }

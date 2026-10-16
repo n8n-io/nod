@@ -917,6 +917,55 @@ test('a task-specific completion gate preserves secret checks and default comple
   );
 });
 
+test('a missed wording check is decided by the judge, never by a not-applicable verdict', async () => {
+  const trace = {
+    turns: [{ id: 'turn', status: 'succeeded', background: false }],
+    interactions: [],
+    final: 'The supplier call is at 16:15.',
+    messages: [{ role: 'assistant', text: 'The supplier call is at 16:15.' }],
+    tools: [],
+    world: {},
+    acknowledgement: { turnsWithTools: 0, acknowledged: 0 },
+    task: 'What is on today?',
+    transcript: () => 'ASSISTANT: The supplier call is at 16:15.',
+  } as unknown as Run;
+  const asked: string[] = [];
+  const score = (applicable: boolean, skipJudges = false) =>
+    grade({
+      definition: {
+        expect: () => [
+          check('names-papelaria', () => ({ pass: false, evidence: 'missing Papelaria Norte' }), {
+            otherwise: 'The reply refers to the Papelaria Norte call in any wording.',
+          }),
+          check('strict-count', () => false),
+        ],
+      } as unknown as Scenario,
+      world: trace.world,
+      trace,
+      judge: {
+        complete: async (_system: string, input: string) => {
+          asked.push(input);
+          const ids = [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => match[1]);
+          return JSON.stringify({
+            verdicts: ids.map((id) => ({ id, reasoning: 'r', applicable, pass: true })),
+          });
+        },
+      } as never,
+      truth: '',
+      skipJudges,
+    });
+  const verdict = (result: Awaited<ReturnType<typeof score>>, id: string) =>
+    result.checks.find((item) => item.id === id);
+  const judged = await score(true);
+  assert.equal(verdict(judged, 'names-papelaria')?.pass, true);
+  assert.equal(verdict(judged, 'names-papelaria')?.kind, 'check');
+  assert.equal(verdict(judged, 'strict-count')?.pass, false);
+  assert.ok(asked.some((input) => input.includes('missing Papelaria Norte')));
+  assert.ok(asked.every((input) => !input.includes('- strict-count:')));
+  assert.equal(verdict(await score(false), 'names-papelaria')?.pass, false);
+  assert.equal(verdict(await score(true, true), 'names-papelaria')?.pass, false);
+});
+
 test('research-only app discovery rejects credential setup even without a connection proposal', async () => {
   const world = catalogAlternative.world({ now: () => 0 });
   const expectation = catalogAlternative
