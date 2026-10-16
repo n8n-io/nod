@@ -749,7 +749,7 @@ export function createAgentBrowserComputer(options: {
         await devtools?.mask(true, [], false, true);
         return await observationCommand(
           state,
-          { action: 'snapshot', compact: true, urls: true, ...(scope ? { selector: scope } : {}) },
+          { action: 'snapshot', urls: true, ...(scope ? { selector: scope } : {}) },
           { signal },
         );
       } finally {
