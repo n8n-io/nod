@@ -156,13 +156,20 @@ export function createSession(options: {
       )
     ).rows[0];
     if (approval) return { kind: 'approval' as const, approval, text };
-    if (turn.waiting_reason === 'credentials') {
-      const form = await credentialForm(text);
-      if (form && user.signIn) return { kind: 'form' as const, form, text };
-      if (form) return { kind: 'question' as const, text };
-      const state = await (await stack.request('/api/state')).json();
-      return { kind: 'secret' as const, request: state.verificationRequests?.[0], text };
-    }
+    if (turn.waiting_reason === 'credentials')
+      for (const started = Date.now(); ; await sleep(250)) {
+        const form = await credentialForm(text);
+        if (form && user.signIn) return { kind: 'form' as const, form, text };
+        if (form) return { kind: 'question' as const, text };
+        const state = await (await stack.request('/api/state')).json();
+        const request = state.verificationRequests?.[0];
+        if (request || Date.now() - started > 30_000)
+          return { kind: 'secret' as const, request, text };
+        const still = await pool.query("SELECT 1 FROM turns WHERE id=$1 AND status='waiting'", [
+          turn.id,
+        ]);
+        if (!still.rowCount) return { kind: 'resumed' as const, text };
+      }
     return { kind: 'question' as const, text };
   }
 
@@ -202,6 +209,7 @@ export function createSession(options: {
   async function respond(scheduled = false): Promise<boolean> {
     const pending = (await waiting(scheduled)) ?? (scheduled ? undefined : await waitingTask());
     if (!pending) return false;
+    if (pending.kind === 'resumed') return true;
     const at = Date.now();
     if (pending.kind === 'approval') {
       const approve =
@@ -245,8 +253,9 @@ export function createSession(options: {
       return true;
     }
     if (pending.kind === 'secret') {
-      const value =
-        typeof user.secrets === 'function'
+      const value = !pending.request
+        ? undefined
+        : typeof user.secrets === 'function'
           ? user.secrets(pending.text, options.world)
           : user.secrets?.[secretIndex++];
       if (!value || !pending.request) {
