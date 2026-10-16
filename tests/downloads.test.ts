@@ -252,7 +252,9 @@ test(
           await mkdir(downloads, { recursive: true });
           await writeFile(join(downloads, 'previous.pdf'), browserDownloadPdf);
           await writeFile(join(downloads, 'previous.crdownload'), 'preexisting partial');
-          await assert.rejects(computer.download!('large', { selector: '#large' }));
+          await assert.rejects(
+            computer.download!('large', { selector: '#large', expectOrigin: fixture.origin }),
+          );
           assert.deepEqual((await readdir(downloads)).sort(), [
             'previous.crdownload',
             'previous.pdf',
@@ -268,7 +270,11 @@ test(
           await writeFile(join(slowDirectory, 'previous.pdf'), browserDownloadPdf);
           const abort = new AbortController();
           const failed = assert.rejects(
-            computer.download!('slow', { selector: '#slow' }, abort.signal),
+            computer.download!(
+              'slow',
+              { selector: '#slow', expectOrigin: fixture.origin },
+              abort.signal,
+            ),
           );
           await fixture.slowDownloadStarted();
           abort.abort();
