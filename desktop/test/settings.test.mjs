@@ -35,7 +35,7 @@ import {
   createUpdateSource,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
-import { stageWindowsUpdate } from '../main/windows-update.mjs';
+import { stageWindowsUpdate } from '../runtime/windows.mjs';
 
 function deferred() {
   let resolve;
@@ -1409,7 +1409,8 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   for (const path of [
     '/credentials/synthetic',
     '/payments/synthetic',
-    '/vault',
+    '/trust',
+    '/vault/synthetic',
     '/browser',
     '/browser-connect/synthetic',
     '/onboarding',
@@ -2522,7 +2523,7 @@ test('choosing Later keeps restart available without repeated background prompts
   assert.equal(restarts, 1);
 });
 
-test('Windows updates stage the verified installer and reuse an unchanged runtime pack', async (t) => {
+test('Windows downloads stage the verified installer and fetch the runtime pack only when it changed', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'otto-windows-update-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const base = 'https://updates.example.invalid/otto-desktop';
@@ -2562,7 +2563,8 @@ test('Windows updates stage the verified installer and reuse an unchanged runtim
   const request = async (url) => {
     if (url === `${base}/releases`)
       return Response.json([{ ...release, id: 11, tag_name: 'desktop-v0.1.0' }, release]);
-    if (url === `${base}/releases/12`) return Response.json(release);
+    if (url === `${base}/releases/12` || url === `${base}/tags/desktop-v0.2.0`)
+      return Response.json(release);
     if (url === `${base}/releases/12/assets/301/release-win32-x64.json`)
       return Response.json(manifest);
     const asset = release.assets.find(
@@ -2600,8 +2602,11 @@ test('Windows updates stage the verified installer and reuse an unchanged runtim
   const ready = await updater.check();
   assert.equal(ready.version, '0.2.0');
   assert.deepEqual(downloads, ['Otto-Setup-x64.exe']);
-  for (const [name, value] of Object.entries(bytes))
-    assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
+  assert.deepEqual(await readdir(join(directory, '0.2.0')), ['Otto-Setup-x64.exe']);
+  assert.deepEqual(
+    await readFile(join(directory, '0.2.0', 'Otto-Setup-x64.exe')),
+    bytes['Otto-Setup-x64.exe'],
+  );
   await updater.dispose();
 
   const candidate = await createUpdateSource({
@@ -2613,6 +2618,22 @@ test('Windows updates stage the verified installer and reuse an unchanged runtim
   await installRuntime(Buffer.from('older Windows runtime pack'));
   await stageWindowsUpdate(candidate, { directory, resourcesPath, fetch: request });
   assert.deepEqual(downloads, ['Otto-Runtime-win32-x64.tar.gz', 'Otto-Setup-x64.exe']);
+  for (const [name, value] of Object.entries(bytes))
+    assert.deepEqual(await readFile(join(directory, '0.2.0', name)), value);
+
+  const source = createUpdateSource({ sourceUrl: base, os: 'win32', fetch: request });
+  const runtime = {
+    releaseTag: 'desktop-v0.2.0',
+    guest: { bytes: manifest.runtime.bytes, sha256: manifest.runtime.sha256 },
+  };
+  assert.equal(
+    await source.runtimeDownloadUrl(runtime),
+    `${base}/releases/12/assets/303/Otto-Runtime-win32-x64.tar.gz`,
+  );
+  await assert.rejects(
+    source.runtimeDownloadUrl({ ...runtime, guest: { ...runtime.guest, sha256: 'e'.repeat(64) } }),
+    /digest does not match/,
+  );
 
   served['Otto-Setup-x64.exe'] = Buffer.alloc(bytes['Otto-Setup-x64.exe'].length, 'x');
   await assert.rejects(

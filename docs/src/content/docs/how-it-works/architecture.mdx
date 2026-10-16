@@ -11,6 +11,14 @@ This page shows how Otto's parts fit together and where each one lives in the co
 
 The short version: in local mode, Otto is one Node process plus a few Docker containers. Hosted mode runs the same code once per user, behind a gateway.
 
+## One conversation, independent tasks
+
+The main chat session coordinates work. It answers short requests and starts a saved session for each independent task. Task questions, progress and results return to the same conversation. Task results do not need a second model call in the coordinator.
+
+The `tasks` table is the task ledger. All sessions share the owner's workspace and memory, with separate saved histories and task folders. The server routes replies and delivers addressed owner updates to the correct session.
+
+See [Task sessions](/how-it-works/task-sessions/) for the architecture diagram, records, context sharing and lifecycle.
+
 ## One process and a few containers
 
 In local mode, one Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.

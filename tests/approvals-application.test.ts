@@ -409,6 +409,43 @@ test(
         },
       );
 
+      await t.test("spending limits change only from the owner's words or their yes", async () => {
+        const limits = async () => {
+          const view = (await request('GET', '/api/trust')).json();
+          return { limit: view.limit, taskUsd: view.taskUsd };
+        };
+        const unasked = await propose('limits_update', { monthlyUsd: 500, taskUsd: null });
+        const [approval] = await approvalsFor(unasked);
+        assert.equal(approval.status, 'pending');
+        assert.deepEqual(await limits(), { limit: null, taskUsd: 5 });
+        const confirmed = await request('POST', '/api/messages', {
+          text: 'Yes',
+          replyToMessageId: approval.confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(confirmed.statusCode, 200, confirmed.body);
+        await waitFor(confirmed.json().turnId, 'succeeded');
+        assert.equal((await approvalsFor(unasked))[0].status, 'completed');
+        assert.deepEqual(await limits(), {
+          limit: { monthlyUsd: 500, reached: false },
+          taskUsd: null,
+        });
+        const text = 'From now on, check in when a task passes $20 and drop my monthly limit.';
+        asked.add(text);
+        plans.set(text, { action: 'limits_update', args: { monthlyUsd: null, taskUsd: 20 } });
+        const response = await request('POST', '/api/messages', { text });
+        assert.equal(response.statusCode, 200, response.body);
+        await waitFor(response.json().turnId, 'succeeded');
+        assert.deepEqual(
+          (await approvalsFor(response.json().turnId)).map((row) => [
+            row.status,
+            row.confirmation_message_id,
+          ]),
+          [['completed', null]],
+        );
+        assert.deepEqual(await limits(), { limit: null, taskUsd: 20 });
+      });
+
       await t.test(
         'schedule confirmations cannot mutate a revision edited after the question was saved',
         async () => {

@@ -39,7 +39,7 @@ import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
-import { stageWindowsUpdate, windowsInstallCommand } from './windows-update.mjs';
+import { windowsInstallCommand } from './windows-update.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
@@ -372,7 +372,7 @@ function trustedAppURL(value) {
         '/you',
         '/tasks',
         '/memory',
-        '/vault',
+        '/trust',
         '/browser',
         '/privacy',
         '/privacy/',
@@ -592,7 +592,7 @@ async function captureFeedbackScreenshot(event) {
   const url = event.senderFrame.url;
   if (
     !window?.isVisible() ||
-    /^\/(?:vault|credentials|payments|browser|browser-connect|onboarding)(?:\/|$)/.test(
+    /^\/(?:trust|vault|credentials|payments|browser|browser-connect|onboarding)(?:\/|$)/.test(
       new URL(url).pathname,
     )
   )
@@ -1162,12 +1162,16 @@ else {
           currentVersion: app.getVersion(),
           native: windows ? undefined : autoUpdater,
           prepareRuntime: async (candidate, signal) => {
-            if (windows)
+            if (windows) {
+              const { stageWindowsUpdate } = await import(
+                pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
+              );
               return stageWindowsUpdate(candidate, {
                 directory: windowsUpdates,
                 resourcesPath: engineRoot,
                 signal,
               });
+            }
             const { prepareRuntimeUpdate } = await import(
               pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
             );

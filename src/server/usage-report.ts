@@ -31,7 +31,7 @@ function month({ view, timeZone, locale }: UsageReport) {
   const { limit } = view;
   const spent = `${name}: ${dollars(view.month.spentUsd)}${limit ? ` of a ${dollars(limit.monthlyUsd)} limit` : ''}.`;
   if (limit?.reached)
-    return `${spent} The limit is reached, so new chat and background requests pause until next month. Raise or remove the limit in Settings › Trust to resume. Running turns can finish.`;
+    return `${spent} The limit is reached, so new chat and background requests pause until next month. Raise or remove the limit in Trust to resume. Running turns can finish.`;
   const over = limit && view.month.forecastUsd > limit.monthlyUsd ? ', above your limit' : '';
   return `${spent} On track for ${dollars(view.month.forecastUsd)}${over}.`;
 }

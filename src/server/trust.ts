@@ -4,7 +4,7 @@ import { turnOrigin } from './approvals.ts';
 
 export type TrustReason = 'background' | 'schedule' | 'unrequested';
 
-const checkInstructions = `You decide whether an AI assistant may run one action for its user now: an action in one of the user's connected apps, a change to the assistant's own schedules or notification settings for the user, or signing in to a website for the user (OTTO_sign_in, or OTTO_browser_session to open a saved signed-in browser).
+const checkInstructions = `You decide whether an AI assistant may run one action for its user now: an action in one of the user's connected apps, a change to the assistant's own schedules, notification settings or spending limits for the user, or signing in to a website for the user (OTTO_sign_in, or OTTO_browser_session to open a saved signed-in browser).
 Reply with only JSON: {"run": true} or {"run": false}.
 run is false when the user's own words forbid the action or require confirmation before it, including reads and drafts. Otherwise, run is true for an action that only reads, or only prepares something for the user without sending, publishing, sharing or deleting anything, such as a draft.
 For any other action, run is true only when the user's own words ask for this kind of action on this target, and false when there are no user words, the target differs from what the user named, the user asked to be asked first, or it is unclear. A short "yes" counts when it answers the assistant message that proposed this action.
@@ -22,18 +22,27 @@ export function createTrust(options: {
 }) {
   const { pool, ownerId } = options;
 
-  async function conversation(threadId: string, originMessageId: string | null) {
+  async function conversation(
+    threadId: string,
+    originMessageId: string | null,
+    taskId: string | null,
+  ) {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
         `WITH owner AS (SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
            AND (created_at>now()-interval '24 hours' OR id=$3)
+           AND (id=$3 OR ($4::uuid IS NULL AND NOT EXISTS (
+             SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
+               AND to_jsonb(u)->>'task_id' IS NOT NULL)) OR ($4::uuid IS NOT NULL AND EXISTS (
+             SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
+               AND to_jsonb(u)->>'task_id'=$4::text)))
            AND text<>'' AND text NOT IN (
              SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
              WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL))
          (SELECT * FROM owner WHERE created_at>now()-interval '24 hours' ORDER BY created_at DESC,id DESC LIMIT 5)
          UNION SELECT * FROM owner WHERE id=$3
          ORDER BY created_at DESC,id DESC`,
-        [ownerId, threadId, originMessageId],
+        [ownerId, threadId, originMessageId, taskId],
       )
     ).rows;
     const latest = users[0];
@@ -42,8 +51,10 @@ export function createTrust(options: {
       await pool.query<{ text: string }>(
         `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
          AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
+         AND (($5::uuid IS NULL AND turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=messages.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL))
+           OR ($5::uuid IS NOT NULL AND (id=(SELECT reply_to_message_id FROM messages WHERE id=$4 AND owner_id=$1) OR turn_id IN (SELECT u.id FROM turns u WHERE u.owner_id=$1 AND to_jsonb(u)->>'task_id'=$5::text))))
          ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [ownerId, threadId, latest.created_at, latest.id],
+        [ownerId, threadId, latest.created_at, latest.id, taskId],
       )
     ).rows[0];
     return {
@@ -64,7 +75,7 @@ export function createTrust(options: {
     const instruction = origin.scheduleInstruction?.trim();
     const words =
       origin.source === 'user'
-        ? await conversation(turn.threadId, origin.messageId)
+        ? await conversation(turn.threadId, origin.messageId, origin.taskId)
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction }
           : undefined;

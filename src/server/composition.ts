@@ -106,7 +106,7 @@ import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
 import { createErrorRedactor } from './redaction.ts';
-import { createLedger } from './ledger.ts';
+import { createLedger, limitsInput } from './ledger.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
@@ -123,6 +123,7 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
+  reactToAssistantMessage,
   resumeAfterConnection,
   resumeAfterCredentials,
   resumeAfterPayment,
@@ -574,7 +575,12 @@ async function initializeApplication(
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
   await personal.initialize({ workers: options.workers });
-  const tasks = createTasks({ pool, ownerId, refresh });
+  const tasks = createTasks({
+    pool,
+    ownerId,
+    refresh,
+    discardBrowser: (id) => adapters.computer.discard(id),
+  });
   await tasks.initialize();
   const triage = createTriage({
     consumers,
@@ -684,26 +690,29 @@ async function initializeApplication(
           ? payments.setting(provenance, args, true)
           : action === 'OTTO_payment_approve'
             ? payments.approve(provenance, args)
-            : action.startsWith('OTTO_')
-              ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-              : (async () => {
-                  const result = await integrations.executeApproved(ownerId, action, args, {
-                    threadId: provenance.threadId,
-                    turnId: provenance.turnId,
-                  });
-                  await ledger.action(provenance.turnId, action);
-                  return (
-                    await saveIntegrationFiles(result, async (file) => {
-                      const name = `${randomUUID()}-${basename(file.name)}`;
-                      await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                      return name;
-                    })
-                  ).value;
-                })(),
+            : action === 'OTTO_limits_update'
+              ? ledger.setLimits(args)
+              : action.startsWith('OTTO_')
+                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                : (async () => {
+                    const result = await integrations.executeApproved(ownerId, action, args, {
+                      threadId: provenance.threadId,
+                      turnId: provenance.turnId,
+                    });
+                    await ledger.action(provenance.turnId, action);
+                    return (
+                      await saveIntegrationFiles(result, async (file) => {
+                        const name = `${randomUUID()}-${basename(file.name)}`;
+                        await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                        return name;
+                      })
+                    ).value;
+                  })(),
     async (action, args, expectedRevision) => {
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
         return;
-      if (action.startsWith('OTTO_')) {
+      if (action === 'OTTO_limits_update') limitsInput.parse(args);
+      else if (action.startsWith('OTTO_')) {
         if (
           ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action) &&
           expectedRevision === undefined
@@ -717,7 +726,14 @@ async function initializeApplication(
     (reply) => trust.answer(reply),
     communication.describe,
   );
-  const reactions = createAgentReactionService({ pool, ownerId, refresh });
+  let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
+  const reactions = createAgentReactionService({
+    pool,
+    ownerId,
+    refresh,
+    deliver: async (messageId, reaction, signal) =>
+      channels ? channels.react(messageId, reaction, signal) : 'absent',
+  });
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
   const accountProfiles = createAccountProfileStore(pool, ownerId);
   await (localAccounts ?? accountProfiles).initialize();
@@ -840,7 +856,10 @@ async function initializeApplication(
     resume: resumeAfterPayment,
     record: (turn, entry, client) => vaultAccess.record(turn, entry, client),
   });
-  const userMessages = createUserMessageService({ confirmAction: approvals.chat });
+  const userMessages = createUserMessageService({
+    confirmAction: approvals.chat,
+    taskReply: tasks.resolveReply,
+  });
   if (options.workers !== false) {
     await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
@@ -856,15 +875,14 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
+      checkIn: ledger.checkIn,
       skipTurn: triage.staleCheck,
       accountProfile,
       connectedApps: integrations.connectedApps,
       memoryContext: memory.context,
-      task: async (turn, input) => {
-        const result = await withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input));
-        refresh();
-        return result;
-      },
+      taskContext: tasks.context,
+      taskLedger: tasks.read,
+      task: tasks.execute,
       startTurn: tasks.inherit,
       turnFinished: (turn, outcome) => void onboardingSuggestions.afterTurn(turn, outcome),
       connections: async (...args) => {
@@ -898,6 +916,19 @@ async function initializeApplication(
       },
       speech,
       manage: async (turn, action, args, { admit, ...provenance }) => {
+        if (action === 'limits_update') {
+          const input = limitsInput.parse(args);
+          const verdict = await trust.check(turn, 'OTTO_limits_update', input);
+          return approvals.request(turn, 'OTTO_limits_update', input, {
+            ...provenance,
+            allowed: !verdict.confirm,
+            admit,
+            details: {
+              current: await ledger.limits(),
+              ...(verdict.confirm ? { reason: verdict.reason } : {}),
+            },
+          });
+        }
         if (
           [
             'notification_preferences_update',
@@ -1090,6 +1121,7 @@ async function initializeApplication(
     submitMessage: userMessages.submit,
     verification: chatVerification,
     startOnboarding: welcome,
+    taskLedger: tasks.read,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
     computer,
@@ -1178,7 +1210,6 @@ async function initializeApplication(
   onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
-  let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;
   if (options.channels !== false && (adapters.messaging || adapters.messagingSetup)) {
     const setup = adapters.messagingSetup;
@@ -1211,7 +1242,10 @@ async function initializeApplication(
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
+      reacted: (messageId, reaction) =>
+        reactToAssistantMessage(messageId, reaction, adapters.model.configured),
       activeThread: (client) => activeThread(client),
+      taskCommand: tasks.chatCommand,
       commandReply: async (command, client, threadId) => {
         const now = new Date();
         if (command === 'usage') {
@@ -1266,17 +1300,19 @@ async function initializeApplication(
           events.off('event', onEvent);
         };
       },
-      submit: async (text, sourceId, client, channel, messageId, answer) =>
+      submit: async (text, sourceId, client, channel, messageId, answer, replyToMessageId) =>
         (
           await userMessages.submit(text, [], {
             sourceId,
             channel,
             client,
             clientMessageId: messageId,
+            replyToMessageId,
             answer,
           })
         ).turnId,
-      answer: (text, channel) => userMessages.answer(text, { channel }),
+      answer: (text, channel, replyToMessageId) =>
+        userMessages.answer(text, { channel, replyToMessageId }),
     });
     channels.registerRoutes(app);
     await channelSettings?.recover();

@@ -74,14 +74,15 @@ await run(
   { env: { ...process.env, GOOS: 'windows', GOARCH: 'amd64', CGO_ENABLED: '0' }, timeout: 300_000 },
 );
 console.log('Windows transport built.');
+configuration.version = process.env.OTTO_DESKTOP_VERSION || configuration.version;
+if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(configuration.version))
+  throw new Error('The Windows release version is invalid.');
 manifest.transport = {
   file: 'bin/docker.exe',
   sha256: await assetHash(join(runtime, 'bin/docker.exe')),
 };
+manifest.releaseTag = `desktop-v${configuration.version}`;
 await writeFile(join(runtime, 'manifest.json'), JSON.stringify(manifest, null, 2));
-configuration.version = process.env.OTTO_DESKTOP_VERSION || configuration.version;
-if (!/^\d+\.\d+\.\d+$/.test(configuration.version))
-  throw new Error('The Windows release version is invalid.');
 const electronVersion = configuration.devDependencies.electron;
 configuration.ottoBuild = {
   source: await run('git', ['-C', root, 'rev-parse', 'HEAD'], { output: 'stdout' }),

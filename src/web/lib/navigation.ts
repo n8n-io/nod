@@ -1,11 +1,11 @@
-import { KeyRound, ListChecks, MessageCircle, PlugZap, Radio } from 'lucide-react';
+import { ListChecks, MessageCircle, PlugZap, Radio, ShieldCheck } from 'lucide-react';
 
 export const sidebarItems = [
   { path: '/', label: 'Chat', key: 'j', icon: MessageCircle },
   { path: '/tasks', label: 'Tasks', key: 'g', icon: ListChecks },
   { path: '/apps', label: 'Apps', key: 'e', icon: PlugZap },
   { path: '/channels', label: 'Channels', key: 'd', icon: Radio },
-  { path: '/vault', label: 'Vault', key: 'k', icon: KeyRound },
+  { path: '/trust', label: 'Trust', key: 'i', icon: ShieldCheck },
 ] as const;
 
 export function isEditingTarget(target: EventTarget | null): boolean {
@@ -36,7 +36,6 @@ export function navigationShortcut(
     return null;
   const key = event.key.toLowerCase();
   if (key === 'b') return { type: 'sidebar' } as const;
-  if (key === 'i') return { type: 'trust' } as const;
   if (key === 'y') return { type: 'memory' } as const;
   const item = sidebarItems.find((entry) => entry.key === key);
   return item ? ({ type: 'navigate', path: item.path } as const) : null;

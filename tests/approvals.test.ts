@@ -697,7 +697,10 @@ test(
           }),
       });
       approvals = checked(approved);
-      messages = thread.createUserMessageService({ confirmAction: approvals.chat });
+      messages = thread.createUserMessageService({
+        confirmAction: approvals.chat,
+        taskReply: (client, threadId, messageId) => tasks.resolveReply(client, threadId, messageId),
+      });
       personal.registerRoutes(app);
       const tasks = createTasks({ pool: db.pool, ownerId });
       await tasks.initialize();
@@ -1243,6 +1246,112 @@ test(
           assert.equal(seen?.[0], origin);
           assert.equal(seen?.at(-1), 'Synthetic aside 5');
           await finish(turn.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
+        'saved task authority excludes owner instructions addressed to other work',
+        async (t) => {
+          const parent = await begin('Read my fixture flight dates.');
+          const oldStatus = randomUUID();
+          t.after(() => finish(parent.turnId, 'cancelled'));
+          const source = (await row(parent.turnId)).message_id;
+          const assigned = await tasks.execute(
+            parent,
+            { action: 'start', title: 'Flight dates', doneWhen: 'Dates checked', now: 'Reading' },
+            source,
+          );
+          assert.ok('id' in assigned);
+          const task = assigned as { id: string; messageId: string };
+          t.after(async () => {
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [oldStatus]);
+            await db.pool.query(
+              "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+              [task.id],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+          });
+          await finish(parent.turnId, 'succeeded');
+          const worker = (
+            await db.pool.query("SELECT id FROM turns WHERE task_id=$1 AND source='task'", [
+              task.id,
+            ])
+          ).rows[0].id;
+          const turn = await running(worker);
+          await tasks.inherit(turn);
+          const hotel = await begin('Send the separate hotel request to hotel@example.test.');
+          t.after(() => finish(hotel.turnId, 'cancelled'));
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Do you want the fixture summary?')",
+            [randomUUID(), ownerId, hotel.threadId, hotel.turnId],
+          );
+          await finish(hotel.turnId, 'succeeded');
+          await trust.check(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          assert.deepEqual(
+            reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text),
+            ['Read my fixture flight dates.'],
+          );
+          const oldApproval = await propose(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) SELECT $1,$2,thread_id,'assistant','Saved task question',confirmation_message_id FROM approvals WHERE id=$3",
+            [oldStatus, ownerId, oldApproval],
+          );
+          assert.equal(
+            (
+              await approvals.chat.answer({
+                threadId: turn.threadId,
+                channel: 'web',
+                text: 'Yes',
+                replyToMessageId: oldStatus,
+              })
+            )?.approvalId,
+            oldApproval,
+          );
+          const mainReply = await begin('Yes.');
+          t.after(() => finish(mainReply.turnId, 'cancelled'));
+          await trust.check(mainReply, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
+          assert.equal(
+            reviews.at(-1)!.assistantMessageBeforeLatestUserMessage,
+            'Do you want the fixture summary?',
+          );
+          await finish(mainReply.turnId, 'succeeded');
+          const update = await messages.submit('Use the new fixture flight dates.', [], {
+            replyToMessageId: task.messageId,
+          });
+          await finish(worker);
+          assert.equal(await confirm(oldApproval, true), undefined);
+          assert.equal(
+            await confirm(oldApproval, true, { replyToMessageId: oldStatus }),
+            undefined,
+          );
+          const continued = await running(update.turnId);
+          await tasks.inherit(continued);
+          assert.equal(await confirm(oldApproval, true), undefined);
+          const freshApproval = await propose(continued, 'GMAIL_SEND_EMAIL', {
+            to: 'hotel@example.test',
+          });
+          assert.notEqual(freshApproval, oldApproval);
+          assert.equal((await stored(oldApproval)).status, 'expired');
+          await db.pool.query("UPDATE approvals SET status='expired' WHERE id=$1", [freshApproval]);
+          await trust.check(continued, 'GMAIL_FETCH_EMAILS', {});
+          const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.deepEqual(words, [
+            'Read my fixture flight dates.',
+            'Use the new fixture flight dates.',
+          ]);
+          await tasks.execute(
+            continued,
+            { action: 'finish', id: task.id, status: 'done', result: 'Dates checked' },
+            update.messageId,
+          );
+          await finish(update.turnId, 'succeeded');
+          const chat = await begin('Summarise the fixture tasks.');
+          t.after(() => finish(chat.turnId, 'cancelled'));
+          await trust.check(chat, 'GMAIL_FETCH_EMAILS', {});
+          const chatWords = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(chatWords.includes('Read my fixture flight dates.'), false);
+          assert.equal(chatWords.includes('Use the new fixture flight dates.'), false);
+          await finish(chat.turnId, 'succeeded');
         },
       );
 
@@ -2272,22 +2381,106 @@ test(
       );
 
       await t.test(
+        'only a rendered status in the reply channel blocks a bare confirmation',
+        async (t) => {
+          const turn = await begin('Prepare the fixture notification.');
+          const id = await propose(turn, 'OTTO_notification_preferences_update', {
+            notificationRule: 'Fixture rule',
+          });
+          const saved = await stored(id);
+          const statusId = randomUUID();
+          t.after(async () => {
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [statusId]);
+            await finish(turn.turnId, 'cancelled');
+          });
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,delivered_channel,created_at) SELECT $1,$2,$3,'assistant','Fixture status','telegram:fixture',created_at+interval '1 second' FROM messages WHERE id=$4",
+            [statusId, ownerId, turn.threadId, saved.confirmation_message_id],
+          );
+          const input = { threadId: turn.threadId, channel: 'web', text: 'Yes' };
+          assert.equal((await approvals.chat.answer(input))?.approvalId, id);
+          await db.pool.query("UPDATE messages SET delivered_channel='web' WHERE id=$1", [
+            statusId,
+          ]);
+          assert.equal(await approvals.chat.answer(input), undefined);
+          assert.equal(
+            (
+              await approvals.chat.answer({
+                ...input,
+                seenMessageId: saved.confirmation_message_id,
+              })
+            )?.approvalId,
+            id,
+          );
+          assert.equal(
+            await approvals.chat.answer({ ...input, seenMessageId: statusId }),
+            undefined,
+          );
+        },
+      );
+
+      await t.test(
         'a channel confirmation preserves the exact snapshot and client retries do not execute twice',
-        async () => {
+        async (t) => {
           const channel = 'telegram:fixture';
           const turn = await begin('Synthetic channel fixture', { channel });
+          const turnIds = [turn.turnId];
+          const statusMessageId = randomUUID();
+          const foreignStatus = randomUUID();
+          t.after(async () => {
+            await db.pool.query(
+              'UPDATE messages SET reply_to_message_id=NULL WHERE reply_to_message_id=ANY($1::uuid[])',
+              [[statusMessageId, foreignStatus]],
+            );
+            await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [
+              [statusMessageId, foreignStatus],
+            ]);
+            await db.pool.query(
+              "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=ANY($1::uuid[]) AND status IN ('queued','running','waiting')",
+              [turnIds],
+            );
+          });
           const args = { notificationRule: 'Synthetic original' };
           await approvals.request(turn, 'OTTO_notification_preferences_update', args);
           const saved = await proposal(turn.turnId);
           args.notificationRule = 'Substituted after proposal';
           await finish(turn.turnId);
           const clientMessageId = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id,delivered_channel) VALUES($1,$2,$3,'assistant',$4,$5,$6)",
+            [
+              statusMessageId,
+              ownerId,
+              turn.threadId,
+              'Saved task question',
+              saved.confirmation_message_id,
+              channel,
+            ],
+          );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,'foreign-owner',$2,'assistant',$3,$4)",
+            [foreignStatus, turn.threadId, 'Foreign question', saved.confirmation_message_id],
+          );
+          assert.equal(
+            await approvals.chat.answer({ threadId: turn.threadId, channel, text: 'Yes' }),
+            undefined,
+          );
+          assert.equal(
+            await approvals.chat.answer({
+              threadId: turn.threadId,
+              channel,
+              text: 'Yes',
+              replyToMessageId: foreignStatus,
+            }),
+            undefined,
+          );
           const reply = {
             channel,
-            replyToMessageId: saved.confirmation_message_id,
+            replyToMessageId: statusMessageId,
             clientMessageId,
           };
           const accepted = await messages.submit('Yes.', [], reply);
+          turnIds.push(accepted.turnId);
           assert.notEqual(accepted.turnId, turn.turnId);
           assert.deepEqual(await messages.submit('Yes.', [], reply), accepted);
           const confirmed = await proposal(turn.turnId);

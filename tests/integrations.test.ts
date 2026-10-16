@@ -10889,7 +10889,14 @@ test(
         ).prompt('Synthetic message', []);
       assert.deepEqual(
         forwarded.map((event) => event.type),
-        ['model_usage', 'model_usage', 'model_usage'],
+        [
+          'model_usage',
+          'provider_usage',
+          'model_usage',
+          'provider_usage',
+          'model_usage',
+          'provider_usage',
+        ],
       );
       await ledger.withTurn(chat, () =>
         ledger
@@ -11114,6 +11121,54 @@ test(
       assert.equal(Math.round((await ledger.messageCosts([chat]))[chat].costUsd! * 100) / 100, 0.9);
       assert.equal(
         (await pool.query("SELECT count(*)::int AS n FROM model_usage WHERE details ? 'costUsd'"))
+          .rows[0].n,
+        0,
+      );
+      await pool.query('ALTER TABLE turns ADD COLUMN session_id uuid');
+      const task = randomUUID();
+      const [started, answered, resumed] = [randomUUID(), randomUUID(), randomUUID()];
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,session_id,created_at) VALUES
+          ($1,'owner','task','Compare trains',$4,now()-interval '30 minutes'),
+          ($2,'owner','user','Yes, keep going',$4,now()-interval '10 minutes'),
+          ($3,'owner','resume','Approved action',$4,now()-interval '5 minutes')`,
+        [started, answered, resumed, task],
+      );
+      await pool.query(
+        `INSERT INTO model_usage(id,owner_id,session_id,cost_usd,details,created_at) VALUES
+          ('before-answer','owner',$1,4,'{}',now()-interval '20 minutes'),
+          ('after-answer','owner',$1,0.5,'{}',now()-interval '8 minutes'),
+          ('plan','owner',$1,NULL,'{"estimateUsd":0.25}',now()-interval '4 minutes'),
+          ('other-session','owner',$2,9,'{}',now()-interval '4 minutes'),
+          ('other-owner','other',$1,9,'{}',now()-interval '4 minutes')`,
+        [task, randomUUID()],
+      );
+      assert.deepEqual(await ledger.checkIn(task, started), { budgetUsd: 5, spentUsd: 4.75 });
+      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.75 });
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,session_id,created_at)
+         VALUES($1,'owner','task','Also compare buses',$2,now()-interval '6 minutes')`,
+        [randomUUID(), task],
+      );
+      assert.deepEqual(await ledger.checkIn(task, resumed), { budgetUsd: 5, spentUsd: 0.25 });
+      const limits = async (payload: object) =>
+        (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload })).json();
+      assert.deepEqual(await limits({ taskUsd: 20 }), { limit: null, taskUsd: 20 });
+      assert.equal((await ledger.checkIn(task, resumed))?.budgetUsd, 20);
+      assert.deepEqual(await limits({ taskUsd: null, monthlyUsd: 30 }), {
+        limit: { monthlyUsd: 30, reached: false },
+        taskUsd: null,
+      });
+      assert.equal(await ledger.checkIn(task, resumed), undefined);
+      assert.equal((await app.inject('/api/trust')).json().taskUsd, null);
+      for (const payload of [{}, { taskUsd: 0 }, { taskUsd: 2.001 }])
+        assert.notEqual(
+          (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload })).statusCode,
+          200,
+        );
+      await limits({ taskUsd: 5, monthlyUsd: null });
+      assert.equal(
+        (await pool.query("SELECT count(*)::int AS n FROM spending_limits WHERE owner_id='owner'"))
           .rows[0].n,
         0,
       );

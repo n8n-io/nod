@@ -7,6 +7,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type {
   InboundMessage,
+  InboundReaction,
   MessagingChannel,
   MessagingTransport,
   MessagingWebhookResult,
@@ -20,6 +21,10 @@ const telegramFileBytes = 50 * 1024 * 1024;
 const telegramTextLimit = 3500;
 const telegramMessage = z.object({
   message_id: z.number().int().nonnegative(),
+  reply_to_message: z
+    .object({ message_id: z.number().int().nonnegative() })
+    .passthrough()
+    .optional(),
   date: z.number().int().positive(),
   text: z.string().trim().min(1),
   from: z.object({
@@ -34,10 +39,39 @@ const telegramMessage = z.object({
     type: z.literal('private'),
   }),
 });
+const telegramReaction = z.object({
+  message_id: z.number().int().nonnegative(),
+  user: z.object({
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    is_bot: z.literal(false),
+  }),
+  chat: z.object({
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    type: z.literal('private'),
+  }),
+  new_reaction: z
+    .array(z.object({ type: z.string(), emoji: z.string().min(1).max(64).optional() }))
+    .max(10),
+});
+const telegramReactions = new Set(
+  '❤ 👍 👎 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡'.split(
+    ' ',
+  ),
+);
+const whatsappReaction = z.object({
+  id: z.string().min(1).max(256),
+  from: z.string().regex(/^\d{7,15}$/),
+  type: z.literal('reaction'),
+  reaction: z.object({
+    message_id: z.string().min(1).max(256),
+    emoji: z.string().max(64).optional(),
+  }),
+});
 const whatsappMessage = z.object({
   id: z.string().min(1),
   from: z.string().regex(/^\d{7,15}$/),
   timestamp: z.string().regex(/^\d{1,12}$/),
+  context: z.object({ id: z.string().min(1) }).optional(),
   type: z.literal('text'),
   text: z.object({ body: z.string().trim().min(1) }),
 });
@@ -177,17 +211,21 @@ export function createChatSdkTransport(
     status,
     body: { error: message },
   });
-  const accepted = (messages: InboundMessage[] = []): MessagingWebhookResult => ({
+  const accepted = (
+    messages: InboundMessage[] = [],
+    reactions: InboundReaction[] = [],
+  ): MessagingWebhookResult => ({
     status: 200,
     body: { ok: true },
     messages,
+    ...(reactions.length ? { reactions } : {}),
   });
   let closed = false;
   let polling = false;
   let offsetsReady: Promise<unknown> | undefined;
   const transport: MessagingTransport = {
     channels,
-    async poll(accept, pair) {
+    async poll(accept, pair, react) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
       polling = true;
       try {
@@ -214,7 +252,7 @@ export function createChatSdkTransport(
               offset: Number(saved.rows[0]?.next_offset ?? 0),
               limit: 100,
               timeout: 0,
-              allowed_updates: ['message'],
+              allowed_updates: ['message', 'message_reaction'],
             }),
             signal: AbortSignal.timeout(10_000),
           },
@@ -240,6 +278,7 @@ export function createChatSdkTransport(
           if (parsed.status < 200 || parsed.status >= 300)
             throw new Error('Telegram update could not be accepted.');
           for (const message of parsed.messages ?? []) await accept(message);
+          for (const reaction of parsed.reactions ?? []) await react?.(reaction);
           if (parsed.pairing) await pair?.(parsed.pairing);
           await pool.query(
             `INSERT INTO channel_poll_offsets(provider,account_id,next_offset) VALUES('telegram',$1,$2)
@@ -294,14 +333,56 @@ export function createChatSdkTransport(
       }
       if (request.channelId === 'telegram' && telegram) {
         const update = z
-          .object({ update_id: z.number().int().nonnegative(), message: z.unknown() })
+          .object({
+            update_id: z.number().int().nonnegative(),
+            message: z.unknown().optional(),
+            message_reaction: z.unknown().optional(),
+          })
           .safeParse(payload);
+        const reacted = telegramReaction.safeParse(
+          update.success ? update.data.message_reaction : undefined,
+        );
+        if (reacted.success) {
+          const { chat, user, message_id, new_reaction } = reacted.data;
+          const emoji = new_reaction.filter((item) => item.type === 'emoji' && item.emoji).at(-1);
+          if (
+            !env.TELEGRAM_ALLOWED_USER_ID ||
+            user.id !== chat.id ||
+            (new_reaction.length && !emoji)
+          )
+            return accepted();
+          return accepted(
+            [],
+            [
+              {
+                channelId: 'telegram',
+                accountId: env.TELEGRAM_BOT_TOKEN!.split(':')[0],
+                senderId: String(user.id),
+                messageId: `${chat.id}:${message_id}`,
+                reaction: emoji?.emoji
+                  ? emoji.emoji.replace(
+                      /(\p{Extended_Pictographic})(?!\uFE0F)(?<!\p{Emoji_Presentation})/gu,
+                      '$1\uFE0F',
+                    )
+                  : null,
+              },
+            ],
+          );
+        }
         const parsed = telegramMessage.safeParse(update.success ? update.data.message : undefined);
         if (!parsed.success || String(parsed.data.from.id) !== String(parsed.data.chat.id))
           return accepted();
         const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
         if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
-        const message = telegram.parseMessage(parsed.data);
+        const { reply_to_message: replied, ...rawMessage } = parsed.data;
+        const message = telegram.parseMessage(rawMessage);
+        const replyId = replied
+          ? telegram.parseMessage({
+              message_id: replied.message_id,
+              chat: parsed.data.chat,
+              date: parsed.data.date,
+            }).id
+          : undefined;
         if (!env.TELEGRAM_ALLOWED_USER_ID) {
           const code = start?.[1];
           if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return accepted();
@@ -331,6 +412,7 @@ export function createChatSdkTransport(
             accountId: env.TELEGRAM_BOT_TOKEN!.split(':')[0],
             senderId: String(parsed.data.from.id),
             messageId: message.id,
+            replyToMessageId: replyId,
             threadId: message.threadId,
             text: message.text,
             sentAt: message.metadata.dateSent,
@@ -338,15 +420,27 @@ export function createChatSdkTransport(
         ]);
       }
       const messages: InboundMessage[] = [];
+      const reactions: InboundReaction[] = [];
       const envelope = whatsappEnvelope.safeParse(payload);
       if (envelope.success && whatsapp)
         for (const entry of envelope.data.entry)
           for (const change of entry.changes) {
             if (change.field !== 'messages' || !change.value.metadata?.phone_number_id) continue;
             for (const raw of change.value.messages ?? []) {
+              const accountId = change.value.metadata.phone_number_id;
+              const reacted = whatsappReaction.safeParse(raw);
+              if (reacted.success) {
+                reactions.push({
+                  channelId: 'whatsapp',
+                  accountId,
+                  senderId: reacted.data.from,
+                  messageId: reacted.data.reaction.message_id,
+                  reaction: reacted.data.reaction.emoji || null,
+                });
+                continue;
+              }
               const parsed = whatsappMessage.safeParse(raw);
               if (!parsed.success) continue;
-              const accountId = change.value.metadata.phone_number_id;
               const message = whatsapp.parseMessage({
                 message: parsed.data,
                 phoneNumberId: accountId,
@@ -357,13 +451,42 @@ export function createChatSdkTransport(
                 accountId,
                 senderId: parsed.data.from,
                 messageId: message.id,
+                replyToMessageId: parsed.data.context?.id,
                 threadId: message.threadId,
                 text: message.text,
                 sentAt: message.metadata.dateSent,
               });
             }
           }
-      return accepted(messages);
+      return accepted(messages, reactions);
+    },
+    async react(input) {
+      input.signal?.throwIfAborted();
+      if (
+        !channels.some(
+          (channel) =>
+            channel.id === input.channelId &&
+            channel.status === 'configured' &&
+            channel.accountId === input.accountId,
+        )
+      )
+        throw new Error('Channel is not configured.');
+      const adapter =
+        input.channelId === 'telegram'
+          ? telegram
+          : input.channelId === 'whatsapp'
+            ? whatsapp
+            : null;
+      if (!adapter) return 'unsupported';
+      const emoji =
+        input.channelId === 'telegram' ? input.reaction?.replaceAll('\uFE0F', '') : input.reaction;
+      if (input.channelId === 'telegram' && emoji && !telegramReactions.has(emoji))
+        return 'unsupported';
+      await bot.initialize();
+      input.signal?.throwIfAborted();
+      if (emoji) await adapter.addReaction(input.threadId, input.messageId, emoji);
+      else await adapter.removeReaction(input.threadId, input.messageId, '');
+      return 'sent';
     },
     async post(input) {
       if (
@@ -382,16 +505,22 @@ export function createChatSdkTransport(
       const thread = bot.thread(input.threadId);
       const unsent = attachments.filter((file) => !file.size || file.size > telegramFileBytes);
       let id = '';
+      const ids: string[] = [];
+      const post = (message: Parameters<typeof thread.reply>[1]) =>
+        input.replyToMessageId
+          ? thread.reply(input.replyToMessageId, message)
+          : thread.post(message);
       for (const part of input.channelId === 'telegram' ? chunks(input.text) : [input.text]) {
-        const sent = await thread.post({ markdown: part });
+        const sent = await post({ markdown: part });
         id ||= sent.id;
+        ids.push(sent.id);
       }
       for (const file of attachments) {
         if (unsent.includes(file)) continue;
         await file
           .read()
           .then((bytes) =>
-            thread.post({
+            post({
               markdown: '',
               attachments: [
                 {
@@ -413,6 +542,7 @@ export function createChatSdkTransport(
           .then(
             (sent) => {
               id ||= sent.id;
+              ids.push(sent.id);
             },
             () => {
               unsent.push(file);
@@ -424,12 +554,15 @@ export function createChatSdkTransport(
           .attachmentFailure?.(unsent.map((file) => file.name))
           .catch(() => undefined);
         for (const part of chunks(notice ?? '')) {
-          const sent = await thread.post({ markdown: part }).catch(() => undefined);
-          id ||= sent?.id ?? '';
+          const sent = await post({ markdown: part }).catch(() => undefined);
+          if (sent) {
+            id ||= sent.id;
+            ids.push(sent.id);
+          }
         }
       }
       if (!id) throw new Error('Channel delivery was not confirmed.');
-      return { id };
+      return { id, ids };
     },
     async close() {
       if (!closed) {

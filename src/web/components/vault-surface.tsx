@@ -98,7 +98,7 @@ export function VaultBackButton({ onClick }: { onClick(): void }) {
   return (
     <Button type="button" variant="ghost" size="sm" className="vault-back" onClick={onClick}>
       <ChevronLeft size={16} aria-hidden="true" />
-      Vault
+      Trust
     </Button>
   );
 }

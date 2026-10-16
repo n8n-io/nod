@@ -73,6 +73,7 @@ export interface AppDependencies {
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
+  taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   planningTasks?: () => boolean;
   messageCosts?: (
     turnIds: string[],
@@ -188,6 +189,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return {
       threadId: thread.id,
+      tasks: await dependencies.taskLedger?.(),
       hasEarlierMessages,
       messages: visibleMessages.map((message) => {
         const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;

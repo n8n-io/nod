@@ -5,7 +5,7 @@ export PATH
 umask 077
 
 base='https://internal.users.n8n.cloud/webhook/otto-desktop'
-certificate='bbfeebcf52e27c2294bd037f1a4d7eb4e31816f1eed385fa56db7340029346a7'
+certificate='82e4c9de30d80541d1c59c0d590537e4c0abf4a04cc34fde6217a0f9e47e1e2d'
 temporary=''
 mounted=false
 installed=false
@@ -141,7 +141,6 @@ current_version=''
 current_identity=''
 current_metadata=''
 if [ -d "$target" ]; then
-  check_signature "$target"
   [ "$(field "$target/Contents/Info.plist" CFBundleIdentifier string)" = 'dev.otto.desktop' ] || fail 'An unrelated app already occupies /Applications/Otto.app.'
   current_version=$(field "$target/Contents/Info.plist" CFBundleShortVersionString string)
   valid_version "$current_version" || fail 'The installed Otto version is invalid.'
@@ -198,7 +197,6 @@ check_stopped
 if [ -e "$target" ]; then
   [ -d "$target" ] || fail 'The installation destination changed during installation.'
   [ -n "$current_identity" ] && [ "$(stat -f '%d:%i' "$target")" = "$current_identity" ] && [ "$(hash "$target/Contents/Info.plist")" = "$current_metadata" ] || fail 'Your Otto app changed during installation. Run the installer again.'
-  check_signature "$target"
   mv "$target" "$temporary/Previous.app" || fail 'Your current Otto app could not be moved.'
 elif [ -n "$current_identity" ]; then
   fail 'Your Otto app moved during installation. Run the installer again.'
@@ -207,4 +205,4 @@ mv "$temporary/Otto.app" "$target" || fail 'The new Otto app could not be instal
 installed=true
 printf '\nOtto %s is installed at %s\n' "$version" "$target"
 printf 'Your keys, conversations and workspace are kept. Updates are available inside Otto.\n'
-printf 'Open Otto from Applications. If macOS blocks this self-signed alpha, use System Settings → Privacy & Security → Open Anyway.\n'
+printf 'Open Otto from Applications.\n'

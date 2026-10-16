@@ -91,6 +91,7 @@ test('task scheduling waits for reviewed instructions and explicit timing before
           createElement(TaskCard, { task, onScheduled: () => scheduled++ }),
           createElement(TaskCard, { task: { ...task, id: crypto.randomUUID(), status: 'cancelled' }, onScheduled: () => scheduled++ }),
         )));
+        await act(async () => document.querySelector('button[aria-controls]').click());
         assert.equal([...document.querySelectorAll('button')].filter(item => item.textContent.trim() === 'Schedule task').length, 1);
         await click('Schedule task');
         assert.equal(writes.length, 0);

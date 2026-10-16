@@ -49,7 +49,11 @@ Otto prints a link with `#access=` when it starts, and your browser keeps the co
 
 ### macOS blocks the first launch
 
-Preview builds aren't notarized by Apple yet. Open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
+Install the newest release, which Apple notarizes. Builds 0.1.12 and earlier aren't notarized: open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
+
+### Otto 0.1.12 or earlier doesn't update
+
+Those builds were signed with an internal certificate, so macOS refuses an update signed with n8n's Developer ID. Download the newest release and replace Otto in Applications, or run the Terminal installer. Your data is kept.
 
 ### macOS asks for Keychain access after an update
 
@@ -111,7 +115,7 @@ Scheduled tasks run only while Otto is open and your computer is awake. Closing 
 
 ### An action shows as uncertain
 
-Otto was interrupted after it started an action, so it can't tell whether the action ran. Otto never runs it again on its own. For a sign-in or payment, **Vault → Activity** shows "Result unknown".
+Otto was interrupted after it started an action, so it can't tell whether the action ran. Otto never runs it again on its own. For a sign-in or payment, **Trust → Activity** shows "Result unknown".
 
 ```mermaid
 stateDiagram-v2

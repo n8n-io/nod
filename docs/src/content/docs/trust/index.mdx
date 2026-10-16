@@ -49,13 +49,13 @@ flowchart LR
   site -- result, secrets masked --> model
 ```
 
-|                  | Trust                                                    | Vault                                                   |
-| ---------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| Protects         | Actions in your connected apps                           | Saved logins, verification codes and cards              |
-| Checks           | The action and its arguments as Otto sends them          | The task, the saved account and the exact website       |
-| Asks you when    | An action beyond a read or draft isn't in your request   | Otto wants an account you haven't allowed for this task |
-| The model sees   | The action and its result                                | Account names and status, never the secret              |
-| You review it in | The confirmation in chat and **Settings → Trust & cost** | **Vault → Activity**                                    |
+|                  | Trust                                                  | Vault                                                   |
+| ---------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| Protects         | Actions in your connected apps                         | Saved logins, verification codes and cards              |
+| Checks           | The action and its arguments as Otto sends them        | The task, the saved account and the exact website       |
+| Asks you when    | An action beyond a read or draft isn't in your request | Otto wants an account you haven't allowed for this task |
+| The model sees   | The action and its result                              | Account names and status, never the secret              |
+| You review it in | The confirmation in chat and **Trust → Activity**      | **Trust → Activity**                                    |
 
 ## Three rules behind everything
 
@@ -90,12 +90,13 @@ Otto doesn't add its own confirmation on top of these checks, which ask you when
 
 ## Where you see and change things
 
-- **Vault → Saved** lists your logins, cards and saved browser sessions. Edit or remove logins and cards, and sign out of sessions.
-- **Vault → Activity** shows every use, question, held attempt, reveal and permission change.
-- **Settings → Trust & cost** shows what Otto spent on models and what it did in your apps. You can set a monthly spending limit.
+Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere).
+
+- **Trust → Activity** shows what Otto did and spent: app actions, sign-ins, card uses, questions and held attempts, with the cost of each request. The sentence at the top holds your monthly limit and when a task checks in with you.
+- **Trust → Saved** lists your logins, cards and saved browser sessions. Edit or remove logins and cards, and sign out of sessions.
 - **Settings → Memory** shows what Otto remembers about you and where it learned it.
 
-![Vault → Activity: this week Otto submitted logins twice, with one question you answered and labels for what you allowed and what you entered.](../../../assets/screens/vault-activity.png)
+![Trust → Activity: October spending of $7.52 of a $25 limit, tasks that check in at $5, and today's app actions, sign-in and card use.](../../../assets/screens/trust-light.png)
 
 ## In this section
 

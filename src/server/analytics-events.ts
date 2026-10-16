@@ -114,7 +114,7 @@ const connectionProperties = z.object({
 });
 const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const turnProperties = z.object({
-  source: z.enum(['user', 'schedule', 'event', 'resume']),
+  source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
   background: z.boolean(),
 });
@@ -124,7 +124,7 @@ const taskProperties = z.object({
   task_action: taskAction,
   task_subject: taskSubject,
   task_activities: taskActivities,
-  source: z.enum(['user', 'schedule', 'event', 'resume']),
+  source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
   channel: z.enum(['web', 'telegram', 'whatsapp', 'other']),
 });
 export const analyticsEvent = z.discriminatedUnion('event', [
@@ -275,7 +275,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
       properties: z
         .object({
           outcome: z.enum(['analyzed', 'unavailable', 'invalid', 'failed', 'queue_full']),
-          source: z.enum(['user', 'schedule', 'event', 'resume']),
+          source: z.enum(['user', 'schedule', 'event', 'resume', 'task']),
           task_count: z.number().int().min(0).max(8).optional(),
           unknown_label_count: z.number().int().min(0).max(200).optional(),
         })

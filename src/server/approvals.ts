@@ -40,6 +40,7 @@ export type ChatConfirmationResult =
 type TurnRow = {
   id: string;
   thread_id: string;
+  task_id: string | null;
   source: string;
   parent_turn_id: string | null;
   message_id: string | null;
@@ -55,7 +56,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      'SELECT id,thread_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
+      "SELECT id,thread_id,to_jsonb(turns)->>'task_id' AS task_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2",
       [turnId, ownerId],
     )
   ).rows[0];
@@ -96,9 +97,18 @@ export async function turnOrigin(turnId: string) {
     const chain = current && (await turnChain(client, current));
     const origin = chain?.at(-1);
     if (!chain || !origin) return undefined;
+    const task = current.task_id
+      ? (
+          await client.query('SELECT source_message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
+            current.task_id,
+            ownerId,
+          ])
+        ).rows[0]
+      : undefined;
     return {
+      taskId: current.task_id,
       source: origin.source,
-      messageId: origin.source === 'user' ? origin.message_id : null,
+      messageId: origin.source === 'user' ? (task?.source_message_id ?? origin.message_id) : null,
       channel: current.channel,
       scheduleInstruction:
         origin.source === 'schedule'
@@ -241,7 +251,7 @@ export async function createApprovals(
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
           `approvals:${ownerId}:${turn.threadId}`,
         ]);
-      const previous = (
+      let previous = (
         background
           ? await client.query(
               "SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb AND status<>'expired' ORDER BY id LIMIT 1",
@@ -252,6 +262,21 @@ export async function createApprovals(
               [turn.threadId, ownerId, authorMessageId, action, snapshot],
             )
       ).rows[0];
+      if (
+        previous?.status === 'pending' &&
+        !(
+          await client.query(
+            "SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2 AND status IN ('running','waiting')",
+            [previous.turn_id, ownerId],
+          )
+        ).rowCount
+      ) {
+        await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
+          previous.id,
+          ownerId,
+        ]);
+        previous = undefined;
+      }
       if (previous) {
         if (previous.status === 'completed')
           return { cached: true as const, result: previous.result };
@@ -363,6 +388,9 @@ export async function createApprovals(
         await database.query(
           `SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.owner_id=$1 AND u.owner_id=$1 AND m.thread_id=$2 AND u.channel=$3 AND m.role='assistant'
            AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',m.created_at))
+           AND NOT EXISTS (SELECT 1 FROM messages n WHERE n.owner_id=$1 AND n.thread_id=$2 AND n.role='assistant' AND n.turn_id IS NULL AND n.delivered_channel=$3
+             AND (n.created_at,n.id)>(m.created_at,m.id)
+             AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',n.created_at)))
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
           [ownerId, input.threadId, input.channel, input.seenMessageId ?? null],
         )
@@ -372,7 +400,13 @@ export async function createApprovals(
       await database.query(
         `SELECT a.*,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
        FROM approvals a JOIN turns u ON u.id=a.turn_id
-       WHERE a.confirmation_message_id=$1 AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4${lock ? ' FOR UPDATE OF a' : ''}`,
+       WHERE a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL),$1)
+         AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4
+         AND (to_jsonb(u)->>'task_id' IS NULL OR NOT EXISTS (
+           SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND n.id<>u.id
+             AND n.source IN ('user','task') AND n.message_id IS NOT NULL AND n.status IN ('queued','running')))
+       ${lock ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
       )
     ).rows[0];

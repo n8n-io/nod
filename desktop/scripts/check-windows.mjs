@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { copyFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { run } from './release-tools.mjs';
+import { assetHash } from '../runtime/assets.mjs';
 import { windowsEnvironment } from '../runtime/windows.mjs';
 
 assert.equal(process.platform, 'win32');
@@ -11,6 +14,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = join(root, 'dist/windows');
 const installation = await mkdtemp(join(tmpdir(), 'otto-installed-preview-'));
 const foreign = await mkdtemp(join(tmpdir(), 'otto-foreign-folder-'));
+const alone = await mkdtemp(join(tmpdir(), 'otto-installer-alone-'));
 const receipt = { installed: false, engine: false, wsl: false };
 const environment = { ...windowsEnvironment(), ELECTRON_RUN_AS_NODE: '1' };
 try {
@@ -22,10 +26,13 @@ try {
   );
   assert.deepEqual(await readdir(foreign), ['keep.txt']);
   assert.equal(await readFile(join(foreign, 'keep.txt'), 'utf8'), 'synthetic user file');
-  console.log('Installing the Windows preview.');
-  await run(join(output, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
+  console.log('Installing the Windows preview without its runtime file.');
+  await copyFile(join(output, 'Otto-Setup-x64.exe'), join(alone, 'Otto-Setup-x64.exe'));
+  await run(join(alone, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const application = join(installation, 'Otto.exe');
   const engine = join(installation, 'resources/engine');
+  const archive = join(engine, 'windows-runtime/guest.tar.gz');
+  await assert.rejects(stat(archive), { code: 'ENOENT' });
   const { devDependencies } = JSON.parse(
     await readFile(join(root, 'desktop/package.json'), 'utf8'),
   );
@@ -139,10 +146,18 @@ if (process.env.WORKSPACE_CONTAINER) {
         {
           dataRoot: profile,
           resourcesPath: engine,
-          onStatus: (value) => console.log(value.message),
+          onStatus: (value) => value.phase === 'downloading' || console.log(value.message),
+          resolveDownloadUrl: async () =>
+            'https://runtime.example.invalid/Otto-Runtime-win32-x64.tar.gz',
+          fetch: async () =>
+            new Response(
+              Readable.toWeb(createReadStream(join(output, 'Otto-Runtime-win32-x64.tar.gz'))),
+            ),
         },
         () => {},
       );
+      await assert.rejects(stat(archive), { code: 'ENOENT' });
+      await assert.rejects(stat(join(profile, 'desktop-runtime/guest.tar.gz')), { code: 'ENOENT' });
       await run(
         join(engine, 'windows-runtime/bin/docker.exe'),
         [
@@ -200,10 +215,17 @@ if (process.env.WORKSPACE_CONTAINER) {
         await run(wsl, ['--unregister', saved.distribution]);
     }
   }
+  console.log('Checking that an update installs its runtime file.');
+  await run(join(output, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
+  const { guest } = JSON.parse(
+    await readFile(join(engine, 'windows-runtime/manifest.json'), 'utf8'),
+  );
+  assert.equal(await assetHash(archive), guest.sha256);
   await writeFile(join(output, 'windows-check.json'), JSON.stringify(receipt, null, 2));
   console.log(JSON.stringify(receipt));
 } finally {
   console.log('Removing the test installation.');
   await rm(installation, { recursive: true, force: true });
   await rm(foreign, { recursive: true, force: true });
+  await rm(alone, { recursive: true, force: true });
 }

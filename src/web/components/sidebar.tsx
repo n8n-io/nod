@@ -119,7 +119,7 @@ export function Sidebar({
       clear();
       const action = navigationShortcut(event);
       if (!action) return;
-      if ((action.type === 'memory' || action.type === 'trust') && !toggles.current.account) return;
+      if (action.type === 'memory' && !toggles.current.account) return;
       event.preventDefault();
       event.stopPropagation();
       if (action.type === 'sidebar') {
@@ -127,9 +127,9 @@ export function Sidebar({
         else toggles.current.onToggle();
         return;
       }
-      if (action.type === 'memory' || action.type === 'trust') {
+      if (action.type === 'memory') {
         setMobileMenuOpen(false);
-        toggles.current.account?.onSettings(action.type === 'memory' ? 'Memory' : 'Trust');
+        toggles.current.account?.onSettings('Memory');
         return;
       }
       navigate.current(action.path);

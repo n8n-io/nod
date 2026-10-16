@@ -1,4 +1,4 @@
-export type TrustSource = 'chat' | 'schedule' | 'event' | 'check' | 'resume';
+export type TrustSource = 'chat' | 'task' | 'schedule' | 'event' | 'check' | 'resume';
 
 export interface TrustEntry {
   id: string;
@@ -29,4 +29,5 @@ export interface TrustView extends TrustPage {
     unpriced: boolean;
   };
   limit: { monthlyUsd: number; reached: boolean } | null;
+  taskUsd: number | null;
 }

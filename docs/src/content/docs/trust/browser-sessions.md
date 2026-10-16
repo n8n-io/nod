@@ -9,7 +9,7 @@ A saved browser session keeps a website signed in inside Otto's private browser,
 
 ## Save a session
 
-1. In **Vault**, select **New**, then **Website session**.
+1. In **Trust**, select **New**, then **Website session**.
 2. Enter the **Website address** and, if you like, an **Account name**. Select **Continue in chat**.
 3. Otto opens the website in a new private browser profile. Sign in through the secure form, or take over the browser yourself.
 4. Otto saves the session once it sees you're signed in.
@@ -33,7 +33,7 @@ A session opens in one browser at a time. While you're still signing in to it in
 
 ## Sign out
 
-Open the session in **Vault → Saved** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
+Open the session in **Trust → Saved** and select **Sign out**. This deletes the saved profile. If a task is using it, stop the task first.
 
 ## Passkeys and manual sign-in
 

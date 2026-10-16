@@ -4,6 +4,7 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { channelReply, createChannels } from '../src/server/channels.ts';
+import { createAgentReactionService } from '../src/server/agent-reactions.ts';
 import { createChatVerification } from '../src/server/chat-verification.ts';
 import { createVault } from '../src/server/vault.ts';
 import { channelConfiguration, createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
@@ -33,7 +34,7 @@ const fixtureEnv = {
 async function createFixtureTables(pool: pg.Pool, owner: string) {
   await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
-    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz NOT NULL DEFAULT now())`);
+    CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();
   await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
   return threadId;
@@ -1102,6 +1103,18 @@ test('channel presentation isolates private links from the model and preserves o
   const ordinary = 'Consulta [a fatura](https://merchant.example/payments/invoice).';
   assert.equal(await channelReply(ordinary, { threadId: 'owned-thread', present }), ordinary);
   assert.equal(presentation.length, 1);
+  const bare: unknown[] = [];
+  assert.equal(
+    await channelReply('Save it in Otto: /trust?add=login', {
+      threadId: 'owned-thread',
+      present: async (_threadId, input) => {
+        bare.push(input);
+        return 'Continua na aplicação Otto.';
+      },
+    }),
+    'Continua na aplicação Otto.',
+  );
+  assert.doesNotMatch(JSON.stringify(bare), /trust\?add/);
   const imageReply = await channelReply(
     'O ficheiro está anexado. [Imagem](http://localhost:4310/api/artifacts/private-file)',
     { threadId: 'owned-thread', present, deliversAttachments: true },
@@ -1309,6 +1322,9 @@ test(
     let providerCalls = 0;
     let failSend = false;
     let failSubmit = false;
+    let failReaction = false;
+    const reacting: { provider: string; body: Record<string, unknown> }[] = [];
+    const reactedTo: [string, string | null][] = [];
     t.mock.method(
       globalThis,
       'fetch',
@@ -1322,6 +1338,11 @@ test(
             ok: true,
             result: { id: 987, is_bot: true, first_name: 'Fixture', username: 'fixture_bot' },
           });
+        if (url === 'https://api.telegram.org/bot987:fixture-not-live/setMessageReaction') {
+          reacting.push({ provider: 'telegram', body });
+          if (failReaction) throw new Error('Fixture reaction delivery is uncertain.');
+          return Response.json({ ok: true, result: true });
+        }
         if (url.startsWith('https://api.telegram.org/bot987:fixture-not-live/send')) {
           sent.push({ provider: 'telegram', body });
           if (failSend) throw new Error('Fixture transport interrupted after possible acceptance.');
@@ -1336,6 +1357,12 @@ test(
           });
         }
         if (/^https:\/\/graph\.facebook\.com\/v\d+\.0\/555000\/messages$/.test(url)) {
+          if (body.type === 'reaction') {
+            reacting.push({ provider: 'whatsapp', body });
+            return Response.json({
+              messages: [{ id: `wamid.fixture-reaction-${reacting.length}` }],
+            });
+          }
           sent.push({ provider: 'whatsapp', body });
           return Response.json({ messages: [{ id: `wamid.fixture-out-${sent.length}` }] });
         }
@@ -1360,6 +1387,9 @@ test(
       },
       subscribe: () => () => {},
       intervalMs: 600000,
+      reacted: async (messageId, reaction) => {
+        reactedTo.push([messageId, reaction]);
+      },
       submit: async (_text, sourceId, client, channel) => {
         const turnId = await fixtureTurn(client, threadId, 'local-development', channel, sourceId);
         if (failSubmit) throw new Error('Fixture turn queue unavailable.');
@@ -1483,7 +1513,7 @@ test(
       assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 2);
       await addReply(
         'channel:telegram:987:123456:10',
-        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/vault?add=card).',
+        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/trust?add=card).',
       );
       await addReply('channel:whatsapp:555000:wamid.good');
       await pool.query(
@@ -1530,10 +1560,153 @@ test(
         '351910000000',
       );
       assert.equal(JSON.stringify(sent).includes('private-token'), false);
-      assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
+      assert.equal(JSON.stringify(sent).includes('/trust?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
       assert.equal(sent.length, 4);
+
+      const idOf = async (query: string) => (await pool.query(query)).rows[0].message_id;
+      const ownerMessage = await idOf(
+        "SELECT message_id FROM channel_inbox WHERE source_id='channel:telegram:987:123456:10'",
+      );
+      const telegramReply = await idOf(
+        "SELECT message_id FROM channel_outbox WHERE provider_message_id='123456:101'",
+      );
+      const whatsappReply = await idOf(
+        "SELECT message_id FROM channel_outbox WHERE provider_message_id='wamid.fixture-out-2'",
+      );
+      const telegramReaction = (messageId: number, emoji: string[], from = 123456) => ({
+        update_id: 500 + reactedTo.length,
+        message_reaction: {
+          chat: { id: from, type: 'private' },
+          message_id: messageId,
+          user: { id: from, is_bot: false, first_name: 'Fixture' },
+          date: Math.floor(Date.now() / 1000),
+          old_reaction: [],
+          new_reaction: emoji.map((value) => ({ type: 'emoji', emoji: value })),
+        },
+      });
+      const whatsappReaction = (target: string, emoji: string, from = '351910000000') => ({
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            changes: [
+              {
+                field: 'messages',
+                value: {
+                  metadata: { phone_number_id: '555000' },
+                  messages: [
+                    {
+                      id: `wamid.reaction-${randomUUID()}`,
+                      from,
+                      timestamp: String(Math.floor(Date.now() / 1000)),
+                      type: 'reaction',
+                      reaction: { message_id: target, emoji },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      });
+      await pool.query(
+        'UPDATE channel_outbox SET provider_message_ids=ARRAY[provider_message_id,$2] WHERE message_id=$1',
+        [telegramReply, '123456:102'],
+      );
+      await sendTelegram(telegramReaction(102, ['👍']));
+      await sendTelegram(telegramReaction(101, ['🔥'], 456789));
+      await sendTelegram(telegramReaction(10, ['👍']));
+      await sendTelegram(telegramReaction(101, []));
+      await sendTelegram(telegramReaction(101, ['❤']));
+      await sendTelegram(telegramReaction(101, ['🤷‍♂']));
+      await sendTelegram(telegramReaction(101, ['🤷‍♀']));
+      await sendWhatsApp(whatsappReaction('wamid.fixture-out-2', '❤️'));
+      await sendWhatsApp(whatsappReaction('wamid.fixture-out-2', '😂', '351920000000'));
+      await sendWhatsApp(whatsappReaction('123456:101', '😂'));
+      assert.deepEqual(reactedTo, [
+        [telegramReply, '👍'],
+        [telegramReply, null],
+        [telegramReply, '❤️'],
+        [telegramReply, '🤷‍♂️'],
+        [telegramReply, '🤷‍♀️'],
+        [whatsappReply, '❤️'],
+      ]);
+      const whatsappOwnerMessage = await idOf(
+        "SELECT message_id FROM channel_inbox WHERE source_id='channel:whatsapp:555000:wamid.good'",
+      );
+      assert.equal(await channels.react(ownerMessage, '👍'), 'sent');
+      assert.equal(await channels.react(ownerMessage, '🫠'), 'unsupported');
+      assert.equal(await channels.react(ownerMessage, null), 'sent');
+      assert.equal(await channels.react(whatsappOwnerMessage, '❤️'), 'sent');
+      assert.equal(await channels.react(randomUUID(), '👍'), 'absent');
+      assert.deepEqual(
+        reacting.map(({ provider, body }) => [provider, body.message_id ?? body.reaction]),
+        [
+          ['telegram', 10],
+          ['telegram', 10],
+          ['whatsapp', { message_id: 'wamid.good', emoji: '❤️' }],
+        ],
+      );
+      assert.deepEqual(
+        reacting.slice(0, 2).map(({ body }) => body.reaction),
+        [[{ type: 'emoji', emoji: '👍' }], []],
+      );
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,'local-development','user','Synthetic request',$2)",
+        [ownerMessage, threadId],
+      );
+      const reactions = createAgentReactionService({
+        pool,
+        ownerId: 'local-development',
+        refresh() {},
+        deliver: channels.react,
+      });
+      const reactionTurn = await fixtureTurn(
+        pool,
+        threadId,
+        'local-development',
+        'telegram',
+        null,
+        'running',
+      );
+      const react = (reaction: string | null) =>
+        reactions.react({ threadId, turnId: reactionTurn, messageId: ownerMessage, reaction });
+      const storedReaction = async () =>
+        (
+          await pool.query(
+            'SELECT assistant_reaction,assistant_reacted_at FROM messages WHERE id=$1',
+            [ownerMessage],
+          )
+        ).rows[0];
+      assert.deepEqual(await react('🫠'), { status: 'skipped', reason: 'unsupported' });
+      assert.deepEqual(await storedReaction(), {
+        assistant_reaction: null,
+        assistant_reacted_at: null,
+      });
+      failReaction = true;
+      assert.deepEqual(await react('👍'), { status: 'skipped', reason: 'delivery_failed' });
+      assert.equal((await storedReaction()).assistant_reaction, '👍');
+      assert.ok((await storedReaction()).assistant_reacted_at);
+      const reactionAttempts = reacting.length;
+      assert.deepEqual(await react('👍'), { status: 'unchanged' });
+      assert.equal(reacting.length, reactionAttempts);
+      failReaction = false;
+      await pool.query(
+        'UPDATE messages SET assistant_reaction=NULL,assistant_reacted_at=NULL WHERE id=$1',
+        [ownerMessage],
+      );
+      assert.deepEqual(await react('👍'), { status: 'updated' });
+      failReaction = true;
+      assert.deepEqual(await react(null), { status: 'skipped', reason: 'delivery_failed' });
+      assert.equal((await storedReaction()).assistant_reaction, '👍');
+      failReaction = false;
+      assert.deepEqual(await react(null), { status: 'updated' });
+      const aborted = new AbortController();
+      aborted.abort();
+      const beforeCancel = reacting.length;
+      await assert.rejects(channels.react(ownerMessage, '👍', aborted.signal));
+      assert.equal(reacting.length, beforeCancel);
 
       await sendWhatsApp(
         whatsappPayload('wamid.old', undefined, undefined, Math.floor(Date.now() / 1000) - 172800),

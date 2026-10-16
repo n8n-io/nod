@@ -202,7 +202,7 @@ export function createChatSdkSetupVerifier(
           body: JSON.stringify({
             url: webhookEndpoint,
             secret_token: secret,
-            allowed_updates: ['message'],
+            allowed_updates: ['message', 'message_reaction'],
             drop_pending_updates: false,
           }),
         });

@@ -1,10 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
+import { setTimeout as wait } from 'node:timers/promises';
 import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import type {
   Agent,
+  AgentEvent,
   AgentImage,
   AgentSession,
   AgentTool,
@@ -23,6 +25,8 @@ import { ottoTools } from './tools.ts';
 import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
+import type { Task } from '../shared/contracts.ts';
+import { taskSummary } from '../shared/task-status.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 const inlineChars = 40_000;
@@ -35,6 +39,7 @@ const parentTools = new Set([
   'ask_user',
   'send_message',
   'manage_apps',
+  'task',
 ]);
 const parallelTools = new Set([
   'delegate',
@@ -56,6 +61,8 @@ const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
+const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
+const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
   'apps',
   'delegate',
@@ -134,6 +141,21 @@ export function createAgentRuntime(dependencies: {
     let modelIncomplete = false;
     let completed = false;
     let lastReply = '';
+    let checkInSpent = context.checkIn?.spentUsd ?? 0;
+    let checkInBlocked = false;
+    let checkInStrikes = 0;
+    let checkInStopped = false;
+    const overBudget = () =>
+      context.checkIn !== undefined && checkInSpent >= context.checkIn.budgetUsd;
+    const countUsage = (event: AgentEvent) => {
+      const usage =
+        event.type === 'model_usage'
+          ? event
+          : event.type === 'provider_usage'
+            ? event.usage
+            : undefined;
+      if (usage) checkInSpent += usage.costUsd ?? usage.estimateUsd ?? 0;
+    };
     let pendingReplies = Promise.resolve();
     const persistedStreams = new Set<string>();
     let streamId: string | undefined;
@@ -162,6 +184,8 @@ export function createAgentRuntime(dependencies: {
     activeTurns.set(context.turnId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
 
+    let taskResult = '';
+    let reportedTaskResult = '';
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -235,7 +259,7 @@ export function createAgentRuntime(dependencies: {
       const name = `${randomUUID()}-error.txt`;
       try {
         await dependencies.workspace.writeArtifact(threadId, name, Buffer.from(text), signal);
-        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${name}. Read it there.`;
+        return `${text.slice(0, 2000)}\nThe full error is saved in the workspace file ${context.taskContext ? `/workspace/${threadId}/${name}` : name}. Read it there.`;
       } catch {
         return text.slice(0, inlineChars);
       }
@@ -253,6 +277,12 @@ export function createAgentRuntime(dependencies: {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
         assertActive();
+        if (overBudget() && !reportingTools.has(name)) {
+          if (source === execution) checkInBlocked = true;
+          throw new Error(
+            `This work has used ${dollars(checkInSpent)} since the owner's last message, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Do no more work now. Call ask_user to say in a line what is done and what is left, and ask whether to keep going.`,
+          );
+        }
         const id = randomUUID();
         const started = performance.now();
         const end = (fields: {
@@ -334,7 +364,17 @@ export function createAgentRuntime(dependencies: {
     try {
       signal.throwIfAborted();
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
-      const workspace = dependencies.workspace.open(context);
+      const rootWorkspace = dependencies.workspace.open(context);
+      let workspace = rootWorkspace;
+      if (context.taskContext) {
+        const path = `${rootWorkspace.path}/tasks/${context.taskContext.id}`;
+        const created = await rootWorkspace.exec(
+          `mkdir -p '${path}/drafts' '${path}/outputs' '${rootWorkspace.path}/shared'`,
+          { signal },
+        );
+        if (created.exitCode) throw new Error('The task folder could not be created.');
+        workspace = { ...rootWorkspace, path };
+      }
       const browser: Computer = {
         ...computer,
         act: (id, action, actionSignal) =>
@@ -397,10 +437,39 @@ export function createAgentRuntime(dependencies: {
             return admitted ? admissions.run(admitted.gate, run).finally(admitted.settle) : run();
           },
         }));
-      const system = systemPrompt(workspace, dependencies.skills);
+      const system = systemPrompt(
+        workspace,
+        dependencies.skills,
+        context.taskContext,
+        context.background,
+      );
+      const task = context.task;
       const shared = {
         context: {
           ...context,
+          task: task
+            ? async (input: unknown) => {
+                const result = await task(input);
+                const action = (input as { action?: string }).action;
+                if (
+                  context.channel === 'telegram' &&
+                  (action === 'update' || action === 'finish') &&
+                  result &&
+                  typeof result === 'object' &&
+                  'id' in result &&
+                  'status' in result
+                ) {
+                  const updated = result as Task;
+                  await deliverReply(
+                    taskSummary(updated),
+                    undefined,
+                    updated.messageId ?? undefined,
+                  );
+                  if (action === 'finish') reportedTaskResult = updated.result.trim();
+                }
+                return result;
+              }
+            : undefined,
           integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
             context.integration(action, args, callSignal, admissions.getStore()?.admit),
           manage: (action: string, args: Record<string, unknown>) =>
@@ -446,8 +515,9 @@ export function createAgentRuntime(dependencies: {
             timeZone: context.timeZone,
             runTool: (name, params, run, options) =>
               guard(name, params, run, { ...options, execution: source }),
-            shouldStop: () => stopped,
+            shouldStop: () => stopped || overBudget(),
             onEvent: (event) => {
+              countUsage(event);
               if (event.type === 'final') answer = event.text;
               if (event.type === 'error') failed = true;
               if (event.type === 'message_end' && event.status === 'incomplete') incomplete = true;
@@ -485,10 +555,26 @@ export function createAgentRuntime(dependencies: {
         signal.throwIfAborted();
         return answer || 'The subagent finished without an answer.';
       };
-      const tools = bind({ ...shared, execution, delegate }, async () => {
-        if (!browsed) await computer.hold(browserId, false).catch(() => {});
-        browsed = true;
-      });
+      const followUps: string[] = [];
+      const followUp = (text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed) throw new Error('Write the follow-up line.');
+        if (followUps.length) return 'A follow-up is already queued.';
+        followUps.push(trimmed);
+        return 'Queued. It goes out as its own message right after your reply; do not repeat it.';
+      };
+      const tools = bind(
+        {
+          ...shared,
+          execution,
+          delegate,
+          ...(!context.background || context.taskContext ? { followUp } : {}),
+        },
+        async () => {
+          if (!browsed) await computer.hold(browserId, false).catch(() => {});
+          browsed = true;
+        },
+      );
       const instruct = (instruction: string) =>
         `${currentUserTime(context.timeZone)}\n${instruction}`;
       const { takeMessages } = context;
@@ -542,7 +628,12 @@ export function createAgentRuntime(dependencies: {
         workspace,
         timeZone: context.timeZone,
         runTool: guard,
-        shouldStop: () => stopped,
+        shouldStop: () => {
+          if (stopped) return true;
+          if (checkInBlocked) checkInStrikes++;
+          checkInBlocked = false;
+          return (checkInStopped = checkInStrikes >= 2);
+        },
         nextMessages:
           takeMessages &&
           (async () => {
@@ -552,9 +643,11 @@ export function createAgentRuntime(dependencies: {
               const { images, omitted } = await inline(message.attachments, budget);
               messages.push({ text: instruct(steeredInstruction(message, omitted)), images });
             }
+            if (messages.length) checkInSpent = checkInStrikes = 0;
             return messages;
           }),
         onEvent: (event) => {
+          countUsage(event);
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
@@ -567,7 +660,10 @@ export function createAgentRuntime(dependencies: {
             );
           }
           if (event.type === 'error') modelFailed = true;
-          if (event.type === 'final') modelFailed = modelIncomplete = false;
+          if (event.type === 'final') {
+            modelFailed = modelIncomplete = false;
+            if (context.taskContext) taskResult = event.text;
+          }
           if (stopped || context.background) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();
@@ -584,14 +680,40 @@ export function createAgentRuntime(dependencies: {
       await session!.prompt(instruct(firstInstruction(context, resumed, omitted)), images);
       await pendingReplies;
       signal.throwIfAborted();
+      if (checkInStopped && status === 'succeeded')
+        throw new Error(
+          `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
+        );
       if (modelFailed)
         throw new Error('The model request failed. Check the configured provider and model.');
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
+      let result =
+        context.taskContext &&
+        taskResult &&
+        taskResult.trim() !== lastReply &&
+        taskResult.trim() !== reportedTaskResult
+          ? taskResult
+          : undefined;
+      if (status === 'succeeded' && followUps.length) {
+        if (result) {
+          await deliverReply(result);
+          result = undefined;
+        }
+        for (const text of followUps) {
+          await wait(1200, undefined, { signal });
+          await deliverReply(text);
+        }
+      }
       waitingForUser = status !== 'succeeded';
       completed = true;
-      return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
+      return {
+        status,
+        ...(result ? { result } : {}),
+        ...(waitingFor ? { waitingFor } : {}),
+        ...(question ? { question } : {}),
+      };
     } finally {
       stopped = true;
       completeStream();

@@ -7,7 +7,7 @@ sidebar:
 
 Before Otto runs an action in a connected app, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules or notification settings. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Otto changes its own schedules, notification settings or spending limits. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
 
 Background work, such as on a new email or a check of an app without events, has no words from you behind it. So the checker lets it read and draft, and Otto asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
@@ -15,12 +15,14 @@ Background work, such as on a new email or a check of an app without events, has
 
 The checker is your selected model at its fastest setting. It checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
 
-| It sees                                                                                       | It never sees                                                               |
-| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| For a task you started, your last five messages from the past day and the one that started it | Tool results, web pages, emails or files                                    |
-| The Otto message your latest one answered                                                     | Anything Otto read while working                                            |
-| A scheduled run's instruction, instead of your messages                                       | Task cards you tapped on your first chat, even when they started a schedule |
-| The action and its arguments as Otto sends them                                               | Other people's words as yours                                               |
+| It sees                                                                         | It never sees                                                               |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| For main chat, your last five messages from the past day and the source request | Tool results, web pages, emails or files                                    |
+| The Otto message your latest one answered                                       | Anything Otto read while working                                            |
+| A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat, even when they started a schedule |
+| The action and its arguments as Otto sends them                                 | Other people's words as yours                                               |
+
+For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
 
 Only your words carry authority. A web page or email can't argue for an action, because the checker never reads it.
 
@@ -54,6 +56,7 @@ Your recent messages and explicitly stated remembered preferences guide presenta
 Generating a question doesn't approve anything. The server checks the task again after generation, then saves the question and exact arguments together. Stop, cancellation, invalid model output or an unavailable model can't produce a late approval. The model never chooses the account or changes the saved arguments while writing the question.
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
+- A later status message in the same reply channel blocks a bare yes. A status in another channel does not block it. On web, a message that arrived after your displayed view does not replace the question you saw. Reply directly to the question to select it.
 - The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
 - A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and Otto treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.

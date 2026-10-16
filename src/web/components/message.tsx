@@ -182,6 +182,10 @@ export function MessageBubble({
     message.role === 'user'
       ? reactionEmoji(message.reactions?.find((item) => item.actor === 'assistant')?.reaction ?? '')
       : '';
+  const shownReaction = reaction || agentReaction;
+  const mountedReaction = useRef(shownReaction);
+  const [leaving, setLeaving] = useState(false);
+  const reactionClass = `reaction-pin${shownReaction && shownReaction !== mountedReaction.current ? ' is-new' : ''}${leaving ? ' is-leaving' : ''}`;
   useEffect(() => {
     setSelectedName('');
     setReaction(
@@ -282,7 +286,17 @@ export function MessageBubble({
     setPickingReaction(false);
     pickerTrigger.current?.focus();
   }
-  async function react(value: string, name = reactionName(value)) {
+  async function leave(value: string) {
+    if (reacting || leaving) return;
+    setLeaving(true);
+    await react(
+      value,
+      reactionName(value),
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
+    );
+    setLeaving(false);
+  }
+  async function react(value: string, name = reactionName(value), delay = 0) {
     if (reacting) return;
     const next = nextReaction(reaction, value);
     setReacting(true);
@@ -290,6 +304,7 @@ export function MessageBubble({
     if (pickingReaction) closePicker();
     setError('');
     try {
+      if (delay) await new Promise((done) => setTimeout(done, delay));
       await post(`/api/messages/${message.id}/reaction`, { reaction: next });
       setReaction(next);
       setSelectedName(next ? name : '');
@@ -375,25 +390,64 @@ export function MessageBubble({
       )}
       <div className="message-content">
         <div className="message-row">
-          <div className="message-body">
-            {message.replyTo && (
-              <blockquote className="message-reply-quote">
-                <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
-                <span>{message.replyTo.text || 'Attachment'}</span>
-              </blockquote>
-            )}
-            {message.attachments.length > 0 && (
-              <MessageAttachments attachments={message.attachments} />
-            )}
-            {message.text && (
-              <MessageText
-                text={message.text}
-                previews={!streaming}
-                connectedAppIds={connectedAppIds}
-                onHandoffDone={streaming ? undefined : onHandoffDone}
-                handoffPaused={handoffPaused}
-                handoffTurnId={message.turnId ?? undefined}
-              />
+          <div
+            className={`message-bubble${shownReaction ? ' has-reaction' : ''}`}
+            onDoubleClick={
+              message.role === 'assistant' && !streaming
+                ? (event) => {
+                    if ((event.target as HTMLElement).closest('a,button,audio,video,input')) return;
+                    window.getSelection()?.removeAllRanges();
+                    void (reaction && reactionEmoji(reaction) === '👍'
+                      ? leave(reaction)
+                      : react('👍'));
+                  }
+                : undefined
+            }
+          >
+            <div className="message-body">
+              {message.replyTo && (
+                <blockquote className="message-reply-quote">
+                  <span>{message.replyTo.text || 'Attachment'}</span>
+                </blockquote>
+              )}
+              {message.attachments.length > 0 && (
+                <MessageAttachments attachments={message.attachments} />
+              )}
+              {message.text && (
+                <MessageText
+                  text={message.text}
+                  previews={!streaming}
+                  connectedAppIds={connectedAppIds}
+                  onHandoffDone={streaming ? undefined : onHandoffDone}
+                  handoffPaused={handoffPaused}
+                  handoffTurnId={message.turnId ?? undefined}
+                />
+              )}
+            </div>
+            {reaction ? (
+              <button
+                key={reaction}
+                type="button"
+                className={reactionClass}
+                disabled={reacting}
+                onClick={() => void leave(reaction)}
+                aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
+                title={`Your reaction: ${selectedName || reactionName(reaction)}. Click to remove`}
+              >
+                {reactionEmoji(reaction)}
+              </button>
+            ) : (
+              agentReaction && (
+                <span
+                  key={agentReaction}
+                  className={reactionClass}
+                  role="img"
+                  aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
+                  title={`Otto reacted: ${reactionName(agentReaction)}`}
+                >
+                  {agentReaction}
+                </span>
+              )
             )}
           </div>
           {!streaming && (
@@ -471,33 +525,6 @@ export function MessageBubble({
             </div>
           )}
         </div>
-        {(reaction || agentReaction) && (
-          <div className="message-footer">
-            <div className="message-meta">
-              {reaction && (
-                <button
-                  className="selected-reaction"
-                  disabled={reacting}
-                  onClick={() => void react(reaction)}
-                  aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
-                  title={selectedName || reactionName(reaction)}
-                >
-                  <ReactionGlyph value={reaction} />
-                </button>
-              )}
-              {agentReaction && (
-                <span
-                  className="selected-reaction agent-reaction"
-                  role="img"
-                  aria-label={`Otto reacted: ${reactionName(agentReaction)}`}
-                  title={`Otto reacted: ${reactionName(agentReaction)}`}
-                >
-                  <ReactionGlyph value={agentReaction} />
-                </span>
-              )}
-            </div>
-          </div>
-        )}
         {error && <Notice>{error}</Notice>}
       </div>
       {menu &&

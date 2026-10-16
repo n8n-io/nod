@@ -16,6 +16,7 @@ export interface ModelUsageObservation {
   cacheWriteTokens: number;
   totalTokens: number;
   costUsd: number | null;
+  estimateUsd?: number | null;
   costSource: 'sdk_estimate' | 'unavailable';
   createdAt: string;
 }
@@ -79,11 +80,22 @@ export interface RuntimeContext {
     reaction?: string | null;
     attachments?: MessageAttachment[];
     unseen?: boolean;
+    turnId?: string | null;
   }>;
   memory?: string;
+  checkIn?: { budgetUsd: number; spentUsd: number };
+  taskContext?: {
+    id: string;
+    title: string;
+    brief: string;
+    doneWhen: string;
+    revision: number;
+    messageId?: string | null;
+  };
+  tasks?: import('../shared/contracts.ts').Task[];
   workspacePath: string;
   signal: AbortSignal;
-  attachments: Array<{ path: string; mimeType: string }>;
+  attachments: Array<{ path: string; mimeType: string; workspaceFile?: string }>;
   emit(type: string, summary: string, event?: ExecutionEvent): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
   reactToMessage?(
@@ -151,6 +163,7 @@ export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
   waitingFor?: 'question' | 'approval' | 'credentials';
   question?: string;
+  result?: string;
 }
 export interface AgentImage {
   type: 'image';

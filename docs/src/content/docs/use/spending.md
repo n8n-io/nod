@@ -1,33 +1,32 @@
 ---
 title: Spending and usage
-description: See what Otto spends on models and does in your apps, set a monthly spending limit, and check usage from chat or Telegram.
+description: See what Otto spends and does, set a monthly spending limit, and choose when a task checks in before it spends more.
 sidebar:
   order: 8
 ---
 
-Otto shows what it spends on models and what it does in your apps, and lets you set a monthly spending limit.
+Otto shows what it spends on models and what it does in your apps. You can set a monthly spending limit and choose when a task checks in with you before it spends more.
 
 Otto itself doesn't charge you. Your model provider bills you for the requests Otto makes with your key or plan.
 
 ## See your spending
 
-Open **Settings → Trust & cost** (⌘I on a Mac, Ctrl+I elsewhere).
+Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere). **Activity** opens first.
 
-- **The last 7 days.** One line with how many things Otto did, how many times it used your apps and what it spent.
-- **This month.** What Otto has spent so far, a chart and a forecast, such as "On track for $12.40".
-- **The statement.** Every request that cost money or acted in a connected app, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Otto did and the cost.
+- **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what Otto did this week. Select a value to see more or change it.
+- **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Otto did and the cost.
 
-Every app action is recorded, reads included.
+Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
-![Settings → Trust & cost showing $0.17 spent this month of a $25 limit, a spending chart and the day's statement.](../../../assets/screens/trust-cost-light.png)
+![Trust → Activity: October spending of $7.52 of a $25 limit, tasks that check in at $5, and today's app actions, sign-in and card use.](../../../assets/screens/trust-light.png)
 
 ## Set a monthly limit
 
-1. Open **Settings → Trust & cost**.
-2. Select **Set a monthly limit**.
+1. Open **Trust**.
+2. In the sentence at the top, select **no monthly limit**, or your current limit.
 3. Enter an amount in US dollars, from $1 up, and select **Save**.
 
-To change the limit, select it and enter a new amount. To remove it, select it, then **Remove**.
+To remove the limit, select it, then **Remove**. You can also tell Otto, for example "Set my monthly limit to $40". See [Ask Otto](#ask-otto).
 
 ## What happens at the limit
 
@@ -51,6 +50,33 @@ The pause lifts at the start of next month, or as soon as you raise or remove th
 Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In the statement it shows a dash instead of a cost, labelled **Included in your plan**. Costs are Otto's estimates. Your provider's bill is the final word.
 :::
 
+## Task check-ins
+
+A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Otto stops before its next step, says what's done and what's left, and asks whether to keep going.
+
+- Say yes, and the task continues until it spends that amount again.
+- Say no, and Otto stops the task.
+
+![Otto in chat: the first draft is ready and both revisions remain, the run has reached the $5 check-in, and Otto asks whether to continue. The reply is yes, keep going.](../../../assets/screens/trust-check-in.png)
+
+The count covers every turn of the task and its helpers, so a task that works in small steps over several days checks in too. A chat reply, a schedule and an event check in the same way. A schedule or event counts from when it started.
+
+Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra.
+
+### Change when tasks check in
+
+1. Open **Trust**.
+2. In the sentence at the top, select the amount after **Tasks check in at**.
+3. Choose **$2**, **$5**, **$20** or **No limit**.
+
+Or tell Otto, for example "Check in when a task passes $20".
+
+![The check-in choices under the sentence: $2, $5 (selected), $20 and No limit.](../../../assets/screens/trust-task-limit.png)
+
+:::note
+Otto finishes an action that has already started before it checks in. If the model keeps trying to work after the check-in, Otto ends the turn with a notice such as **Paused at the $5 check-in. Reply to keep going.**
+:::
+
 ## See the cost of one reply
 
 Hover over Otto's final reply, or move keyboard focus to it, to see the estimated model cost of that request. **Price unavailable** means part of the usage has no price.
@@ -61,7 +87,9 @@ Send `/usage` for the same summary. It doesn't use the model or cost anything. T
 
 ## Ask Otto
 
-You can ask Otto about its own spending and app actions, for example "How much have you spent this month?" Otto reads the same view. It can't change your limit.
+You can ask Otto about its own spending and app actions, for example "How much have you spent this month?" Otto reads the same view.
+
+You can also tell Otto to change a limit, for example "Raise my monthly limit to $40" or "Stop checking in on tasks". The same check that guards app actions decides: Otto changes a limit when your own words ask for it, and asks you first otherwise. A web page or email can't change your limits.
 
 ## Related resources
 

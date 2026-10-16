@@ -499,6 +499,78 @@ test('an app call issued after one that asks never runs, unless the ask fails fi
   assert.ok(events.includes('end GMAIL_LIST_LABELS'));
 });
 
+test('past the spending check-in a turn stops working but can ask, and one that keeps working pauses', async () => {
+  const usage = (costUsd: number | null, estimateUsd?: number): AgentEvent => ({
+    type: 'model_usage',
+    id: randomUUID(),
+    provider: 'fixture',
+    model: 'fixture',
+    inputTokens: 1,
+    outputTokens: 1,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 2,
+    costUsd,
+    ...(estimateUsd === undefined ? {} : { estimateUsd }),
+    costSource: costUsd === null ? 'unavailable' : 'sdk_estimate',
+    createdAt: new Date().toISOString(),
+  });
+  const reads: string[] = [];
+  const integration: RuntimeContext['integration'] = async (action) => {
+    reads.push(action);
+    return { ok: true };
+  };
+  const read = (tools: Map<string, AgentTool>) =>
+    tools.get('apps')!.execute({ action: 'GMAIL_FETCH_EMAILS', args: {} });
+  const checkIn = { budgetUsd: 5, spentUsd: 4 };
+  const asked = await fixture(
+    async (tools, emit, options) => {
+      await read(tools);
+      emit(usage(null, 0.5));
+      await read(tools);
+      emit({
+        type: 'provider_usage',
+        usage: {
+          id: randomUUID(),
+          provider: 'codemode',
+          category: 'agent',
+          operation: 'models',
+          status: 'succeeded',
+          durationMs: 0,
+          costUsd: null,
+          estimateUsd: 1,
+        },
+      });
+      assert.equal(options.shouldStop(), false);
+      await assert.rejects(read(tools), /past the \$5 check-in/);
+      await call(tools, 'ask_user', { question: 'Read 12 of 40 threads. Keep going?' });
+    },
+    { integration, checkIn },
+  );
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.deepEqual(asked.replies, ['Read 12 of 40 threads. Keep going?']);
+  assert.equal(reads.length, 2);
+  await assert.rejects(
+    fixture(
+      async (tools, emit, options) => {
+        emit(usage(6));
+        while (!options.shouldStop()) await read(tools).catch(() => {});
+      },
+      { integration, checkIn },
+    ),
+    /Paused at the \$5 check-in/,
+  );
+  assert.equal(reads.length, 2);
+  await fixture(
+    async (tools, emit) => {
+      emit(usage(50));
+      await read(tools);
+    },
+    { integration },
+  );
+  assert.equal(reads.length, 3);
+});
+
 test('a failing observer never breaks a tool call', async () => {
   let result: AgentToolResult | undefined;
   await fixture(
@@ -1043,4 +1115,68 @@ test('long tool errors reach the model as a preview and a workspace file', async
   assert.equal(saved[0]!.text, failure);
   assert.ok(messages[1]!.length < 2500);
   assert.ok(messages[1]!.includes(saved[0]!.path));
+});
+
+test('a queued follow-up goes out once as its own message after the reply, from chat and task sessions, never from an event, delegated or waiting turn', async () => {
+  const offer = 'Want this every Monday morning?';
+  const done = await fixture(async (tools, emit) => {
+    assert.match(JSON.stringify(await call(tools, 'follow_up', { text: offer })), /Queued/);
+    assert.match(
+      JSON.stringify(await call(tools, 'follow_up', { text: 'Another offer' })),
+      /already/,
+    );
+    emit({ type: 'final', text: 'Here are the top three posts.' });
+  });
+  assert.equal(done.result.status, 'succeeded');
+  assert.deepEqual(done.replies, ['Here are the top three posts.', offer]);
+
+  const background = await fixture(
+    async (tools) => {
+      assert.equal(tools.has('follow_up'), false);
+    },
+    { background: true },
+  );
+  assert.deepEqual(background.replies, []);
+
+  let childTools: string[] = [];
+  const delegated = await fixture(async (tools, _emit, options) => {
+    if (options.ephemeral) {
+      childTools = [...tools.keys()];
+      return;
+    }
+    await call(tools, 'delegate', { title: 'Forum lookup', instruction: 'Find the posts.' });
+  });
+  assert.ok(childTools.length > 0);
+  assert.equal(childTools.includes('follow_up'), false);
+  assert.deepEqual(delegated.replies, []);
+
+  const waiting = await fixture(async (tools) => {
+    await call(tools, 'follow_up', { text: offer });
+    await call(tools, 'ask_user', { question: 'Which forum?' });
+  });
+  assert.equal(waiting.result.status, 'waiting_user');
+  assert.deepEqual(waiting.replies, ['Which forum?']);
+});
+
+test('a task result reaches the owner before its follow-up and is not returned for a second delivery', async () => {
+  const result = 'The draft is ready.';
+  const offer = 'Want me to prepare these each Monday?';
+  const done = await fixture(
+    async (tools, emit) => {
+      await call(tools, 'follow_up', { text: offer });
+      emit({ type: 'final', text: result });
+    },
+    {
+      background: true,
+      taskContext: {
+        id: randomUUID(),
+        title: 'Draft',
+        brief: 'Prepare a draft.',
+        doneWhen: 'The draft is ready.',
+        revision: 1,
+      },
+    },
+  );
+  assert.deepEqual(done.replies, [result, offer]);
+  assert.equal(done.result.result, undefined);
 });

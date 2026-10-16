@@ -1751,6 +1751,39 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
   );
   assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
   assert.equal(existsSync(join(directory, 'rewrite-completed')), false);
+  await assert.rejects(run('bash', { command: 'sleep 2', timeout: 1 }), /timed out/);
+  assert.match(await run('bash', { command: 'if' }), /syntax error/);
+  if (process.platform === 'linux') {
+    await rm(join(bin, 'timeout'), { force: true });
+    await rm(join(bin, 'rtk'));
+    assert.match(await run('bash', { command: 'kill -KILL $$' }), /Command exited with code 137/);
+    t.after(async () => {
+      const pid = Number(await readFile(join(directory, 'timeout-pid'), 'utf8').catch(() => '0'));
+      if (pid > 0) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+    });
+    await assert.rejects(
+      run('bash', {
+        command: `trap '' TERM; printf '%s' "$$" > timeout-pid; sleep 30`,
+        timeout: 1,
+      }),
+      /timed out/,
+    );
+    const pid = Number(await readFile(join(directory, 'timeout-pid'), 'utf8'));
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return;
+      }
+      await setTimeout(20);
+    }
+    assert.fail('The command survived its timeout.');
+  }
 });
 
 // Runtime: credential guard in observations, one active turn, stop and shutdown drain.
@@ -1824,6 +1857,135 @@ function context(directory: string): RuntimeContext {
     manage: async () => ({}),
   };
 }
+
+test('saved tasks use their folder and return their final result without a coordinator turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-task-runtime-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const id = randomUUID();
+  const paths: string[] = [];
+  const commands: string[] = [];
+  const replies: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (options) => {
+        paths.push(options.workspace.path);
+        return {
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            options.onEvent({ type: 'final', text: 'The fixture output is checked.' });
+          },
+        };
+      },
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({
+      open: () => ({
+        path: '/workspace/fixture',
+        instructions: 'Fixture',
+        exec: async (command) => {
+          commands.push(command);
+          return { exitCode: 0 };
+        },
+      }),
+    }),
+  });
+  try {
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      sessionId: id,
+      background: true,
+      taskContext: {
+        id,
+        title: 'Fixture task',
+        brief: 'Check the fixture',
+        doneWhen: 'Fixture output checked',
+        revision: 1,
+      },
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+    assert.equal(result.result, 'The fixture output is checked.');
+    assert.deepEqual(paths, [`/workspace/fixture/tasks/${id}`]);
+    assert.ok(commands.some((command) => command.includes(`/tasks/${id}/outputs`)));
+    assert.deepEqual(replies, []);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test('Telegram task progress replies to its task and does not repeat its finished result', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-task-telegram-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const id = randomUUID();
+  const messageId = randomUUID();
+  const replies: Array<{ text: string; target?: string }> = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (options) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          const task = options.tools.find((tool) => tool.name === 'task')!;
+          await task.execute({ action: 'update', id, now: 'Check the output' });
+          await task.execute({ action: 'update', id, now: 'Check the output' });
+          await task.execute({ action: 'finish', id, status: 'done', result: 'Fixture checked' });
+          options.onEvent({ type: 'final', text: 'Fixture checked' });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      sessionId: id,
+      background: true,
+      channel: 'telegram',
+      taskContext: {
+        id,
+        title: 'Fixture',
+        brief: 'Check the output',
+        doneWhen: 'Checked',
+        revision: 1,
+        messageId,
+      },
+      task: async (input) => ({
+        id,
+        messageId,
+        title: 'Fixture',
+        doneWhen: 'Checked',
+        now: 'Check the output',
+        status: (input as { action: string }).action === 'finish' ? 'done' : 'working',
+        result: 'Fixture checked',
+        question: null,
+        waitingFor: [],
+        nextCheck: null,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+        closedAt:
+          (input as { action: string }).action === 'finish' ? new Date(0).toISOString() : null,
+      }),
+      reply: async (text, _id, target) => {
+        replies.push({ text, target });
+      },
+    });
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.result, undefined);
+    assert.equal(replies.length, 2);
+    assert.ok(replies.every((reply) => reply.target === messageId));
+  } finally {
+    await runtime.dispose();
+  }
+});
 
 test('an attached photo reaches a model that reads images and is listed as omitted for one that does not', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-images-'));

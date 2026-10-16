@@ -438,7 +438,7 @@ export function BrowserHandoff({
         <span role="status">{status}</span>
         <div className="browser-handoff-actions">
           <Button variant="ghost" size="sm" asChild>
-            <a href="/vault?add=login" target="_blank" rel="noopener noreferrer">
+            <a href="/trust?add=login" target="_blank" rel="noopener noreferrer">
               <KeyRound size={16} aria-hidden="true" />
               Save login
             </a>

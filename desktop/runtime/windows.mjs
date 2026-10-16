@@ -13,8 +13,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
+import { assetHash } from './assets.mjs';
 import { availablePort, execute, finishRuntime } from './index.mjs';
 
 const holders = new Map();
@@ -70,6 +72,80 @@ export async function installWsl({ signal } = {}) {
     ],
     { env, signal, timeout: 1_200_000 },
   );
+}
+
+async function download(
+  { url, bytes, sha256 },
+  path,
+  { signal, fetch: request = fetch, onProgress = () => {} },
+) {
+  let response;
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    const address = new URL(url);
+    if (address.protocol !== 'https:' || address.username || address.password)
+      throw new Error('Otto received an unsafe download address.');
+    response = await request(url, {
+      signal,
+      redirect: 'manual',
+      headers: { accept: 'application/octet-stream' },
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    url = new URL(response.headers.get('location') || '', url).href;
+    await response.body?.cancel();
+  }
+  if (!response?.ok || !response.body)
+    throw new Error('The Otto download is unavailable. Try again.');
+  const hash = createHash('sha256');
+  let received = 0;
+  let reported = 0;
+  const check = new Transform({
+    transform(chunk, encoding, callback) {
+      received += chunk.length;
+      hash.update(chunk);
+      if (Date.now() - reported > 250) {
+        reported = Date.now();
+        onProgress(received / bytes);
+      }
+      callback(
+        received > bytes ? new Error('The Otto download is larger than expected.') : null,
+        chunk,
+      );
+    },
+  });
+  await pipeline(Readable.fromWeb(response.body), check, createWriteStream(path, { flags: 'wx' }), {
+    signal,
+  });
+  if (received !== bytes || hash.digest('hex') !== sha256)
+    throw new Error('The Otto download failed its integrity check. Try again.');
+}
+
+export async function stageWindowsUpdate(candidate, { directory, resourcesPath, signal, fetch }) {
+  if (
+    !/^\d+\.\d+\.\d+$/.test(candidate?.version) ||
+    candidate.installer?.file !== 'Otto-Setup-x64.exe' ||
+    candidate.runtime?.file !== 'Otto-Runtime-win32-x64.tar.gz'
+  )
+    throw new Error('The Otto update is invalid.');
+  const target = join(directory, candidate.version);
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(target, { recursive: true });
+  try {
+    const installed = JSON.parse(
+      await readFile(join(resourcesPath, 'windows-runtime/manifest.json'), 'utf8').catch(
+        () => '{}',
+      ),
+    );
+    if (installed.guest?.sha256 !== candidate.runtime.sha256)
+      await download(candidate.runtime, join(target, candidate.runtime.file), { signal, fetch });
+    await download(candidate.installer, join(target, candidate.installer.file), {
+      signal,
+      fetch,
+    });
+    return target;
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function prepareWindowsRuntime(options, onComputerStart) {
@@ -166,24 +242,46 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   onComputerStart();
   if (!existing || saved.guest !== manifest.guest.sha256) {
     status({ phase: 'installing', message: 'Installing your private computer…' });
+    const placed = join(assets, manifest.guest.file);
+    const present = await stat(placed).then(
+      async (file) =>
+        file.size === manifest.guest.bytes &&
+        (await assetHash(placed, signal)) === manifest.guest.sha256,
+      () => false,
+    );
+    if (!present) await rm(placed, { force: true });
     const space = await statfs(controlRoot);
     const required =
       manifest.guest.expandedBytes * 2 +
       manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
+      (present ? 0 : manifest.guest.bytes) +
       2 * 1024 ** 3;
     if (space.bavail * space.bsize < required)
       throw new Error(
         'Otto needs more free disk space to prepare its private computer. Free space, then select Try again.',
       );
-    const archive = join(assets, manifest.guest.file);
-    if ((await stat(archive)).size !== manifest.guest.bytes)
-      throw new Error('The Windows runtime file is damaged. Extract both download files again.');
-    const hash = createHash('sha256');
-    for await (const bytes of createReadStream(archive, { signal })) hash.update(bytes);
-    if (hash.digest('hex') !== manifest.guest.sha256)
-      throw new Error('The Windows runtime file failed its integrity check.');
+    const archive = present ? placed : join(controlRoot, 'guest.tar.gz');
     const guest = join(controlRoot, 'guest.tar');
     try {
+      if (!present) {
+        if (!options.resolveDownloadUrl)
+          throw new Error(
+            'Put Otto-Runtime-win32-x64.tar.gz next to Otto-Setup-x64.exe, then run the installer again.',
+          );
+        const message = 'Downloading your private computer…';
+        status({ phase: 'downloading', message, progress: 0 });
+        await rm(archive, { force: true });
+        await download(
+          { ...manifest.guest, url: await options.resolveDownloadUrl(manifest, signal) },
+          archive,
+          {
+            signal,
+            fetch: options.fetch,
+            onProgress: (progress) => status({ phase: 'downloading', message, progress }),
+          },
+        );
+        status({ phase: 'installing', message: 'Installing your private computer…' });
+      }
       let expanded = 0;
       const gunzip = createGunzip();
       gunzip.on('data', (bytes) => {
@@ -222,13 +320,15 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
           ],
           { env: hostEnvironment, signal, timeout: 900_000, input: createReadStream(guest) },
         );
-        saved.guest = manifest.guest.sha256;
-        await writeFile(temporaryState, JSON.stringify(saved), { flag: 'wx' });
-        await rename(temporaryState, configPath);
       }
+      saved.guest = manifest.guest.sha256;
+      await writeFile(temporaryState, JSON.stringify(saved), { flag: 'wx' });
+      await rename(temporaryState, configPath);
     } finally {
       await rm(guest, { force: true });
+      if (!present) await rm(archive, { force: true });
     }
+    await rm(placed, { force: true });
   }
   status({ phase: 'starting', message: 'Starting your private computer…' });
   const runGuest = (input) =>

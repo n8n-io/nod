@@ -1106,21 +1106,6 @@ input[type='range']:disabled {
   border-top: 1px solid var(--border);
   margin: 16px 0;
 }
-.message-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  margin-top: 4px;
-}
-.message-meta time {
-  font-size: 10px;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
-.message-user .message-meta {
-  justify-content: flex-end;
-}
 .message-actions {
   display: flex;
   align-items: center;
@@ -1135,14 +1120,6 @@ input[type='range']:disabled {
 .message-actions .button[aria-pressed='true'] {
   color: var(--accent);
   background: var(--accent-soft);
-}
-.selected-reaction {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  background: var(--accent-soft);
-  padding: 4px 8px;
-  border-radius: var(--control-radius);
-  color: var(--accent);
 }
 .message-more {
   position: relative;
@@ -1778,9 +1755,6 @@ input[type='range']:disabled {
   }
   .message-user .message-content {
     padding: 8px 12px 4px;
-  }
-  .message-meta time {
-    font-size: 9px;
   }
   .message-actions .button {
     height: 24px;

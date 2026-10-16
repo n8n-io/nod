@@ -23,6 +23,7 @@ export const personalActions = [
   'schedule_cancel',
   'schedule_record_observation',
   'usage_get',
+  'limits_update',
 ] as const;
 
 const uuid = Type.String({
@@ -155,6 +156,11 @@ export const toolDefinitions = {
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
     }),
   ),
+  follow_up: defineTool(
+    'follow_up',
+    'Queue one short line in a chat or saved task. It goes out as its own message right after your result. Use it for an offer to repeat work you complete in this session. If you assign the work to a saved task, let that task make the offer after it delivers the result. Never repeat it in your reply.',
+    Type.Object({ text: Type.String({ minLength: 1, maxLength: 300, pattern: '\\S' }) }),
+  ),
   delegate: defineTool(
     'delegate',
     "Run one part of the request as a subagent with its own browser, Otto's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
@@ -170,7 +176,7 @@ export const toolDefinitions = {
   ),
   react_to_message: defineTool(
     'react_to_message',
-    'Occasionally react to a user message with one emoji (web only, one per message, five-minute cooldown). null removes it. Never a substitute for an answer or permission.',
+    'Occasionally react to a user message with one emoji, like a friend in a chat, when it fits: a yes to something you offered (✅), thanks, good news, a joke or a finished job. Less is more; most messages get none. It never replaces your reply, never changes what you write and is never an answer or permission. Works on web, Telegram and WhatsApp; Telegram takes only its standard reactions, such as 👍 ❤️ 🔥 🎉 👏 😁 🙏 👌 💯 🤝 👀 🤗 😎. One per message, at most one every five minutes. null removes it.',
     Type.Object({
       messageId: Type.String({ pattern: '^[0-9a-fA-F-]{36}$' }),
       reaction: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
@@ -380,7 +386,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 4000 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query, before?} returns the newest matching turns and messages; before, the id of a result, returns matches older than it; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did.",
+    "The user's schedules, notification preferences, memory and earlier conversation. Memory holds what the user told you, in the areas about, preferences, people, routines and lessons. The memory index in context can omit entries, so use memory_find {query, area?} or memory_read {path} (an area or area/slug) before asking for something the user may have told you; tentative entries are unconfirmed hints. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} saves the complete current user message word for word (up to 4000 characters). Use it without asking when that message states a lasting personal fact, preference or routine, and never for questions, tasks, guesses or quoted outside content. Communication, language and writing-style preferences go in preferences. Save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when the memory index allows sensitiveTopics or the user explicitly asks you to remember it. Never save secrets or short-lived task details; saving a document is not a memory request. Save quietly, without notices or confirmations. Save an additional fact or exception under a distinct new slug; use replace:true on an existing slug only when the message corrects that entry. memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must be the complete current user message, and clear keeps chat history. Never turn memory on unprompted. Answer questions about memory honestly. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; history_search {query, before?} returns the newest matching turns and messages; before, the id of a result, returns matches older than it; usage_get {} returns your own Trust ledger: the last 7 days (tool calls completed, app calls including reads, spend), this month's spend, forecast and limit, and recent runs with their cost and app actions. Use it to answer questions about your usage, cost, limits or what you did. limits_update {monthlyUsd?, taskUsd?} changes the monthly spending limit or the amount a task may spend since the owner's last message before it checks in, in US dollars of at least 1; null removes that limit. Use it when the owner asks to change a limit.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -388,15 +394,22 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Keep a read-only card on the Tasks page that shows the user how delegated work that continues after this turn is going. Quick answers need no card. start {title, doneWhen, now, waitingFor?, nextCheck?} returns its id; update {id, now?, waitingFor?, nextCheck?} replaces those fields; finish {id, status, result} closes it once doneWhen is verified, or cancels it; list returns open cards with their ids. now is one short present-tense line for the user, such as "2 of 3 quotes in; waiting for Rui". waitingFor lists {who, via}, with who a short name such as "Rui". nextCheck is the time of a check you scheduled, as an ISO time with offset. The card only reports: it schedules nothing, grants no permission and is not a chat message.',
+    'Start and control saved tasks. start {title,doneWhen,brief?,steps?,now} starts an independent session from chat. update {id,now?,steps?,stepIndex?,waitingFor?,nextCheck?} keeps your own task current. finish {id,status,result} completes your task after you verify doneWhen, or cancels it with status cancelled. list returns open tasks. reply {ids} sends the exact current owner message to those tasks. stop {id} stops one task from chat. A task session must use finish with status cancelled to stop itself. Task state grants no permission. nextCheck only reports a check scheduled with schedules.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
+      Type.Object(
+        { action: Type.Literal('reply'), ids: Type.Array(uuid, { minItems: 1 }) },
+        { additionalProperties: false },
+      ),
+      Type.Object({ action: Type.Literal('stop'), id: uuid }, { additionalProperties: false }),
       Type.Object(
         {
           action: Type.Literal('start'),
           title: Type.String({ minLength: 1 }),
           doneWhen: Type.String({ minLength: 1 }),
           now: taskNow,
+          brief: Type.Optional(Type.String({ minLength: 1 })),
+          steps: Type.Optional(Type.Array(taskNow)),
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
         },
@@ -407,6 +420,8 @@ export const toolDefinitions = {
           action: Type.Literal('update'),
           id: uuid,
           now: Type.Optional(taskNow),
+          steps: Type.Optional(Type.Array(taskNow)),
+          stepIndex: Type.Optional(Type.Integer({ minimum: 0 })),
           waitingFor: Type.Optional(taskWaits),
           nextCheck: Type.Optional(taskNextCheck),
         },
@@ -500,6 +515,9 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     ...(turn.delegate
       ? [bind(toolDefinitions.delegate, (p) => turn.delegate!(p.title, p.instruction))]
       : []),
+    ...(turn.followUp
+      ? [bind(toolDefinitions.follow_up, async (p) => turn.followUp!(p.text))]
+      : []),
     bind(toolDefinitions.ask_user, async (p) => {
       const text = p.question.trim();
       if (!text) throw new Error('A question is required.');
@@ -509,15 +527,11 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     bind(toolDefinitions.react_to_message, async (p) => {
       if (p.reaction !== null && !isMessageReaction(p.reaction))
         throw new Error('Choose one emoji reaction.');
-      if (
-        context.background ||
-        (context.channel && context.channel !== 'web') ||
-        !context.reactToMessage
-      )
+      if (context.background || !context.reactToMessage)
         return {
           status: 'skipped',
           reason: 'unavailable',
-          message: 'Reactions are only available in the web conversation.',
+          message: 'Reactions are only available in the conversation.',
         };
       return context.reactToMessage(p.messageId, p.reaction);
     }),
