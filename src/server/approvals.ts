@@ -86,8 +86,10 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
     await client.query<{
       authority_instruction: string | null;
       authority_source_message_id: string | null;
+      scheduled_for: Date;
+      time_zone: string;
     }>(
-      'SELECT authority_instruction,authority_source_message_id FROM schedule_runs WHERE turn_id=$1 AND owner_id=$2',
+      'SELECT authority_instruction,authority_source_message_id,scheduled_for,time_zone FROM schedule_runs WHERE turn_id=$1 AND owner_id=$2',
       [turnId, ownerId],
     )
   ).rows[0];
@@ -108,15 +110,15 @@ export async function turnOrigin(turnId: string) {
           ])
         ).rows[0]
       : undefined;
+    const run =
+      origin.source === 'schedule' ? await scheduleAuthority(client, origin.id) : undefined;
     return {
       taskId: current.task_id,
       source: origin.source,
       messageId: origin.source === 'user' ? (task?.source_message_id ?? origin.message_id) : null,
       channel: current.channel,
-      scheduleInstruction:
-        origin.source === 'schedule'
-          ? ((await scheduleAuthority(client, origin.id))?.authority_instruction ?? undefined)
-          : undefined,
+      scheduleInstruction: run?.authority_instruction ?? undefined,
+      ...(run ? { scheduledFor: run.scheduled_for.toISOString(), timeZone: run.time_zone } : {}),
     };
   } finally {
     client.release();

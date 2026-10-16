@@ -7,7 +7,7 @@ sidebar:
 
 Before Otto runs an action in a connected app, or a step in its browser that could send, submit or change something, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it, and background work asks. Saving a note has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it and the time it runs, so "ask me before the second one" still applies to the run that sends it. Background work asks. Saving a note has its own rules: see [Memory](/how-it-works/memory/).
 
 Background work, such as on a new email or a check of an app without events, has no words from you behind it. So the checker lets it read and draft, and Otto asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
@@ -21,7 +21,7 @@ Reading your reply to a confirmation can use a decision model instead. See [Deci
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | For main chat, your last five messages from the past day and the source request | Tool results, web pages, emails or files                                    |
 | The Otto message your latest one answered                                       | Anything Otto read while working                                            |
-| A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat, even when they started a schedule |
+| A scheduled run's instruction and run time, instead of your messages            | Task cards you tapped on your first chat, even when they started a schedule |
 | The action and its arguments as Otto sends them                                 | Other people's words as yours                                               |
 | How a schedule or memory note Otto would change stands now                      |                                                                             |
 

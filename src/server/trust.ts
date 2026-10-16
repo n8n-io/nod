@@ -76,7 +76,11 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
       origin.source === 'user'
         ? await conversation(turn.threadId, origin.messageId, origin.taskId)
         : origin.source === 'schedule'
-          ? instruction && { scheduledTaskInstruction: instruction }
+          ? instruction && {
+              scheduledTaskInstruction: instruction,
+              scheduledFor: origin.scheduledFor,
+              timeZone: origin.timeZone,
+            }
           : undefined;
     const answer = await options
       .review(checkInstructions, { ...words, action: { name: action, arguments: args } })

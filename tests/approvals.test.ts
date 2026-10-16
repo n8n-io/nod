@@ -803,10 +803,13 @@ test(
           const authorized = await begin('Synthetic scheduled work', { source: 'schedule' });
           await db.pool.query(
             `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
-             VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,now(),'UTC',$6)`,
+             VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,'2026-10-19T07:00:00Z','Europe/Madrid',$6)`,
             [randomUUID(), ownerId, randomUUID(), randomUUID(), authorized.turnId, instruction],
           );
-          aligned = (input) => input.scheduledTaskInstruction === instruction;
+          aligned = (input) =>
+            input.scheduledTaskInstruction === instruction &&
+            input.scheduledFor === '2026-10-19T07:00:00.000Z' &&
+            input.timeZone === 'Europe/Madrid';
           assert.deepEqual(
             await trust.check(authorized, 'GOOGLECALENDAR_PATCH_EVENT', {
               event_id: 'synthetic-standup',
