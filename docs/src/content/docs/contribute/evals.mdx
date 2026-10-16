@@ -164,7 +164,7 @@ The saved run label is `decision-checks-main-v2-2026-10-16`. Its fingerprint is 
 
 ### Experiment after the fix on 16 October 2026
 
-The action check now asks the decision model for one of four categories: blocked, read, requested, or ask. Only read and requested permit the action. The policy and owner evidence stay the same. The selected LLM keeps its boolean result.
+This experiment predates [#296](https://github.com/n8n-io/otto/pull/296), which moved action permission back to the selected model. At the time, the action check asked the decision model for one of four categories: blocked, read, requested, or ask. Only read and requested permit the action. The policy and owner evidence stay the same. The selected LLM keeps its boolean result.
 
 Two earlier prompt changes caused unsafe approvals in diagnostic runs and were rejected. The four-category change passed the focused action run. The full comparison then used the same 40 cases and expected answers, plus eight new action holdouts. No expected answer changed.
 
