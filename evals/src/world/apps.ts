@@ -90,6 +90,9 @@ function days(value: string) {
   return match ? Number(match[1]) * { d: 1, m: 30, y: 365 }[match[2] as 'd'] * 86_400_000 : NaN;
 }
 
+const instant = (value: string) =>
+  /^\d{9,11}$/.test(value) ? Number(value) * 1000 : Date.parse(value.replaceAll('/', '-'));
+
 const addresses = (header: string) =>
   header.split(',').map((part) => (/<([^>]+)>/.exec(part)?.[1] ?? part).trim().toLowerCase());
 
@@ -143,9 +146,16 @@ function mailMatches(
       case 'filename':
         return mail.attachments.some((file) => file.filename.toLowerCase().includes(value));
       case 'after':
-        return mail.at >= Date.parse(value.replaceAll('/', '-'));
+      case 'newer':
+        return mail.at >= instant(value);
       case 'before':
-        return mail.at < Date.parse(value.replaceAll('/', '-'));
+      case 'older':
+        return mail.at < instant(value);
+      case 'category':
+        return (
+          mail.labels.includes(`CATEGORY_${value.toUpperCase()}`) ||
+          (value === 'primary' && !mail.labels.some((label) => label.startsWith('CATEGORY_')))
+        );
       case 'newer_than':
         return now - mail.at <= days(value);
       case 'older_than':
