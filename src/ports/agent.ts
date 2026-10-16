@@ -1,7 +1,7 @@
 import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
-import type { CredentialKind, WorkspaceSession } from './computer.ts';
+import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } from './computer.ts';
 import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
 
 export interface ModelUsageObservation {
@@ -43,6 +43,13 @@ export type BrowserConnectionRequest =
     }
   | { action: 'use'; url: string; connectionId: string }
   | { action: 'save'; url: string; connectionId: string; signedIn: true };
+
+export interface BrowserStep {
+  step: BrowserAction | { action: 'upload'; selector: string; path: string };
+  page: BrowserPage;
+  typed: string[];
+  subagent: boolean;
+}
 
 interface MessageAttachment {
   name: string;
@@ -111,6 +118,9 @@ export interface RuntimeContext {
     connectionId?: string,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
+  browserStep?(
+    request: BrowserStep,
+  ): Promise<'run' | 'refused' | { [appConfirmation]: string } | { result: unknown }>;
   waitForUser?(question: string, browserId?: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;

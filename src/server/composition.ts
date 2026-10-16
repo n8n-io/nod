@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { appConfirmation, type Agent, type RuntimeObservation } from '../ports/agent.ts';
+import {
+  appConfirmation,
+  type Agent,
+  type BrowserStep,
+  type RuntimeObservation,
+} from '../ports/agent.ts';
 import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
@@ -15,7 +20,13 @@ import {
 } from './analytics.ts';
 import { captureConnectionInventory } from './analytics-connections.ts';
 import { createConversationAnalytics } from './conversation-analytics.ts';
-import type { Computer, Workspace } from '../ports/computer.ts';
+import {
+  BrowserActionError,
+  type BrowserAction,
+  type Computer,
+  type Workspace,
+} from '../ports/computer.ts';
+import { fileBytes } from '../shared/files.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
@@ -664,34 +675,107 @@ async function initializeApplication(
     submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
     refresh,
   });
+  const browserStepArgs = ({ step, page, typed }: BrowserStep) => {
+    const {
+      timeZone: _timeZone,
+      locale: _locale,
+      expectOrigin: _expectOrigin,
+      readOnly: _readOnly,
+      waitMs: _waitMs,
+      ...command
+    } = step as BrowserAction;
+    return {
+      website: page.origin,
+      page: page.url,
+      step: step.action,
+      ...(page.controls?.length ? { control: page.controls } : {}),
+      ...(page.dialog !== undefined ? { dialog: page.dialog } : {}),
+      ...(step.action === 'upload' ? { file: basename(step.path) } : {}),
+      ...(typed.length ? { typedOnPage: typed } : {}),
+      command,
+    };
+  };
+  const replayBrowserStep = async (
+    args: Record<string, unknown>,
+    provenance: { threadId: string; turnId: string },
+  ) => {
+    const command = args.command as Omit<BrowserAction, 'action'> & {
+      action: BrowserAction['action'] | 'upload';
+      path?: string;
+    };
+    const expectOrigin = String(args.website);
+    const browserId = (
+      await pool.query<{ session_id: string }>(
+        'SELECT session_id FROM turns WHERE id=$1 AND owner_id=$2',
+        [provenance.turnId, ownerId],
+      )
+    ).rows[0]?.session_id;
+    const notRun = () =>
+      Object.assign(new BrowserActionError('browser_target_changed'), { notRun: true });
+    if (!browserId) throw notRun();
+    const current = await computer.currentPage(browserId).catch(() => undefined);
+    if (current?.origin !== expectOrigin) throw notRun();
+    try {
+      const page =
+        command.action === 'upload'
+          ? await computer.upload(browserId, {
+              selector: String(command.selector),
+              name: basename(String(command.path)),
+              bytes: await workspace.readArtifact(
+                provenance.threadId,
+                String(command.path),
+                fileBytes,
+              ),
+              expectOrigin,
+            })
+          : await computer.act(browserId, {
+              ...(command as BrowserAction),
+              expectOrigin,
+            });
+      return { url: page.url, page: page.text };
+    } catch (error) {
+      if (error instanceof BrowserActionError && error.code === 'browser_target_changed')
+        throw notRun();
+      throw error;
+    }
+  };
   const approvals = await createApprovals(
     (action, args, provenance) =>
-      action === 'OTTO_vault_allow'
-        ? vaultAccess.allow(args)
-        : action === 'OTTO_payment_setting'
-          ? payments.setting(provenance, args, true)
-          : action === 'OTTO_payment_approve'
-            ? payments.approve(provenance, args)
-            : action === 'OTTO_limits_update'
-              ? ledger.setLimits(args)
-              : action.startsWith('OTTO_')
-                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                : (async () => {
-                    const result = await integrations.executeApproved(ownerId, action, args, {
-                      threadId: provenance.threadId,
-                      turnId: provenance.turnId,
-                    });
-                    await ledger.action(provenance.turnId, action);
-                    return (
-                      await saveIntegrationFiles(result, async (file) => {
-                        const name = `${randomUUID()}-${basename(file.name)}`;
-                        await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                        return name;
-                      })
-                    ).value;
-                  })(),
+      action === 'OTTO_browser'
+        ? replayBrowserStep(args, provenance)
+        : action === 'OTTO_vault_allow'
+          ? vaultAccess.allow(args)
+          : action === 'OTTO_payment_setting'
+            ? payments.setting(provenance, args, true)
+            : action === 'OTTO_payment_approve'
+              ? payments.approve(provenance, args)
+              : action === 'OTTO_limits_update'
+                ? ledger.setLimits(args)
+                : action.startsWith('OTTO_')
+                  ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                  : (async () => {
+                      const result = await integrations.executeApproved(ownerId, action, args, {
+                        threadId: provenance.threadId,
+                        turnId: provenance.turnId,
+                      });
+                      await ledger.action(provenance.turnId, action);
+                      return (
+                        await saveIntegrationFiles(result, async (file) => {
+                          const name = `${randomUUID()}-${basename(file.name)}`;
+                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                          return name;
+                        })
+                      ).value;
+                    })(),
     async (action, args, expectedRevision) => {
-      if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
+      if (
+        [
+          'OTTO_browser',
+          'OTTO_vault_allow',
+          'OTTO_payment_approve',
+          'OTTO_payment_setting',
+        ].includes(action)
+      )
         return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
       else if (action.startsWith('OTTO_')) {
@@ -875,6 +959,19 @@ async function initializeApplication(
           next: 'connect_account_then_continue',
         });
         return { ...result, message };
+      },
+      browserStep: async (turn, request, signal) => {
+        const args = browserStepArgs(request);
+        const verdict = await trust.check(turn, 'OTTO_browser', args);
+        if (!verdict.confirm) return 'run';
+        if (request.subagent) return 'refused';
+        const result = await approvals.request(turn, 'OTTO_browser', args, {
+          signal,
+          details: { reason: verdict.reason },
+        });
+        return result && typeof result === 'object' && 'requiresConfirmation' in result
+          ? { [appConfirmation]: String(result.question) }
+          : { result };
       },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);

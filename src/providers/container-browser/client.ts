@@ -318,7 +318,12 @@ export function createBridgeComputer(options: {
           {
             method: 'upload',
             threadId: threadIdentity(id),
-            input: { selector: input.selector, name: input.name, size: input.bytes.length },
+            input: {
+              selector: input.selector,
+              name: input.name,
+              size: input.bytes.length,
+              ...(input.expectOrigin ? { expectOrigin: input.expectOrigin } : {}),
+            },
           },
           signal,
           { data: input.bytes },
@@ -350,11 +355,25 @@ export function createBridgeComputer(options: {
       if (bytes.length !== result.size) throw new Error('The browser file is unavailable.');
       return { bytes, name: result.name, mimeType: result.mimeType };
     },
-    currentPage: async (id) =>
+    currentPage: async (id, step) =>
       z
-        .object({ origin: z.string().max(2048), url: z.string().max(8192) })
+        .object({
+          origin: z.string().max(2048),
+          url: z.string().max(8192),
+          controls: z
+            .array(z.object({ role: z.string().max(100), name: z.string().max(300) }).strict())
+            .max(3)
+            .optional(),
+          dialog: z.string().max(8192).optional(),
+        })
         .strict()
-        .parse(await call({ method: 'currentPage', threadId: threadIdentity(id) })),
+        .parse(
+          await call({
+            method: 'currentPage',
+            threadId: threadIdentity(id),
+            ...(step ? { input: step } : {}),
+          }),
+        ),
     fillCard: async (input) => {
       await call({
         method: 'fillCard',

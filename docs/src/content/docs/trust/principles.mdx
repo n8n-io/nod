@@ -43,7 +43,7 @@ No single check makes an AI assistant safe, so Otto stacks independent ones. The
 ```mermaid
 flowchart LR
   you([Your request]):::accent --> model[Model<br/>plans, asks when unsure]
-  model --> trust[Trust check<br/>exact app action]
+  model --> trust[Trust check<br/>exact action or step]
   model --> vault[Vault<br/>task, account, website]
   trust --> world[Apps and websites]
   vault --> world

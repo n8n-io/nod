@@ -3187,3 +3187,44 @@ test(
     }
   },
 );
+
+test('a checked browser step runs only on the page and control the checker saw', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-checked-step-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  const page = () => fixture.pages.get('checked')!;
+  try {
+    await computer.act('checked', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('checked', { action: 'fill', selector: '#account', text: 'synthetic' });
+    const search = await computer.currentPage('checked', { action: 'click', selector: '@e3' });
+    assert.deepEqual(search, {
+      origin: 'https://1.1.1.1',
+      url: 'https://1.1.1.1/login',
+      controls: [{ role: 'textbox', name: 'Search' }],
+    });
+    const next = { action: 'click', selector: '@e2' } as const;
+    await assert.rejects(
+      computer.act('checked', { ...next, expectOrigin: 'https://2.2.2.2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    await assert.rejects(
+      computer.act('checked', { ...next, selector: '@e9', expectOrigin: 'https://1.1.1.1' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    assert.deepEqual(page().entered, []);
+    await computer.act('checked', { ...next, expectOrigin: 'https://1.1.1.1' });
+    assert.deepEqual(page().entered, ['synthetic']);
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'evaluate',
+        script: "document.body.dataset.changed = 'synthetic'",
+        readOnly: true,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_script_writes',
+    );
+    assert.equal(page().dom.window.document.body.dataset.changed, undefined);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

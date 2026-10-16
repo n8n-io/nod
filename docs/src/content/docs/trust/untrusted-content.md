@@ -35,15 +35,15 @@ Automatic memory learning reads only your own short messages without attachments
 
 ## What this does and doesn't protect against
 
-| Protected                                                   | Not protected                                                     |
-| ----------------------------------------------------------- | ----------------------------------------------------------------- |
-| A page or email can't approve an action or grant permission | The model can still be persuaded. It isn't immune to injection    |
-| Every app action passes the trust check                     | Clicks on websites in Otto's browser aren't checked by the server |
-| Vault never gives the model a saved password, code or card  | The data notice is a label for the model, not isolation           |
-| Payments always need your approval                          | A website receives whatever Otto submits to it                    |
+| Protected                                                                        | Not protected                                                  |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| A page or email can't approve an action or grant permission                      | The model can still be persuaded. It isn't immune to injection |
+| Every app action and every browser step that could submit passes the trust check | A website can label a button misleadingly                      |
+| Vault never gives the model a saved password, code or card                       | The data notice is a label for the model, not isolation        |
+| Payments always need your approval                                               | A website receives whatever Otto submits to it                 |
 
 :::caution
-The server doesn't check what Otto reads or types on websites in its browser, or the links it opens or fetches. Text that fools the model could still use those paths.
+The server doesn't check what Otto reads or types on a website until a step submits it, or the links it opens or fetches. Text that fools the model could still use those paths.
 :::
 
 ## Where this is enforced

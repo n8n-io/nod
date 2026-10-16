@@ -56,6 +56,12 @@ export interface BrowserAction {
   offset?: number;
   timeZone?: string;
   locale?: string;
+  expectOrigin?: string;
+  readOnly?: boolean;
+}
+export interface BrowserControl {
+  role: string;
+  name: string;
 }
 export interface BrowserObservation {
   text: string;
@@ -76,11 +82,14 @@ export interface BrowserUploadInput {
   selector: string;
   name: string;
   bytes: Uint8Array;
+  expectOrigin?: string;
 }
 export type CredentialKind = 'identifier' | 'password' | 'otp';
 export interface BrowserPage {
   origin: string;
   url: string;
+  controls?: BrowserControl[];
+  dialog?: string;
 }
 export interface CredentialInput {
   threadId: string;
@@ -147,7 +156,7 @@ export interface Computer {
     fields: CardFields,
   ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
   checkoutImage(threadId: string): Promise<Uint8Array>;
-  currentPage(threadId: string): Promise<BrowserPage>;
+  currentPage(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
   hold(threadId: string, held: boolean): Promise<void>;
   close(threadId: string): Promise<void>;
   discard(threadId: string): Promise<void>;
