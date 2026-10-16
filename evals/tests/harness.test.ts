@@ -1205,6 +1205,7 @@ test('caption approval is the explicit go-ahead, not any earlier answer', async 
       { at: 2_000, text: 'Use the studio account.' },
       { at: 3_000, text: 'Looks good, post them.' },
     ],
+    approvals: [] as Run['approvals'],
   } as unknown as Run;
   const check = definition
     .expect(world)
@@ -1214,6 +1215,19 @@ test('caption approval is the explicit go-ahead, not any earlier answer', async 
   assert.equal((await check.check(run)).pass, true);
   world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 2_500 }];
   assert.equal((await check.check(run)).pass, false);
+  const step = (status: string, website: string) => ({
+    turnId: 't',
+    action: 'OTTO_browser',
+    status,
+    args: { website },
+  });
+  run.approvals = [step('declined', 'https://studio.shortsy.example.org')];
+  assert.equal((await check.check(run)).pass, false);
+  run.approvals = [step('completed', 'https://creator.tiktoc.example.net')];
+  assert.equal((await check.check(run)).pass, false);
+  run.approvals = [step('completed', 'https://studio.shortsy.example.org')];
+  assert.equal((await check.check(run)).pass, true);
+  run.approvals = [];
   run.userMessages = run.userMessages.slice(0, 2);
   world.state.posts = [{ platform: 'shorts', text: 'Caption', hash: '', at: 4_000 }];
   assert.equal((await check.check(run)).pass, false);
