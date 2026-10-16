@@ -1120,7 +1120,7 @@ test(
         'See our ',
         ' for details.',
       ])
-        assert.ok(text.includes(line), line);
+        assert.ok(text.includes(line), `${line}\n---\n${text}`);
     } finally {
       await computer.dispose();
       await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -579,7 +579,14 @@ export async function runDecisionEval(options: {
   }
   for (const arm of arms) {
     if (unpriced || spent >= budgetUnits) break;
-    const result = await check(arm, decisionCases[0], 0, true);
+    const canary = decisionCases.find(
+      (item) => arm.endsWith('-llm') || policies.branch[item.kind].question,
+    );
+    if (!canary) {
+      blocked[arm] = 'This revision gives that model path no decision question.';
+      continue;
+    }
+    const result = await check(arm, canary, 0, true);
     if (result.status === 'error')
       blocked[arm] = `Canary request failed (${result.httpStatus ?? 'model error'}).`;
   }
