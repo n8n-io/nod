@@ -407,7 +407,6 @@ export function MessageBubble({
             <div className="message-body">
               {message.replyTo && (
                 <blockquote className="message-reply-quote">
-                  <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
                   <span>{message.replyTo.text || 'Attachment'}</span>
                 </blockquote>
               )}

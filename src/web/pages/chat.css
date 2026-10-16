@@ -209,10 +209,6 @@
   font-size: var(--text-control);
   line-height: 1.5;
 }
-.message-reply-quote strong {
-  font-size: var(--text-control);
-  font-weight: 500;
-}
 .message-reply-quote span {
   display: -webkit-box;
   -webkit-line-clamp: 2;
