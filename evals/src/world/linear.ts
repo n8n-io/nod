@@ -69,6 +69,8 @@ export function linear(
     const prefix = issue.identifier.split('-')[0];
     if (!teams.some((item) => item.key === prefix))
       throw new Error(`Seed issue ${issue.identifier} has no team ${prefix}.`);
+    if (!workflow.some((state) => state.name === issue.state))
+      throw new Error(`Seed issue ${issue.identifier} has an unknown state ${issue.state}.`);
     return {
       ...issue,
       id: issue.id ?? randomUUID(),

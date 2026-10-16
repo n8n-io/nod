@@ -154,7 +154,8 @@ export default scenario({
       check(
         'title-names-the-passport',
         (run) => ({
-          pass: /passport/i.test(target(run)?.title ?? ''),
+          pass:
+            /passport/i.test(target(run)?.title ?? '') && /renew/i.test(target(run)?.title ?? ''),
           evidence: target(run)?.title,
         }),
         { failure: 'reasoning' },

@@ -151,6 +151,29 @@ function problems(text: string, rows: Row[]) {
       .filter((row) => !unique.has(row.id))
       .map((row) => row.id)
       .join(', ')}`;
+  const sources = new Map(rows.map((row) => [row.id, parse(row.line)[0]]));
+  const day = (value: string) => {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const local = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
+    return local && `${local[3]}-${local[2].padStart(2, '0')}-${local[1].padStart(2, '0')}`;
+  };
+  const altered = ids.filter((id, index) => {
+    const [, , merchant, category, amount] = sources.get(id!)!;
+    const values = data[index].map((value) => value.trim());
+    return !(
+      values.some((value) => day(value) === dates.get(id!)) &&
+      values.some((value) => value.toLowerCase() === merchant.toLowerCase()) &&
+      values.some((value) => value.toLowerCase() === category.toLowerCase()) &&
+      values.some(
+        (value) =>
+          /\d/.test(value) &&
+          Math.abs(Number(value.replace(/[€\s]/g, '')) - Number(amount)) < 0.005,
+      )
+    );
+  });
+  if (altered.length)
+    return `${altered.length} rows lost their date, merchant, category or amount, first ${altered[0]}`;
   const order = ids.map((id) => dates.get(id!)!);
   const wrong = order.findIndex((date, index) => index > 0 && date < order[index - 1]);
   return wrong < 0

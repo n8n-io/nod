@@ -126,6 +126,7 @@ interface Seed {
   id: string;
   name: string;
   parents: string;
+  shared: string;
 }
 
 export default scenario({
@@ -150,6 +151,7 @@ export default scenario({
       id: file.id,
       name: file.name,
       parents: [...file.parents].sort().join(),
+      shared: JSON.stringify(file.shared),
     }));
     return {
       apps: createApps(owner, { drive: drive(store), docs: docs(store) }),
@@ -225,7 +227,8 @@ export default scenario({
               !after ||
               after.trashed ||
               after.name !== item.name ||
-              [...after.parents].sort().join() !== item.parents
+              [...after.parents].sort().join() !== item.parents ||
+              JSON.stringify(after.shared) !== item.shared
             );
           });
           return {

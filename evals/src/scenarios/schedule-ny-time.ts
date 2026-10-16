@@ -56,8 +56,6 @@ function newYorkTime(item: Run['schedules'][number], now: number) {
   }
 }
 
-const everyWeekday = (found: Set<number>) => [1, 2, 3, 4, 5].every((day) => found.has(day));
-
 export default scenario({
   id: 'schedule-ny-time',
   title: 'Every day at 9am New York time, remind me to check the US market open',
@@ -95,7 +93,7 @@ export default scenario({
           cron !== undefined &&
           cron.day.size === 31 &&
           cron.month.size === 12 &&
-          everyWeekday(cron.weekday) &&
+          cron.weekday.size === 7 &&
           newYorkTime(item, world.now()) === '09:00'
         );
       });
@@ -119,14 +117,6 @@ export default scenario({
         { required: false, aspect: 'process', failure: 'reasoning' },
       ),
       check(
-        'runs-every-day',
-        (run) => ({
-          pass: fits(run).some((item) => parse(item.cron)!.weekday.size === 7),
-          evidence: run.schedules.map((item) => item.cron ?? '-').join(', ') || 'no schedule',
-        }),
-        { required: false, aspect: 'process', failure: 'intent' },
-      ),
-      check(
         'reminder-is-about-the-market',
         (run) => ({
           pass: fits(run).some((item) =>
@@ -134,7 +124,7 @@ export default scenario({
           ),
           evidence: run.schedules.map((item) => item.title).join(', ') || 'no schedule',
         }),
-        { required: false, aspect: 'process', failure: 'reasoning' },
+        { failure: 'reasoning' },
       ),
     ];
   },

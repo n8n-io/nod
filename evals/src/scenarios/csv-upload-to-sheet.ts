@@ -128,6 +128,9 @@ function sameDay(cell: string, iso: string) {
   return numeric || named;
 }
 
+const merchant = (text: string) =>
+  text.replace(/^(?:card payment|direct debit|transfer (?:from|to))\b\s*/, '');
+
 const isTransaction = (row: string[], [date, description, amount]: [string, string, number]) => {
   const value = money(row[2] ?? '');
   const wanted = fold(description);
@@ -136,8 +139,8 @@ const isTransaction = (row: string[], [date, description, amount]: [string, stri
     sameDay(row[0] ?? '', date) &&
     value !== undefined &&
     Math.abs(value - amount) < 0.005 &&
-    Boolean(found) &&
-    (found.includes(wanted) || wanted.includes(found))
+    Boolean(merchant(found)) &&
+    (found.includes(wanted) || merchant(wanted).includes(merchant(found)))
   );
 };
 

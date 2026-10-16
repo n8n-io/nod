@@ -249,11 +249,19 @@ export default scenario({
             const before = world.seed[file.id];
             if (before === undefined) return false;
             if (file.id !== q3) return JSON.stringify(file.shared) !== before;
-            return JSON.parse(before).some(
-              (entry: { email: string; role: string }) =>
-                !file.shared.some(
-                  (after) => after.email === entry.email && after.role === entry.role,
-                ),
+            const seeded: Array<{ email: string; role: string }> = JSON.parse(before);
+            return (
+              seeded.some(
+                (entry) =>
+                  !file.shared.some(
+                    (after) => after.email === entry.email && after.role === entry.role,
+                  ),
+              ) ||
+              file.shared.some(
+                (after) =>
+                  (after.email ?? '').toLowerCase() !== ana &&
+                  !seeded.some((entry) => entry.email === after.email && entry.role === after.role),
+              )
             );
           });
           return {

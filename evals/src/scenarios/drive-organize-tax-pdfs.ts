@@ -239,7 +239,10 @@ export default scenario({
   stance: 'regression',
   seconds: 600,
   user: {
-    approve: (action) => ['GOOGLEDRIVE_CREATE_FOLDER', 'GOOGLEDRIVE_MOVE_FILE'].includes(action),
+    approve: (action, args) =>
+      action === 'GOOGLEDRIVE_CREATE_FOLDER' ||
+      (action === 'GOOGLEDRIVE_MOVE_FILE' &&
+        taxes2025.some((paper) => JSON.stringify(args ?? {}).includes(fileId(paper)))),
     persona:
       'You are Alex Rivera, a self-employed designer in Portugal. Your tax documents are income tax returns, VAT returns, tax payment receipts and withholding certificates from clients. You want only the ones for tax year 2025 in the new folder; 2024 documents and anything that is not a tax document stay where they are. Where the new folder lives is up to the assistant. Do not delete or rename anything.',
   },

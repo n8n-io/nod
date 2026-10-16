@@ -125,11 +125,14 @@ export default scenario({
         'porto-has-both-items',
         (run) => {
           const content = lines(portoPage(run)?.markdown);
-          const missing = items.filter((item) => !content.some((line) => item.pattern.test(line)));
+          const missing = items.filter(
+            (item) =>
+              !content.some((line) => item.pattern.test(line) && !/^[-*+]?\s*\[x\]/i.test(line)),
+          );
           return {
             pass: !missing.length,
             evidence: missing.length
-              ? `missing: ${missing.map((item) => item.label).join(', ')}`
+              ? `missing or ticked: ${missing.map((item) => item.label).join(', ')}`
               : undefined,
           };
         },

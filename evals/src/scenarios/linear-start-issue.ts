@@ -350,7 +350,6 @@ export default scenario({
         { failure: 'scope' },
       ),
       check('web-142-otherwise-unchanged', () => fields(issue('WEB-142')) === world.target, {
-        required: false,
         failure: 'scope',
       }),
     ];

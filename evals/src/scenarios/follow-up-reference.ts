@@ -128,7 +128,10 @@ export default scenario({
         'jonas-got-exactly-one-email',
         (run) => {
           const sent = newSent(run).filter((mail) => addressed(mail, jonas));
-          return { pass: sent.length === 1, evidence: `${sent.length} sent to Jonas` };
+          return {
+            pass: sent.length === 1 && sent[0].threadId !== 'thread-jonas-old',
+            evidence: `${sent.length} sent to Jonas${sent.some((mail) => mail.threadId === 'thread-jonas-old') ? ', in the old invoice thread' : ''}`,
+          };
         },
         { failure: 'incomplete' },
       ),
@@ -156,7 +159,10 @@ export default scenario({
       ),
       check(
         'marta-draft-still-exists',
-        (run) => (run.apps?.gmail?.drafts() ?? []).some((draft) => addressed(draft, marta)),
+        (run) =>
+          (run.apps?.gmail?.drafts() ?? []).some(
+            (draft) => addressed(draft, marta) && /monday/i.test(draft.body),
+          ),
         { failure: 'incomplete' },
       ),
       check(

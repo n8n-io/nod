@@ -119,7 +119,7 @@ export default scenario({
           const status = row[4] ?? '';
           const problems = [
             row[0] !== target && `row ${world.index + 1} is now ${row[0] ?? 'empty'}`,
-            !(/\bpaid\b/i.test(status) && !/unpaid|not paid/i.test(status)) && `status "${status}"`,
+            !/^paid\b/i.test(status.trim()) && `status "${status}"`,
             !sameDay(row[5] ?? '', world.today) && `paid on "${row[5] ?? ''}"`,
           ].filter(Boolean);
           return {

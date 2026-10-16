@@ -713,7 +713,14 @@ export function sheets(seed: Sheet[], now: () => number) {
     return { col, row: Number(match[2]) - 1 };
   };
   const read = (book: (typeof books)[number], range: string, computed = false) => {
-    const [name, cells = ''] = range.includes('!') ? range.split(/!(.*)/s) : [range, ''];
+    const bare =
+      !book.tabs.some((item) => item.name === range.replace(/^'|'$/g, '')) &&
+      /^[A-Za-z]{1,3}\d*:[A-Za-z]{1,3}\d*$|^[A-Za-z]{1,3}\d+$/.test(range);
+    const [name, cells = ''] = range.includes('!')
+      ? range.split(/!(.*)/s)
+      : bare
+        ? [book.tabs[0].name, range]
+        : [range, ''];
     const tab = book.tabs.find((item) => item.name === name.replace(/^'|'$/g, '')) ?? book.tabs[0];
     const rows = computed ? computeTab(book.tabs, tab.name) : tab.rows;
     if (!cells)

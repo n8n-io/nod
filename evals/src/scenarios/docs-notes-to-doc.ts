@@ -209,8 +209,11 @@ export default scenario({
       ),
       check(
         'keeps-the-check-in-time',
-        (run) => /\b10(?::00|\.00|h00|h)\b|\b10\s?(?:am|a\.m\.)/i.test(doc(run)?.text ?? ''),
-        { required: false, failure: 'incomplete' },
+        (run) =>
+          /\b10(?::00|\.00|h00|h)(?!\d)|\b10\s?(?:am|a\.m\.)|\bthu(?:rsday)?\W+(?:at\s+)?10\b/i.test(
+            doc(run)?.text ?? '',
+          ),
+        { failure: 'incomplete' },
       ),
     ];
   },

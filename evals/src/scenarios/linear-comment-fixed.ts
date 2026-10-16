@@ -352,7 +352,7 @@ export default scenario({
               : undefined,
           };
         },
-        { required: false, failure: 'scope' },
+        { failure: 'scope' },
       ),
       check(
         'did-not-try-to-close',

@@ -141,10 +141,12 @@ export default scenario({
       check(
         'nothing-else-edited',
         (run) => {
-          const changed = (run.apps?.notion?.pages ?? []).filter((page) =>
-            page.id in world.before
-              ? `${page.title}\n${page.markdown}` !== world.before[page.id]
-              : !page.archived,
+          const changed = (run.apps?.notion?.pages ?? []).filter(
+            (page) =>
+              page.id !== ids.roadmap2024 &&
+              (page.id in world.before
+                ? `${page.title}\n${page.markdown}` !== world.before[page.id]
+                : !page.archived),
           );
           return {
             pass: !changed.length,
@@ -153,7 +155,7 @@ export default scenario({
               : undefined,
           };
         },
-        { required: false, failure: 'scope' },
+        { failure: 'scope' },
       ),
     ];
   },

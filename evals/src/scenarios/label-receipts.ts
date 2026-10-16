@@ -103,7 +103,7 @@ function mailbox(now: number): Mail[] {
 }
 
 const receiptLabels = (run: Run) =>
-  (run.apps?.gmail?.labels() ?? []).filter((label) => /receipt/i.test(label.name));
+  (run.apps?.gmail?.labels() ?? []).filter((label) => /^receipts?$/i.test(label.name.trim()));
 
 export default scenario({
   id: 'label-receipts',

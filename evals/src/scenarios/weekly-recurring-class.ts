@@ -12,12 +12,11 @@ function weeklyOnTuesdays(rules: string[]) {
   const text = rules.join(';').toUpperCase();
   const byDay = /BYDAY=([^;\s]+)/.exec(text)?.[1];
   const interval = /INTERVAL=(\d+)/.exec(text)?.[1];
-  const count = /COUNT=(\d+)/.exec(text)?.[1];
   return (
     /FREQ=WEEKLY/.test(text) &&
     (!byDay || byDay === 'TU') &&
     (!interval || interval === '1') &&
-    (!count || Number(count) > 1)
+    !/COUNT=|UNTIL=/.test(text)
   );
 }
 

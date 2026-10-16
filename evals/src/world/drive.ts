@@ -44,10 +44,36 @@ const content = (file: StoredFile) =>
   file.bytes ?? (file.text === undefined ? undefined : Buffer.from(file.text));
 
 function clauses(query: string) {
+  const quoted: string[] = [];
   return query
+    .replace(/'(?:\\'|[^'])*'/g, (match) => `'\u0000${quoted.push(match) - 1}'`)
     .replace(/[()]/g, ' ')
     .split(/\s+or\s+/i)
-    .map((group) => group.split(/\s+and\s+/i).map((part) => part.trim()));
+    .map((group) =>
+      group
+        .split(/\s+and\s+/i)
+        .map((part) => part.trim().replace(/'\u0000(\d+)'/g, (_, index) => quoted[Number(index)])),
+    );
+}
+
+function sorter(orderBy: unknown) {
+  const keys = String(orderBy ?? '')
+    .split(',')
+    .map((part) => part.trim().split(/\s+/))
+    .filter(([field]) => field);
+  const value = (file: StoredFile, field: string) =>
+    /^name/i.test(field)
+      ? file.name.toLowerCase()
+      : field === 'folder'
+        ? Number(file.mimeType !== folderType)
+        : file.modified;
+  return (a: StoredFile, b: StoredFile) => {
+    for (const [field, direction] of keys) {
+      const [x, y] = [value(a, field), value(b, field)];
+      if (x !== y) return (x < y ? -1 : 1) * (/^desc$/i.test(direction ?? '') ? -1 : 1);
+    }
+    return keys.length ? 0 : b.modified - a.modified;
+  };
 }
 
 function test(file: StoredFile, clause: string) {
@@ -125,7 +151,7 @@ export function drive(store: FileStore) {
                 ? clauses(query).some((group) => group.every((clause) => test(file, clause)))
                 : `${file.name} ${file.text ?? ''}`.toLowerCase().includes(query.toLowerCase())),
           )
-          .sort((a, b) => b.modified - a.modified)
+          .sort(sorter(args.orderBy ?? args.order_by))
           .slice(0, Number(args.pageSize ?? args.page_size ?? 100));
         return { files: found.map(view) };
       },

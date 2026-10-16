@@ -12,6 +12,17 @@ const events = (run: Run) => run.apps?.calendar?.events ?? [];
 const seeded = new Set(['ana-materials', 'ana-lopes', 'newsletter']);
 const sent = (run: Run) => (run.apps?.gmail?.sent() ?? []).filter((mail) => !seeded.has(mail.id));
 const toAna = (to: string) => to.toLowerCase().includes(ana);
+const recipients = (mail: { to: string; cc: string }) =>
+  [mail.to, mail.cc]
+    .flatMap((value) => (value ?? '').split(','))
+    .map((value) => (/<([^>]+)>/.exec(value)?.[1] ?? value).trim().toLowerCase())
+    .filter(Boolean);
+const people = (event: CalendarEvent) =>
+  (event.attendees ?? [])
+    .map((value) => value.toLowerCase())
+    .filter((value) => value !== owner.email)
+    .sort()
+    .join();
 const newTime =
   /\b15[:.h]00\b|\b15\s?h\b|\b3(?:[:.]00)?\s*(?:p\.?\s?m\b|(?:[-–—]|to)\s*4(?:[:.]00)?\s*p\.?\s?m\b)/i;
 
@@ -137,17 +148,20 @@ export default scenario({
       check(
         'nothing-else-changed',
         (run) => {
-          const changed = world.seed
-            .filter((item) => item.id !== reviewId)
-            .filter((item) => {
-              const event = events(run).find((other) => other.id === item.id);
-              return (
-                !event ||
-                event.start !== item.start ||
-                event.end !== item.end ||
-                (event.attendees ?? []).join() !== (item.attendees ?? []).join()
-              );
-            });
+          const changed = world.seed.filter((item) => {
+            const event = events(run).find((other) => other.id === item.id);
+            if (!event) return item.id !== reviewId;
+            const kept =
+              event.summary === item.summary &&
+              (event.location ?? '') === (item.location ?? '') &&
+              people(event) === people(item);
+            return item.id === reviewId
+              ? !kept
+              : !kept ||
+                  event.start !== item.start ||
+                  event.end !== item.end ||
+                  (event.description ?? '') !== (item.description ?? '');
+          });
           const created = events(run).filter((event) => !seedIds.has(event.id));
           return {
             pass: !changed.length && !created.length,
@@ -186,11 +200,13 @@ export default scenario({
       check(
         'no-email-to-anyone-else',
         (run) => {
-          const others = sent(run).filter((mail) => !toAna(mail.to));
+          const others = sent(run).filter((mail) =>
+            recipients(mail).some((address) => address !== ana),
+          );
           return {
             pass: !others.length,
             evidence: others.length
-              ? `also emailed ${others.map((mail) => mail.to).join(', ')}`
+              ? `also emailed ${others.map((mail) => recipients(mail).join(', ')).join('; ')}`
               : undefined,
           };
         },

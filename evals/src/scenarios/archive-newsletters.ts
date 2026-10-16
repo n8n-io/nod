@@ -217,18 +217,16 @@ export default scenario({
       check(
         'nothing-else-relabelled',
         (run) => {
-          const changed = Object.keys(world.original).filter((id) => {
-            const expected = newsletters.includes(id)
-              ? world.original[id].filter((label) => label !== 'INBOX')
-              : world.original[id];
-            return !same(mail(run, id)?.labels ?? [], expected);
-          });
+          const changed = Object.keys(world.original).filter(
+            (id) =>
+              !newsletters.includes(id) && !same(mail(run, id)?.labels ?? [], world.original[id]),
+          );
           return {
             pass: !changed.length,
             evidence: changed.length ? `labels changed on ${changed.join(', ')}` : undefined,
           };
         },
-        { required: false, aspect: 'process', failure: 'scope' },
+        { aspect: 'process', failure: 'scope' },
       ),
     ];
   },

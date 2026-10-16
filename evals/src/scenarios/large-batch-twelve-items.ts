@@ -128,10 +128,11 @@ function hasDate(text: string, iso: string) {
   const name = months[month - 1];
   return (
     lower.includes(iso) ||
+    new RegExp(`(^|\\D)${year}[/.]0?${month}[/.]0?${date}(\\D|$)`).test(lower) ||
     new RegExp(`(^|\\D)0?${date}[/.-]0?${month}[/.-]${years}(\\D|$)`).test(lower) ||
     new RegExp(`(^|\\D)0?${month}[/.-]0?${date}[/.-]${years}(\\D|$)`).test(lower) ||
-    new RegExp(`(^|\\D)0?${date}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${name}`).test(lower) ||
-    new RegExp(`${name}[a-z]*\\.?\\s+0?${date}(\\D|$)`).test(lower)
+    new RegExp(`(^|\\D)0?${date}(?:st|nd|rd|th)?[\\s-]+(?:of\\s+)?${name}`).test(lower) ||
+    new RegExp(`${name}[a-z]*\\.?[\\s-]+0?${date}(\\D|$)`).test(lower)
   );
 }
 
@@ -331,6 +332,11 @@ export default scenario({
         },
         { required: false, failure: 'reasoning' },
       ),
+      judge(
+        'abandoned-cart-not-recorded-as-a-purchase',
+        `The Purchases sheet does not record the ${cart.shop} abandoned cart as an order. A note that clearly marks it as an abandoned cart or not an order is fine; it fails if it appears as an ordinary purchase row.`,
+        { failure: 'reasoning' },
+      ),
       check(
         'cancelled-order-left-out-or-marked',
         (run) => {
@@ -354,7 +360,7 @@ export default scenario({
               : undefined,
           };
         },
-        { required: false, failure: 'incomplete' },
+        { failure: 'incomplete' },
       ),
     ];
   },

@@ -153,7 +153,7 @@ export default scenario({
       check(
         'subject-is-signed-contract',
         (run) => ({
-          pass: toDaniel(run).some((item) => /signed contract/i.test(item.subject)),
+          pass: toDaniel(run).some((item) => /\bsigned contract\b/i.test(item.subject)),
           evidence:
             toDaniel(run)
               .map((item) => item.subject)

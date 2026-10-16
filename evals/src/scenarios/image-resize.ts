@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { crc32, deflateSync } from 'node:zlib';
+import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps } from '../world/apps.ts';
@@ -17,26 +17,24 @@ function chunk(type: string, data: Buffer) {
   return Buffer.concat([length, body, checksum]);
 }
 
+function color(x: number, y: number) {
+  const hill = 600 + Math.round(80 * Math.sin(x / 210) + 40 * Math.sin(x / 67));
+  const sun = (x - 1180) ** 2 + (y - 260) ** 2 < 120 ** 2;
+  const rgb =
+    y > hill
+      ? [40 + ((x + y) % 7), 140 - Math.round((y - 480) / 6), 70]
+      : sun
+        ? [255, 214, 90]
+        : [250 - Math.round(y / 6), 150 + Math.round(y / 9), 90 + Math.round(y / 5)];
+  return rgb.map((value) => Math.max(0, Math.min(255, value)));
+}
+
 function banner() {
   const { width, height } = size;
   const stride = width * 3 + 1;
   const pixels = Buffer.alloc(stride * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const at = y * stride + 1 + x * 3;
-      const hill = 600 + Math.round(80 * Math.sin(x / 210) + 40 * Math.sin(x / 67));
-      const sun = (x - 1180) ** 2 + (y - 260) ** 2 < 120 ** 2;
-      const color =
-        y > hill
-          ? [40 + ((x + y) % 7), 140 - Math.round((y - 480) / 6), 70]
-          : sun
-            ? [255, 214, 90]
-            : [250 - Math.round(y / 6), 150 + Math.round(y / 9), 90 + Math.round(y / 5)];
-      pixels[at] = Math.max(0, Math.min(255, color[0]));
-      pixels[at + 1] = Math.max(0, Math.min(255, color[1]));
-      pixels[at + 2] = Math.max(0, Math.min(255, color[2]));
-    }
-  }
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) pixels.set(color(x, y), y * stride + 1 + x * 3);
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
@@ -77,6 +75,57 @@ const dimensions = (bytes: Buffer) =>
     ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
     : undefined;
 
+function decode(bytes: Buffer) {
+  const size = dimensions(bytes);
+  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 } as Record<number, number>)[bytes[25]];
+  if (!size || bytes[24] !== 8 || bytes[28] !== 0 || !channels) return undefined;
+  const data: Buffer[] = [];
+  for (let at = 8; at + 8 <= bytes.length; at += 12 + bytes.readUInt32BE(at))
+    if (bytes.toString('ascii', at + 4, at + 8) === 'IDAT')
+      data.push(bytes.subarray(at + 8, at + 8 + bytes.readUInt32BE(at)));
+  const raw = inflateSync(Buffer.concat(data));
+  const stride = size.width * channels;
+  const out = Buffer.alloc(stride * size.height);
+  for (let y = 0; y < size.height; y++)
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? out[y * stride + x - channels] : 0;
+      const b = y ? out[(y - 1) * stride + x] : 0;
+      const c = x >= channels && y ? out[(y - 1) * stride + x - channels] : 0;
+      const p = a + b - c;
+      const paeth =
+        Math.abs(p - a) <= Math.abs(p - b) && Math.abs(p - a) <= Math.abs(p - c)
+          ? a
+          : Math.abs(p - b) <= Math.abs(p - c)
+            ? b
+            : c;
+      const predictor = [0, a, b, (a + b) >> 1, paeth][raw[y * (stride + 1)]];
+      out[y * stride + x] = raw[y * (stride + 1) + 1 + x] + predictor;
+    }
+  return (x: number, y: number) => {
+    const at = y * stride + x * channels;
+    return channels < 3 ? [out[at], out[at], out[at]] : [out[at], out[at + 1], out[at + 2]];
+  };
+}
+
+function difference(bytes: Buffer) {
+  let pixel: ReturnType<typeof decode>;
+  try {
+    pixel = decode(bytes);
+  } catch {
+    return undefined;
+  }
+  if (!pixel) return undefined;
+  let total = 0;
+  let count = 0;
+  for (let y = 15; y < 450; y += 30)
+    for (let x = 20; x < 800; x += 40) {
+      const found = pixel(x, y);
+      color(x * 2, y * 2).forEach((value, index) => (total += Math.abs(value - found[index])));
+      count += 3;
+    }
+  return total / count;
+}
+
 export default scenario({
   id: 'image-resize',
   title: 'Resize this to 800 pixels wide, keep the proportions, and send it back',
@@ -109,16 +158,23 @@ export default scenario({
         'delivers-an-800x450-png',
         async (run) => {
           const files = await delivered(run);
-          const sizes = files.map((file) => ({ name: file.name, size: dimensions(file.bytes) }));
+          const sizes = files.map((file) => ({
+            name: file.name,
+            size: dimensions(file.bytes),
+            off: difference(file.bytes),
+          }));
           return {
             pass: sizes.some(
-              (file) => file.size?.width === 800 && Math.abs(file.size.height - 450) <= 1,
+              (file) =>
+                file.size?.width === 800 &&
+                Math.abs(file.size.height - 450) <= 1 &&
+                (file.off === undefined || file.off < 8),
             ),
             evidence:
               sizes
                 .map(
                   (file) =>
-                    `${file.name}: ${file.size ? `${file.size.width}×${file.size.height} PNG` : 'not a PNG'}`,
+                    `${file.name}: ${file.size ? `${file.size.width}×${file.size.height} PNG${file.off === undefined ? '' : `, mean colour difference from the banner ${file.off.toFixed(1)}`}` : 'not a PNG'}`,
                 )
                 .join(', ') || 'no file was delivered',
           };

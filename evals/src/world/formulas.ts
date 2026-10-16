@@ -127,7 +127,9 @@ function evaluate(tabs: Tab[], home: Tab, formula: string, seen: Set<string>): V
     const a = point(from, 0);
     const b = point(to, Math.max(0, tab.rows.length - 1));
     const values: string[] = [];
-    for (let r = Math.min(a.row, b.row); r <= Math.max(a.row, b.row); r++)
+    const top = Math.min(a.row, b.row);
+    const bottom = Math.min(Math.max(a.row, b.row), Math.max(top, tab.rows.length - 1));
+    for (let r = top; r <= bottom; r++)
       for (let c = Math.min(a.col, b.col); c <= Math.max(a.col, b.col); c++)
         values.push(cell(tabs, tab, r, c, seen));
     return text.includes(':') ? { range: values } : (numeric(values[0]) ?? values[0]);
