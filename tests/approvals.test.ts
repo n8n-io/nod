@@ -808,7 +808,7 @@ test(
           );
           aligned = (input) =>
             input.scheduledTaskInstruction === instruction &&
-            input.scheduledFor === '2026-10-19T07:00:00.000Z' &&
+            input.scheduledFor === '2026-10-19T09:00:00+02:00' &&
             input.timeZone === 'Europe/Madrid';
           assert.deepEqual(
             await trust.check(authorized, 'GOOGLECALENDAR_PATCH_EVENT', {

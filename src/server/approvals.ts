@@ -5,6 +5,7 @@ import { ownerId } from './config.ts';
 import { refresh } from './events.ts';
 import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
+import { localTimestamp } from '../shared/date-locale.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -118,7 +119,12 @@ export async function turnOrigin(turnId: string) {
       messageId: origin.source === 'user' ? (task?.source_message_id ?? origin.message_id) : null,
       channel: current.channel,
       scheduleInstruction: run?.authority_instruction ?? undefined,
-      ...(run ? { scheduledFor: run.scheduled_for.toISOString(), timeZone: run.time_zone } : {}),
+      ...(run
+        ? {
+            scheduledFor: localTimestamp(run.time_zone, run.scheduled_for),
+            timeZone: run.time_zone,
+          }
+        : {}),
     };
   } finally {
     client.release();
