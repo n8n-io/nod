@@ -114,7 +114,10 @@ export function createCommunication(options: {
       signal,
     );
     signal?.throwIfAborted();
-    const text = response.parse(result).text;
+    const drafted = response.safeParse(result);
+    if (!drafted.success)
+      throw new Error('Otto could not write this message, so nothing was sent or changed.');
+    const text = drafted.data.text;
     if (purpose === 'confirmation') {
       const reviewed = await options.review(
         confirmationInstructions,

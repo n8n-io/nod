@@ -257,7 +257,10 @@ test('communication blocks unsupported confirmations unless their frozen facts p
     { valid: true, run: true },
   ]) {
     captured.length = 0;
-    await assert.rejects(communication.describe(proposal));
+    await assert.rejects(
+      communication.describe(proposal),
+      /^Error: Otto could not write an accurate confirmation for this action/,
+    );
     assert.deepEqual(captured[1], {
       purpose: 'confirmation_review',
       data: { action: original.action, args: original.args, details: original.details },

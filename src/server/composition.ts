@@ -1128,7 +1128,13 @@ async function initializeApplication(
         const confirmation = await approvals.request(
           turn,
           'OTTO_payment_approve',
-          { paymentId: result.paymentId },
+          {
+            paymentId: result.paymentId,
+            origin: result.details.origin,
+            amount: result.details.amount,
+            currency: result.details.currency,
+            card: result.details.card,
+          },
           { details: result.details },
         );
         if (

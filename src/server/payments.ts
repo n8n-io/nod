@@ -407,7 +407,7 @@ export async function createPayments(
   }
 
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
-    const { paymentId } = z.object({ paymentId: z.uuid() }).strict().parse(raw);
+    const { paymentId } = z.object({ paymentId: z.uuid() }).parse(raw);
     const row = await open(paymentId, { threadId: context.threadId });
     const card = (await options.cards()).find((item) => item.id === row?.card_id);
     if (!row || !card?.doItForMe)
