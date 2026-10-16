@@ -37,7 +37,7 @@ Open the session in **Trust → Saved** and select **Sign out**. This deletes th
 
 ## Passkeys and manual sign-in
 
-Passkeys are turned off in Otto's browser, because your passkeys live on your own devices. Sites offer their other sign-in methods instead. For a magic link or any step Otto can't finish, Otto asks you to take over its browser. See [Otto's browser](/use/browser/).
+Passkeys are turned off in Otto's browser, because your passkeys live on your own devices. A passkey request fails right away, so use another sign-in method. For a magic link or any step Otto can't finish, Otto asks you to take over its browser. See [Otto's browser](/use/browser/).
 
 ## Saved session or saved login?
 

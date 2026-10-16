@@ -2000,9 +2000,9 @@ test(
       const passkey = await computer.act('fixture', {
         action: 'evaluate',
         script:
-          "navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32) } }).then(() => 'resolved', (error) => error.name)",
+          "Object.getPrototypeOf(navigator.credentials).get.call(navigator.credentials, { publicKey: { challenge: new Uint8Array(32) } }).then(() => 'resolved', (error) => error.message)",
       });
-      assert.match(passkey.text, /NotAllowedError/);
+      assert.match(passkey.text, /Passkeys are not available in this browser/);
     } finally {
       if (stderrPath) {
         const pipe = await open(stderrPath, constants.O_RDONLY | constants.O_NONBLOCK).catch(

@@ -82,18 +82,25 @@ const streamFrame = z.object({
 const holdMs = 30 * 60_000;
 
 const withoutPasskeys = `(() => {
-  const credentials = navigator.credentials;
-  if (!credentials) return;
+  const container = window.CredentialsContainer && CredentialsContainer.prototype;
+  if (!container) return;
   const unavailable = () =>
     Promise.reject(new DOMException('Passkeys are not available in this browser.', 'NotAllowedError'));
-  const get = credentials.get.bind(credentials);
-  const create = credentials.create.bind(credentials);
-  credentials.get = (options) => (options && options.publicKey ? unavailable() : get(options));
-  credentials.create = (options) => (options && options.publicKey ? unavailable() : create(options));
-  if (window.PublicKeyCredential) {
-    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
-    PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(false);
-  }
+  const { get, create } = container;
+  container.get = function (options) {
+    return options && options.publicKey ? unavailable() : get.call(this, options);
+  };
+  container.create = function (options) {
+    return options && options.publicKey ? unavailable() : create.call(this, options);
+  };
+  const key = window.PublicKeyCredential;
+  if (!key) return;
+  key.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
+  key.isConditionalMediationAvailable = () => Promise.resolve(false);
+  const capabilities = key.getClientCapabilities;
+  if (capabilities)
+    key.getClientCapabilities = () =>
+      capabilities.call(key).then((all) => Object.fromEntries(Object.keys(all).map((name) => [name, false])));
 })();`;
 
 class BrowserLockedError extends Error {
