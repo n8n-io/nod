@@ -1,12 +1,8 @@
-.ob-about {
-  padding-top: 8px;
-  padding-bottom: 40px;
-}
 .ob-about-chat {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 320px;
-  max-height: max(320px, min(560px, 100dvh - 360px));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -21,8 +17,6 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin-top: auto;
-  padding-top: 24px;
 }
 .ob-about-sent {
   display: grid;
@@ -63,7 +57,8 @@
 }
 .ob-about-compose {
   display: grid;
-  gap: 12px;
+  gap: 8px;
+  padding-bottom: 24px;
 }
 .ob-composer > input {
   display: block;
@@ -90,6 +85,11 @@
 .ob-about-error {
   color: var(--error);
   font-size: var(--text-control);
+}
+@media (max-width: 640px) {
+  .ob-about-compose {
+    padding-bottom: 16px;
+  }
 }
 @keyframes ob-about-row {
   from {

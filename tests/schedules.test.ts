@@ -683,6 +683,48 @@ test(
         },
       );
       await t.test(
+        'a schedule started from a tapped first-task card gets no instruction authority',
+        async () => {
+          const title = 'Check in with me every Friday';
+          const tapped = await receive(title);
+          const offer = randomUUID();
+          await db.pool.query(
+            `INSERT INTO messages(id,owner_id,role,text,thread_id,suggestions,created_at)
+             SELECT $1,owner_id,'assistant','Synthetic first tasks',thread_id,$2,created_at-interval '1 second'
+             FROM messages WHERE id=$3`,
+            [
+              offer,
+              JSON.stringify({
+                intro: 'Synthetic intro',
+                tasks: [{ id: randomUUID(), title, source: 'web', kind: 'ongoing' }],
+              }),
+              tapped.sourceMessageId,
+            ],
+          );
+          const authority = async (id: string) =>
+            (
+              await db.pool.query(
+                'SELECT authority_instruction,authority_source_message_id FROM schedules WHERE id=$1',
+                [id],
+              )
+            ).rows[0];
+          const fromCard = await createRouted(tapped);
+          assert.deepEqual(await authority(fromCard.id), {
+            authority_instruction: null,
+            authority_source_message_id: tapped.sourceMessageId,
+          });
+          const typed = await receive(`${title} at nine`);
+          const fromOwner = await createRouted(typed);
+          assert.deepEqual(await authority(fromOwner.id), {
+            authority_instruction: `${title} at nine`,
+            authority_source_message_id: typed.sourceMessageId,
+          });
+          for (const schedule of [fromCard, fromOwner])
+            await personal.manage('schedule_cancel', { id: schedule.id });
+          await db.pool.query('DELETE FROM messages WHERE id=$1', [offer]);
+        },
+      );
+      await t.test(
         'a real timed occurrence reaches the original Telegram fixture once',
         async () => {
           workerMock.mock.restore();

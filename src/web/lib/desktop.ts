@@ -7,15 +7,11 @@ export type DesktopPreferences = {
   launchAtLogin: boolean;
 };
 
-export type DesktopSettings = DesktopPreferences & {
-  hasComposioKey: boolean;
-  keys: { composioApiKey: { suffix: string | null } };
-  restartRequired: boolean;
-};
+export type DesktopSettings = DesktopPreferences;
 
 export type DesktopSettingsChange = Partial<
   Pick<DesktopPreferences, 'theme' | 'notifications' | 'launchAtLogin'>
-> & { composioApiKey?: string | null };
+>;
 
 export type DesktopSettingsSection = 'general' | 'models' | 'preferences';
 
@@ -33,8 +29,6 @@ type DesktopWindow = Window & {
   ottoDesktop?: {
     getSettings(): Promise<DesktopSettings>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
-    revealComposioKey(): Promise<string>;
-    applySettings(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
@@ -85,28 +79,6 @@ export function getDesktopSettings() {
 
 export function saveDesktopSettings(change: DesktopSettingsChange) {
   return settingsBridge().saveSettings(change);
-}
-
-export function revealDesktopComposioKey() {
-  return settingsBridge().revealComposioKey();
-}
-
-export async function applyDesktopSettings() {
-  window.dispatchEvent(new window.Event('otto:apply-settings'));
-  await new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-  try {
-    await settingsBridge().applySettings();
-  } catch (cause) {
-    window.dispatchEvent(
-      new window.CustomEvent('otto:settings-error', {
-        detail:
-          'Your key change is saved but could not be applied yet. Finish your current work, then try again in Settings → Models.',
-      }),
-    );
-    throw cause;
-  }
 }
 
 export function desktopPreferences() {

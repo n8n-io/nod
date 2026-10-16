@@ -28,10 +28,14 @@ export function setupLink(
   text: string,
 ): { href: string; setup: SetupKind; label: string } | null {
   const label = text.trim().replace(/\s+/g, ' ');
-  if (link.kind === 'external')
-    return link.href.startsWith('https://') && appLabel.test(label)
+  if (link.kind === 'external') {
+    const url = new URL(link.href);
+    return url.protocol === 'https:' &&
+      (url.origin === 'https://connect.composio.dev' || url.pathname === '/v1/connect/pair') &&
+      appLabel.test(label)
       ? { href: link.href, setup: 'app', label }
       : null;
+  }
   if (link.kind !== 'setup') return null;
   if (link.setup === 'app')
     return { href: link.href, setup: 'app', label: appLabel.test(label) ? label : 'Connect app' };

@@ -52,26 +52,37 @@ Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an O
 
 ## Apps and Composio
 
-| Variable                           | What it does                                                                                                                                                     | Default   |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `COMPOSIO_API_KEY`                 | Your Composio project key for Gmail, Calendar, Slack and other apps. You can paste it in onboarding instead.                                                     | Empty     |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. In hosted mode only the gateway holds it. The key then also needs **Triggers → Read and write**. | Empty     |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                                                              | Automatic |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                                                                    | Automatic |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                                                                       | Automatic |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                                                                      | Automatic |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                                                                        | Automatic |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                                                              | Automatic |
+Desktop and source/server installs offer Easy Connect with Google sign-in or a personal Composio key. Easy Connect requires an email or verified Google Workspace domain allowed by the proxy operator. Select either in **Settings → App connections**; see [Apps](/connect/apps/#use-your-own-composio-project).
 
-"Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. See [Apps](/connect/apps/) for the key permissions.
+Setting `COMPOSIO_API_KEY` pins a source/server install to its own project, and the app no longer offers the choice. The desktop app ignores `COMPOSIO_API_KEY`. Packaged and ordinary source desktop launches also ignore `OTTO_COMPOSIO_PROXY_URL`; [isolated desktop development](/deploy/desktop-app/) can override it.
+
+| Variable                           | What it does                                                                                                                                                | Default           |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                                                     | Empty             |
+| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom connection service in place of Otto's when `COMPOSIO_API_KEY` is absent.                                                                      | Otto's connection |
+| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. In hosted mode only the gateway holds it. The key also needs **Triggers → Read and write**. | Empty             |
+| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                                                         | Automatic         |
+| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                                                               | Automatic         |
+| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                                                                  | Automatic         |
+| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                                                                 | Automatic         |
+| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                                                                   | Automatic         |
+| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                                                         | Automatic         |
+
+For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
+
+Webhook and auth-config settings apply only when Otto uses your own Composio project, through `COMPOSIO_API_KEY` or a key saved in the app. Explicit auth-config IDs take precedence. Otherwise, Otto discovers eligible custom configurations across supported toolkits. It uses Composio defaults only when no custom configuration exists. Ambiguous or unavailable custom configurations stop the connection instead of falling back.
+
+Easy Connect's operator selects its configurations on the connection service. Otto doesn't send these auth-config settings to that service. Notion and Linear connect through their own MCP servers, so these settings don't apply to them. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
 
 ## Vault
 
-| Variable         | What it does                                                                                                                                                                                      | Default |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved logins, cards, model keys and the Composio key. Required outside macOS. On macOS, if it's empty, Otto keeps a key in the Keychain item `dev.otto.vault`. | Empty   |
+| Variable         | What it does                                                                                                                                                                                                     | Default |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved credentials and overrides automatic local storage. Local macOS uses Keychain; local Linux web uses a private profile file. Other server modes require a configured key. | Empty   |
 
-Create a key with `openssl rand -base64 32`.
+For an explicitly managed server key, create it with `openssl rand -base64 32`. Local Linux web installs keep their generated key at `OTTO_DATA_ROOT/vault/master-key`, outside the sandbox. The directory and key must be owned by the server user and private. Desktop uses its existing OS-protected key; hosted tenant keys remain operator-managed.
+
+Otto never generates a replacement when encrypted data already exists. Restore the original key if it is missing. Back up the private key separately alongside the encrypted database; a database backup alone cannot recover saved credentials.
 
 :::danger[Back up the Vault key]
 Saved credentials can't be read without it. Keep a copy somewhere safe, outside the repository.

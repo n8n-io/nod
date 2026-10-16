@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowUp, Mic } from 'lucide-react';
-import { Button } from '../../../components/ui';
-import type { StepProps } from '..';
+import type { Connection } from '../../../../shared/contracts';
 import {
   interviewAnswerChars,
   interviewLabels,
@@ -9,18 +8,13 @@ import {
   type InterviewResponse,
   type InterviewSave,
 } from '../../../../shared/onboarding';
+import { OttoGlyph, prefersReducedMotion, Rise } from '../../../components/motion';
+import { Button } from '../../../components/ui';
+import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
-import {
-  Bubble,
-  Footer,
-  Messages,
-  OttoGlyph,
-  prefersReducedMotion,
-  Rise,
-  UserBubble,
-  useReveal,
-} from '../motion';
-import { readStep, readStored, writeStored } from '../storage';
+import type { StepProps } from '..';
+import { Bubble, Footer, Messages, UserBubble, useReveal } from '../motion';
+import { prepareSuggestions, readStep, readStored, writeStored } from '../storage';
 
 type Turn = { ack: string[]; question: string };
 type Talk = { answers: string[]; turns: Turn[] };
@@ -64,6 +58,8 @@ function restore(): Talk {
 
 export function About({ arrived, onNext }: StepProps) {
   const [{ answers, turns }, setTalk] = useState(restore);
+  const { data: apps } = usePageData<Connection[]>('/api/apps');
+  const gmail = apps?.some((app) => app.slug === 'gmail' && app.status === 'connected');
   const [draft, setDraft] = useState('');
   const [fresh, setFresh] = useState(arrived === 'forward');
   const [introDone, setIntroDone] = useState(
@@ -153,6 +149,7 @@ export function About({ arrived, onNext }: StepProps) {
     setFresh(true);
     setWaited(false);
     stuck.current = true;
+    writeStored('suggestions', false);
     setTalk({ answers: [], turns: [first] });
   }
 
@@ -162,6 +159,7 @@ export function About({ arrived, onNext }: StepProps) {
     try {
       const body: InterviewSave = { answers: answers as InterviewSave['answers'] };
       await api('/api/onboarding/interview', { method: 'PUT', body: JSON.stringify(body) });
+      void prepareSuggestions();
       onNext();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -177,9 +175,8 @@ export function About({ arrived, onNext }: StepProps) {
   ];
   const lines: ReactNode[] = wrapped
     ? [
-        <Bubble>It’s great to meet you.</Bubble>,
         <Bubble>
-          This is what I’ve learned about you so far:
+          Thanks, that helps. Here’s what I’ve got so far:
           <span className="ob-about-summary" data-analytics-private>
             {interviewLabels.map((label, at) => (
               <span key={label}>
@@ -190,14 +187,16 @@ export function About({ arrived, onNext }: StepProps) {
           </span>
         </Bubble>,
         <Bubble>
-          I’ll keep this in mind. Next, let’s connect your <strong>email</strong> so I can start
-          helping.
+          {gmail
+            ? 'I’ll keep this in mind and look through your inbox for things I can take off your plate.'
+            : 'I’ll keep this in mind.'}{' '}
+          Next, let’s set up <strong>Telegram</strong> so you can reach me from anywhere.
         </Bubble>,
       ]
     : said(turns[index], index);
 
   return (
-    <section className="ob-step ob-about" data-analytics-public>
+    <section className="ob-step" data-analytics-public>
       <div className="ob-about-chat" ref={chat} onScroll={scrolled}>
         <div className="ob-about-log" ref={log}>
           {answers.map((answer, at) => (

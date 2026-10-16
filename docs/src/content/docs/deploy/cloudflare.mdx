@@ -56,7 +56,7 @@ Dry runs check bundling and configuration only.
 
 <Steps>
 
-1. Create a private `.env.hosted.local` (mode 600) from `deployment/hosted.env.example`. Add a dedicated development database reachable from Docker, a fresh `OTTO_MASTER_KEY` from `openssl rand -base64 32`, a random `BETTER_AUTH_SECRET` of at least 32 characters, `OTTO_ENVIRONMENT=development`, model and Composio keys, and a Google OAuth client with the redirect `http://localhost:4330/api/auth/callback/google`.
+1. Create a private `.env.hosted.local` (mode 600) from `deployment/hosted.env.example`. Add a dedicated development database reachable from Docker, a fresh `OTTO_MASTER_KEY` from `openssl rand -base64 32`, a random `BETTER_AUTH_SECRET` of at least 32 characters, `OTTO_ENVIRONMENT=development`, model keys, and a Google OAuth client with the redirect `http://localhost:4330/api/auth/callback/google`. App connections use the managed service by default; `COMPOSIO_API_KEY` is optional for an operator-owned project.
 
 2. Build and start.
 
@@ -77,20 +77,21 @@ Run only one Wrangler container stack at a time, and rebuild `dist/web` after UI
 
 ## Environments and secrets
 
-`wrangler.jsonc` defines separate `development` and `production` environments. Keep their databases, keys, Google clients and Composio projects separate too. Use a dedicated PostgreSQL database, because provisioning changes default grants.
+`wrangler.jsonc` defines separate `development` and `production` environments. Keep their databases, keys and Google clients separate too. If you supply your own Composio keys, use separate projects for each environment. Use a dedicated PostgreSQL database, because provisioning changes default grants.
 
 Each environment has one `GATEWAY_ENV` Worker secret, compact JSON with these keys:
 
-| Key                                                              | Value                                                                                                                      |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                                   | The dedicated database                                                                                                     |
-| `OTTO_MASTER_KEY`                                                | 32 random bytes, base64-encoded                                                                                            |
-| `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in                                                                                                             |
-| `COMPUTER_PROVIDER`                                              | `cloudflare`, or `e2b` with `E2B_API_KEY` and `E2B_COMPUTER_TEMPLATE`                                                      |
-| `OBJECT_STORAGE_PROVIDER`                                        | `http`                                                                                                                     |
-| `OBJECT_STORAGE_ENDPOINT`                                        | `http://otto.storage/v1/objects/`                                                                                          |
-| Model and `COMPOSIO_*` keys                                      | Your provider keys                                                                                                         |
-| Optional                                                         | `OTTO_MAX_USERS`, `OTTO_DEVELOPER_IDS`, `OTTO_PRIVACY_NOTICE_FILE`, `OTTO_ANALYTICS_ENABLED`, `OTTO_ANALYTICS_ENVIRONMENT` |
+| Key                                                              | Value                                                                                                                        |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                   | The dedicated database                                                                                                       |
+| `OTTO_MASTER_KEY`                                                | 32 random bytes, base64-encoded                                                                                              |
+| `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in                                                                                                               |
+| `COMPUTER_PROVIDER`                                              | `cloudflare`, or `e2b` with `E2B_API_KEY` and `E2B_COMPUTER_TEMPLATE`                                                        |
+| `OBJECT_STORAGE_PROVIDER`                                        | `http`                                                                                                                       |
+| `OBJECT_STORAGE_ENDPOINT`                                        | `http://otto.storage/v1/objects/`                                                                                            |
+| Model keys                                                       | Your model provider keys                                                                                                     |
+| Optional `COMPOSIO_*` keys                                       | Your own Composio project instead of managed app connections. See [Configuration](/deploy/configuration/#apps-and-composio). |
+| Optional                                                         | `OTTO_MAX_USERS`, `OTTO_DEVELOPER_IDS`, `OTTO_PRIVACY_NOTICE_FILE`, `OTTO_ANALYTICS_ENABLED`, `OTTO_ANALYTICS_ENVIRONMENT`   |
 
 - Keep `GATEWAY_ENV` under 5 KiB.
 - Never put secrets in build arguments, Vite variables or Wrangler `vars`.

@@ -16,9 +16,9 @@ Otto opens onboarding the first time you use it. In the desktop app, it starts o
 ```mermaid
 flowchart LR
   hi[Welcome] --> model[Connect<br/>a model]:::accent
-  model --> q[Three<br/>questions]
-  q --> gmail[Gmail]:::muted
-  gmail --> tg[Telegram]:::muted
+  model --> gmail[Gmail]:::muted
+  gmail --> q[Three<br/>questions]
+  q --> tg[Telegram]:::muted
   tg --> usage[Usage data]
   usage --> cards([First tasks<br/>in chat]):::go
 ```
@@ -31,9 +31,9 @@ flowchart LR
 
 2. **Connect a model.** Pick OpenAI, Anthropic or OpenRouter. Select **Sign in with ChatGPT** or **Connect OpenRouter** to use your account, or paste an API key. Your key is encrypted and never shown to the model. Otto picks a recommended model, which you can change. Select **Continue**.
 
-3. **Answer three questions.** Otto asks what you're working on, what you're aiming for and what it can take off your plate. Type a short answer to each. Otto shows a summary and saves it to its memory. Select **Continue**, or **Change my answers** to start again.
+3. **Connect Gmail (optional).** On desktop or a personal web install, choose **Easy Connect** and sign in with an allowed Google account, or save your own Composio key. Then select **Connect** for Gmail and approve its separate permissions. You can also select **Skip for now**.
 
-4. **Connect Gmail (optional).** Paste your Composio key and select **Save**. Then select **Connect Gmail** and sign in to Google. No key yet? Make a free account at [app.composio.dev](https://app.composio.dev), or select **Skip for now**.
+4. **Answer three questions.** Otto asks what you're working on, what you're aiming for and what it can take off your plate. Type a short answer to each. Otto shows a summary and saves it to its memory. Select **Continue**, or **Change my answers** to start again.
 
 5. **Connect Telegram (optional).** Scan the code to open BotFather, send `/newbot` and pick a name. Select **I have my token**, paste the token and select **Save**. Then scan the new code and send `/start` to your bot. When Otto asks **Is this you?**, select **Confirm**.
 
@@ -43,14 +43,18 @@ flowchart LR
 
 You can add more later from **Apps** and **Channels** in the sidebar. See [Connect apps](/connect/apps/) and [Channels](/use/channels/).
 
+To restart unfinished setup in your browser, open `/onboarding?replay=1` on your Otto address. This clears the saved onboarding step and unfinished answers from that browser. Your saved model connections, app accounts and other settings stay in place.
+
 ## Start your first task
 
-Otto greets you in the chat and lines up three first tasks as cards. It bases them on your answers and, if you connected Gmail, on the subjects and previews of a few recent emails. If it can't prepare them, you get a standard set, such as **Plan my next two weeks**.
+Otto greets you in the chat and lines up three first tasks as cards: one it can finish **Right now**, and two **Ongoing** jobs it keeps doing for you, such as a morning briefing or a weekly check-in. It bases them on your answers and, if you connected Gmail, on a short inbox summary prepared during setup on desktop and personal web installs. If no summary is ready, or you use hosted Otto, it uses recent inbox subjects and snippets instead. If a card doesn't come out right, you get a standard one in its place, such as **Plan my next two weeks**.
 
-Each card shows where the task comes from (**Gmail**, **For you** or **Telegram**). Select **Do it** to send the card's title to Otto as your message. The card shows **On it…** while Otto works and **Done** when it finishes. You can also ignore the cards and type any request.
+Each card shows where the task comes from (**Gmail**, **For you** or **Telegram**). Select **Do it**, or **Set it up** on an ongoing card, to send the card's title to Otto as your message. The card shows **On it…** while Otto works, then **Done** or **Set up**. You can also ignore the cards and type any request.
+
+When your first task is done, Otto suggests a few other things it can do for you. Ask for any of them in your own words.
 
 :::note[A card isn't your permission]
-The card's words are Otto's, not yours. They can't on their own approve sending something to other people or deleting data.
+The card's words are Otto's, not yours. They can't on their own approve sending something to other people or deleting data, now or in a schedule the card set up.
 :::
 
 ## Write a good first request

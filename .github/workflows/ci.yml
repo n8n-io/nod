@@ -168,6 +168,7 @@ jobs:
           --volume "$PWD/src:/app/src:ro"
           --volume "$PWD/tests:/app/tests:ro"
           --volume "$PWD/scripts:/app/scripts:ro"
+          --volume "$PWD/public:/app/public:ro"
           --volume "$PWD/deployment/e2b:/app/deployment/e2b:ro"
           --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"

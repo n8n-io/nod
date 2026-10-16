@@ -6,7 +6,8 @@ import { Button, Input } from '../../../components/ui';
 import { telegramState, useChannelSettings } from '../../../hooks/use-channel-settings';
 import { channelSetupBody } from '../../../lib/secondary-pages';
 import { sessionStore } from '../../../lib/session';
-import { Bubble, Footer, Grow, Messages, Rise, useReveal } from '../motion';
+import { Rise } from '../../../components/motion';
+import { Bubble, Footer, Grow, Messages, useReveal } from '../motion';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { wait: 300 }];
 const botFather = 'https://t.me/BotFather';
@@ -108,7 +109,11 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
             </span>
           </p>
           <div className="ob-tg-buttons" data-analytics-public>
-            <Button disabled={busy} onClick={() => void telegramAction('confirm')}>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void telegramAction('confirm')}
+            >
               {busy ? 'Confirming…' : 'Confirm'}
             </Button>
             <Button variant="ghost" disabled={busy} onClick={() => void telegramAction('pairing')}>
@@ -193,7 +198,7 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
   ];
 
   return (
-    <section className="ob-step ob-step-wide ob-telegram">
+    <section className="ob-step ob-telegram">
       <div data-analytics-public>
         <Messages
           revealed={revealed}

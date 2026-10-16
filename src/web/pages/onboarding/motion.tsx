@@ -2,23 +2,16 @@ import {
   useEffect,
   useRef,
   useState,
-  type CSSProperties,
   type HTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
 } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { OttoGlyph, prefersReducedMotion, Rise } from '../../components/motion';
 import { Button } from '../../components/ui';
 import { cn } from '../../lib/utils';
 
 export type RevealStep = { wait?: number; typing?: number };
-
-export function prefersReducedMotion() {
-  return (
-    typeof window !== 'undefined' &&
-    !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  );
-}
 
 export function useReveal(
   sequence: readonly RevealStep[],
@@ -32,6 +25,7 @@ export function useReveal(
     played: false,
   }));
   const [run, setRun] = useState(0);
+  const pending = useRef<number[]>([]);
   const signature = sequence.map((step) => `${step.wait ?? 0}:${step.typing ?? 0}`).join();
   useEffect(() => {
     if (prefersReducedMotion() || (!enabled && !run)) {
@@ -39,7 +33,7 @@ export function useReveal(
       return;
     }
     setState({ revealed: 0, typing: opening, played: true });
-    const timers: number[] = [];
+    const timers: number[] = (pending.current = []);
     let at = 0;
     sequence.forEach((step, index) => {
       at += step.wait ?? 0;
@@ -61,72 +55,11 @@ export function useReveal(
     done: state.revealed >= total,
     played: state.played,
     replay: () => setRun((value) => value + 1),
+    skip: () => {
+      pending.current.forEach(clearTimeout);
+      setState((current) => ({ ...current, revealed: total, typing: false }));
+    },
   };
-}
-
-export type GlyphReaction = { kind: 'on' | 'off'; count: number };
-
-export function OttoGlyph({
-  size = 32,
-  mode = 'idle',
-  reaction,
-  className,
-}: {
-  size?: number;
-  mode?: 'idle' | 'thinking' | 'still';
-  reaction?: GlyphReaction | null;
-  className?: string;
-}) {
-  const thinking = mode === 'thinking';
-  const [phase, setPhase] = useState<'rest' | 'spin' | 'settle'>(thinking ? 'spin' : 'rest');
-  const live = useRef({ thinking, since: 0 });
-  useEffect(() => {
-    live.current = { thinking, since: performance.now() };
-    if (prefersReducedMotion()) setPhase(thinking ? 'spin' : 'rest');
-    else if (thinking) setPhase((current) => (current === 'rest' ? 'spin' : current));
-  }, [thinking]);
-  const circle = (
-    <circle
-      cx="25"
-      cy="6"
-      r="4"
-      className={mode === 'idle' && phase === 'rest' ? 'ob-glyph-pulse' : undefined}
-      fill="var(--brand-pink)"
-    />
-  );
-  const dot = reaction ? (
-    <g key={reaction.count} className="ob-glyph-react" data-reaction={reaction.kind}>
-      {circle}
-    </g>
-  ) : (
-    circle
-  );
-  return (
-    <svg
-      className={cn('ob-glyph', className)}
-      viewBox="0 0 32 32"
-      width={size}
-      height={size}
-      fill="none"
-      aria-hidden="true"
-    >
-      <circle cx="16" cy="16" r="10" stroke="currentColor" strokeWidth="4" />
-      <g
-        className="ob-glyph-orbit"
-        data-phase={phase}
-        onAnimationIteration={(event) => {
-          if (event.target !== event.currentTarget || live.current.thinking) return;
-          if (performance.now() - live.current.since > 600) setPhase('settle');
-        }}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget)
-            setPhase(live.current.thinking ? 'spin' : 'rest');
-        }}
-      >
-        {dot}
-      </g>
-    </svg>
-  );
 }
 
 export function Bubble({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -139,7 +72,7 @@ export function UserBubble({ className, ...props }: HTMLAttributes<HTMLDivElemen
   );
 }
 
-export function Typing() {
+function Typing() {
   return (
     <div className="ob-bubble ob-typing" role="status" aria-label="Otto is typing">
       <span />
@@ -157,7 +90,7 @@ export function Grow({ open, children }: { open: boolean; children: ReactNode })
   );
 }
 
-export function OttoRow({
+function OttoRow({
   thinking = false,
   avatar,
   children,
@@ -204,24 +137,6 @@ export function Messages({
         <Typing />
       </Grow>
     </OttoRow>
-  );
-}
-
-export function Rise({
-  show = true,
-  index = 0,
-  className,
-  style,
-  ...props
-}: HTMLAttributes<HTMLDivElement> & { show?: boolean; index?: number }) {
-  return (
-    <div
-      className={cn('ob-rise', className)}
-      data-show={show}
-      inert={!show}
-      style={{ '--rise-delay': `${index * 70}ms`, ...style } as CSSProperties}
-      {...props}
-    />
   );
 }
 

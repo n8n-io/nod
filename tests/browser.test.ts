@@ -42,7 +42,7 @@ import {
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { toolDefinitions } from '../src/runtime/tools.ts';
-import { createRedactor } from '../src/server/redaction.ts';
+import { createErrorRedactor, createRedactor } from '../src/server/redaction.ts';
 import { createBrowserFixture, fakeDevtools, type DevtoolsModel } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -2516,8 +2516,15 @@ test('a restarted credential session serves only its cached masked image without
 
 test('redaction masks nested credentials, headers and encoded JSON before persistence', () => {
   const secret = 'fixture-provider-secret-with/slash';
-  const secrets = [secret];
+  const padded = ` \t${secret}\r\n`;
+  const paddedShort = '  short  ';
+  const secrets = [padded, paddedShort];
   const redact = createRedactor(secrets);
+  const redactError = createErrorRedactor(secrets);
+  for (const value of [padded, secret, encodeURIComponent(padded), encodeURIComponent(secret)])
+    assert.equal(redactError(`Provider failed for ${value}`), 'Provider failed for [redacted]');
+  assert.equal(redact('short remains useful'), 'short remains useful');
+  assert.equal(redact(`Padded value:${paddedShort}`), 'Padded value:[redacted]');
   const input = {
     query: 'messages after yesterday',
     password: 'private-password',
@@ -2554,7 +2561,7 @@ test('redaction masks nested credentials, headers and encoded JSON before persis
   assert.ok(encoded.includes('Useful result'));
   assert.ok(encoded.includes('messages after yesterday'));
   assert.ok(encoded.includes('q=hello'));
-  secrets.push('fixture-rotated-opaque-token');
+  secrets.push(' \tfixture-rotated-opaque-token\n');
   const rotated = String(redact('fixture-rotated-opaque-token and ' + secret));
   assert.ok(!rotated.includes('fixture-rotated-opaque-token'));
   assert.ok(!rotated.includes(secret));
@@ -2663,6 +2670,324 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         assert.equal(await captureFeedbackScreenshot(), null);
         assert.equal(native, captures);
       } finally {
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('managed integration access proves browser possession and fences cancelled or uncertain completion', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('', { url: 'https://otto.fixture.test', pretendToBeVisual: true });
+      globalThis.window = dom.window;
+      const { startIntegrationAccess } = await import('./src/web/lib/integration-access.ts');
+      const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+      const until = async check => {
+        for (let i = 0; i < 100 && !check(); i++) await settle();
+        assert.ok(check(), 'Expected the fixture operation to settle');
+      };
+      const deferred = () => {
+        let resolve;
+        const promise = new Promise(done => resolve = done);
+        return { promise, resolve };
+      };
+      const generated = [];
+      const generateKey = crypto.subtle.generateKey.bind(crypto.subtle);
+      const sign = crypto.subtle.sign.bind(crypto.subtle);
+      crypto.subtle.generateKey = async (...args) => {
+        const pair = await generateKey(...args);
+        generated.push(pair);
+        return pair;
+      };
+      const timers = new Map();
+      let timerId = 0;
+      window.setTimeout = callback => { timers.set(++timerId, callback); return timerId; };
+      window.clearTimeout = id => timers.delete(id);
+      const poll = () => {
+        const scheduled = [...timers.values()];
+        timers.clear();
+        for (const callback of scheduled) callback();
+      };
+      const sessions = new Map();
+      const popups = [];
+      const events = [];
+      const proofs = [];
+      let currentPopup;
+      let delayedStart;
+      let authorizeAfterProof;
+      let uncertain = false;
+      let completedState = 'enabled';
+      let nativeUrl;
+      let nativeCancelled = 0;
+      let nativeStatusFailure = false;
+      let cancellationFailure = false;
+      let sequence = 0;
+      window.open = () => {
+        events.push('open');
+        const popup = {
+          closed: false,
+          opener: window,
+          location: { href: 'about:blank' },
+          close() { this.closed = true; },
+          postMessage(message, origin) {
+            proofs.push({ message, origin });
+            const session = sessions.get(message.id);
+            assert.ok(session);
+            assert.equal(origin, 'https://broker.fixture.test');
+            void (async () => {
+              const key = await crypto.subtle.importKey('jwk', session.browserKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+              const bytes = Buffer.from(message.signature, 'base64url');
+              assert.equal(bytes.length, 64);
+              assert.equal(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, bytes, new TextEncoder().encode(session.challenge)), true);
+              session.proofVerified = true;
+              if (authorizeAfterProof) await authorizeAfterProof.promise;
+              session.status = 'authorized';
+            })();
+          },
+        };
+        popups.push(popup);
+        currentPopup = popup;
+        return popup;
+      };
+      globalThis.fetch = async (path, options = {}) => {
+        const input = options.body ? JSON.parse(options.body) : null;
+        if (path === '/api/integrations/access/start') {
+          events.push('start');
+          if (input.native) return Response.json({ id: 'synthetic-native-attempt', url: nativeUrl, expiresAt: Date.now() + 60_000 });
+          const id = 'synthetic-attempt-' + ++sequence;
+          const challenge = ['otto-proxy-access-v1', id, window.location.origin, 'synthetic-random-challenge'].join('\n');
+          const session = { id, browserKey: input.browserKey, challenge, status: 'pending', completed: 0, cancelled: 0 };
+          sessions.set(id, session);
+          if (delayedStart) await delayedStart.promise;
+          return Response.json({ id, url: 'https://broker.fixture.test/enroll?id=' + id, expiresAt: Date.now() + 60_000 });
+        }
+        if (path.startsWith('/api/integrations/access/status?')) {
+          if (path.endsWith('synthetic-native-attempt')) {
+            if (nativeStatusFailure) throw new TypeError('Synthetic native status failed');
+            return Response.json({ status: 'completed' });
+          }
+          const session = sessions.get(new URL(path, window.location.origin).searchParams.get('id'));
+          return Response.json({ status: session.status });
+        }
+        if (path === '/api/integrations/access/complete') {
+          const session = sessions.get(input.id);
+          assert.equal(session.status, 'authorized');
+          session.completed++;
+          session.status = 'completed';
+          if (uncertain) throw new TypeError('Synthetic connection lost after completion');
+          return Response.json({ state: completedState, email: 'alex@example.test' });
+        }
+        if (path === '/api/integrations/access/cancel') {
+          if (input.id === 'synthetic-native-attempt') {
+            nativeCancelled++;
+            return Response.json({ ok: true });
+          }
+          const session = sessions.get(input.id);
+          session.cancelled++;
+          if (cancellationFailure) throw new TypeError('Synthetic cancellation failed');
+          session.status = 'cancelled';
+          return Response.json({ ok: true });
+        }
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const message = (session, changes = {}) => window.dispatchEvent(new window.MessageEvent('message', {
+        source: currentPopup,
+        origin: 'https://broker.fixture.test',
+        data: { type: 'otto:proxy-access:challenge', id: session.id, challenge: session.challenge },
+        ...changes,
+      }));
+      try {
+        const first = startIntegrationAccess();
+        assert.deepEqual(events, ['open']);
+        await until(() => currentPopup.location.href.startsWith('https://broker.fixture.test'));
+        const session = sessions.get('synthetic-attempt-1');
+        assert.equal(generated[0].privateKey.extractable, false);
+        await assert.rejects(crypto.subtle.exportKey('jwk', generated[0].privateKey));
+        assert.equal(currentPopup.opener, window);
+        message(session, { origin: 'https://attacker.fixture.test' });
+        message(session, { source: {} });
+        message(session, { data: { type: 'otto:proxy-access:challenge', id: 'another-attempt', challenge: session.challenge } });
+        message(session, { data: { type: 'otto:proxy-access:challenge', id: session.id, challenge: session.challenge.replace(window.location.origin, 'https://another.fixture.test') } });
+        message(session, { data: { type: 'otto:proxy-access:challenge', id: session.id, challenge: session.challenge + 'x'.repeat(512) } });
+        await settle();
+        assert.equal(proofs.length, 0);
+        message(session);
+        await until(() => session.status === 'authorized');
+        poll();
+        await first.done;
+        assert.equal(session.completed, 1);
+        assert.equal(session.cancelled, 0);
+        assert.equal(proofs.length, 1);
+        assert.equal(currentPopup.closed, true);
+        message(session);
+        await settle();
+        assert.equal(proofs.length, 1);
+
+        delayedStart = deferred();
+        const second = startIntegrationAccess();
+        const secondFailure = assert.rejects(second.done, error => error.name === 'AbortError');
+        await until(() => sessions.has('synthetic-attempt-2'));
+        await second.cancel();
+        assert.equal(currentPopup.closed, true);
+        delayedStart.resolve();
+        await secondFailure;
+        const cancelled = sessions.get('synthetic-attempt-2');
+        assert.equal(cancelled.cancelled, 1);
+        assert.equal(cancelled.completed, 0);
+        assert.equal(currentPopup.location.href, 'about:blank');
+        delayedStart = null;
+
+        uncertain = true;
+        cancellationFailure = true;
+        const third = startIntegrationAccess();
+        const thirdFailure = assert.rejects(third.done, /Synthetic connection lost/);
+        await until(() => currentPopup.location.href.includes('synthetic-attempt-3'));
+        const ambiguous = sessions.get('synthetic-attempt-3');
+        message(ambiguous);
+        await until(() => ambiguous.status === 'authorized');
+        poll();
+        await thirdFailure;
+        poll();
+        message(ambiguous);
+        await settle();
+        assert.equal(ambiguous.completed, 1);
+        assert.equal(ambiguous.cancelled, 1);
+        assert.equal(timers.size, 0);
+
+        cancellationFailure = false;
+        uncertain = false;
+        const signed = deferred();
+        const releaseSignature = deferred();
+        crypto.subtle.sign = async (...args) => {
+          const value = await sign(...args);
+          signed.resolve();
+          await releaseSignature.promise;
+          return value;
+        };
+        const fourth = startIntegrationAccess();
+        const fourthFailure = assert.rejects(fourth.done, error => error.name === 'AbortError');
+        await until(() => currentPopup.location.href.includes('synthetic-attempt-4'));
+        const interrupted = sessions.get('synthetic-attempt-4');
+        const sent = proofs.length;
+        message(interrupted);
+        await signed.promise;
+        await fourth.cancel();
+        await fourthFailure;
+        releaseSignature.resolve();
+        await settle();
+        assert.equal(proofs.length, sent);
+        assert.equal(interrupted.cancelled, 1);
+        assert.equal(interrupted.completed, 0);
+        crypto.subtle.sign = sign;
+
+        authorizeAfterProof = deferred();
+        const fifth = startIntegrationAccess();
+        let fifthResult;
+        const fifthDone = fifth.done.then(() => { fifthResult = 'completed'; }, error => { fifthResult = error.name; });
+        await until(() => currentPopup.location.href.includes('synthetic-attempt-5'));
+        const isolated = sessions.get('synthetic-attempt-5');
+        message(isolated);
+        await until(() => isolated.proofVerified);
+        currentPopup.opener = null;
+        currentPopup.closed = true;
+        poll();
+        await settle();
+        assert.equal(isolated.status, 'pending');
+        assert.equal(isolated.cancelled, 0);
+        assert.equal(fifthResult, undefined);
+        assert.equal(timers.size, 1);
+        authorizeAfterProof.resolve();
+        await until(() => isolated.status === 'authorized');
+        poll();
+        await fifthDone;
+        assert.equal(fifthResult, 'completed');
+        assert.equal(isolated.completed, 1);
+        authorizeAfterProof = null;
+
+        const sixth = startIntegrationAccess();
+        const sixthFailure = assert.rejects(sixth.done, error => error.name === 'AbortError');
+        await until(() => currentPopup.location.href.includes('synthetic-attempt-6'));
+        currentPopup.closed = true;
+        poll();
+        await sixthFailure;
+        const abandoned = sessions.get('synthetic-attempt-6');
+        assert.equal(abandoned.cancelled, 1);
+        assert.equal(abandoned.completed, 0);
+        assert.equal(abandoned.proofVerified, undefined);
+
+        for (const state of ['revoked', 'denied']) {
+          completedState = state;
+          const raced = startIntegrationAccess();
+          const rejected = assert.rejects(raced.done, /removed|not enabled/);
+          await until(() => currentPopup.location.href.startsWith('https://broker.fixture.test'));
+          const session = sessions.get('synthetic-attempt-' + sequence);
+          message(session);
+          await until(() => session.status === 'authorized');
+          poll();
+          await rejected;
+          poll();
+          assert.equal(session.completed, 1);
+          assert.equal(session.cancelled, 0);
+          assert.equal(timers.size, 0);
+        }
+
+        for (const terminal of ['denied', 'cancelled']) {
+          const attempt = startIntegrationAccess();
+          const rejection = assert.rejects(attempt.done, terminal === 'denied' ? /not enabled/ : error => error.name === 'AbortError');
+          await until(() => currentPopup.location.href.startsWith('https://broker.fixture.test'));
+          const session = sessions.get('synthetic-attempt-' + sequence);
+          session.status = terminal;
+          poll();
+          await rejection;
+          assert.equal(session.cancelled, 0);
+          assert.equal(session.completed, 0);
+          assert.equal(timers.size, 0);
+        }
+
+        const opened = [];
+        const capability = 'A'.repeat(43);
+        window.ottoDesktop = { openExternal: async url => opened.push(url) };
+        for (const candidate of [
+          'http://localhost:49152/' + capability,
+          'http://[::1]:49152/' + capability,
+          'http://127.0.0.2:49152/' + capability,
+          'http://127.0.0.1/' + capability,
+          'http://127.0.0.1:80/' + capability,
+          'http://127.0.0.1:0/' + capability,
+          'http://127.0.0.1:65536/' + capability,
+          'https://127.0.0.1:49152/' + capability,
+          'http://user:password@127.0.0.1:49152/' + capability,
+          'http://127.0.0.1:49152/' + capability + '?code=test',
+          'http://127.0.0.1:49152/' + capability + '#test',
+          'http://127.0.0.1:49152/' + capability.slice(1),
+        ]) {
+          nativeUrl = candidate;
+          const before = nativeCancelled;
+          await assert.rejects(startIntegrationAccess().done, /address could not be verified/);
+          assert.equal(nativeCancelled, before + 1);
+        }
+        assert.equal(opened.length, 0);
+        nativeUrl = 'http://127.0.0.1:49152/' + capability;
+        const beforeNativeSuccess = nativeCancelled;
+        await startIntegrationAccess().done;
+        assert.deepEqual(opened, [nativeUrl]);
+        assert.equal(nativeCancelled, beforeNativeSuccess);
+        nativeStatusFailure = true;
+        await assert.rejects(startIntegrationAccess().done, /Synthetic native status failed/);
+        assert.equal(nativeCancelled, beforeNativeSuccess + 1);
+        nativeStatusFailure = false;
+        window.ottoDesktop.openExternal = async () => { throw new Error('Synthetic native launch failed'); };
+        await assert.rejects(startIntegrationAccess().done, /Synthetic native launch failed/);
+        assert.equal(nativeCancelled, beforeNativeSuccess + 2);
+        assert.equal(timers.size, 0);
+      } finally {
+        crypto.subtle.generateKey = generateKey;
+        crypto.subtle.sign = sign;
         dom.window.close();
       }
     `,

@@ -3735,13 +3735,17 @@ globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.win
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 globalThis.location = window.location;
 const requests=[];
+const integrationStatus = {mode:'own',switchable:true,keyWritable:true,suffix:'K7Q9',managed:null};
 window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
 window.fetch = globalThis.fetch = async (url, init={}) => {
   const path = new URL(url,window.location.href).pathname;
   if (path==='/api/configuration') return Response.json({localOnly:true,integrationsReady:true});
   if (path==='/api/apps') return Response.json([{slug:'gmail',status:'disconnected'}]);
-  if (path==='/api/integrations/key') return Response.json({managed:false,saved:true,suffix:'K7Q9'});
+  if (path==='/api/integrations/key') {
+    assert.equal(init.method ?? 'GET', 'GET');
+    return Response.json(integrationStatus);
+  }
   requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body});
   return Response.json(path.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1});
 };
@@ -3795,7 +3799,10 @@ document.body.append(emailContainer);
 const emailRoot = createRoot(emailContainer);
 await act(async () => {emailRoot.render(createElement(Email,{arrived:'back',onNext() {},onBack() {}})); await new Promise(resolve => setTimeout(resolve,50));});
 await act(async () => {await new Promise(resolve => setTimeout(resolve,50));});
-assert.match(emailContainer.textContent,/K7Q9/);
+const changeConnection = emailContainer.querySelector('.ob-email-summary button');
+assert.ok(changeConnection);
+await act(async () => changeConnection.click());
+assert.ok(emailContainer.textContent.includes('K7Q9'));
 document.querySelector('#mutable').textContent = 'synthetic-private-recorded-mutation';
 document.querySelector('input').value = 'synthetic-private-recorded-input';
 document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));

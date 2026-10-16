@@ -18,13 +18,30 @@
 .ob strong {
   font-weight: 600;
 }
-.ob a {
+.ob a,
+.ob-link {
   color: var(--link);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.ob a:hover {
+.ob a:hover,
+.ob-link:hover:not(:disabled) {
   color: var(--link-hover);
+}
+.ob a:focus-visible,
+.ob-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ob-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.ob-link:disabled {
+  opacity: 0.45;
 }
 .ob-header {
   display: grid;
@@ -47,11 +64,11 @@
 .ob-dots {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 .ob-dots > span {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: var(--radius-full);
   background: var(--input);
   transition:
@@ -71,11 +88,6 @@
   align-items: center;
   gap: 8px;
 }
-.ob-feedback-wrap {
-  position: relative;
-  display: inline-flex;
-  border-radius: var(--radius-full);
-}
 .ob-main {
   display: flex;
   flex: 1 1 auto;
@@ -85,22 +97,20 @@
 }
 .ob-step {
   display: flex;
+  flex: 1 0 auto;
   flex-direction: column;
   gap: 24px;
   width: 100%;
   max-width: 720px;
-  margin: auto;
-  padding: 16px 24px 48px;
+  margin: 0 auto;
+  padding: 24px 24px 0;
   animation: ob-step-in 260ms ease-out;
 }
-.ob-step-wide {
-  max-width: 780px;
-}
 .ob-notice {
-  width: 100%;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 24px 24px;
+  scroll-margin-bottom: 96px;
+}
+.ob-notice > .notice {
+  margin: 0;
 }
 .ob-row {
   display: flex;
@@ -219,10 +229,16 @@
   pointer-events: none;
 }
 .ob-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  margin-top: auto;
+  padding: 16px 0 24px;
+  background: linear-gradient(transparent, var(--canvas) 16px);
 }
 .ob-footer-end {
   display: flex;
@@ -340,8 +356,13 @@
   .ob .ob-feedback {
     padding-inline: 8px;
   }
-  .ob-step,
-  .ob-notice {
+  .ob-step {
+    padding: 16px 16px 0;
+  }
+  .ob-footer {
+    padding-bottom: 16px;
+  }
+  .ob-footer .button {
     padding-inline: 16px;
   }
 }

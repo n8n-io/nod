@@ -33,7 +33,7 @@ This page explains the words you'll meet in these docs. Select a term to read th
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | [Model connection](/connect/models/) | How Otto reaches a model: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT or OpenRouter account. The provider bills you for use.  |
 | [Connected app](/connect/apps/)      | An account Otto can use for you, such as Gmail, Calendar or Slack.                                                                         |
-| [Composio](/connect/apps/)           | The service Otto uses to connect many apps for you. On your own computer, you need a Composio key to use it.                               |
+| [Composio](/connect/apps/)           | The service Otto uses to connect many apps for you. Managed connections use an allowed Google account; you can also use a personal key.    |
 | [MCP](/connect/mcp-api-cli/)         | Model Context Protocol, a standard way for an app to offer tools to an assistant. Notion and Linear connect through their own MCP servers. |
 | [Channel](/use/channels/)            | Another place to chat with Otto besides the app: Telegram or WhatsApp.                                                                     |
 
