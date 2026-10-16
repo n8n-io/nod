@@ -202,10 +202,20 @@ test(
     );
     assert.equal(supplied.data.action, proposal.action);
     assert.equal(supplied.data.args.recipient_email, proposal.args.recipient_email);
+    assert.deepEqual((supplied as { withheld?: string[] }).withheld, [
+      'args.token',
+      'details.password',
+    ]);
     assert.doesNotMatch(
       JSON.stringify(supplied),
       /synthetic-private|private-payment|private-artifact|private-token|Foreign owner|Other thread|Security code|Suggested task|Assistant instruction/,
     );
+    assert.deepEqual(captured[1], {
+      purpose: 'confirmation_review',
+      data: supplied.data,
+      withheld: ['args.token', 'details.password'],
+      text: 'Confirma a ação apresentada.',
+    });
   },
 );
 
