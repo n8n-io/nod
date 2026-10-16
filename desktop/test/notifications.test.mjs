@@ -46,6 +46,8 @@ test('notification previews extract readable message text without link targets o
     text: '## **Your report is ready**\n\nRead [the summary](https://example.test/private?token=synthetic-link-secret) and `review.csv`.\n<!--hidden comment--><script>hidden script</script>',
     replyTo: { text: 'synthetic-private-quoted-message' },
   });
+  assert.ok(preview.includes('Your report is ready'));
+  assert.ok(preview.includes('the summary'));
   for (const value of [
     'synthetic-link-secret',
     'hidden comment',
@@ -59,6 +61,7 @@ test('notification previews extract readable message text without link targets o
       { name: 'quarterly-report.csv', url: '/api/artifacts/synthetic-capability-token' },
     ],
   });
+  assert.ok(attachment.includes('quarterly-report.csv'));
   assert.ok(!attachment.includes('synthetic-capability-token'));
 });
 

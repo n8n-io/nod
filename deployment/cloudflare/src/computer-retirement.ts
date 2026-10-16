@@ -55,6 +55,7 @@ export async function retireUnusedComputer(options: {
               'role',
               'phase',
               'stopped',
+              'commands',
               'checkpoint',
               'previousCheckpoint',
             ].includes(field),
@@ -66,6 +67,8 @@ export async function retireUnusedComputer(options: {
         state.phase !== 'uncertain' ||
         typeof state.stopped !== 'boolean' ||
         (state.generation !== identity.generation && !state.stopped) ||
+        (state.commands !== undefined &&
+          (!Array.isArray(state.commands) || state.commands.length !== 0)) ||
         state.checkpoint !== undefined ||
         state.previousCheckpoint !== undefined
       )

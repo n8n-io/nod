@@ -10,6 +10,9 @@ export const personalSecret = new RegExp(
   'i',
 );
 const slugPattern = '[a-z0-9]+(?:-[a-z0-9]+)*';
+const legacyKinds = { fact: 'about', preference: 'preferences', pattern: 'lessons' } as const;
+const legacy =
+  /^## ([0-9a-f-]{36})\nKind: (fact|preference|pattern)\nUpdated: (\d{4}-\d\d-\d\dT[^\n]+)\nSources: ([0-9a-f-, ]+)\n\n([^\n]+)$/;
 
 export function unsafe(...texts: Array<string | undefined>) {
   return texts.some((text) => !!text && personalSecret.test(text));
@@ -153,6 +156,23 @@ export function parse(bytes?: Uint8Array): Tree {
     seen.add(pathOf(entry));
     tree.entries.push(entry);
   };
+  if (body.startsWith('# Memory')) {
+    for (const part of body.split(/\n(?=## )/)) {
+      const match = legacy.exec(part.trim());
+      if (!match) continue;
+      const target = legacyKinds[match[2] as keyof typeof legacyKinds];
+      const entry = entrySchema.safeParse({
+        area: target,
+        slug: slugFor(tree, target, match[5]),
+        text: match[5],
+        origin: match[2] === 'pattern' ? 'inferred' : 'stated',
+        updated: match[3],
+        sources: match[4].split(', '),
+      });
+      if (entry.success) keep(entry.data);
+    }
+    return tree;
+  }
   let doc: Record<string, unknown>;
   try {
     doc = z.record(z.string(), z.unknown()).parse(JSON.parse(body));

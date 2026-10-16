@@ -219,7 +219,10 @@ test(
       assert.doesNotMatch(ambiguous.body, /111111|Ambiguous fixture/);
       await fixture.channels.drain();
       assert.equal(sent.length, 1);
-      assert.equal(sent[0].threadId, 'fixture-thread');
+      assert.deepEqual(
+        { channelId: sent[0].channelId, accountId: sent[0].accountId, threadId: sent[0].threadId },
+        { channelId: 'telegram', accountId: 'fixture-account', threadId: 'fixture-thread' },
+      );
       const guidance = (
         await pool.query(
           "SELECT i.text,i.state,i.turn_id,m.role,m.turn_id AS reply_turn_id FROM channel_inbox i JOIN channel_outbox o USING(source_id) JOIN messages m ON m.id=o.message_id WHERE i.source_id='channel:telegram:fixture-account:ambiguous-code'",

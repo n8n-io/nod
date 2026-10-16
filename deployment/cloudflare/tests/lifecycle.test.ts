@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { createTenantLifecycle } from '../src/lifecycle.ts';
-import { bootstrap, type TenantIdentity } from '../src/protocol.ts';
+import { bootstrap, boundedBody, type TenantIdentity } from '../src/protocol.ts';
 
 function configuration(
   ownerId = randomUUID(),
@@ -66,6 +66,9 @@ function fixture(hooks: { stop?(): Promise<void> } = {}) {
       time = value;
     },
     saved: () => saved && { ...saved },
+    replaceSaved: (identity: TenantIdentity) => {
+      saved = identity;
+    },
   };
 }
 
@@ -259,6 +262,15 @@ test('concurrent conflicting bootstrap calls cannot replace the admitted process
   assert.equal(saved?.generation, '1');
 });
 
+test('body limits apply to actual streamed bytes without trusting content length', async () => {
+  const request = new Request('http://otto.runtime/runtime/start', {
+    method: 'POST',
+    body: new Uint8Array(12),
+    headers: { 'content-length': '1' },
+  });
+  await assert.rejects(boundedBody(request, 10), { status: 413 });
+});
+
 test('tenant renewal and identity reject stale generations and invalid expiry before acknowledgement', async () => {
   const f = fixture();
   const input = configuration(undefined, '1', f.now() + 40_000);
@@ -335,6 +347,30 @@ test('concurrent renewals never roll expiry backward and idempotent startup pres
   f.setTime(nextExpiry);
   await assert.rejects(f.lifecycle.identity());
   await assert.rejects(f.lifecycle.start(input));
+});
+
+test('legacy records require confirmed stop before a fresh generation restores authority', async () => {
+  const f = fixture();
+  const input = configuration(undefined, '1', f.now() + 60_000);
+  await f.lifecycle.start(input);
+  const { leaseExpiresAt: _expiry, revoking: _revoking, ...legacy } = f.saved()!;
+  f.replaceSaved(legacy as TenantIdentity);
+  await assert.rejects(f.lifecycle.identity(), { status: 503 });
+  await assert.rejects(f.lifecycle.start(input), { status: 409 });
+  let acknowledged = false;
+  await assert.rejects(
+    f.lifecycle.renew(input.ownerId, '1', new Date(f.now() + 65_000).toISOString(), async () => {
+      acknowledged = true;
+    }),
+    { status: 409 },
+  );
+  assert.equal(acknowledged, false);
+  await f.lifecycle.stop(input.ownerId, '1');
+  assert.equal(f.saved()!.revoking, true);
+  assert.equal(f.saved()!.stopped, true);
+  assert.equal(Number.isSafeInteger(f.saved()!.leaseExpiresAt), true);
+  await f.lifecycle.start(configuration(input.ownerId, '2', f.now() + 60_000));
+  assert.equal((await f.lifecycle.identity('2')).revoking, false);
 });
 
 test('read-only tenant stop inspection serializes behind cleanup without adopting or changing a lease', async () => {

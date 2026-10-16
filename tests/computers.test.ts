@@ -33,6 +33,7 @@ import {
   type E2BSandbox,
 } from '../src/providers/e2b/client.ts';
 import { createE2BAdapters } from '../src/providers/e2b/index.ts';
+import { launchE2BCommand } from '../src/providers/e2b/transport.ts';
 import { createCloudflareRuntimeTransport } from '../src/providers/runtime-host/cloudflare.ts';
 import { createComputerShutdownConfirmation } from '../src/providers/runtime-host/computer-shutdown.ts';
 import { fakeComputer } from './runtime-fixtures.ts';
@@ -91,6 +92,7 @@ test('E2B SDK configuration keeps keys server-side and blocks public traffic', a
     string,
     unknown
   >;
+  assert.equal(started.user, 'otto-browser');
   assert.deepEqual(started.envs, {});
   assert.equal(JSON.stringify(started).includes('synthetic-server-key'), false);
   await sandbox.start({
@@ -592,6 +594,58 @@ test('E2B uncertain connections persist a fence and do not expose SDK errors', a
       await f.close();
     }
   }
+});
+
+test('E2B output streams past 32 MiB while read and fences only when the reader stalls', async () => {
+  const run = async (read: boolean) => {
+    let fenced = false;
+    let finish = () => {};
+    const allocation = {
+      onFence: () => () => {},
+      fence: () => {
+        fenced = true;
+      },
+      acquire: async () => ({
+        release: () => {},
+        sandbox: {
+          start: async (input: { stdout(data: string): void }) => {
+            const chunk = 'x'.repeat(1024 * 1024);
+            setImmediate(async () => {
+              for (let index = 0; index < 40 && !fenced; index++) {
+                input.stdout(chunk);
+                await delay(1);
+              }
+              finish();
+            });
+            return {
+              sendStdin: async () => {},
+              closeStdin: async () => {},
+              disconnect: async () => {},
+              wait: () =>
+                new Promise<{ exitCode: number }>((resolve) => {
+                  finish = () => resolve({ exitCode: 0 });
+                }),
+            };
+          },
+        },
+      }),
+    } as unknown as Parameters<typeof launchE2BCommand>[0];
+    const child = launchE2BCommand(allocation, 'workspace', 'fixture');
+    let received = 0;
+    if (read) child.stdout.on('data', (chunk: Buffer) => (received += chunk.length));
+    const outcome = await new Promise<string>((resolve) => {
+      child.on('close', () => resolve('closed'));
+      child.on('error', () => resolve('failed'));
+    });
+    return { outcome, fenced, received };
+  };
+  assert.deepEqual(await run(true), {
+    outcome: 'closed',
+    fenced: false,
+    received: 40 * 1024 * 1024,
+  });
+  const stalled = await run(false);
+  assert.deepEqual([stalled.outcome, stalled.fenced], ['failed', true]);
 });
 
 test('E2B allocation refuses competing leases and fences failed lease renewal', async () => {
@@ -1316,6 +1370,29 @@ test('clean-stop inspection refuses stale, malformed, oversized and failed recei
     fetch: async () => Response.json({ generation: '12', stopped: false }),
   });
   assert.equal(await transport.deploymentStopped!(ownerId, '12'), false);
+});
+
+test('deployment preparation keeps busy distinct from unsafe and requires bounded exact-generation clean stop acknowledgement', async () => {
+  const ownerId = randomUUID();
+  const input = {
+    nonce: randomUUID(),
+    targetRelease: 'a'.repeat(40),
+    deadline: Date.now() + 30_000,
+  };
+  for (const [status, value, expected] of [
+    [200, { ok: true, generation: '3', clean: true, stopped: true }, 'stopped'],
+    [409, { ok: false, generation: '3', status: 'busy' }, 'busy'],
+    [409, { ok: false, generation: '3', status: 'unsafe' }, undefined],
+    [200, { ok: true, generation: '4', clean: true, stopped: true }, undefined],
+    [200, { ok: true, generation: '3', clean: false, stopped: true }, undefined],
+  ] as const) {
+    const transport = createCloudflareRuntimeTransport({
+      fetch: async () => Response.json(value, { status }),
+    });
+    const result = transport.prepareDeployment!(ownerId, '3', input);
+    if (expected) assert.equal(await result, expected);
+    else await assert.rejects(result);
+  }
 });
 
 test('computer shutdown refuses configurable remote destinations, invalid generations and unconfirmed results', async () => {

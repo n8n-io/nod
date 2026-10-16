@@ -23,6 +23,7 @@ function fixture() {
     },
     transaction: async <T>(operation: (value: unknown) => Promise<T>) => operation(storage),
   } as unknown as DurableObjectStorage;
+  let reply = async (_request: Request) => Response.json({ ok: true, receipts: [] });
   const create = () =>
     createGatewayDeployment({
       storage,
@@ -33,7 +34,7 @@ function fixture() {
       }),
       forward: async (request) => {
         requests.push(request);
-        return Response.json({ ok: true, receipts: [] });
+        return reply(request);
       },
     });
   const request = (requestId = randomUUID()) => {
@@ -51,7 +52,15 @@ function fixture() {
       body,
     });
   };
-  return { values, requests, create, request };
+  return {
+    values,
+    requests,
+    create,
+    request,
+    reply(value: typeof reply) {
+      reply = value;
+    },
+  };
 }
 
 test('durable deployment request replay protection survives replacement and rejected auth cannot close admission', async () => {
@@ -69,4 +78,18 @@ test('durable deployment request replay protection survives replacement and reje
   assert.equal(await fresh.create().closed(), false);
   assert.equal(fresh.requests.length, 0);
   assert.equal(fresh.values.size, 0);
+});
+
+test('gateway refuses malformed successful acknowledgements and keeps admission closed', async () => {
+  for (const body of [
+    { ok: true },
+    { ok: true, receipts: [{ ownerId: randomUUID(), generation: '0' }] },
+    { ok: true, receipts: [], extra: true },
+  ]) {
+    const f = fixture();
+    f.reply(async () => Response.json(body));
+    await assert.rejects(f.create().handle(f.request()));
+    assert.equal(await f.create().closed(), true);
+    assert.equal((f.values.get('deployment-barrier') as { phase: string }).phase, 'failed');
+  }
 });

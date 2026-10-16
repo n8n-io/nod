@@ -113,7 +113,10 @@ test('failed drain and unknown stored state remain closed without implicit recov
       throw new Error('private detail');
     },
   });
-  await assert.rejects(barrier.handle(f.input, f.request));
+  await assert.rejects(
+    barrier.handle(f.input, f.request),
+    (error: Error) => !error.message.includes('private detail'),
+  );
   assert.equal(f.state().phase, 'failed');
   assert.equal(await barrier.closed(), true);
   await assert.rejects(barrier.handle({ ...f.input, action: 'activate' }, f.request));

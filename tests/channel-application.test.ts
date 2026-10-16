@@ -11,7 +11,69 @@ import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
+import { createAnalytics } from '../src/server/analytics.ts';
+import { gunzipSync } from 'node:zlib';
+
+test('analytics drops revoked owner queues while preserving another owner and rechecks dispatch consent', async (t) => {
+  const received: { distinct_id: string; event: string }[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
+    const raw =
+      typeof options.body === 'string'
+        ? options.body
+        : gunzipSync(options.body as Uint8Array).toString();
+    received.push(...JSON.parse(raw).batch);
+    return Response.json({ status: 1 });
+  });
+  const consented = new Set(['hosted:alex', 'hosted:sam']);
+  const analytics = await createAnalytics({
+    provider: createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) }),
+    deployment: 'hosted',
+    environment: 'production',
+    dataRoot: '.',
+  });
+  t.after(() => analytics.shutdown());
+  for (const owner of ['alex', 'sam', 'never']) {
+    if (owner !== 'never') analytics.setUsageData(owner, true);
+    analytics.capture(owner, { event: 'otto_chat_stopped' });
+  }
+  analytics.setUsageData('alex', false);
+  await analytics.shutdown();
+  assert.deepEqual(
+    received.map((event) => event.distinct_id),
+    ['hosted:sam'],
+  );
+
+  received.length = 0;
+  const remote = await createAnalytics({
+    provider: createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) }),
+    deployment: 'hosted',
+    environment: 'production',
+    dataRoot: '.',
+  });
+  remote.setUsageData('alex', true);
+  remote.capture('alex', { event: 'otto_chat_stopped' });
+  consented.delete('hosted:alex');
+  await remote.shutdown();
+  assert.equal(received.length, 0);
+
+  const ownerBound = createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) });
+  const signal = new AbortController().signal;
+  ownerBound.capture(
+    { distinctId: 'hosted:sam', event: 'otto_chat_stopped', properties: {} },
+    signal,
+  );
+  ownerBound.capture(
+    { distinctId: 'hosted:alex', event: 'otto_chat_stopped', properties: {} },
+    signal,
+  );
+  await ownerBound.shutdown();
+  assert.deepEqual(
+    received.map((event) => event.distinct_id),
+    ['hosted:sam'],
+  );
+});
 
 test(
   'application loads encrypted channel setup, replaces transports, and continues replies within their channel',

@@ -181,6 +181,7 @@ function completedRolloutFixture() {
     account_id: 'c'.repeat(32),
     durable_objects: { namespace_id: 'e'.repeat(32) },
   };
+  const observations = [];
   const changes = { rollout: (value) => value };
   const f = fixture({
     application: (value) =>
@@ -196,6 +197,7 @@ function completedRolloutFixture() {
     api: (url) => {
       if (!url.pathname.includes('/containers/applications/')) return;
       const resource = url.pathname.endsWith(`/rollouts/${rolloutId}`) ? 'rollout' : 'detail';
+      observations.push(resource);
       const container = f.containers[1];
       const result =
         resource === 'detail'
@@ -229,7 +231,7 @@ function completedRolloutFixture() {
       return Response.json({ success: true, result });
     },
   });
-  return { ...f, changes };
+  return { ...f, changes, observations };
 }
 
 test('a stale application list requires exact completed rollout proof bracketed by coherent detail reads', async () => {
@@ -237,6 +239,7 @@ test('a stale application list requires exact completed rollout proof bracketed 
   await f.client.prepare();
   await f.client.activate();
   await f.client.verifyRollouts();
+  assert.deepEqual(f.observations, ['detail', 'rollout', 'detail']);
   await f.client.complete();
   assert.equal(new Set(f.controls.map((input) => input.nonce)).size, 1);
 });

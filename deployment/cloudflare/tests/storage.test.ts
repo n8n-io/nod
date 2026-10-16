@@ -20,11 +20,17 @@ function fixture() {
       const value = objects.get(key);
       return value ? { body: value.body, size: value.body.byteLength, httpEtag: value.etag } : null;
     },
-    async put(key: string, value: ReadableStream | Uint8Array) {
+    async put(key: string, value: ReadableStream | Uint8Array, options: { onlyIf: Headers }) {
       const body =
         value instanceof Uint8Array
           ? value
           : new Uint8Array(await new Response(value).arrayBuffer());
+      const current = objects.get(key);
+      if (
+        (options.onlyIf.get('if-none-match') === '*' && current) ||
+        (options.onlyIf.has('if-match') && options.onlyIf.get('if-match') !== current?.etag)
+      )
+        return null;
       const etag = `"version-${++version}"`;
       objects.set(key, { body, etag });
       return { httpEtag: etag };
@@ -67,6 +73,24 @@ test('storage keys use trusted owner and environment and never caller-supplied h
   assert.equal(objects.size, 1);
   await storageRequest(new Request(url, { method: 'DELETE' }), identity, bucket);
   assert.equal(objects.size, 0);
+});
+
+test('session checkpoints require exact etag compare-and-swap across competing writers', async () => {
+  const { bucket, identity } = fixture();
+  const key = `sessions/${randomUUID()}.jsonl`;
+  const url = `http://otto.storage/v1/objects/${encodeURIComponent(key)}`;
+  const first = await storageRequest(put(url, 'first', { 'if-none-match': '*' }), identity, bucket);
+  const etag = first.headers.get('etag')!;
+  const writes = await Promise.all([
+    storageRequest(put(url, 'second', { 'if-match': etag }), identity, bucket),
+    storageRequest(put(url, 'stale', { 'if-match': etag }), identity, bucket),
+  ]);
+  assert.deepEqual(
+    writes.map((response) => response.status),
+    [204, 412],
+  );
+  assert.equal(await (await storageRequest(new Request(url), identity, bucket)).text(), 'second');
+  await assert.rejects(storageRequest(put(url, 'blind'), identity, bucket), { status: 428 });
 });
 
 test('private storage keeps tenants out of computer checkpoints and bounds object size', async () => {

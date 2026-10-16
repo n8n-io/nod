@@ -79,6 +79,12 @@ function bucketFixture() {
   };
 }
 
+function privateFailure(error: unknown) {
+  assert.equal((error as { status?: number }).status, 503);
+  assert.doesNotMatch(String((error as Error).message), /Synthetic private/);
+  return true;
+}
+
 function byteStream(bytes: Uint8Array, chunkSize = 32768) {
   let offset = 0;
   return new ReadableStream<Uint8Array>({
@@ -169,7 +175,7 @@ test('failed producer, corrupt stream and quota overflow abort unpublished check
         : byteStream(new Uint8Array(kind === 'quota' ? 2049 : kind === 'empty' ? 0 : 2048));
     await assert.rejects(
       fixture.store.save({ stream, exitCode: Promise.resolve(kind === 'producer' ? 1 : 0) }),
-      { status: 503 },
+      privateFailure,
     );
     assert.equal(fixture.objects.size, 0, kind);
     assert.equal(fixture.uploads[0].aborted, true, kind);
@@ -259,7 +265,7 @@ test('late or unknown multipart completion cannot publish a manifest or delete a
         stream: byteStream(new Uint8Array(2048).fill(2)),
         exitCode: Promise.resolve(0),
       }),
-      { status: 503 },
+      privateFailure,
     );
     await entered.promise;
     await saving;

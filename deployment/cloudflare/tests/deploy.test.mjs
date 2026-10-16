@@ -96,14 +96,14 @@ function imageDigest(image) {
   return `${image.slice(0, image.lastIndexOf(':'))}@sha256:${'d'.repeat(64)}`;
 }
 
-function planInput() {
+function planInput(config = configuration()) {
   return {
     environment: 'production',
     release,
     accountId,
     publicUrl: origin,
     gatewayEnv: variables.GATEWAY_ENV,
-    config: configuration(),
+    config,
   };
 }
 
@@ -124,6 +124,21 @@ test('deployment validation rejects another environment, origin and invalid revi
   const plan = deploymentPlan(input);
   assert.equal(JSON.parse(plan.secrets.GATEWAY_ENV).OTTO_RELEASE, release);
   assert.equal(JSON.stringify(plan.config).includes('synthetic-gateway-credential'), false);
+});
+
+test('deployment requires one explicit EU object binding before publication', () => {
+  const valid = configuration().env.production.r2_buckets[0];
+  for (const bindings of [
+    undefined,
+    [],
+    [valid, valid],
+    [{ ...valid, jurisdiction: undefined }],
+    [{ ...valid, jurisdiction: 'default' }],
+  ]) {
+    const config = configuration();
+    config.env.production.r2_buckets = bindings;
+    assert.throws(() => deploymentPlan(planInput(config)));
+  }
 });
 
 test('missing, denied or mismatched deployed storage never permits admission completion', async () => {
@@ -188,6 +203,70 @@ test('deployment keeps secrets out of arguments, child environments and reports,
   await assert.rejects(stat(secretPath), { code: 'ENOENT' });
 });
 
+test('pending image preparation keeps admission open until every unique pinned image is ready', async () => {
+  const images = [
+    `registry.cloudflare.com/${accountId}/otto-production@sha256:${'d'.repeat(64)}`,
+    `registry.cloudflare.com/${accountId}/otto-production-browser@sha256:${'d'.repeat(64)}`,
+    `registry.cloudflare.com/${accountId}/otto-production-workspace@sha256:${'d'.repeat(64)}`,
+  ];
+  const ready = new Set();
+  const calls = new Map();
+  const events = [];
+  let elapsed = 0;
+  const control = lifecycle(events);
+  control.prepare = async () => {
+    assert.deepEqual([...ready].sort(), [...images].sort());
+    events.push('prepare');
+  };
+  await deployRelease('production', variables, {
+    config: configuration(),
+    deploymentControl: control,
+    imageDigest,
+    report() {},
+    now: () => elapsed,
+    wait: async (duration) => {
+      assert.equal(events.includes('prepare'), false);
+      assert.equal(events.includes('deploy'), false);
+      elapsed += duration;
+    },
+    command: async (args) => {
+      events.push(args[0] === 'deploy' ? 'deploy' : 'push');
+    },
+    request: async (url, options) => {
+      if (url.endsWith('/workers/scripts/otto/settings')) return workerSettings();
+      const { image } = JSON.parse(options.body);
+      assert.ok(images.includes(image));
+      assert.equal(events.includes('prepare'), false);
+      const count = (calls.get(image) ?? 0) + 1;
+      calls.set(image, count);
+      const prepared = count >= images.indexOf(image) + 1;
+      if (prepared) ready.add(image);
+      return Response.json(
+        { success: true, result: { image, status: prepared ? 'ready' : 'pending' } },
+        { status: prepared ? 200 : 202 },
+      );
+    },
+    smoke: async () => events.push('smoke'),
+  });
+  assert.deepEqual(
+    [...calls],
+    images.map((image, index) => [image, index + 1]),
+  );
+  assert.deepEqual(events, [
+    'push',
+    'push',
+    'push',
+    'prepare',
+    'activate',
+    'deploy',
+    'verifyRollouts',
+    'smoke',
+    'initialize',
+    'complete',
+  ]);
+  assert.ok(elapsed > 0 && elapsed < 15 * 60_000);
+});
+
 test('unavailable image preparation cannot close admission or publish Worker code', async (t) => {
   const prepared = (image, changes = {}) => ({
     success: true,
@@ -227,6 +306,28 @@ test('unavailable image preparation cannot close admission or publish Worker cod
       assert.equal(events.includes('prepare'), false);
       assert.equal(events.includes('deploy'), false);
     });
+  }
+});
+
+test('a failed publication of any image prevents Worker activation and smoke checks', async () => {
+  for (const failure of [1, 2, 3]) {
+    const commands = [];
+    let temporaryConfig;
+    await assert.rejects(
+      deploy('production', variables, {
+        config: configuration(),
+        report() {},
+        command: async (args) => {
+          commands.push(args);
+          temporaryConfig = args[args.indexOf('--config') + 1];
+          if (commands.length === failure) throw new Error('Synthetic image failure.');
+        },
+        smoke: async () => assert.fail('Smoke must not run after a failed push.'),
+      }),
+    );
+    assert.equal(commands.length, failure);
+    assert.ok(commands.every((args) => args[0] === 'containers'));
+    await assert.rejects(stat(temporaryConfig), { code: 'ENOENT' });
   }
 });
 

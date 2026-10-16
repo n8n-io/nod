@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { assertContainerStartupSettled, startContainer } from '../src/container-startup.ts';
 import { stopContainer } from '../src/container-stop.ts';
-import { RuntimeControlError } from '../src/protocol.ts';
+import { createTenantLifecycle } from '../src/lifecycle.ts';
+import { RuntimeControlError, type TenantIdentity } from '../src/protocol.ts';
 
 function deferred() {
   let resolve!: () => void;
@@ -82,6 +84,25 @@ test('the deadline bounds the stop request and a late acknowledgement cannot con
   assert.equal(polls, 0);
 });
 
+test('an unresponsive status check is bounded and its later failure is observed', async () => {
+  const raw = deferred();
+  await assert.rejects(
+    stopContainer(
+      {
+        stop: async () => {},
+        async getState() {
+          await raw.promise;
+          return { status: 'stopped' };
+        },
+      },
+      { running: () => false, timeoutMs: 10 },
+    ),
+    RuntimeControlError,
+  );
+  raw.reject(new Error('synthetic private late status failure'));
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
 test('unsettled startup prevents both sending the signal and returning a clean receipt', async () => {
   const raw = deferred();
   let stops = 0;
@@ -112,4 +133,46 @@ test('unsettled startup prevents both sending the signal and returning a clean r
   await assert.rejects(stopContainer(restarting, { running: () => false }), RuntimeControlError);
   late.resolve();
   await starting;
+});
+
+test('timeout retains tenant revocation and requires an explicit confirmed-stop retry', async () => {
+  let running = true;
+  let status: 'healthy' | 'stopped' = 'healthy';
+  let saved: TenantIdentity = {
+    ownerId: randomUUID(),
+    environment: 'development',
+    generation: '1',
+    configurationHash: 'synthetic',
+    leaseExpiresAt: Date.now() + 60_000,
+    revoking: false,
+    stopped: false,
+  };
+  const container = {
+    stop: async () => {},
+    getState: async () => ({ status }),
+  };
+  const lifecycle = createTenantLifecycle({
+    environment: 'development',
+    read: async () => saved,
+    write: async (identity) => {
+      saved = identity;
+    },
+    status: async () => status,
+    start: async () => {},
+    stop: () => stopContainer(container, { running: () => running, timeoutMs: 10 }),
+  });
+  await assert.rejects(lifecycle.stop(saved.ownerId, '1'), RuntimeControlError);
+  assert.equal(saved.revoking, true);
+  assert.equal(saved.stopped, false);
+  await assert.rejects(lifecycle.identity('1'), RuntimeControlError);
+  running = false;
+  status = 'stopped';
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(saved.stopped, false);
+  assert.deepEqual(await lifecycle.stop(saved.ownerId, '1'), {
+    ok: true,
+    generation: '1',
+    stopped: true,
+  });
+  assert.equal(saved.stopped, true);
 });

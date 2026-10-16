@@ -20,7 +20,7 @@ import Fastify from 'fastify';
 import pg from 'pg';
 import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
-test('localhost access requires the owner key cookie from the private key exchange', async () => {
+test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
   const app = Fastify();
   try {
@@ -33,6 +33,19 @@ test('localhost access requires the owner key cookie from the private key exchan
     registerLocalAccess(app, 4310, { key });
     app.post('/api/fixture', async () => ({ ok: true }));
     app.get('/api/privacy', async () => ({ content: null }));
+    const cookie = `otto-access-4310=${key}`;
+    for (const headers of [
+      { host: 'attacker.example:4310', cookie },
+      { host: 'localhost:4311', cookie },
+      { host: 'localhost:4310', cookie, origin: 'https://attacker.example' },
+      { host: 'localhost:4310', cookie, origin: 'null' },
+      { host: 'localhost:4310', cookie, origin: 'https://localhost:4310' },
+      { host: 'localhost:4310', cookie, 'sec-fetch-site': 'cross-site' },
+    ])
+      assert.equal(
+        (await app.inject({ method: 'POST', url: '/api/fixture', headers })).statusCode,
+        403,
+      );
     for (const headers of [
       { host: 'localhost:4310' },
       { host: 'localhost:4310', origin: 'http://localhost:4310' },
@@ -51,11 +64,11 @@ test('localhost access requires the owner key cookie from the private key exchan
       (await app.inject({ url: '/api/privacy', headers: { host: 'localhost:4310' } })).statusCode,
       200,
     );
-    const exchange = (candidate: string) =>
+    const exchange = (candidate: string, headers: Record<string, string> = {}) =>
       app.inject({
         method: 'POST',
         url: '/api/access',
-        headers: { host: 'localhost:4310', origin: 'http://localhost:4310' },
+        headers: { host: 'localhost:4310', origin: 'http://localhost:4310', ...headers },
         payload: { key: candidate },
       });
     for (const rejected of [
@@ -65,6 +78,7 @@ test('localhost access requires the owner key cookie from the private key exchan
       assert.equal(rejected.statusCode, 401);
       assert.equal(rejected.headers['set-cookie'], undefined);
     }
+    assert.equal((await exchange(key, { origin: 'https://attacker.example' })).statusCode, 403);
     const accepted = await exchange(key);
     assert.equal(accepted.statusCode, 204);
     const issued = String(accepted.headers['set-cookie']);

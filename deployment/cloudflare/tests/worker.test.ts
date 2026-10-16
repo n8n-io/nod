@@ -447,7 +447,10 @@ test('anonymous gateway startup and both TCP proxy failures return fixed errors'
       current.request('https://otto.example.test/api/events'),
     );
     assert.equal(response.status, 503);
-    assert.doesNotMatch(await response.text(), /synthetic|upstream|credential/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), {
+      error: 'This request could not be completed. Try again.',
+    });
   }
 });
 

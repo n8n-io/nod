@@ -5,6 +5,8 @@ import pg from 'pg';
 import type { BrowserConnectionRequest } from '../src/ports/agent.ts';
 import type { Computer } from '../src/ports/computer.ts';
 import { createBrowserConnections } from '../src/server/browser-connections.ts';
+import { createAnalytics } from '../src/server/analytics.ts';
+import type { ProductAnalytics } from '../src/ports/analytics.ts';
 
 test(
   'browser profiles require an explicit observed sign-in outcome and retain owner and turn fences',
@@ -270,6 +272,123 @@ test(
         undefined,
       );
     } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'saved browser analytics exclude private browsing details and stay off after consent changes mid-use',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `browser_analytics_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const events: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      deployment: 'hosted',
+      environment: 'development',
+      dataRoot: '',
+      provider: { capture: (event) => events.push(event), shutdown: async () => {} },
+    });
+    try {
+      const ownerId = 'synthetic-browser-owner';
+      const turn = { threadId: randomUUID(), turnId: randomUUID() };
+      await pool.query(
+        'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,archived_at timestamptz)',
+      );
+      await pool.query(
+        'CREATE TABLE turns(id uuid PRIMARY KEY,thread_id uuid,owner_id text,status text)',
+      );
+      await pool.query('INSERT INTO threads VALUES($1,$2,NULL)', [turn.threadId, ownerId]);
+      await pool.query("INSERT INTO turns VALUES($1,$2,$3,'running')", [
+        turn.turnId,
+        turn.threadId,
+        ownerId,
+      ]);
+      let location = 'https://tenant.example.com/account';
+      let waiting: Promise<void> | undefined;
+      let entered = () => {};
+      const computer = {
+        bindProfile: async () => {},
+        hold: async () => {},
+        close: async () => {},
+        deleteProfile: async () => {},
+        act: async () => {
+          entered();
+          await waiting;
+          return { url: location, text: 'Synthetic private account page' };
+        },
+        currentPage: async () => ({ origin: new URL(location).origin, url: location }),
+      } as unknown as Computer;
+      analytics.setUsageData(ownerId, true, randomUUID());
+      const service = await createBrowserConnections(pool, {
+        ownerId,
+        computer,
+        analytics: analytics.forOwner(ownerId),
+        analyticsConsent: () => analytics.consent(ownerId),
+      });
+      const opened = await service.request(
+        {
+          action: 'connect',
+          url: 'https://tenant.example.com/login?secret=synthetic-private',
+          label: 'Private fixture account',
+        },
+        turn,
+      );
+      assert.ok('connectionId' in opened && opened.connectionId);
+      const id = opened.connectionId;
+      const use = () => service.request({ action: 'use', url: location, connectionId: id }, turn);
+      await use();
+      assert.equal(events.filter((event) => event.event === 'otto_service_used').length, 0);
+      await service.request(
+        { action: 'save', url: location, connectionId: id, signedIn: true },
+        turn,
+      );
+      await use();
+      const count = events.length;
+      location = 'https://other.example.org/private-path?secret=synthetic-private';
+      await use();
+      assert.equal(events.length, count);
+      location = 'https://tenant.example.com/account';
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const inFlight = use();
+      await started;
+      analytics.setUsageData(ownerId, false, randomUUID());
+      analytics.setUsageData(ownerId, true, randomUUID());
+      release();
+      await inFlight;
+      assert.equal(events.length, count);
+      waiting = undefined;
+      analytics.setUsageData(ownerId, false, randomUUID());
+      await use();
+      assert.equal(events.length, count);
+      analytics.setUsageData(ownerId, true, randomUUID());
+      await use();
+      assert.equal(events.length, count + 1);
+      const serialized = JSON.stringify(events);
+      for (const value of [
+        'tenant.',
+        'private-path',
+        'synthetic-private',
+        'Private fixture account',
+        id,
+      ])
+        assert.ok(!serialized.includes(value));
+    } finally {
+      await analytics.shutdown();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
-import { createComputerLifecycle, type ComputerState } from '../src/computer-lifecycle.ts';
+import {
+  createComputerLifecycle,
+  type ComputerIdentity,
+  type ComputerState,
+} from '../src/computer-lifecycle.ts';
 import { CheckpointTooLarge, type ComputerCheckpoint } from '../src/computer-checkpoints.ts';
 
 function deferred() {
@@ -24,6 +28,7 @@ function fixture(role: 'browser' | 'workspace' = 'workspace') {
   const restored: ComputerState[] = [];
   const removed: ComputerCheckpoint[] = [];
   let beforeWrite = async (_state: ComputerState) => {};
+  let beforeClaim = async (_identity: ComputerIdentity, _id: string) => {};
   let beforeCheckpoint = async (_state: ComputerState) => {};
   let beforeLaunch = async (_state: ComputerState) => {};
   let beforeDestroy = async () => {};
@@ -45,6 +50,7 @@ function fixture(role: 'browser' | 'workspace' = 'workspace') {
       writes.push(structuredClone(state));
     },
     async claimCommand(identity, id) {
+      await beforeClaim(identity, id);
       const key = JSON.stringify([
         identity.ownerId,
         identity.environment,
@@ -158,6 +164,9 @@ function fixture(role: 'browser' | 'workspace' = 'workspace') {
     },
     beforeWrite(value: typeof beforeWrite) {
       beforeWrite = value;
+    },
+    beforeClaim(value: typeof beforeClaim) {
+      beforeClaim = value;
     },
     beforeCheckpoint(value: typeof beforeCheckpoint) {
       beforeCheckpoint = value;
@@ -607,6 +616,62 @@ test('browser uncertainty fences every concurrent action and never checkpoints p
   assert.equal(f.running(), false);
   assert.equal(f.events.includes('checkpoint'), false);
   await assert.rejects(f.launch());
+});
+
+test('legacy command IDs migrate before accepted work and stay rejected after array removal', async () => {
+  const f = fixture();
+  const legacy = [randomUUID(), randomUUID(), randomUUID()];
+  f.seed({
+    ownerId: f.ownerId,
+    environment: 'development',
+    generation: '1',
+    role: 'workspace',
+    phase: 'ready',
+    stopped: false,
+    commands: legacy,
+  });
+  await assert.rejects(f.launch(legacy[0]), { status: 409 });
+  assert.equal(f.events.includes('launch'), false);
+  assert.deepEqual(f.state()?.commands, legacy);
+  const id = randomUUID();
+  await f.launch(id);
+  assert.equal(f.state()?.commands, undefined);
+  for (const previous of [...legacy, id]) assert.equal(f.claimed(previous), true);
+  const intent = f.events.indexOf('write:dirty:false');
+  for (const previous of legacy) assert.ok(f.events.indexOf(`claim:${previous}`) < intent);
+  await f.completed(id);
+  await f.settled();
+  f.restart();
+  for (const previous of legacy) await assert.rejects(f.launch(previous), { status: 409 });
+  assert.equal(f.events.filter((event) => event === 'launch').length, 1);
+});
+
+test('interrupted legacy migration retains its source IDs and never dispatches an action', async () => {
+  const f = fixture();
+  const legacy = [randomUUID(), randomUUID()];
+  f.seed({
+    ownerId: f.ownerId,
+    environment: 'development',
+    generation: '1',
+    role: 'workspace',
+    phase: 'ready',
+    stopped: false,
+    commands: legacy,
+  });
+  f.beforeClaim(async (_identity, id) => {
+    if (id === legacy[1]) throw new Error('Synthetic private migration failure');
+  });
+  await assert.rejects(f.launch());
+  assert.deepEqual(f.state()?.commands, legacy);
+  assert.equal(f.claimed(legacy[0]), true);
+  assert.equal(f.events.includes('launch'), false);
+  f.beforeClaim(async () => {});
+  f.restart();
+  const id = randomUUID();
+  await f.launch(id);
+  assert.equal(f.state()?.commands, undefined);
+  assert.equal(f.claimed(legacy[1]), true);
+  assert.equal(f.claimed(id), true);
 });
 
 test('an interrupted intent write burns its claimed ID without running native code', async () => {

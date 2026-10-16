@@ -669,9 +669,16 @@ async function initializeApplication(
       if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
         return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
-      else if (action.startsWith('OTTO_'))
+      else if (action.startsWith('OTTO_')) {
+        if (
+          ['OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action) &&
+          expectedRevision === undefined
+        )
+          throw Object.assign(new Error('This schedule needs a fresh approval.'), {
+            statusCode: 409,
+          });
         await personal.validateReview(action.slice('OTTO_'.length), args, expectedRevision);
-      else await integrations.prepare(ownerId, action, args);
+      } else await integrations.prepare(ownerId, action, args);
     },
     (reply) => trust.answer(reply),
     communication.describe,

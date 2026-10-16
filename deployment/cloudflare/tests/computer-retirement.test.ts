@@ -14,6 +14,7 @@ function fixture(role: 'browser' | 'workspace' = 'browser') {
     generation: '3',
     phase: 'uncertain',
     stopped: true,
+    commands: [],
   };
   const values = new Map<string, unknown>([['computer', structuredClone(original)]]);
   let authorization: (() => void) | undefined;
@@ -98,7 +99,7 @@ test('unused retirement atomically retains the exact uncertainty record and a st
   }
 });
 
-test('identity, generation and checkpoint ambiguity keep the original fence', async () => {
+test('identity, generation, legacy command and checkpoint ambiguity keep the original fence', async () => {
   const changes: Array<Record<string, unknown>> = [
     { ownerId: randomUUID() },
     { environment: 'production' },
@@ -106,6 +107,8 @@ test('identity, generation and checkpoint ambiguity keep the original fence', as
     { generation: '4', stopped: null },
     { generation: '5' },
     { stopped: false },
+    { commands: [randomUUID()] },
+    { commands: null },
     { checkpoint: {} },
     { previousCheckpoint: {} },
     { unknown: true },

@@ -57,6 +57,7 @@ test(
     const asked = new Set<string>();
     const cleared = new Set<string>();
     const confirmationText = 'Proceed with the saved synthetic action?';
+    let confirmationValid = true;
     let beforeConfirmation = async () => {};
     const executedApps: string[] = [];
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
@@ -165,7 +166,7 @@ test(
               return { text: confirmationText };
             }
             if ('purpose' in input && input.purpose === 'confirmation_review')
-              return { valid: true };
+              return { valid: confirmationValid };
             return task === 'review' && 'reply' in input
               ? {
                   answer: ({ Yes: 'yes', No: 'no' } as Record<string, string>)[String(input.reply)],
@@ -308,6 +309,44 @@ test(
       );
 
       await t.test(
+        'a rejected generated confirmation cannot create an approval or send an email',
+        async () => {
+          const writes = integrationFixture.writes.length;
+          const text = `Synthetic rejected confirmation ${randomUUID()}`;
+          plans.set(text, {
+            tool: 'apps',
+            action: 'GMAIL_SEND_EMAIL',
+            args: {
+              recipient_email: 'blocked@example.test',
+              subject: 'Synthetic reviewed email',
+              body: 'Synthetic body awaiting confirmation.',
+            },
+          });
+          confirmationValid = false;
+          try {
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            const turn = response.json().turnId as string;
+            ids.push(response.json().threadId as string);
+            await waitFor(turn, 'failed|succeeded|waiting');
+            assert.deepEqual(await approvalsFor(turn), []);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text=$2",
+                  [turn, confirmationText],
+                )
+              ).rowCount,
+              0,
+            );
+            assert.equal(integrationFixture.writes.length, writes);
+          } finally {
+            confirmationValid = true;
+          }
+        },
+      );
+
+      await t.test(
         'a schedule changed during confirmation generation cannot save a stale approval',
         async () => {
           const schedule = await reminder();
@@ -436,6 +475,33 @@ test(
             assert.equal(applied.enabled, action !== 'schedule_cancel');
             assert.equal(applied.title, args.title ?? saved.title);
           }
+        },
+      );
+
+      await t.test(
+        'legacy schedule approvals without a saved revision cannot execute',
+        async () => {
+          const schedule = await reminder();
+          const turn = await propose('schedule_cancel', { id: schedule.id });
+          const [approval] = await approvalsFor(turn);
+          await pool.query('UPDATE approvals SET expected_revision=NULL WHERE id=$1', [
+            approval.id,
+          ]);
+          const response = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(response.statusCode, 409, response.body);
+          assert.equal((await approvalsFor(turn))[0].status, 'pending');
+          assert.deepEqual(
+            (
+              await pool.query('SELECT revision,enabled,job_id FROM schedules WHERE id=$1', [
+                schedule.id,
+              ])
+            ).rows[0],
+            { revision: 0, enabled: true, job_id: schedule.jobId },
+          );
         },
       );
 

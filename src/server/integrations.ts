@@ -226,6 +226,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (featured) return { slug, ...featured };
     return { slug, name: slug.replaceAll('_', ' '), description: '' };
   }
+  const savedSessions = (
+    await pool.query<{ name: string | null }>("SELECT to_regclass('integration_sessions') AS name")
+  ).rows[0].name
+    ? (
+        await pool.query<{ session_id: string }>(
+          'SELECT session_id FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2',
+          [configuredOwner, providerId],
+        )
+      ).rows
+    : [];
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_connections (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -239,6 +249,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       watch_failures integer NOT NULL DEFAULT 0, watch_requested boolean NOT NULL DEFAULT true,
       watch_attempted boolean NOT NULL DEFAULT false, watch_revision integer NOT NULL DEFAULT 0
     );
+    DROP TABLE IF EXISTS integration_sessions;
     CREATE TABLE IF NOT EXISTS app_setup_completions (
       owner_id text NOT NULL, link_hash text NOT NULL,
       PRIMARY KEY (owner_id,link_hash)
@@ -256,8 +267,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
-    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid;
+    DO $$ BEGIN
+      IF to_regclass('direct_oauth_accounts') IS NOT NULL THEN
+        IF to_regclass('vault_app_grants') IS NOT NULL THEN
+          DELETE FROM vault_app_grants WHERE id IN (SELECT id FROM direct_oauth_accounts);
+        END IF;
+        DROP TABLE direct_oauth_accounts;
+      END IF;
+    END $$;
+    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,
+      DROP COLUMN IF EXISTS intent;
   `);
+  const stale = await pool.query<
+    Pick<ConnectionRow, 'provider_id' | 'account_id' | 'pending_account_id' | 'trigger_id'>
+  >(
+    `DELETE FROM app_connections WHERE owner_id=$1 AND (provider_id='direct' OR slug=ANY($2::text[]))
+     RETURNING provider_id,account_id,pending_account_id,trigger_id`,
+    [configuredOwner, [...officialMcp.keys()]],
+  );
   let draining = false;
   let closed = false;
   let refreshing: Promise<void> | undefined;
@@ -267,6 +294,21 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     if (closed) return undefined;
     return options.admission ? options.admission.run(operation) : Promise.resolve().then(operation);
   }
+  const bounded = (operation: () => Promise<unknown>) =>
+    Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((resolve) => setTimeout(resolve, 10_000).unref()),
+    ]).catch(() => {});
+  void background(async () => {
+    if (!provider.configured) return;
+    for (const row of savedSessions) await bounded(() => provider.deleteSession(row.session_id));
+    for (const row of stale.rows.filter((item) => item.provider_id === providerId)) {
+      if (row.trigger_id) await bounded(() => provider.unsubscribe(row.trigger_id!));
+      for (const account of new Set([row.account_id, row.pending_account_id]))
+        if (account) await bounded(() => provider.deleteAccount(account));
+    }
+  })?.catch(() => {});
+
   function requiredProvider() {
     if (!provider.configured)
       throw new IntegrationError('Configure a connection provider before linking services.', 503);

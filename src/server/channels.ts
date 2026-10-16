@@ -298,6 +298,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   CREATE INDEX IF NOT EXISTS channel_inbox_turn ON channel_inbox(turn_id);
   CREATE INDEX IF NOT EXISTS channel_inbox_channel ON channel_inbox(owner_id,channel,state,received_at DESC)`);
   await pool.query(
+    `UPDATE messages m SET delivered_channel=i.channel FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
+    WHERE m.id=o.message_id AND m.owner_id=$1 AND i.owner_id=$1 AND m.turn_id IS NULL AND m.delivered_channel IS NULL AND o.state='sent'`,
+    [ownerId],
+  );
+  await pool.query(
     `UPDATE channel_outbox o SET
        state=CASE WHEN o.state='sending' THEN 'uncertain' ELSE 'pending' END,
        reason=CASE WHEN o.state='sending' THEN 'interrupted_send' ELSE NULL END,

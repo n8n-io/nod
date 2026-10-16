@@ -84,11 +84,10 @@ test('launch, stream, and native exit failures expose only fixed errors and rele
         },
       });
       if (mode === 'exit') exit.resolve(Number.NaN);
-      await assert.rejects(
-        operation,
-        (error: { status?: number; message: string }) =>
-          error.status === 503 && !error.message.includes('synthetic private'),
-      );
+      await assert.rejects(operation, {
+        status: 503,
+        message: 'The runtime request could not be completed.',
+      });
       if (mode !== 'launch') {
         assert.ok(current.events.includes('kill:9'));
         assert.ok(current.events.includes('abort-input'));

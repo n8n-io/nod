@@ -30,7 +30,11 @@ function fixture(t: TestContext) {
   const actions: string[] = [];
   const provisioned: string[] = [];
   const starts: string[] = [];
-  const hooks: { beforeResume?: () => Promise<void> } = {};
+  const hooks: {
+    beforeResume?: () => Promise<void>;
+    afterResume?: () => Promise<void>;
+    beforeCommit?: () => Promise<void>;
+  } = {};
   let gateway: ReturnType<typeof createGatewayDeployment>;
   const record = {
     ownerId,
@@ -83,6 +87,8 @@ function fixture(t: TestContext) {
   const storage = {
     get: async (key: string) => structuredClone(values.get(key)),
     put: async (key: string, value: unknown) => {
+      if (key === 'deployment-barrier' && (value as DeploymentState).phase === 'complete')
+        await hooks.beforeCommit?.();
       values.set(key, structuredClone(value));
     },
     transaction: async <T>(operation: (value: unknown) => Promise<T>) => operation(storage),
@@ -109,6 +115,7 @@ function fixture(t: TestContext) {
         new URL(request.url).pathname,
         body,
       );
+      if (input.action === 'complete') await hooks.afterResume?.();
       return Response.json(result);
     },
   });
@@ -209,6 +216,26 @@ test('failed bootstrap resume keeps admission closed and only the exact operatio
   assert.equal(f.provisioned.length, 1);
 });
 
+test('lost bootstrap resume acknowledgement retains the barrier and exact retry is safe after Node resumed', async (t) => {
+  const f = fixture(t);
+  await f.control();
+  await f.control({ action: 'activate' });
+  f.hooks.afterResume = async () => {
+    throw new Error('Synthetic acknowledgement lost');
+  };
+  await assert.rejects(f.control({ action: 'complete' }));
+  assert.equal(f.state().phase, 'activating');
+  assert.equal(await f.gateway.closed(), true);
+  await assert.rejects(f.request());
+  assert.equal(f.provisioned.length, 0);
+  f.hooks.afterResume = undefined;
+  await f.control({ action: 'complete' });
+  assert.equal(await f.gateway.closed(), false);
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.starts.length, 1);
+  assert.deepEqual(f.actions, ['prepare', 'complete', 'complete']);
+});
+
 test('Node completion cannot resume a different release or an unrelated bootstrap operation', async (t) => {
   const f = fixture(t);
   await f.control();
@@ -225,4 +252,25 @@ test('Node completion cannot resume a different release or an unrelated bootstra
   }
   await f.control({ action: 'complete' });
   assert.equal((await f.request()).status, 200);
+});
+
+test('failed durable completion keeps admission closed after resume and exact retry commits once', async (t) => {
+  const f = fixture(t);
+  await f.control();
+  await f.control({ action: 'activate' });
+  f.hooks.beforeCommit = async () => {
+    throw new Error('Synthetic storage write failed');
+  };
+  await assert.rejects(f.control({ action: 'complete' }));
+  assert.equal(f.state().phase, 'activating');
+  assert.equal(await f.gateway.closed(), true);
+  await assert.rejects(f.request());
+  assert.equal(f.provisioned.length, 0);
+  f.hooks.beforeCommit = undefined;
+  await f.control({ action: 'complete' });
+  await f.control({ action: 'complete' });
+  assert.equal(await f.gateway.closed(), false);
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.starts.length, 1);
+  assert.deepEqual(f.actions, ['prepare', 'complete', 'complete']);
 });
