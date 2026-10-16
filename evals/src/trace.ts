@@ -40,6 +40,7 @@ export interface Run {
     error: string | null;
     background: boolean;
     waiting_reason?: string | null;
+    waiting?: boolean;
     startedAt?: number;
     finishedAt?: number;
   }>;
@@ -256,7 +257,7 @@ export async function collect(options: {
   }));
   const turns = (
     await stack.pool.query(
-      'SELECT id,status,source,error,background,waiting_reason,started_at,finished_at FROM turns ORDER BY created_at, id',
+      `SELECT t.id,t.status,t.source,t.error,t.background,t.waiting_reason,t.started_at,t.finished_at,${stack.waiting('t')} AS waiting FROM turns t ORDER BY t.created_at, t.id`,
     )
   ).rows.map(({ started_at, finished_at, ...turn }) => ({
     ...turn,
@@ -389,7 +390,9 @@ export async function collect(options: {
       return clip(build(800), limit);
     },
     groundTruth() {
-      const failedTurns = turns.filter((turn) => turn.status !== 'succeeded');
+      const failedTurns = turns.filter(
+        (turn) => turn.status !== 'succeeded' && (turn.status !== 'waiting' || turn.waiting),
+      );
       return [
         `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
         `Assistant messages shown to the user: ${replies.length}.`,

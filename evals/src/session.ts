@@ -165,9 +165,10 @@ export function createSession(options: {
         const request = state.verificationRequests?.[0];
         if (request || Date.now() - started > 30_000)
           return { kind: 'secret' as const, request, text };
-        const still = await pool.query("SELECT 1 FROM turns WHERE id=$1 AND status='waiting'", [
-          turn.id,
-        ]);
+        const still = await pool.query(
+          `SELECT 1 FROM turns t WHERE t.id=$1 AND ${stack.waiting('t')}`,
+          [turn.id],
+        );
         if (!still.rowCount) return { kind: 'resumed' as const, text };
       }
     return { kind: 'question' as const, text };
@@ -177,11 +178,11 @@ export function createSession(options: {
     const id = await thread();
     const turn = (
       await pool.query(
-        'SELECT id,status,waiting_reason FROM turns WHERE thread_id=$1 AND ($2 OR NOT background) ORDER BY created_at DESC, id DESC LIMIT 1',
+        `SELECT t.id,t.waiting_reason,${stack.waiting('t')} AS waiting FROM turns t WHERE t.thread_id=$1 AND ($2 OR NOT t.background) ORDER BY t.created_at DESC, t.id DESC LIMIT 1`,
         [id, scheduled],
       )
     ).rows[0];
-    if (turn?.status !== 'waiting') return undefined;
+    if (!turn?.waiting) return undefined;
     return pendingFor(turn, await lastAssistantText());
   }
 
@@ -189,7 +190,7 @@ export function createSession(options: {
     const id = await thread();
     const turn = (
       await pool.query(
-        "SELECT id,waiting_reason FROM turns WHERE thread_id=$1 AND status='waiting' AND background AND source IN ('task','user') ORDER BY created_at, id LIMIT 1",
+        `SELECT t.id,t.waiting_reason FROM turns t WHERE t.thread_id=$1 AND ${stack.waiting('t')} AND t.background AND t.source IN ('task','user') ORDER BY t.created_at, t.id LIMIT 1`,
         [id],
       )
     ).rows[0];

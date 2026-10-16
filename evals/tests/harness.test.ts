@@ -1530,6 +1530,7 @@ test('persisted background sessions and child captures count each request and to
     },
     request: async () => Response.json({ notes: [], archive: [] }),
     exec: async () => ({ exitCode: 0, output: '' }),
+    waiting: (alias: string) => `${alias}.status='waiting'`,
   } as unknown as Stack;
   const session = createSession({ stack, user: {}, deadline: Date.now() + 1000 });
   const read = () =>
@@ -1681,6 +1682,7 @@ test('saved model tools expose synthetic secret regressions despite redacted cap
         pool: { query: async () => ({ rows: [] }) },
         request: async () => Response.json({ notes: [], archive: [] }),
         exec: async () => ({ exitCode: 0, output: '' }),
+        waiting: (alias: string) => `${alias}.status='waiting'`,
       } as unknown as Stack;
       const run = await collect({
         task: 'Synthetic request',

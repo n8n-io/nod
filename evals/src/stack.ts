@@ -86,6 +86,7 @@ export interface Stack {
   directory: string;
   container: string;
   pool: pg.Pool;
+  waiting(alias: string): string;
   bossSchema: string;
   sessionRoot: string;
   observations: Array<{ turnId: string; event: Observation }>;
@@ -286,6 +287,7 @@ export async function startStack(options: {
       { createContainerBrowserComputer },
       { createDockerWorkspace },
       { createPublicLinkPreviewProvider },
+      { waitingTurnSql },
     ] = await Promise.all([
       load<typeof import('../../src/server/composition.ts')>('src/server/composition.ts'),
       load<typeof import('../../src/server/db.ts')>('src/server/db.ts'),
@@ -301,6 +303,7 @@ export async function startStack(options: {
       load<typeof import('../../src/providers/public-web/link-preview.ts')>(
         'src/providers/public-web/link-preview.ts',
       ),
+      load<{ waitingTurnSql?: (alias: string) => string }>('src/server/vault.ts'),
     ]);
     databasePool = pool;
     const vaultKey = randomBytes(32);
@@ -392,6 +395,7 @@ export async function startStack(options: {
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
     return {
       request: createStackRequest(baseUrl, cookie),
+      waiting: (alias) => waitingTurnSql?.(alias) ?? `${alias}.status='waiting'`,
       origin: baseUrl,
       directory,
       container,
