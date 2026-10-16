@@ -807,22 +807,26 @@ async function initializeApplication(
               ? payments.approve(provenance, args)
               : action === 'OTTO_limits_update'
                 ? ledger.setLimits(args)
-                : action.startsWith('OTTO_')
-                  ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                  : (async () => {
-                      const result = await integrations.executeApproved(ownerId, action, args, {
-                        threadId: provenance.threadId,
-                        turnId: provenance.turnId,
-                      });
-                      await ledger.action(provenance.turnId, action);
-                      return (
-                        await saveIntegrationFiles(result, async (file) => {
-                          const name = `${randomUUID()}-${basename(file.name)}`;
-                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                          return name;
-                        })
-                      ).value;
-                    })(),
+                : action.startsWith('OTTO_memory_')
+                  ? withTurnLock(provenance.turnId, () =>
+                      personal.manage(action.slice('OTTO_'.length), args, provenance),
+                    )
+                  : action.startsWith('OTTO_')
+                    ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                    : (async () => {
+                        const result = await integrations.executeApproved(ownerId, action, args, {
+                          threadId: provenance.threadId,
+                          turnId: provenance.turnId,
+                        });
+                        await ledger.action(provenance.turnId, action);
+                        return (
+                          await saveIntegrationFiles(result, async (file) => {
+                            const name = `${randomUUID()}-${basename(file.name)}`;
+                            await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                            return name;
+                          })
+                        ).value;
+                      })(),
     async (action, args, expectedRevision) => {
       if (
         [
@@ -1148,17 +1152,26 @@ async function initializeApplication(
             },
           });
         }
-        await admit?.(false);
-        if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
+        if (action === 'memory_forget' || action === 'memory_control') {
           const origin = await turnOrigin(turn.turnId);
-          return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, {
-              ...provenance,
-              turnId: turn.turnId,
-              ownerRooted: origin?.source === 'user',
-            }),
-          );
+          const input = await personal.reviewMemory(action, args, {
+            ...provenance,
+            turnId: turn.turnId,
+            ownerRooted: origin?.source === 'user',
+          });
+          const verdict = await trust.check(turn, `OTTO_${action}`, input);
+          return approvals.request(turn, `OTTO_${action}`, input, {
+            ...provenance,
+            allowed: !verdict.confirm,
+            admit,
+            details: verdict.confirm ? { reason: verdict.reason } : {},
+          });
         }
+        await admit?.(false);
+        if (action === 'memory_learn')
+          return withTurnLock(turn.turnId, () =>
+            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+          );
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },

@@ -7,7 +7,7 @@ sidebar:
 
 Before Otto runs an action in a connected app, or a step in its browser that could send, submit or change something, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules, notification settings or spending limits. A scheduled run is checked against the instruction that created it, and background work asks. Memory has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it, and background work asks. Saving a note has its own rules: see [Memory](/how-it-works/memory/).
 
 Background work, such as on a new email or a check of an app without events, has no words from you behind it. So the checker lets it read and draft, and Otto asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
@@ -33,6 +33,7 @@ For action permission, a decision model selects one category: forbidden or confi
 | The Otto message your latest one answered                                       | Anything Otto read while working                                            |
 | A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat, even when they started a schedule |
 | The action and its arguments as Otto sends them                                 | Other people's words as yours                                               |
+| How a schedule or memory note Otto would change stands now                      |                                                                             |
 
 For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
 
@@ -59,7 +60,7 @@ If the checker can't answer, Otto requires confirmation. If the model can't writ
 
 ## Browser steps
 
-On websites, the same checker decides each step that could send, submit or change something: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening a page, reading it, typing into a field without pressing Enter (including single characters pressed into a text field), and read-only scripts skip the checker. Typing skips it even on a page that saves as you type.
+On websites, the same checker decides each step that could send, submit or change something: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening a page, reading it, typing into a field without pressing Enter (including single characters pressed into a text field), and read-only scripts skip the checker. Typing skips it even on a page that saves as you type. A download from a link just follows its address. A download from a button is a click, so the checker decides it too.
 
 The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Otto typed or chose on that page. It never sees the page's text. Following links, searching, filtering, closing a popup, declining optional cookies, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, accepting cookies, and changing an account or a setting that saves at once count as acting, and run only when your words ask for them. A reading step that repeats exactly within 10 minutes, under the same words from you, reuses its earlier verdict.
 

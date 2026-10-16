@@ -3593,7 +3593,12 @@ test(
 test('a checked browser step is described from its snapshot and runs only on that page and control', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-checked-step-'));
   const fixture = stagedLoginBrowser();
-  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  const commands: Array<Record<string, unknown>> = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    onDaemonCommand: (command) => commands.push(command),
+  });
   const page = () => fixture.pages.get('checked')!;
   try {
     await computer.act('checked', { action: 'open', url: 'https://1.1.1.1/login' });
@@ -3633,6 +3638,18 @@ test('a checked browser step is described from its snapshot and runs only on tha
       [{ role: 'button', name: '' }],
     );
     assert.deepEqual(page().entered, []);
+    await assert.rejects(
+      computer.download('checked', { selector: '@e2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_download_control',
+    );
+    await assert.rejects(
+      computer.download('checked', { selector: '@e2', expectOrigin: 'https://2.2.2.2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    assert.equal(
+      commands.some((command) => command.action === 'download'),
+      false,
+    );
     await computer.act('checked', { ...next, expectOrigin: 'https://1.1.1.1' });
     assert.deepEqual(page().entered, ['synthetic']);
     await assert.rejects(

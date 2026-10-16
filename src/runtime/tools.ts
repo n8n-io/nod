@@ -629,11 +629,24 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       }
       if (action === 'download') {
         if (!context.publishBrowserFile) throw new Error('Browser file delivery is unavailable.');
-        const file = await computer.download(
-          browserId,
-          { selector: rest.selector, url: rest.url, name },
-          signal,
-        );
+        let file;
+        try {
+          file = await computer.download(
+            browserId,
+            { selector: rest.selector, url: rest.url, name },
+            signal,
+          );
+        } catch (error) {
+          if (!(error instanceof BrowserActionError && error.code === 'browser_download_control'))
+            throw error;
+          const checked = await check({ action: 'click', selector: rest.selector });
+          if ('output' in checked) return checked.output;
+          file = await computer.download(
+            browserId,
+            { selector: rest.selector, name, ...checked },
+            signal,
+          );
+        }
         signal.throwIfAborted();
         if (!file.bytes.length || file.bytes.length > fileBytes)
           throw new Error('Browser file delivery exceeds the download limit.');

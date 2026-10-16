@@ -60,6 +60,14 @@ const settingsInput = z
   .object({ saving: z.boolean().optional(), sensitive: z.boolean().optional() })
   .strict()
   .refine((input) => Object.keys(input).length > 0);
+export const controlInput = z
+  .object({ enabled: z.boolean().optional(), clear: z.boolean().default(false) })
+  .strict()
+  .refine((input) => input.enabled !== undefined || input.clear, {
+    message: 'Choose whether to turn memory on, turn it off or clear it.',
+  });
+export const forgetInput = z.object({ path }).strict();
+export const forgetReview = z.object({ path, note: z.string() }).strict();
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode });
 }
@@ -177,21 +185,8 @@ export function createMemoryService(options: {
     });
   }
 
-  async function control(
-    raw: unknown,
-    provenance: { sourceMessageId: string | null; turnId: string },
-  ) {
-    const input = z
-      .object({
-        enabled: z.boolean().optional(),
-        clear: z.boolean().default(false),
-        quote: z.string().trim().min(1),
-      })
-      .strict()
-      .parse(raw);
-    if (input.enabled === undefined && !input.clear)
-      throw new Error('Choose whether to turn memory on, turn it off or clear it.');
-    await currentSource(provenance, input.quote);
+  async function control(raw: unknown) {
+    const input = controlInput.parse(raw);
     const mark = await watermark();
     return edit(
       (tree) => {
@@ -208,10 +203,16 @@ export function createMemoryService(options: {
     );
   }
 
-  async function forget(raw: unknown) {
+  function noteText(tree: Tree, target: string) {
+    return (locate(tree, target) ?? tree.archive.find((item) => pathOf(item) === target))?.text;
+  }
+
+  async function forget(raw: unknown, expected?: string) {
     const target = path.parse(raw);
     return edit(
       (tree) => {
+        if (expected !== undefined && noteText(tree, target) !== expected)
+          fail('The note changed. Review it before asking again.', 409);
         const entry = locate(tree, target);
         const archived = tree.archive.length;
         tree.archive = tree.archive.filter((item) => pathOf(item) !== target && item.by !== target);
@@ -426,6 +427,7 @@ export function createMemoryService(options: {
     context,
     enabled: async () => (await load()).tree.enabled,
     learn,
+    currentSource,
     control,
     forget,
     edit,
@@ -444,6 +446,7 @@ export function createMemoryService(options: {
       return find((await load()).tree, input.query, input.area);
     },
     read: async (raw: unknown) => open((await load()).tree, readInput.parse(raw).path),
+    note: async (raw: unknown) => noteText((await load()).tree, path.parse(raw)),
   };
 }
 

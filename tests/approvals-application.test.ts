@@ -11,6 +11,7 @@ import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { createDecisionModel } from '../src/providers/decisions.ts';
+import { BrowserActionError } from '../src/ports/computer.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -157,6 +158,15 @@ test(
           act: async (_id, input) => {
             browserActs.push({ ...input });
             return { text: 'Synthetic bank page', url: 'https://bank.example.test/transfer' };
+          },
+          download: async (_id, input) => {
+            if (input.selector && !input.expectOrigin)
+              throw new BrowserActionError('browser_download_control');
+            return {
+              bytes: Buffer.from('synthetic'),
+              name: 'synthetic.pdf',
+              mimeType: 'application/pdf',
+            };
           },
           currentPage: async (_id, step) => {
             if (dialogOpen && step?.action !== 'accept_dialog')
@@ -436,6 +446,16 @@ test(
           }
           assert.deepEqual(clicks().slice(before), [click, click]);
           assert.equal((await approvalsFor(moved))[0].status, 'expired');
+          const download = await propose('download', { selector: '@e7' }, 'browser');
+          const [unclicked] = await approvalsFor(download);
+          assert.equal(unclicked.status, 'pending');
+          const declined = await request('POST', '/api/messages', {
+            text: 'No',
+            replyToMessageId: unclicked.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          await waitFor(declined.json().turnId, 'succeeded');
+          assert.deepEqual(clicks().slice(before), [click, click]);
           dialogOpen = true;
           try {
             const dialog = await propose('accept_dialog', {}, 'browser');
@@ -557,6 +577,69 @@ test(
             limit: { monthlyUsd: 500, reached: false },
             taskUsd: null,
           });
+        },
+      );
+
+      await t.test(
+        "memory forgets a note or stops saving only after the owner's yes when they didn't ask",
+        async () => {
+          const memory = async () => (await request('GET', '/api/memory')).json();
+          const saved = await request('POST', '/api/memory/notes', {
+            area: 'preferences',
+            text: 'Prefers synthetic green tea.',
+          });
+          assert.equal(saved.statusCode, 200, saved.body);
+          const path = saved.json().path as string;
+          const listed = async () =>
+            (await memory()).notes.some((note: { path: string }) => note.path === path);
+          const stale = await propose('memory_forget', { path });
+          const [asked] = await approvalsFor(stale);
+          assert.equal(asked.status, 'pending');
+          const edited = await request('PATCH', `/api/memory/notes/${path}`, {
+            text: 'Prefers synthetic jasmine tea.',
+          });
+          assert.equal(edited.statusCode, 200, edited.body);
+          const refused = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: asked.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(refused.statusCode, 409, refused.body);
+          assert.equal((await approvalsFor(stale))[0].status, 'pending');
+          assert.equal(await listed(), true);
+          const forget = await propose('memory_forget', { path });
+          const [approval] = await approvalsFor(forget);
+          assert.equal(approval.status, 'pending');
+          const confirmed = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(confirmed.statusCode, 200, confirmed.body);
+          await waitFor(confirmed.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(forget))[0].status, 'completed');
+          assert.equal(await listed(), false);
+
+          const text = `Synthetic proposal ${randomUUID()}`;
+          const off = await propose(
+            'memory_control',
+            { enabled: false, quote: text },
+            undefined,
+            text,
+          );
+          const [held] = await approvalsFor(off);
+          assert.equal(held.status, 'pending');
+          assert.equal((await memory()).saving, true);
+          const stopped = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: held.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(stopped.statusCode, 200, stopped.body);
+          await waitFor(stopped.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(off))[0].status, 'completed');
+          assert.equal((await memory()).saving, false);
+          await request('PATCH', '/api/memory', { saving: true });
         },
       );
 

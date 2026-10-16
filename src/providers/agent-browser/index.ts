@@ -1156,12 +1156,12 @@ export function createAgentBrowserComputer(options: {
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
-      let target = input.selector ? selector(input.selector) : undefined;
       let url = input.url;
-      if (target) {
+      let target: string | undefined;
+      if (input.selector) {
         const href = await command(
           state,
-          { action: 'getattribute', selector: target, attribute: 'href' },
+          { action: 'getattribute', selector: selector(input.selector), attribute: 'href' },
           { signal },
         );
         if (typeof href.value === 'string' && href.value.trim()) {
@@ -1176,8 +1176,14 @@ export function createAgentBrowserComputer(options: {
           )
             url = new URL(href.value, current).href;
         }
+        if (!url) {
+          if (input.expectOrigin === undefined)
+            throw new BrowserActionError('browser_download_control');
+          await onTarget(state, input, signal);
+          target = selector(input.selector);
+        }
       }
-      if (!target && !url) {
+      if (!url && !target) {
         const type = await evaluate(state, 'document.contentType', signal);
         if (type === 'application/pdf') url = current;
         else {
@@ -1221,9 +1227,9 @@ export function createAgentBrowserComputer(options: {
       }
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
-      const anchor = !target ? `otto-download-${randomUUID()}` : undefined;
+      const anchor = target ? undefined : `otto-download-${randomUUID()}`;
       try {
-        if (anchor) {
+        if (anchor)
           await evaluate(
             state,
             `(() => {
@@ -1236,11 +1242,13 @@ export function createAgentBrowserComputer(options: {
           })()`,
             signal,
           );
-          target = `#${anchor}`;
-        }
         await command(
           state,
-          { action: 'download', selector: target, path: resolve(directory, capture.file) },
+          {
+            action: 'download',
+            selector: target ?? `#${anchor}`,
+            path: resolve(directory, capture.file),
+          },
           { signal },
         );
         signal?.throwIfAborted();

@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import pg from 'pg';
+import { BrowserActionError } from '../src/ports/computer.ts';
 import { IntegrationDownload } from '../src/ports/integrations.ts';
 import { ObjectStoreConflict } from '../src/ports/object-storage.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
@@ -168,15 +169,27 @@ test(
         const computer = bridge.computer;
         try {
           assert.equal((await fetch(`${fixture.origin}/invoice.pdf`)).status, 403);
-          for (const [id, input] of [
-            ['attachment', { selector: '#download', name: 'invoice.pdf' }],
-            ['inline-url', { url: `${fixture.origin}/inline.pdf`, name: 'invoice.pdf' }],
-            ['blob', { selector: '#blob', name: 'invoice.pdf' }],
-            ['blob-anchor', { selector: '#blob-anchor', name: 'invoice.pdf' }],
+          for (const [id, input, control] of [
+            ['attachment', { selector: '#download', name: 'invoice.pdf' }, false],
+            ['inline-url', { url: `${fixture.origin}/inline.pdf`, name: 'invoice.pdf' }, false],
+            ['blob', { selector: '#blob', name: 'invoice.pdf' }, true],
+            ['blob-anchor', { selector: '#blob-anchor', name: 'invoice.pdf' }, true],
           ] as const) {
             await computer.act(id, { action: 'open', url: `${fixture.origin}/session` });
             const before = fixture.authenticatedDownloads();
-            const file = await computer.download!(id, input);
+            if (control) {
+              await assert.rejects(
+                computer.download!(id, input),
+                (error: Error) =>
+                  error.cause instanceof BrowserActionError &&
+                  error.cause.code === 'browser_download_control',
+              );
+              assert.equal(fixture.authenticatedDownloads(), before);
+            }
+            const file = await computer.download!(
+              id,
+              control ? { ...input, expectOrigin: fixture.origin } : input,
+            );
             assert.equal(fixture.authenticatedDownloads(), before + 1);
             assert.deepEqual(file, {
               bytes: browserDownloadPdf,
@@ -239,7 +252,9 @@ test(
           await mkdir(downloads, { recursive: true });
           await writeFile(join(downloads, 'previous.pdf'), browserDownloadPdf);
           await writeFile(join(downloads, 'previous.crdownload'), 'preexisting partial');
-          await assert.rejects(computer.download!('large', { selector: '#large' }));
+          await assert.rejects(
+            computer.download!('large', { selector: '#large', expectOrigin: fixture.origin }),
+          );
           assert.deepEqual((await readdir(downloads)).sort(), [
             'previous.crdownload',
             'previous.pdf',
@@ -255,7 +270,11 @@ test(
           await writeFile(join(slowDirectory, 'previous.pdf'), browserDownloadPdf);
           const abort = new AbortController();
           const failed = assert.rejects(
-            computer.download!('slow', { selector: '#slow' }, abort.signal),
+            computer.download!(
+              'slow',
+              { selector: '#slow', expectOrigin: fixture.origin },
+              abort.signal,
+            ),
           );
           await fixture.slowDownloadStarted();
           abort.abort();

@@ -31,7 +31,7 @@ Otto doesn't scan outside text for injection phrases. Pattern lists miss new wor
 
 ## Memory ignores outside content
 
-Automatic memory learning reads only your own short messages without attachments. It never reads Otto's replies, tool results or web pages. Outside text reaches memory only if you paste it into a message yourself. The one exception: when you connect Gmail, Otto learns your writing style from your own sent email, with no facts, names or quotes. See [Memory](/use/memory/).
+Automatic memory learning reads only your own short messages without attachments. It never reads Otto's replies, tool results or web pages. Outside text reaches memory only if you paste it into a message yourself, and it can't make Otto forget a note, turn memory off or on, or clear it: those go through the [trust check](/trust/approvals/). The one exception: when you connect Gmail, Otto learns your writing style from your own sent email, with no facts, names or quotes. See [Memory](/use/memory/).
 
 ## What this does and doesn't protect against
 
