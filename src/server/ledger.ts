@@ -6,6 +6,7 @@ import type { Agent } from '../ports/agent.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
+import type { DecisionModel } from '../ports/decisions.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -190,6 +191,22 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
               ...value,
             });
             report?.(value);
+          });
+        } finally {
+          await flushUsage();
+        }
+      },
+    };
+  }
+
+  function decisions(base: DecisionModel): DecisionModel {
+    return {
+      async check(request, signal, report) {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        try {
+          return await base.check(request, signal, (usage) => {
+            record(usage);
+            report?.(usage);
           });
         } finally {
           await flushUsage();
@@ -404,6 +421,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     initialize,
     agent,
     curator,
+    decisions,
     action,
     limitReached,
     checkIn,

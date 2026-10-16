@@ -20,6 +20,8 @@ import type { IntegrationProvider, IntegrationService } from '../ports/integrati
 import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
+import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
+import { createDecisionModel } from '../providers/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelAccountRegistry, ChannelSetupVerifier } from '../ports/channel-settings.ts';
@@ -160,6 +162,7 @@ export interface ApplicationAdapters {
   memoryCurator?: MemoryCurator;
   analyticsCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
+  decisions?: DecisionModel;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
@@ -229,6 +232,18 @@ export function createDefaultAdapters(
       return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
     },
     configured: () => models.configured,
+  });
+  const decisions = createDecisionModel({
+    resolve: async () => {
+      if (env.TYPESAFE_API_KEY?.trim())
+        return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim() };
+      if (!models.configured) return;
+      const access = await models.resolve();
+      if (access.method === 'subscription' || access.provider === 'anthropic') return;
+      const credential = await access.read();
+      if (credential?.type !== 'api_key') throw new Error('The model connection is unavailable.');
+      return { provider: access.provider, key: credential.key };
+    },
   });
   const authConfigs: Partial<Record<IntegrationService, string>> = {
     gmail: env.COMPOSIO_GMAIL_AUTH_CONFIG_ID,
@@ -381,6 +396,7 @@ export function createDefaultAdapters(
     memoryCurator: modelCurator,
     analyticsCurator: selectedCurator,
     onboardingCurator: selectedCurator,
+    decisions,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(
         runtimeMode === 'tenant'
@@ -486,10 +502,17 @@ async function initializeApplication(
   const onboardingCurator = adapters.onboardingCurator
     ? ledger.curator(adapters.onboardingCurator)
     : curator;
-  const review = (instructions: string, input: object, signal?: AbortSignal) =>
-    onboardingCurator.configured
+  const decisions = adapters.decisions && ledger.decisions(adapters.decisions);
+  const review: ModelReview = async (instructions, input, signal, question) => {
+    if (question) {
+      const result = await decisions?.check({ instructions, input, question }, signal);
+      if (result !== undefined) return result;
+      instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
+    }
+    return onboardingCurator.configured
       ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
-      : Promise.resolve(undefined);
+      : undefined;
+  };
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
     skills: createSkillLibrary(
