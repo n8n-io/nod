@@ -67,7 +67,7 @@ import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
-import { createApprovals } from './approvals.ts';
+import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication } from './communication.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
@@ -938,8 +938,13 @@ async function initializeApplication(
         }
         await admit?.(false);
         if (['memory_forget', 'memory_learn', 'memory_control'].includes(action)) {
+          const origin = await turnOrigin(turn.turnId);
           return withTurnLock(turn.turnId, () =>
-            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+            personal.manage(action, args, {
+              ...provenance,
+              turnId: turn.turnId,
+              ownerRooted: origin?.source === 'user',
+            }),
           );
         }
         if (action === 'usage_get') return ledger.read();
