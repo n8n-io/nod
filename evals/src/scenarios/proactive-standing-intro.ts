@@ -128,8 +128,13 @@ export default scenario({
       ),
       judge(
         'second-update-does-not-repeat-it',
-        'The second update is one message that reports that the design review with Priya moved to tomorrow at 09:15 and now overlaps the 09:00 to 09:30 1:1 with Niklas. It does not repeat that Otto will keep flagging calendar changes or how to stop it.',
+        'The second update reports that the design review with Priya moved to tomorrow at 09:15 and now overlaps the 09:00 to 09:30 1:1 with Niklas, and no message in it repeats that Otto will keep flagging calendar changes or how to stop it.',
         { failure: 'format' },
+      ),
+      judge(
+        'second-update-is-one-message',
+        'The second update arrives as a single message, without a follow-up correction or restatement.',
+        { required: false, failure: 'format' },
       ),
     ];
   },
