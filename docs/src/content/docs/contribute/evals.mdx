@@ -174,7 +174,7 @@ flowchart TD
 - The 70% floor applies only to the per-scenario test. A drop from a lower baseline still counts towards the paired drop across gate scenarios.
 - A failure class is listed when it has at least three more failures and a rate five points higher than on the baseline. This never blocks.
 - Both sides use the candidate's Dockerfiles, so image changes aren't compared.
-- A scenario joins the gate only if it's a calibrated regression scenario that passed every attempt in a run of at least five. A later proving run in which it fails removes it, and editing it removes it until it's proven again.
+- A scenario joins the gate only if it's a calibrated regression scenario that passed every attempt in a run of at least five. A later proving run in which it fails removes it. Editing it, or a fake app or site file it runs, removes it until it's proven again; edits to other fakes and to the grader don't.
 
 </details>
 

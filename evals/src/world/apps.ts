@@ -19,11 +19,11 @@ import {
   type Tool,
   type WriteKind,
 } from './app-kit.ts';
-import { docs, drive } from './drive.ts';
+import type { docs, drive } from './drive.ts';
 import { computeTab } from './formulas.ts';
-import { linear } from './linear.ts';
+import type { linear } from './linear.ts';
 import { remoteMcp } from './mcp.ts';
-import { notion } from './notion.ts';
+import type { notion } from './notion.ts';
 import type { Site } from './sites.ts';
 
 export type { Tool, WriteKind } from './app-kit.ts';
