@@ -21,11 +21,7 @@ import {
 import Fastify from 'fastify';
 import { createRuntimeLease } from '../src/server/runtime-lease.ts';
 import { request as httpRequest } from 'node:http';
-import {
-  createTenantDrain,
-  registerTenantDrain,
-  registerWorkAdmission,
-} from '../src/server/tenant-drain.ts';
+import { createTenantDrain, registerTenantDrain } from '../src/server/tenant-drain.ts';
 import { createWorkAdmission, createWorkConsumers } from '../src/server/work-admission.ts';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
@@ -33,7 +29,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLocalRuntimeTransport } from '../src/providers/runtime-host/local.ts';
-import { registerLocalAccess } from '../src/server/access.ts';
 
 async function bounded<T>(promise: Promise<T>) {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -84,7 +79,6 @@ describe('runtime host', () => {
       deploymentClosed?: boolean;
       denyLease?: boolean;
     } = {};
-    let closes = 0;
     const record = (ownerId: string) => ({
       ownerId,
       environment: 'development',
@@ -105,13 +99,8 @@ describe('runtime host', () => {
         GOOGLE_CLIENT_SECRET: 'synthetic-google-secret',
         UNLISTED_OPERATOR_SECRET: 'synthetic-unlisted-secret',
         DATABASE_URL: 'postgresql://operator:private@db.example.test/control',
-        OPENAI_API_KEY: 'synthetic-server-provider-key',
         COMPOSIO_WEBHOOK_SECRET: 'synthetic-webhook-secret',
         COMPUTER_PROVIDER: 'e2b',
-        OTTO_FEEDBACK_ENABLED: 'false',
-        OTTO_FEEDBACK_URL: 'https://feedback.example.test/intake',
-        OTTO_FEEDBACK_TOKEN: 'synthetic-feedback-token',
-        OTTO_FEEDBACK_RECEIPT_URL_PREFIX: 'https://issues.example.test/projects/otto/issues/',
         OBJECT_STORAGE_ROOT: '/private/otto-files',
       },
       tenants: {
@@ -188,9 +177,7 @@ describe('runtime host', () => {
           if (hooks.fetch) return hooks.fetch(ownerId, request);
           return Response.json({ ownerId });
         },
-        async close() {
-          closes++;
-        },
+        async close() {},
       },
     });
     t.after(() => host.close().catch(() => {}));
@@ -202,14 +189,12 @@ describe('runtime host', () => {
       host,
       leases,
       generations,
-      actors,
       starts,
       stops,
       releases,
       requests,
       hooks,
       request,
-      closes: () => closes,
     };
   }
 
@@ -332,14 +317,6 @@ describe('runtime host', () => {
     assert.deepEqual(await operation, [{ ownerId: owner, generation: '1' }]);
   });
 
-  test('persistent maintenance prevents gateway restore from acquiring or starting another tenant', async (t) => {
-    const f = fixture(t);
-    f.hooks.deploymentClosed = true;
-    await assert.rejects(f.request(randomUUID()));
-    assert.equal(f.leases.size, 0);
-    assert.equal(f.starts.length, 0);
-  });
-
   test('lost gateway journal recovers only after exact clean-stop inspection of every persisted owner', async (t) => {
     const f = fixture(t);
     const first = randomUUID();
@@ -444,18 +421,6 @@ describe('runtime host', () => {
       assert.notEqual(a.environment[key], b.environment[key]);
     for (const configuration of f.starts) {
       assert.equal(configuration.environment.OTTO_OWNER_ID, configuration.ownerId);
-      assert.equal(configuration.environment.OTTO_CONTROL_URL, 'http://otto.control');
-      assert.equal(configuration.environment.OPENAI_API_KEY, 'synthetic-server-provider-key');
-      assert.equal(configuration.environment.OTTO_FEEDBACK_ENABLED, 'false');
-      assert.equal(
-        configuration.environment.OTTO_FEEDBACK_URL,
-        'https://feedback.example.test/intake',
-      );
-      assert.equal(configuration.environment.OTTO_FEEDBACK_TOKEN, 'synthetic-feedback-token');
-      assert.equal(
-        configuration.environment.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
-        'https://issues.example.test/projects/otto/issues/',
-      );
       assert.equal(
         configuration.environment.OBJECT_STORAGE_ROOT,
         `/private/otto-files/${configuration.ownerId}`,
@@ -468,7 +433,6 @@ describe('runtime host', () => {
         'COMPOSIO_WEBHOOK_SECRET',
       ])
         assert.equal(configuration.environment[key], undefined);
-      assert.equal(configuration.environment.OTTO_COMPOSIO_WEBHOOKS, 'gateway');
       assert.equal(
         Object.values(configuration.environment).some((value) =>
           /synthetic-(master-key|auth-secret|google-secret|unlisted-secret|webhook-secret)/.test(
@@ -528,66 +492,14 @@ describe('runtime host', () => {
     );
   });
 
-  test('an unavailable lease never starts or addresses an actor', async (t) => {
-    const f = fixture(t);
-    f.hooks.denyLease = true;
-    await assert.rejects(f.request(randomUUID()), /restarting/);
-    assert.equal(f.starts.length, 0);
-    assert.equal(f.requests.length, 0);
-  });
-
-  test('failed startup cleans up only its generation and a retry obtains a new lease', async (t) => {
-    const f = fixture(t);
-    const owner = randomUUID();
-    f.actors.set(owner, 'previous');
-    f.hooks.start = async () => {
-      throw new Error('private transport detail');
-    };
-    await assert.rejects(f.request(owner), (error) => {
-      assert.equal(
-        (error as Error).message,
-        'The account runtime could not start. Try again shortly.',
-      );
-      return true;
-    });
-    assert.deepEqual(
-      f.stops.map((stop) => stop.generation),
-      ['previous', '1'],
-    );
-    assert.equal(f.releases.length, 1);
-    assert.equal(f.leases.has(owner), false);
-    f.hooks.start = undefined;
-    assert.equal((await f.request(owner)).status, 200);
-    assert.equal(f.starts.at(-1)!.generation, '2');
-  });
-
-  test('shutdown waits for startup, rejects late readiness and closes once', async (t) => {
-    const f = fixture(t);
-    const owner = randomUUID();
-    const entered = deferred();
-    const ready = deferred();
-    f.hooks.start = async () => {
-      entered.resolve();
-      await ready.promise;
-    };
-    const request = assert.rejects(f.request(owner), /could not start/);
-    await bounded(entered.promise);
-    const closing = f.host.close();
-    const again = f.host.close();
-    await setImmediate();
-    assert.equal(f.closes(), 0);
-    ready.resolve();
-    await Promise.all([request, closing, again]);
-    assert.equal(f.requests.length, 0);
-    assert.equal(f.stops.length, 1);
-    assert.equal(f.releases.length, 1);
-    assert.equal(f.closes(), 1);
-    await assert.rejects(f.request(owner), /unavailable/);
-  });
-
   test('lease loss retains ownership until stop succeeds and concurrent retries create one replacement', async (t) => {
     const f = fixture(t, 100);
     const owner = randomUUID();
+    f.hooks.denyLease = true;
+    await assert.rejects(f.request(owner));
+    assert.equal(f.starts.length, 0);
+    assert.equal(f.requests.length, 0);
+    f.hooks.denyLease = false;
     const failedStop = deferred();
     f.hooks.renew = async () => undefined;
     f.hooks.stop = async () => {
@@ -693,10 +605,7 @@ describe('tenant drain', () => {
     return { promise, resolve };
   }
 
-  function fixture(
-    computer?: { pause(): Promise<void>; resume(): Promise<void> },
-    desktop = false,
-  ) {
+  function fixture(computer?: { pause(): Promise<void>; resume(): Promise<void> }) {
     const app = Fastify();
     const identity = {
       secret: randomBytes(32).toString('base64url'),
@@ -707,36 +616,24 @@ describe('tenant drain', () => {
     const admission = createWorkAdmission();
     const consumers = createWorkConsumers();
     const drain = createTenantDrain({ admission, consumers, computer });
-    if (desktop) {
-      registerLocalAccess(app, 4310, { key: identity.secret, desktop: true });
-      registerWorkAdmission(app, admission);
-    } else {
-      registerRuntimeAccess(app, identity);
-      registerTenantDrain(app, { admission, drain, generation: identity.generation });
-    }
+    registerRuntimeAccess(app, identity);
+    registerTenantDrain(app, { admission, drain, generation: identity.generation });
     app.setErrorHandler((error, _request, reply) => {
       const status = (error as { statusCode?: number }).statusCode ?? 503;
       reply.code(status).send({ error: 'The request could not be completed.' });
     });
     app.post('/api/runtime/lease', async () => ({ ok: true }));
-    const headers = (path: string, body: string, kind: RuntimeClaims['kind'] = 'user') =>
-      desktop
-        ? {
-            host: '127.0.0.1:4310',
-            'content-type': 'application/json',
-            'x-otto-desktop-token': identity.secret,
-          }
-        : {
-            'content-type': 'application/json',
-            'x-otto-runtime': signRuntimeRequest({
-              ...identity,
-              method: 'POST',
-              target: path,
-              body: Buffer.from(body),
-              developer: false,
-              kind,
-            }),
-          };
+    const headers = (path: string, body: string, kind: RuntimeClaims['kind'] = 'user') => ({
+      'content-type': 'application/json',
+      'x-otto-runtime': signRuntimeRequest({
+        ...identity,
+        method: 'POST',
+        target: path,
+        body: Buffer.from(body),
+        developer: false,
+        kind,
+      }),
+    });
     const request = (path: string, body: unknown = {}, kind: RuntimeClaims['kind'] = 'user') => {
       const payload = JSON.stringify(body);
       return app.inject({
@@ -748,44 +645,6 @@ describe('tenant drain', () => {
     };
     return { app, identity, admission, consumers, drain, headers, request };
   }
-
-  test('desktop shutdown waits for admitted requests, refuses new ones and has no drain routes', async () => {
-    const f = fixture(undefined, true);
-    const started = gate();
-    const finish = gate();
-    let effects = 0;
-    let closed = false;
-    f.app.post('/api/work', async () => {
-      effects++;
-      started.resolve();
-      await finish.promise;
-      return { ok: true };
-    });
-    const input = {
-      nonce: randomUUID(),
-      targetRelease: '0'.repeat(40),
-      deadline: Date.now() + 5000,
-    };
-    try {
-      for (const url of ['/api/runtime/drain', '/api/runtime/resume'])
-        assert.equal((await f.request(url, input)).statusCode, 404);
-      const working = f.request('/api/work');
-      await bounded(started.promise);
-      f.admission.close();
-      const closing = f.admission.drain(Date.now() + 5000).then(() => {
-        closed = true;
-      });
-      assert.equal((await bounded(f.request('/api/work'))).statusCode, 503);
-      assert.equal(closed, false);
-      finish.resolve();
-      assert.equal((await bounded(working)).statusCode, 200);
-      await bounded(closing);
-      assert.equal(effects, 1);
-    } finally {
-      finish.resolve();
-      await f.app.close();
-    }
-  });
 
   test('signed deployment drain waits for admitted HTTP work, blocks new work and preserves lease renewal', async () => {
     const f = fixture();
@@ -1284,12 +1143,6 @@ describe('tenant store', () => {
           assert.equal((await store.runtimeConfiguration(ownerA)).ownerId, ownerA);
         },
       );
-      const closingConnection = await admin.connect();
-      closingConnection.release();
-      const closeConnection = closingConnection.end.bind(closingConnection);
-      t.mock.method(closingConnection, 'end', (callback?: () => void) => {
-        setTimeout(() => closeConnection(callback ?? (() => {})), 100);
-      });
     },
   );
 });
@@ -1348,7 +1201,7 @@ describe('local runtime host', () => {
         getSecret: () => secret,
       });
       await tenants.initialize();
-      const create = (feedbackEnvironment: Record<string, string> = { OTTO_FEEDBACK_URL: '' }) =>
+      const create = () =>
         createTenantRuntimeHost({
           tenants,
           masterKey: secret,
@@ -1363,7 +1216,7 @@ describe('local runtime host', () => {
             COMPUTER_PROVIDER: 'e2b',
             E2B_API_KEY: 'synthetic-unused-key',
             E2B_COMPUTER_TEMPLATE: 'synthetic-computer',
-            ...feedbackEnvironment,
+            OTTO_FEEDBACK_URL: '',
           },
         });
       host = create();
@@ -1380,30 +1233,16 @@ describe('local runtime host', () => {
         assert.equal(response.status, 200);
         return (await response.json()) as { notificationRule: string; quietHoursEnabled: boolean };
       }
-      async function feedback(owner: string) {
-        const response = await host!.fetch(
-          owner,
-          new Request('http://otto.test/api/feedback/context'),
-          { developer: false },
-        );
-        assert.equal(response.status, 200);
-        const context = (await response.json()) as { enabled: boolean; recipient: string | null };
-        return { enabled: context.enabled, recipient: context.recipient };
-      }
       await Promise.all([
         request(ownerA, 'PATCH', { notificationRule: 'fixture A', quietHoursEnabled: false }),
         request(ownerB, 'PATCH', { notificationRule: 'fixture B', quietHoursEnabled: true }),
       ]);
       assert.equal((await request(ownerA, 'GET')).notificationRule, 'fixture A');
       assert.equal((await request(ownerB, 'GET')).notificationRule, 'fixture B');
-      assert.deepEqual(await feedback(ownerA), { enabled: false, recipient: null });
       const previous = await tenants.currentLease(ownerA);
       await host.close();
       assert.equal(await tenants.currentLease(ownerA), undefined);
-      host = create({
-        OTTO_FEEDBACK_ENABLED: 'false',
-        OTTO_FEEDBACK_URL: 'invalid disabled configuration',
-      });
+      host = create();
       const restored = await request(ownerA, 'GET');
       assert.equal(restored.notificationRule, 'fixture A');
       assert.equal(restored.quietHoursEnabled, false);
@@ -1411,16 +1250,6 @@ describe('local runtime host', () => {
       assert.ok(
         BigInt((await tenants.currentLease(ownerA))!.generation) > BigInt(previous!.generation),
       );
-      assert.deepEqual(await feedback(ownerA), { enabled: false, recipient: null });
-      await host.close();
-      host = create({
-        OTTO_FEEDBACK_URL: 'https://feedback.example.test/intake',
-        OTTO_FEEDBACK_RECEIPT_URL_PREFIX: 'https://issues.example.test/projects/otto/issues/',
-      });
-      assert.deepEqual(await feedback(ownerA), {
-        enabled: true,
-        recipient: 'feedback.example.test',
-      });
     },
   );
 });

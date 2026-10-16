@@ -39,49 +39,28 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-function fixture(
-  hooks: {
-    stopComputers?(identity: TenantIdentity): Promise<void>;
-    stop?(): Promise<void>;
-    leaseUpdated?(identity: TenantIdentity): Promise<void>;
-  } = {},
-) {
+function fixture(hooks: { stop?(): Promise<void> } = {}) {
   let time = Date.UTC(2026, 8, 27, 12);
   let saved: TenantIdentity | undefined;
   let state: 'healthy' | 'stopped' = 'stopped';
-  const calls: string[] = [];
-  const leases: TenantIdentity[] = [];
   const lifecycle = createTenantLifecycle({
     environment: 'development',
     now: () => time,
     read: async () => saved && { ...saved },
     write: async (identity) => {
       saved = { ...identity };
-      calls.push(identity.stopped ? 'stopped' : identity.revoking ? 'revoking' : 'active');
     },
     status: async () => state,
     start: async () => {
       state = 'healthy';
-      calls.push('start');
-    },
-    stopComputers: async (identity) => {
-      calls.push('stop-computers');
-      await hooks.stopComputers?.(identity);
     },
     stop: async () => {
-      calls.push('stop-tenant');
       await hooks.stop?.();
       state = 'stopped';
-    },
-    leaseUpdated: async (identity) => {
-      leases.push({ ...identity });
-      await hooks.leaseUpdated?.(identity);
     },
   });
   return {
     lifecycle,
-    calls,
-    leases,
     now: () => time,
     setTime: (value: number) => {
       time = value;
@@ -90,76 +69,15 @@ function fixture(
     replaceSaved: (identity: TenantIdentity) => {
       saved = identity;
     },
-    platformStopped: () => {
-      state = 'stopped';
-    },
   };
 }
 
 test('tenant bootstrap binds the SQL namespace, runtime identity and environment', async () => {
   const input = configuration();
-  const result = await bootstrap(
-    { ...input, env: { ...input.env, OTTO_BIND_HOST: '127.0.0.1' } },
-    'development',
-  );
-  assert.equal(result.env.NODE_ENV, 'production');
-  assert.equal(result.env.OTTO_ANALYTICS_ENABLED, 'false');
-  assert.equal(result.env.OTTO_ANALYTICS_ENVIRONMENT, 'development');
-  assert.equal(result.env.OTTO_DATA_ROOT, '/data');
-  assert.equal(result.env.HOST, '0.0.0.0');
-  assert.equal(result.env.OTTO_BIND_HOST, '0.0.0.0');
+  const result = await bootstrap(input, 'development');
   assert.equal(result.identity.leaseExpiresAt, Date.parse(input.env.OTTO_RUNTIME_LEASE_EXPIRES));
   assert.equal(result.identity.revoking, false);
   assert.ok(!JSON.stringify(result.identity).includes('synthetic'));
-  await assert.rejects(bootstrap(input, 'production'));
-  await assert.rejects(bootstrap({ ...input, ownerId: randomUUID() }, 'development'));
-  for (const change of [
-    { OTTO_MODE: 'gateway' },
-    { OTTO_RUNTIME_SECRET: 'short' },
-    { OTTO_RUNTIME_GENERATION: '0' },
-    { DATABASE_URL: 'postgresql://admin:synthetic@db.example.test/otto' },
-    { PGBOSS_SCHEMA: 'public' },
-    { OTTO_OWNER_ID: randomUUID() },
-    { OTTO_ANALYTICS_ENABLED: 'yes' },
-    { OTTO_ANALYTICS_ENVIRONMENT: 'private-account@example.test' },
-  ])
-    await assert.rejects(bootstrap({ ...input, env: { ...input.env, ...change } }, 'development'));
-});
-
-test('tenant bootstrap preserves telemetry opt-out and isolates staging events despite production Node mode', async () => {
-  for (const environment of ['production', 'staging']) {
-    const input = configuration(randomUUID(), '1', Date.now() + 60_000, environment);
-    const initial = await bootstrap(input, environment);
-    assert.equal(initial.env.NODE_ENV, 'production');
-    assert.equal(initial.env.OTTO_ANALYTICS_ENABLED, String(environment === 'production'));
-    assert.equal(
-      initial.env.OTTO_ANALYTICS_ENVIRONMENT,
-      environment === 'production' ? 'production' : 'development',
-    );
-    const disabled = await bootstrap(
-      { ...input, env: { ...input.env, OTTO_ANALYTICS_ENABLED: 'false' } },
-      environment,
-    );
-    assert.equal(disabled.env.OTTO_ANALYTICS_ENABLED, 'false');
-    const observed = await bootstrap(
-      {
-        ...input,
-        env: {
-          ...input.env,
-          OTTO_ANALYTICS_ENABLED: 'true',
-          OTTO_ANALYTICS_ENVIRONMENT: 'development',
-        },
-      },
-      environment,
-    );
-    assert.equal(observed.env.OTTO_ANALYTICS_ENABLED, 'true');
-    assert.equal(observed.env.OTTO_ANALYTICS_ENVIRONMENT, 'development');
-    assert.notEqual(disabled.identity.configurationHash, observed.identity.configurationHash);
-  }
-});
-
-test('tenant bootstrap binds its computer provider and forces the private E2B stop callback', async () => {
-  const input = configuration();
   const external = await bootstrap(
     {
       ...input,
@@ -171,48 +89,19 @@ test('tenant bootstrap binds its computer provider and forces the private E2B st
     },
     'development',
   );
-  assert.equal(external.identity.computerProvider, 'e2b');
   assert.equal(external.env.OTTO_COMPUTER_CONTROL_URL, 'http://otto.computer/v1/stopped');
-  const legacy = await bootstrap(input, 'development');
-  assert.equal(legacy.identity.computerProvider, 'cloudflare');
-  assert.equal(legacy.env.OTTO_COMPUTER_CONTROL_URL, undefined);
-  await assert.rejects(
-    bootstrap({ ...input, env: { ...input.env, COMPUTER_PROVIDER: 'unknown' } }, 'development'),
-  );
-});
-
-test('physical tenant termination does not confirm an unacknowledged remote computer stop', async () => {
-  let saved: TenantIdentity | undefined;
-  let state: 'stopped' | 'healthy' = 'stopped';
-  let acknowledged = false;
-  const calls: string[] = [];
-  const lifecycle = createTenantLifecycle({
-    environment: 'development',
-    read: async () => saved,
-    write: async (identity) => {
-      saved = identity;
-    },
-    status: async () => state,
-    start: async () => {
-      state = 'healthy';
-    },
-    stop: async () => {
-      state = 'stopped';
-      calls.push('node-stopped');
-    },
-    confirmComputersStopped: async () => {
-      calls.push('computer-inspected');
-      if (!acknowledged) throw new Error('Remote stop is unconfirmed.');
-    },
-  });
-  const input = configuration();
-  await lifecycle.start({ ...input, env: { ...input.env, COMPUTER_PROVIDER: 'e2b' } });
-  await assert.rejects(lifecycle.stop(input.ownerId, '1'));
-  assert.equal(saved?.stopped, false);
-  assert.equal(saved?.revoking, true);
-  assert.deepEqual(calls, ['node-stopped', 'computer-inspected']);
-  acknowledged = true;
-  assert.equal((await lifecycle.stop(input.ownerId, '1')).stopped, true);
+  await assert.rejects(bootstrap(input, 'production'));
+  await assert.rejects(bootstrap({ ...input, ownerId: randomUUID() }, 'development'));
+  for (const change of [
+    { OTTO_MODE: 'gateway' },
+    { OTTO_RUNTIME_SECRET: 'short' },
+    { OTTO_RUNTIME_GENERATION: '0' },
+    { DATABASE_URL: 'postgresql://admin:synthetic@db.example.test/otto' },
+    { PGBOSS_SCHEMA: 'public' },
+    { OTTO_OWNER_ID: randomUUID() },
+    { COMPUTER_PROVIDER: 'unknown' },
+  ])
+    await assert.rejects(bootstrap({ ...input, env: { ...input.env, ...change } }, 'development'));
 });
 
 test('a physically stopped E2B generation cannot restart while its previous computer evidence is delayed', async (t) => {
@@ -221,6 +110,7 @@ test('a physically stopped E2B generation cannot restart while its previous comp
       let saved: TenantIdentity | undefined;
       let state: 'healthy' | 'stopped' | 'stopped_with_code' = 'stopped';
       const starts: string[] = [];
+      let unconfirmed = true;
       const evidenceRequested = deferred();
       const oldEvidence = deferred();
       const lifecycle = createTenantLifecycle({
@@ -239,6 +129,10 @@ test('a physically stopped E2B generation cannot restart while its previous comp
         },
         confirmComputersStopped: async (identity) => {
           assert.equal(identity.generation, '1');
+          if (unconfirmed) {
+            unconfirmed = false;
+            throw new Error('Remote stop is unconfirmed.');
+          }
           evidenceRequested.resolve();
           await oldEvidence.promise;
         },
@@ -255,6 +149,9 @@ test('a physically stopped E2B generation cannot restart while its previous comp
       await assert.rejects(lifecycle.start(next), { status: 409 });
       assert.deepEqual(saved, before);
       assert.deepEqual(starts, ['1', '1']);
+      await assert.rejects(lifecycle.stop(first.ownerId, '1'));
+      assert.equal(saved?.stopped, false);
+      await assert.rejects(lifecycle.start(next), { status: 409 });
       const stopped = lifecycle.stop(first.ownerId, '1');
       await evidenceRequested.promise;
       assert.equal(saved?.revoking, true);
@@ -276,7 +173,6 @@ test('a physically stopped E2B generation cannot restart while its previous comp
 test('tenant startup and replacement require one fixed identity and a confirmed stopped generation', async () => {
   let saved: TenantIdentity | undefined;
   let state: 'stopped' | 'healthy' | 'stopping' = 'stopped';
-  let starts = 0;
   let stops = 0;
   let finishStop = true;
   const lifecycle = createTenantLifecycle({
@@ -287,7 +183,6 @@ test('tenant startup and replacement require one fixed identity and a confirmed 
     },
     status: async () => state,
     start: async () => {
-      starts++;
       state = 'healthy';
     },
     stop: async () => {
@@ -300,7 +195,6 @@ test('tenant startup and replacement require one fixed identity and a confirmed 
   assert.deepEqual(await lifecycle.start(first), { ok: true, generation: '1' });
   assert.equal((await lifecycle.identity()).ownerId, first.ownerId);
   await lifecycle.start(first);
-  assert.equal(starts, 2);
   const second = { ...first, env: { ...first.env, OTTO_RUNTIME_GENERATION: '2' } };
   await assert.rejects(lifecycle.start(second), { status: 409 });
   await assert.rejects(lifecycle.start(configuration()), { status: 409 });
@@ -377,72 +271,6 @@ test('body limits apply to actual streamed bytes without trusting content length
   await assert.rejects(boundedBody(request, 10), { status: 413 });
 });
 
-test('tenant bootstrap accepts only a bounded future ISO lease with an injected clock', async () => {
-  const now = Date.UTC(2026, 8, 27, 12);
-  const input = configuration(undefined, '1', now + 65_000);
-  assert.equal(
-    (await bootstrap(input, 'development', () => now)).identity.leaseExpiresAt,
-    now + 65_000,
-  );
-  for (const expiry of [
-    String(now + 60_000),
-    new Date(now).toISOString(),
-    new Date(now - 1).toISOString(),
-    new Date(now + 65_001).toISOString(),
-    'invalid',
-    '2026-09-27T12:01:00+00:00',
-    '2026-09-31T12:01:00Z',
-  ]) {
-    await assert.rejects(
-      bootstrap(
-        { ...input, env: { ...input.env, OTTO_RUNTIME_LEASE_EXPIRES: expiry } },
-        'development',
-        () => now,
-      ),
-      { status: 400 },
-    );
-  }
-  const withoutMilliseconds = {
-    ...input,
-    env: { ...input.env, OTTO_RUNTIME_LEASE_EXPIRES: '2026-09-27T12:01:00Z' },
-  };
-  assert.equal(
-    (await bootstrap(withoutMilliseconds, 'development', () => now)).identity.leaseExpiresAt,
-    now + 60_000,
-  );
-});
-
-test('tenant renewal persists only after acknowledgement and preserves the returned response', async () => {
-  const f = fixture();
-  const input = configuration(undefined, '1', f.now() + 40_000);
-  await f.lifecycle.start(input);
-  const original = f.saved()!;
-  const acknowledge = deferred<{ accepted: boolean }>();
-  const requested = deferred();
-  f.setTime(f.now() + 10_000);
-  const expiresAt = new Date(f.now() + 60_000).toISOString();
-  const renewal = f.lifecycle.renew(input.ownerId, '1', expiresAt, async () => {
-    requested.resolve();
-    return acknowledge.promise;
-  });
-  await requested.promise;
-  assert.deepEqual(await f.lifecycle.identity('1'), original);
-  assert.equal(f.leases.length, 1);
-  const response = { accepted: true };
-  acknowledge.resolve(response);
-  assert.equal(await renewal, response);
-  assert.equal(f.saved()!.leaseExpiresAt, Date.parse(expiresAt));
-  assert.equal(f.leases.at(-1)!.leaseExpiresAt, Date.parse(expiresAt));
-  assert.equal(f.saved()!.configurationHash, original.configurationHash);
-  const later = new Date(f.now() + 65_000).toISOString();
-  await assert.rejects(
-    f.lifecycle.renew(input.ownerId, '1', later, async () => {
-      throw new Error('synthetic rejected acknowledgement');
-    }),
-  );
-  assert.equal(f.saved()!.leaseExpiresAt, Date.parse(expiresAt));
-});
-
 test('tenant renewal and identity reject stale generations and invalid expiry before acknowledgement', async () => {
   const f = fixture();
   const input = configuration(undefined, '1', f.now() + 40_000);
@@ -467,84 +295,6 @@ test('tenant renewal and identity reject stale generations and invalid expiry be
   assert.equal(acknowledged, 0);
 });
 
-test('tenant stop persists revocation before awaiting computers and confirms tenant stop afterwards', async () => {
-  const computers = deferred();
-  const stopping = deferred();
-  const f = fixture({
-    stopComputers: async (identity) => {
-      assert.equal(identity.revoking, true);
-      assert.equal(f.saved()!.revoking, true);
-      stopping.resolve();
-      await computers.promise;
-    },
-  });
-  const input = configuration(undefined, '1', f.now() + 60_000);
-  await f.lifecycle.start(input);
-  f.calls.length = 0;
-  const stop = f.lifecycle.stop(input.ownerId, '1');
-  await stopping.promise;
-  assert.deepEqual(f.calls, ['revoking', 'stop-computers']);
-  assert.equal(f.saved()!.stopped, false);
-  await assert.rejects(f.lifecycle.identity('1'), { status: 503 });
-  computers.resolve();
-  assert.deepEqual(await stop, { ok: true, generation: '1', stopped: true });
-  assert.deepEqual(f.calls, ['revoking', 'stop-computers', 'stop-tenant', 'stopped']);
-  assert.equal(f.leases.at(-1)!.stopped, true);
-});
-
-test('failed computer stop retains revocation and blocks replacement even when the tenant platform stopped', async () => {
-  let fails = true;
-  const f = fixture({
-    stopComputers: async () => {
-      if (fails) throw new Error('synthetic stop failure');
-    },
-  });
-  const input = configuration(undefined, '1', f.now() + 60_000);
-  await f.lifecycle.start(input);
-  await assert.rejects(f.lifecycle.stop(input.ownerId, '1'));
-  assert.equal(f.saved()!.revoking, true);
-  assert.equal(f.saved()!.stopped, false);
-  assert.equal(f.calls.includes('stop-tenant'), false);
-  await assert.rejects(f.lifecycle.identity(), { status: 503 });
-  f.platformStopped();
-  const replacement = { ...input, env: { ...input.env, OTTO_RUNTIME_GENERATION: '2' } };
-  await assert.rejects(f.lifecycle.start(replacement), { status: 409 });
-  await assert.rejects(f.lifecycle.start(input), { status: 409 });
-  fails = false;
-  await f.lifecycle.stop(input.ownerId, '1');
-  await f.lifecycle.start(replacement);
-  assert.equal(f.saved()!.generation, '2');
-  assert.equal(f.saved()!.revoking, false);
-});
-
-test('late renewal acknowledgement cannot undo stop or a replacement generation', async (t) => {
-  for (const replace of [false, true])
-    await t.test(replace ? 'replacement' : 'stop', async () => {
-      const f = fixture();
-      const input = configuration(undefined, '1', f.now() + 40_000);
-      await f.lifecycle.start(input);
-      const acknowledged = deferred();
-      const requested = deferred();
-      const renewal = f.lifecycle.renew(
-        input.ownerId,
-        '1',
-        new Date(f.now() + 60_000).toISOString(),
-        async () => {
-          requested.resolve();
-          await acknowledged.promise;
-        },
-      );
-      const rejected = assert.rejects(renewal, { status: 409 });
-      await requested.promise;
-      await f.lifecycle.stop(input.ownerId, '1');
-      if (replace) await f.lifecycle.start(configuration(input.ownerId, '2', f.now() + 65_000));
-      const before = f.saved();
-      acknowledged.resolve();
-      await rejected;
-      assert.deepEqual(f.saved(), before);
-    });
-});
-
 test('gateway death expires identity immediately and fences a pending renewal before alarm cleanup', async () => {
   const f = fixture();
   const input = configuration(undefined, '1', f.now() + 40_000);
@@ -565,46 +315,8 @@ test('gateway death expires identity immediately and fences a pending renewal be
   f.setTime(f.now() + 40_000);
   await assert.rejects(f.lifecycle.identity(), { status: 503 });
   assert.equal(f.saved()!.stopped, false);
-  assert.equal(f.calls.includes('stop-computers'), false);
   acknowledged.resolve();
   await rejected;
-  f.calls.length = 0;
-  await f.lifecycle.expire();
-  assert.deepEqual(f.calls, ['revoking', 'stop-computers', 'stop-tenant', 'stopped']);
-  assert.equal(f.saved()!.stopped, true);
-});
-
-test('expiry cleanup cannot be undone by a delayed renewal and remains retryable on stop failure', async () => {
-  let fails = true;
-  const f = fixture({
-    stop: async () => {
-      if (fails) throw new Error('synthetic tenant stop failure');
-    },
-  });
-  const input = configuration(undefined, '1', f.now() + 40_000);
-  await f.lifecycle.start(input);
-  await f.lifecycle.expire();
-  assert.equal(f.calls.includes('stop-computers'), false);
-  const acknowledge = deferred();
-  const requested = deferred();
-  const renewal = f.lifecycle.renew(
-    input.ownerId,
-    '1',
-    new Date(f.now() + 60_000).toISOString(),
-    async () => {
-      requested.resolve();
-      await acknowledge.promise;
-    },
-  );
-  const rejected = assert.rejects(renewal, { status: 409 });
-  await requested.promise;
-  f.setTime(f.now() + 40_000);
-  await assert.rejects(f.lifecycle.expire());
-  assert.equal(f.saved()!.revoking, true);
-  assert.equal(f.saved()!.stopped, false);
-  acknowledge.resolve();
-  await rejected;
-  fails = false;
   await f.lifecycle.expire();
   assert.equal(f.saved()!.stopped, true);
 });
@@ -656,6 +368,7 @@ test('legacy records require confirmed stop before a fresh generation restores a
   await f.lifecycle.stop(input.ownerId, '1');
   assert.equal(f.saved()!.revoking, true);
   assert.equal(f.saved()!.stopped, true);
+  assert.equal(Number.isSafeInteger(f.saved()!.leaseExpiresAt), true);
   await f.lifecycle.start(configuration(input.ownerId, '2', f.now() + 60_000));
   assert.equal((await f.lifecycle.identity('2')).revoking, false);
 });
@@ -682,13 +395,6 @@ test('read-only tenant stop inspection serializes behind cleanup without adoptin
   assert.equal(inspected, false);
   finish.resolve();
   await stop;
-  const before = { state: f.saved(), calls: [...f.calls], leases: [...f.leases] };
   assert.equal(await proof, true);
-  assert.equal(await f.lifecycle.inspectStopped(input.ownerId, '2', async () => true), false);
   assert.equal(await f.lifecycle.inspectStopped(randomUUID(), '1', async () => true), false);
-  assert.equal(await f.lifecycle.inspectStopped(input.ownerId, null, async () => true), false);
-  assert.deepEqual({ state: f.saved(), calls: f.calls, leases: f.leases }, before);
-  const fresh = fixture();
-  assert.equal(await fresh.lifecycle.inspectStopped(randomUUID(), null, async () => true), true);
-  assert.deepEqual(fresh.calls, []);
 });

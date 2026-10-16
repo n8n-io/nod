@@ -291,7 +291,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   );
   ALTER TABLE channel_inbox ADD COLUMN IF NOT EXISTS provider_reply_id text;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS provider_message_ids text[] NOT NULL DEFAULT '{}';
-  UPDATE channel_outbox SET provider_message_ids=ARRAY[provider_message_id] WHERE provider_message_id IS NOT NULL AND cardinality(provider_message_ids)=0;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS presentation jsonb;
   ALTER TABLE channel_outbox ADD COLUMN IF NOT EXISTS claim_id uuid;
   CREATE INDEX IF NOT EXISTS channel_inbox_pending ON channel_inbox(state,created_at);

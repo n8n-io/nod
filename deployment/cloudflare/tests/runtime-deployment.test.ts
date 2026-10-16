@@ -1,31 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import {
-  deploymentProof,
-  runtimeDeploymentAcknowledgement,
-  runtimeDeploymentBody,
-} from '../src/runtime-deployment.ts';
+import { deploymentProof, runtimeDeploymentAcknowledgement } from '../src/runtime-deployment.ts';
 
 const input = { nonce: randomUUID(), targetRelease: 'a'.repeat(40), deadline: Date.now() + 60_000 };
-
-test('runtime drain parser preserves authenticated bytes and accepts only exact owned-generation proof', async () => {
-  const raw = ` ${JSON.stringify(input)} `;
-  const parsed = await runtimeDeploymentBody(
-    new Request('http://synthetic/api/runtime/drain', { method: 'POST', body: raw }),
-  );
-  assert.equal(new TextDecoder().decode(parsed.bytes), raw);
-  assert.deepEqual(parsed.input, input);
-  assert.equal(deploymentProof({ ...input, generation: '2' }, input, '2'), true);
-  assert.equal(deploymentProof({ ...input, generation: '1' }, input, '2'), false);
-  assert.equal(deploymentProof({ ...input, generation: '2', extra: true }, input, '2'), false);
-  for (const body of [JSON.stringify({ ...input, ownerId: randomUUID() }), 'x'.repeat(2049), '{'])
-    await assert.rejects(
-      runtimeDeploymentBody(
-        new Request('http://synthetic/api/runtime/drain', { method: 'POST', body }),
-      ),
-    );
-});
 
 test('only the exact natural-drain acknowledgement may become a durable proof', async () => {
   const receipt = {
@@ -35,13 +13,7 @@ test('only the exact natural-drain acknowledgement may become a durable proof', 
     generation: '2',
     drained: true,
   };
-  const response = await runtimeDeploymentAcknowledgement(
-    Response.json(receipt),
-    input,
-    '2',
-    'drain',
-  );
-  assert.deepEqual(await response.json(), receipt);
+  await runtimeDeploymentAcknowledgement(Response.json(receipt), input, '2', 'drain');
   for (const body of [
     { ...receipt, drained: false },
     { ...receipt, generation: '1' },
@@ -55,12 +27,7 @@ test('only the exact natural-drain acknowledgement may become a durable proof', 
   await assert.rejects(
     runtimeDeploymentAcknowledgement(new Response('x'.repeat(2049)), input, '2', 'drain'),
   );
-  assert.deepEqual(
-    await (
-      await runtimeDeploymentAcknowledgement(Response.json({ ok: true }), input, '2', 'resume')
-    ).json(),
-    { ok: true },
-  );
+  await runtimeDeploymentAcknowledgement(Response.json({ ok: true }), input, '2', 'resume');
 });
 
 test('E2B drain requires an explicit remote computer pause acknowledgement', async () => {

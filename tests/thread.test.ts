@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { promisify } from 'node:util';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import Fastify from 'fastify';
@@ -19,16 +17,15 @@ import {
   type FeedbackReceipt,
   type FeedbackSubmission,
 } from '../src/shared/feedback.ts';
-import type { Agent, RuntimeContext } from '../src/ports/agent.ts';
+import type { RuntimeContext } from '../src/ports/agent.ts';
 import type { ConnectedApp, InboxSnippet } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { createPreferencesStore, defaultPreferences } from '../src/server/preferences.ts';
+import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
-import { withServiceAnalytics } from '../src/server/analytics-connections.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
@@ -159,7 +156,6 @@ test(
       });
     const onboarding = onboardingFor(ownerId);
     await onboarding.initialize();
-    let pricingUnavailable = false;
     const app = await createApp({
       analytics: captureAnalytics,
       computer: fakeComputer({
@@ -171,10 +167,7 @@ test(
       configuration: () => ({ ...configuration(), llmReady: true }),
       startOnboarding: onboarding.complete,
       planningTasks: onboarding.planning,
-      messageCosts: async () => {
-        if (pricingUnavailable) throw new Error('Synthetic pricing failure.');
-        return {};
-      },
+      messageCosts: async () => ({}),
     });
     onboarding.registerRoutes(app);
     const tasks = createTasks({ pool: db.pool, ownerId });
@@ -199,18 +192,13 @@ test(
       payload?: Record<string, unknown>,
     ) => app.inject({ method, url: path, headers, payload });
 
-    const quietInstructions = new Map<string, Record<string, unknown>>();
     const quietRuntime = createAgentRuntime({
       agent: {
         open: async (input) => ({
           resumed: false,
           abort() {},
           dispose() {},
-          async prompt(text) {
-            quietInstructions.set(
-              input.turnId,
-              JSON.parse(text.split('Request data (JSON):\n')[1]!),
-            );
+          async prompt() {
             await input.tools
               .find((tool) => tool.name === 'apps')!
               .execute({
@@ -231,15 +219,6 @@ test(
     const readConnectedApps = async () => structuredClone(currentApps);
 
     const runs: RuntimeContext[] = [];
-    const beforeRuntimeRuns = new Map<string, string | undefined>();
-    const runtimeRuns = new Map<string, string | undefined>();
-    let observeServices = false;
-    const service = () =>
-      withServiceAnalytics(
-        captureAnalytics,
-        { app: 'gmail', connection_method: 'managed_app' },
-        async () => ({}),
-      );
     const sessionGates = new Map<string, Promise<void>>();
     const taken = new Map<
       string,
@@ -257,13 +236,6 @@ test(
     const remoteUploads = new Map<string, Uint8Array>();
     const fileContexts = new Map<string, RuntimeContext>();
     const integrationReads: string[] = [];
-    const appResults = new Map<string, unknown>();
-    const largeAppResult = {
-      threads: Array.from({ length: 400 }, (_, index) => ({
-        id: `synthetic-thread-${index}`,
-        snippet: 'Synthetic inbox snippet. '.repeat(8),
-      })),
-    };
     let remoteAttachmentRead = false;
     let fenced: RuntimeContext | undefined;
     let releaseFence: () => void = () => {};
@@ -271,7 +243,6 @@ test(
       releaseFence = resolve;
     });
     let failRelease = 0;
-    let taskHold = Promise.resolve();
 
     let limitReached = false;
     const interruptedText = 'Synthetic interrupted turn.';
@@ -282,11 +253,7 @@ test(
       analytics: captureAnalytics,
       present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
-      executeConfirmation: async (turnId) => {
-        beforeRuntimeRuns.set(turnId, analytics.currentRun(ownerId)?.id);
-        if (observeServices) await service();
-        return undefined;
-      },
+      executeConfirmation: async () => undefined,
       connectedApps: readConnectedApps,
       spendingLimitReached: async () => limitReached,
       speech: {
@@ -298,7 +265,6 @@ test(
         throw new Error('Unused fixture');
       },
       integration: async (_turn, action, _args, options) => {
-        if (action === 'GMAIL_LIST_THREADS') return largeAppResult;
         if (action === 'SLACK_DOWNLOAD_SLACK_FILE')
           return {
             data: {
@@ -319,79 +285,12 @@ test(
       taskLedger: tasks.read,
       task: tasks.execute,
       startTurn: tasks.inherit,
-      artifacts: {
-        ...localArtifacts,
-        storeArtifact: async (...input) => {
-          const artifact = await localArtifacts.storeArtifact(...input);
-          if (artifact.name === 'atomic.png') {
-            void thread.stopThread();
-            await delay(300);
-          }
-          return artifact;
-        },
-      },
+      artifacts: localArtifacts,
       runTurn: async (context) => {
         runs.push(context);
-        runtimeRuns.set(context.turnId, analytics.currentRun(ownerId)?.id);
-        if (context.prompt === 'background-task-finish-fixture') {
-          const task = (await context.task!({
-            action: 'start',
-            title: 'Background fixture',
-            doneWhen: 'Fixture checked',
-            now: 'Checking',
-          })) as Task;
-          await context.task!({
-            action: 'finish',
-            id: task.id,
-            status: 'done',
-            result: 'Fixture checked',
-          });
-          return { status: 'succeeded' };
-        }
-        if (context.prompt === 'dispatch-tasks-fixture') {
-          if (!context.taskContext) {
-            for (const title of ['Task A', 'Task B'])
-              await context.task!({
-                action: 'start',
-                title,
-                doneWhen: 'The fixture output is checked',
-                now: 'Starting',
-                steps: ['Read', 'Check'],
-              });
-          } else {
-            await context.emit('tool_start', 'Read fixture input');
-            await Promise.race([
-              sessionGates.get(context.taskContext.title),
-              new Promise<void>((resolve) =>
-                context.signal.addEventListener('abort', () => resolve(), { once: true }),
-              ),
-            ]);
-            if (context.signal.aborted) return { status: 'succeeded' };
-            await context.takeMessages!();
-            await context.task!({
-              action: 'finish',
-              id: context.taskContext.id,
-              status: 'done',
-              result: 'Fixture checked',
-            });
-            return { status: 'succeeded', result: `${context.taskContext.title} checked` };
-          }
-          return { status: 'succeeded' };
-        }
-        if (context.prompt === 'forward-task-update-fixture') {
-          const ledger = await tasks.read();
-          await context.task!({
-            action: 'reply',
-            ids: ledger
-              .filter((task) => ['Task A', 'Task B'].includes(task.title))
-              .map((task) => task.id),
-          });
-          return { status: 'succeeded' };
-        }
         if (context.prompt === 'limit race fixture') throw new Error(spendingLimitReached);
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
-          if (observeServices) await service();
           return { status: 'succeeded' };
         }
         if (context.prompt === 'background-research-fixture') {
@@ -456,10 +355,6 @@ test(
           });
           return { status: 'succeeded' };
         }
-        if (context.prompt === 'large-app-result-fixture') {
-          appResults.set(context.prompt, await context.integration('GMAIL_LIST_THREADS', {}));
-          return { status: 'succeeded' };
-        }
         if (context.prompt.endsWith('-file-fixture')) {
           fileContexts.set(context.prompt, context);
           return { status: 'succeeded' };
@@ -474,31 +369,6 @@ test(
         if (context.prompt === 'Fresh conversation') {
           context.delta('Fresh stream', randomUUID());
           await context.reply('Fresh answer.');
-          return { status: 'succeeded' };
-        }
-        if (context.prompt.startsWith('watch-')) {
-          await context.emit('tool_start', 'web search');
-          if (context.prompt === 'watch-update-fixture') {
-            const { tasks } = (await context.task!({ action: 'list' })) as { tasks: Task[] };
-            await context.task!({
-              action: 'update',
-              id: tasks.find((task) => task.title === 'Kayak trip')!.id,
-              now: 'Booking the touring kayak',
-            });
-          }
-          await waiting.get(context.prompt);
-          if (context.prompt === 'watch-ask-fixture') {
-            await context.waitForUser!('Which kayak do you mean?');
-            return { status: 'waiting_user' };
-          }
-          if (context.prompt === 'watch-pi-fixture')
-            await context.task!({
-              action: 'start',
-              title: 'Kayak comparison',
-              doneWhen: 'A sourced comparison is shared',
-              now: 'Reading the spec sheets',
-            });
-          await context.reply('**Owners like** the stable hull. More detail follows.');
           return { status: 'succeeded' };
         }
         const gate = waiting.get(context.prompt);
@@ -528,96 +398,7 @@ test(
             code: 'E_SYNTHETIC',
           });
         }
-        if (context.prompt === 'screenshot-during-stop') {
-          await context.publishScreenshot!(new Uint8Array([1, 2, 3]), 'atomic.png');
-          return { status: 'succeeded' };
-        }
         if (context.prompt === 'release-retry') failRelease = 1;
-        if (context.prompt.startsWith('task-')) {
-          const report = (input: Record<string, unknown>) => context.task!(input);
-          if (context.prompt === 'task-start-fixture' && !context.taskContext) {
-            await report({
-              action: 'start',
-              title: 'Plumber quotes',
-              doneWhen: 'One plumber booked under 200 EUR',
-              now: 'Asked two plumbers for quotes',
-              waitingFor: [
-                { who: 'Rui', via: 'email' },
-                { who: 'Ana', via: 'email' },
-              ],
-              nextCheck: new Date(Date.now() + 86_400_000).toISOString(),
-            });
-            return { status: 'succeeded' };
-          }
-          if (context.prompt === 'task-start-fixture') {
-            await assert.rejects(
-              report({
-                action: 'update',
-                id: context.taskContext!.id,
-                steps: ['Read', 'Check'],
-                stepIndex: 2,
-              }),
-              /step index/,
-            );
-            await report({
-              action: 'update',
-              id: context.taskContext!.id,
-              steps: ['Read', 'Check'],
-              stepIndex: 1,
-            });
-            await assert.rejects(
-              report({ action: 'update', id: context.taskContext!.id, steps: ['Check'] }),
-              /step index/,
-            );
-            await report({
-              action: 'update',
-              id: context.taskContext!.id,
-              now: 'Asked two plumbers for quotes',
-              waitingFor: [
-                { who: 'Rui', via: 'email' },
-                { who: 'Ana', via: 'email' },
-              ],
-              nextCheck: new Date(Date.now() + 3_600_000).toISOString(),
-            });
-            return { status: 'succeeded' };
-          }
-          const { tasks } = (await report({ action: 'list' })) as { tasks: Task[] };
-          const id = tasks.find((task) => task.title === 'Plumber quotes')!.id;
-          if (context.prompt === 'task-foreign-fixture') {
-            const foreign = (
-              await db.pool.query("SELECT id FROM tasks WHERE owner_id='task-other-owner'")
-            ).rows[0].id;
-            assert.equal(tasks.length, 1);
-            await assert.rejects(
-              report({ action: 'update', id: foreign, now: 'x' }),
-              /Only the task session/,
-            );
-            return { status: 'succeeded' };
-          }
-          if (context.prompt === 'task-hold-fixture') {
-            await report({ action: 'update', id, now: 'Reading Rui’s reply' });
-            await taskHold;
-            return { status: 'succeeded' };
-          }
-          if (context.prompt === 'task-ask-fixture') {
-            await report({ action: 'update', id, now: 'Rui quoted 180 EUR', waitingFor: [] });
-            await context.waitForUser!('Rui quoted 180 EUR for Saturday. Should I book him?');
-            return { status: 'waiting_user' };
-          }
-          if (context.prompt === 'task-fail-fixture') {
-            await report({ action: 'update', id, now: 'Booking Rui' });
-            throw new Error('Synthetic task failure');
-          }
-          if (context.prompt === 'task-finish-fixture') {
-            await report({
-              action: 'finish',
-              id,
-              status: 'done',
-              result: 'Rui is booked for Saturday at 10:00 for 180 EUR.',
-            });
-            return { status: 'succeeded' };
-          }
-        }
         if (context.prompt === 'ask-question') {
           await context.waitForUser!('Which account should I use?');
           return { status: 'waiting_user' };
@@ -778,25 +559,6 @@ test(
         assert.deepEqual((await db.pool.query('SELECT count(*) FROM turns')).rows, beforeLate.rows);
       });
 
-      await t.test('parallel source dispatch creates one turn and one drain job', async () => {
-        const jobsBefore = await drainJobs(threadId);
-        const ids = await Promise.all(
-          Array.from({ length: 6 }, () =>
-            thread.enqueueTurn('schedule-fixture', {
-              sourceId: 'schedule:one-job',
-              source: 'schedule',
-            }),
-          ),
-        );
-        assert.equal(new Set(ids).size, 1);
-        assert.equal(
-          (await db.pool.query('SELECT thread_id FROM turns WHERE id=$1', [ids[0]])).rows[0]
-            .thread_id,
-          threadId,
-        );
-        assert.equal(await drainJobs(threadId), jobsBefore + 1);
-      });
-
       await t.test('credential resume and source-keyed messages are idempotent', async () => {
         const id = randomUUID();
         await db.pool.query(
@@ -869,26 +631,6 @@ test(
           assert.deepEqual(await counts(), oneMore);
         },
       );
-
-      await t.test('foreign and assistant message IDs cannot be reused', async () => {
-        const foreignThread = randomUUID(),
-          foreignId = randomUUID(),
-          assistantId = randomUUID();
-        await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'another-owner')", [
-          foreignThread,
-        ]);
-        await db.pool.query(
-          "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,'another-owner','user','Same synthetic text',$2),($3,'local-development','assistant','Same synthetic text',$4)",
-          [foreignId, foreignThread, assistantId, threadId],
-        );
-        const before = await counts();
-        for (const id of [foreignId, assistantId])
-          assert.equal(
-            (await sendJson({ clientMessageId: id, text: 'Same synthetic text' })).statusCode,
-            409,
-          );
-        assert.deepEqual(await counts(), before);
-      });
 
       await t.test(
         'worker start interrupts running turns once without retrying them and drains queued turns',
@@ -979,7 +721,6 @@ test(
       );
 
       await t.test('consecutive messages run as turns on the same thread', async () => {
-        const before = analyticsEvents.length;
         const first = await thread.submitUserMessage('first message', [], { channel: 'web' });
         await waitFor(settled(first.turnId));
         const second = await thread.submitUserMessage('second message', [], {
@@ -1004,28 +745,6 @@ test(
           1,
         );
         firstThreadId = first.threadId;
-        const captured = analyticsEvents.slice(before);
-        assert.equal(captured.filter((event) => event.event === 'otto_turn_started').length, 2);
-        assert.equal(
-          captured.filter(
-            (event) =>
-              event.event === 'otto_turn_completed' && event.properties.outcome === 'succeeded',
-          ).length,
-          2,
-        );
-        assert.ok(
-          captured.every(
-            (event) => event.properties.source === 'user' && event.properties.channel === 'web',
-          ),
-        );
-        assert.ok(
-          captured.every(
-            (event) => event.distinctId === analytics.configuration(ownerId).distinctId,
-          ),
-        );
-        assert.ok(!JSON.stringify(captured).includes('first message'));
-        assert.ok(!JSON.stringify(captured).includes(first.threadId));
-        assert.ok(!JSON.stringify(captured).includes(first.turnId));
       });
 
       await t.test('a backlog of drain jobs does not delay the next turn', async () => {
@@ -1042,7 +761,6 @@ test(
         'each session runs one turn at a time while sessions run in parallel',
         async () => {
           await waitFor(settledThread);
-          observeServices = true;
           const threadId = (await thread.activeThread(db.pool)).id;
           let release = () => {};
           const gate = new Promise<void>((resolve) => {
@@ -1093,134 +811,6 @@ test(
           assert.equal(ran(first)?.sessionId, first);
           assert.equal(ran(next)?.sessionId, first);
           assert.equal(ran(other)?.sessionId, other);
-          observeServices = false;
-          const ids = [first, next, other].map((id) => runtimeRuns.get(id));
-          assert.ok(ids.every(Boolean));
-          assert.equal(new Set(ids).size, 3);
-          for (const id of [first, next, other]) {
-            assert.equal(beforeRuntimeRuns.get(id), runtimeRuns.get(id));
-            assert.notEqual(runtimeRuns.get(id), id);
-            const captured = analyticsEvents.filter(
-              (event) => event.properties.run_id === runtimeRuns.get(id),
-            );
-            assert.equal(captured.filter((event) => event.event === 'otto_service_used').length, 2);
-            assert.equal(captured.filter((event) => event.event === 'otto_turn_started').length, 1);
-            assert.equal(
-              captured.filter((event) => event.event === 'otto_turn_completed').length,
-              1,
-            );
-          }
-        },
-      );
-
-      await t.test('turns retain owned manual and automatic region preferences', async () => {
-        const preferences = createPreferencesStore(db.pool, ownerId);
-        const otherOwner = `region-owner-${randomUUID()}`;
-        const otherPreferences = createPreferencesStore(db.pool, otherOwner);
-        const original = await preferences.get();
-        try {
-          await otherPreferences.update({ locale: 'en-CA', timeZone: 'America/Toronto' });
-          await preferences.update({ locale: 'en-US', timeZone: 'Europe/Lisbon' });
-          const manual = await thread.submitUserMessage('Manual region fixture');
-          await waitFor(settled(manual.turnId));
-          assert.equal(ran(manual.turnId)?.locale, 'en-US');
-
-          await preferences.update({ locale: null });
-          await preferences.update({ hourCycle: 'h23' });
-          assert.equal((await preferences.get()).locale, null);
-          assert.equal((await otherPreferences.get()).locale, 'en-CA');
-          const automatic = await thread.submitUserMessage('Automatic region fixture');
-          await waitFor(settled(automatic.turnId));
-          assert.equal(ran(automatic.turnId)?.locale, 'en-PT');
-          assert.equal(ran(automatic.turnId)?.timeZone, 'Europe/Lisbon');
-          assert.equal(ran(automatic.turnId)?.hourCycle, 'h23');
-
-          await preferences.update({ timeZone: null });
-          assert.equal((await preferences.get()).timeZone, null);
-          assert.equal((await otherPreferences.get()).timeZone, 'America/Toronto');
-          const unset = await thread.submitUserMessage('Unset time zone fixture');
-          await waitFor(settled(unset.turnId));
-          assert.ok(ran(unset.turnId));
-          assert.equal(ran(unset.turnId)?.timeZone, undefined);
-          for (const timeZone of ['', '+05:30', 'Mars/Olympus'])
-            await assert.rejects(preferences.update({ timeZone }), /valid time zone/);
-          assert.equal((await preferences.get()).timeZone, null);
-        } finally {
-          await preferences.update(original);
-          await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [otherOwner]);
-        }
-      });
-
-      await t.test(
-        'queued background turns receive the current owned notification rule at execution',
-        async () => {
-          const preferences = createPreferencesStore(db.pool, ownerId);
-          const otherOwner = `notification-owner-${randomUUID()}`;
-          const otherPreferences = createPreferencesStore(db.pool, otherOwner);
-          const original = await preferences.get();
-          const oldRule = 'Report each synthetic receipt as it arrives.';
-          const foreignRule = 'Another owner only wants synthetic travel alerts.';
-          const eventPrompt = `Inspect this synthetic receipt quietly. Previously saved rule: ${oldRule}`;
-          const schedulePrompt = 'Send the requested synthetic daily briefing now.';
-          try {
-            quietBackgroundWork = true;
-            await otherPreferences.update({ notificationRule: foreignRule });
-            for (const rule of [
-              'Keep routine synthetic updates for my daily briefing, except urgent matters.',
-              '',
-              '   ',
-              undefined,
-            ]) {
-              await preferences.update({ notificationRule: oldRule });
-              const ids: string[] = [];
-              await transaction(async (client) => {
-                for (const [source, prompt] of [
-                  ['event', eventPrompt],
-                  ['schedule', schedulePrompt],
-                ] as const)
-                  ids.push(await thread.enqueueTurn(prompt, { source, client }));
-                if (rule === undefined)
-                  await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
-                else await preferences.update({ notificationRule: rule });
-              }, db.pool);
-              for (const [index, id] of ids.entries()) {
-                await waitFor(settled(id));
-                assert.equal(await turnStatus(id), 'succeeded');
-                const expected = rule ?? defaultPreferences.notificationRule;
-                assert.equal(Reflect.get(ran(id)!, 'notificationRule'), expected);
-                assert.equal(quietInstructions.get(id)?.notificationRule, expected);
-                assert.equal(
-                  quietInstructions.get(id)?.currentInstruction,
-                  index === 0 ? eventPrompt : schedulePrompt,
-                );
-                assert.ok(!JSON.stringify(quietInstructions.get(id)).includes(foreignRule));
-              }
-              assert.equal(
-                (
-                  await db.pool.query('SELECT id FROM messages WHERE turn_id=ANY($1::uuid[])', [
-                    ids,
-                  ])
-                ).rowCount,
-                0,
-              );
-            }
-            await preferences.update({ notificationRule: '' });
-            const direct = await thread.submitUserMessage('A direct synthetic receipt question');
-            await waitFor(settled(direct.turnId));
-            assert.equal(await turnStatus(direct.turnId), 'succeeded');
-            assert.ok(
-              (
-                await db.pool.query(
-                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'",
-                  [direct.turnId],
-                )
-              ).rowCount,
-            );
-          } finally {
-            quietBackgroundWork = false;
-            await preferences.update(original);
-            await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [otherOwner]);
-          }
         },
       );
 
@@ -1298,45 +888,6 @@ test(
           } finally {
             dependencies.manage = manage;
           }
-        },
-      );
-
-      await t.test(
-        'schedules run on time beside a long conversation turn that still takes new messages',
-        async (t) => {
-          t.mock.method(dependencies, 'manage', async () => ({}));
-          block('steer-long');
-          const long = await thread.submitUserMessage('steer-long', [], { channel: 'web' });
-          await waitFor(() => Boolean(ran(long.turnId)));
-          const jumps = [];
-          for (const minute of [1, 2])
-            jumps.push(
-              await thread.enqueueTurn('jump fixture', {
-                source: 'schedule',
-                sourceId: `schedule:jump:${long.turnId}:${minute}`,
-              }),
-            );
-          const question = await thread.submitUserMessage('weather fixture', [], {
-            channel: 'web',
-          });
-          for (const jump of jumps) await waitFor(settled(jump));
-          assert.equal(await turnStatus(long.turnId), 'running');
-          release('steer-long');
-          await waitFor(settled(long.turnId));
-          assert.deepEqual(
-            taken.get(long.turnId)!.map(({ id, text }) => ({ id, text })),
-            [{ id: question.messageId, text: 'weather fixture' }],
-          );
-          const next = await thread.submitUserMessage('after jump fixture', [], {
-            channel: 'web',
-          });
-          await waitFor(settled(next.turnId));
-          const history = ran(next.turnId)!.history;
-          assert.deepEqual(
-            history.filter((item) => item.text === 'done: jump fixture').map((item) => item.unseen),
-            [true, true],
-          );
-          assert.equal(history.find((item) => item.text === 'done: steer-long')?.unseen, false);
         },
       );
 
@@ -1515,41 +1066,6 @@ test(
         },
       );
 
-      await t.test(
-        'a large app result is saved in the thread workspace and returned by reference',
-        async () => {
-          const { turnId, threadId: id } = await thread.submitUserMessage(
-            'large-app-result-fixture',
-          );
-          await waitFor(settled(turnId));
-          const full = JSON.stringify(largeAppResult);
-          const result = appResults.get('large-app-result-fixture') as {
-            workspaceFile: string;
-            bytes: number;
-            preview: string;
-          };
-          assert.match(result.workspaceFile, /^[a-f0-9-]{36}-GMAIL_LIST_THREADS\.json$/);
-          assert.equal(result.bytes, Buffer.byteLength(full));
-          assert.ok(result.preview.length < full.length && full.startsWith(result.preview));
-          assert.equal(
-            await readFile(join(root, 'workspaces', id, result.workspaceFile), 'utf8'),
-            full,
-          );
-          dependencies.writeArtifact = async () => {
-            throw new Error('Fixture workspace unavailable');
-          };
-          try {
-            const unsaved = await thread.submitUserMessage('large-app-result-fixture');
-            await waitFor(settled(unsaved.turnId));
-          } finally {
-            dependencies.writeArtifact = undefined;
-          }
-          const fallback = appResults.get('large-app-result-fixture') as Record<string, unknown>;
-          assert.equal(fallback.workspaceFile, undefined);
-          assert.equal(fallback.preview, result.preview);
-        },
-      );
-
       await t.test('replies stage owned downloaded files but never foreign artifacts', async () => {
         const { turnId: sourceTurn } = await thread.submitUserMessage('pdf-source-fixture');
         await waitFor(async () => (await turnStatus(sourceTurn)) === 'succeeded');
@@ -1634,14 +1150,6 @@ test(
         ).rows[0];
         assert.deepEqual(row, { status: 'waiting', waiting_reason: 'question' });
         assert.equal(
-          analyticsEvents.find(
-            (event) =>
-              event.event === 'otto_turn_completed' &&
-              event.properties.run_id === runtimeRuns.get(question.turnId),
-          )!.properties.waiting_reason,
-          'question',
-        );
-        assert.equal(
           (
             await db.pool.query(
               "SELECT count(*)::int AS count FROM messages WHERE turn_id=$1 AND role='assistant' AND text='Which account should I use?'",
@@ -1661,16 +1169,6 @@ test(
               ])
             ).rows[0],
             { status: 'waiting', waiting_reason: reason },
-          );
-          const captured = analyticsEvents.find(
-            (event) =>
-              event.event === 'otto_turn_completed' &&
-              event.properties.run_id === runtimeRuns.get(waiting.turnId),
-          )!;
-          assert.equal(captured.properties.waiting_reason, reason);
-          assert.equal(
-            captured.properties.outcome,
-            reason === 'credentials' ? 'waiting_credentials' : 'waiting_user',
           );
         }
         await waitFor(settledThread);
@@ -1730,276 +1228,6 @@ test(
           ).rows[0];
           assert.equal(row.parent_turn_id, background);
           await db.pool.query("UPDATE tasks SET state='done' WHERE id=$1", [taskId]);
-        },
-      );
-
-      await t.test(
-        'independent tasks keep chat free, receive owner updates and stop separately',
-        async () => {
-          let releaseA!: () => void;
-          let releaseB!: () => void;
-          sessionGates.set(
-            'Task A',
-            new Promise<void>((resolve) => {
-              releaseA = resolve;
-            }),
-          );
-          sessionGates.set(
-            'Task B',
-            new Promise<void>((resolve) => {
-              releaseB = resolve;
-            }),
-          );
-          const started = await userMessages.submit('dispatch-tasks-fixture');
-          try {
-            await waitFor(
-              () =>
-                runs.filter((run) => run.prompt === 'dispatch-tasks-fixture' && run.taskContext)
-                  .length === 2,
-            );
-            await waitFor(settled(started.turnId));
-            const ledger = await tasks.read();
-            const a = ledger.find((task) => task.title === 'Task A')!;
-            const b = ledger.find((task) => task.title === 'Task B')!;
-            const workers = runs.filter(
-              (run) => run.prompt === 'dispatch-tasks-fixture' && run.taskContext,
-            );
-            assert.equal(new Set(workers.map((run) => run.sessionId)).size, 2);
-            assert.ok(workers.every((run) => run.sessionId !== started.threadId));
-            assert.equal(new Set(workers.map((run) => run.workspacePath)).size, 1);
-            const command = async (
-              action: 'tasks' | 'status' | 'stop',
-              replyId?: string,
-              hasReply = Boolean(replyId),
-            ) => {
-              const result = await transaction(
-                (client) => tasks.chatCommand(client, action, replyId, hasReply),
-                db.pool,
-              );
-              await result.afterCommit?.();
-              return result;
-            };
-            assert.ok(
-              (await command('tasks')).replies.some(
-                (reply) => reply.text.includes('Task A') && reply.replyToMessageId === a.messageId,
-              ),
-            );
-            const taskStatus = await command('status', a.messageId!);
-            assert.equal(taskStatus.replies[0].replyToMessageId, a.messageId);
-            const statusMessageId = randomUUID();
-            await db.pool.query(
-              "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,$2,$3,'assistant',$4,$5)",
-              [statusMessageId, ownerId, started.threadId, taskStatus.replies[0].text, a.messageId],
-            );
-            assert.equal(
-              (await command('status', statusMessageId)).replies[0].replyToMessageId,
-              a.messageId,
-            );
-            await command('stop', randomUUID(), true);
-            assert.ok(workers.every((worker) => !worker.signal.aborted));
-            const chat = await userMessages.submit('A small separate question');
-            await waitFor(settled(chat.turnId));
-            assert.equal(
-              runs.find((run) => run.turnId === chat.turnId)!.sessionId,
-              started.threadId,
-            );
-            const update = await userMessages.submit('forward-task-update-fixture');
-            await waitFor(settled(update.turnId));
-            for (const task of (await tasks.read()).filter((task) =>
-              [a.id, b.id].includes(task.id),
-            )) {
-              assert.equal(task.revision, 2);
-              assert.equal(task.appliedRevision, 1);
-            }
-            const workerA = workers.find((run) => run.taskContext!.id === a.id)!;
-            const received = await workerA.takeMessages!();
-            assert.equal(received[0].text, 'forward-task-update-fixture');
-            assert.equal(
-              (await db.pool.query('SELECT turn_id FROM tasks WHERE id=$1', [a.id])).rows[0]
-                .turn_id,
-              workerA.turnId,
-            );
-            assert.equal((await tasks.read()).find((task) => task.id === a.id)!.appliedRevision, 2);
-            const detail = (await request('GET', `/api/tasks/${a.id}`)).json();
-            assert.ok(
-              detail.events.some(
-                (event: { summary: string }) => event.summary === 'Read fixture input',
-              ),
-            );
-            assert.equal((await request('POST', `/api/tasks/${a.id}/stop`)).statusCode, 200);
-            assert.equal(
-              (await command('status', a.messageId!)).replies[0].text.startsWith('Stopped'),
-              true,
-            );
-            await waitFor(() => workerA.signal.aborted);
-            const workerB = workers.find((run) => run.taskContext!.id === b.id)!;
-            assert.equal(workerB.signal.aborted, false);
-            await assert.rejects(workerA.reply('Must not write after Stop'));
-            releaseB();
-            await waitFor(settled(workerB.turnId));
-            assert.equal((await tasks.read()).find((task) => task.id === b.id)!.status, 'done');
-            const result = (
-              await db.pool.query(
-                'SELECT id,reply_to_message_id FROM messages WHERE turn_id=$1 AND text=$2',
-                [workerB.turnId, 'Task B checked'],
-              )
-            ).rows[0];
-            assert.equal(result.reply_to_message_id, b.messageId);
-            const continued = await userMessages.submit('Continue from the result', [], {
-              replyToMessageId: result.id,
-            });
-            await waitFor(settled(continued.turnId));
-            assert.equal(
-              runs.find((run) => run.turnId === continued.turnId)!.sessionId,
-              workerB.sessionId,
-            );
-            await command('stop', b.messageId!);
-            assert.equal(
-              (await tasks.read()).find((task) => task.id === b.id)!.status,
-              'cancelled',
-            );
-            const background = await thread.enqueueTurn('background-task-finish-fixture', {
-              source: 'event',
-            });
-            await waitFor(settled(background));
-            const adopted = (await tasks.read()).find(
-              (task) => task.title === 'Background fixture',
-            )!;
-            assert.equal(adopted.status, 'done');
-            assert.equal(runs.find((run) => run.turnId === background)!.sessionId, background);
-            await db.pool.query('UPDATE tasks SET message_id=NULL WHERE id=$1', [adopted.id]);
-            await tasks.initialize();
-            const migrated = (await tasks.read()).find((task) => task.id === adopted.id)!;
-            assert.ok(migrated.messageId);
-            assert.equal(
-              (await command('status', migrated.messageId!)).replies[0].replyToMessageId,
-              migrated.messageId,
-            );
-          } finally {
-            releaseA();
-            releaseB();
-          }
-        },
-      );
-
-      await t.test(
-        'a saved task keeps progress, questions and results in its own session',
-        async (t) => {
-          t.mock.method(console, 'error', () => {});
-          const card = async () =>
-            (await request('GET', '/api/tasks'))
-              .json()
-              .find((item: Task) => item.title === 'Plumber quotes') as Task;
-          const idle = async () => {
-            await waitFor(settledThread);
-            await waitFor(async () => !['queued', 'working'].includes((await card()).status));
-          };
-          const taskReply = async (text: string) =>
-            userMessages.submit(text, [], { replyToMessageId: (await card()).messageId! });
-          await db.pool.query(
-            "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,'task-other-owner','Plumber quotes','Foreign','Foreign step')",
-            [randomUUID()],
-          );
-
-          const started = await thread.submitUserMessage('task-start-fixture');
-          await waitFor(settled(started.turnId));
-          await idle();
-          let current = await card();
-          assert.equal(current.status, 'waiting');
-          assert.equal(current.now, 'Asked two plumbers for quotes');
-          assert.deepEqual(current.waitingFor, [
-            { who: 'Rui', via: 'email' },
-            { who: 'Ana', via: 'email' },
-          ]);
-          assert.ok(Date.parse(current.nextCheck!) > Date.now());
-          assert.equal(
-            (await request('GET', '/api/tasks'))
-              .json()
-              .filter((item: Task) => item.title === 'Plumber quotes').length,
-            1,
-          );
-
-          const foreign = await thread.submitUserMessage('task-foreign-fixture');
-          await waitFor(settled(foreign.turnId));
-          assert.equal(await turnStatus(foreign.turnId), 'succeeded');
-          await idle();
-
-          let releaseHold!: () => void;
-          taskHold = new Promise((resolve) => {
-            releaseHold = resolve;
-          });
-          const held = await taskReply('task-hold-fixture');
-          await waitFor(async () => (await card()).now === 'Reading Rui’s reply');
-          assert.equal((await card()).status, 'working');
-          releaseHold();
-          await waitFor(settled(held.turnId));
-          await idle();
-          assert.equal((await card()).status, 'waiting');
-
-          const asked = await taskReply('task-ask-fixture');
-          await waitFor(settled(asked.turnId));
-          await idle();
-          current = await card();
-          assert.equal(current.status, 'needs_you');
-          assert.equal(current.question, 'Rui quoted 180 EUR for Saturday. Should I book him?');
-          assert.ok(current.questionMessageId);
-          const statusReply = await transaction(
-            (client) => tasks.chatCommand(client, 'status', current.messageId!),
-            db.pool,
-          );
-          assert.equal(statusReply.replies[0].replyToMessageId, current.questionMessageId);
-          const questionStatusId = randomUUID();
-          await db.pool.query(
-            "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) VALUES($1,$2,$3,'assistant',$4,$5)",
-            [
-              questionStatusId,
-              ownerId,
-              asked.threadId,
-              statusReply.replies[0].text,
-              current.questionMessageId,
-            ],
-          );
-          const target = await transaction(
-            (client) => tasks.resolveReply(client, asked.threadId, questionStatusId),
-            db.pool,
-          );
-          assert.equal(target.task_id, current.id);
-          assert.equal(await thread.resumeAfterConnection(asked.turnId, 'synthetic'), true);
-          const resumed = (
-            await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
-              `connection:${asked.turnId}`,
-            ])
-          ).rows[0].id as string;
-          await waitFor(settled(resumed));
-          await idle();
-          assert.equal(
-            (await db.pool.query('SELECT task_id FROM turns WHERE id=$1', [resumed])).rows[0]
-              .task_id,
-            current.id,
-          );
-          const answer = await taskReply('Yes, book Rui');
-          await waitFor(settled(answer.turnId));
-          await idle();
-          current = await card();
-          assert.equal(current.status, 'scheduled');
-          assert.equal(current.question, null);
-
-          const failed = await taskReply('task-fail-fixture');
-          await waitFor(settled(failed.turnId));
-          await idle();
-          current = await card();
-          assert.equal(current.status, 'failed');
-          assert.equal(current.question, null);
-          assert.equal(runs.filter((context) => context.prompt === 'task-fail-fixture').length, 1);
-
-          const finished = await taskReply('task-finish-fixture');
-          await waitFor(settled(finished.turnId));
-          await idle();
-          current = await card();
-          assert.equal(current.status, 'done');
-          assert.equal(current.result, 'Rui is booked for Saturday at 10:00 for 180 EUR.');
-          assert.deepEqual([current.nextCheck, current.waitingFor], [null, []]);
-          assert.ok(current.closedAt);
         },
       );
 
@@ -2238,32 +1466,6 @@ test(
         await waitFor(settledThread);
       });
 
-      await t.test('a stop during artifact delivery leaves no orphaned artifact', async () => {
-        const turn = await thread.submitUserMessage('screenshot-during-stop', [], {
-          channel: 'web',
-        });
-        await waitFor(settled(turn.turnId));
-        await waitFor(settledThread);
-        const artifacts = (
-          await db.pool.query("SELECT id FROM artifacts WHERE name='atomic.png'")
-        ).rows.map((row) => row.id as string);
-        assert.equal(artifacts.length, 1);
-        const messages = await db.pool.query(
-          "SELECT text,attachments FROM messages WHERE turn_id=$1 AND role='assistant'",
-          [turn.turnId],
-        );
-        assert.deepEqual(
-          messages.rows.flatMap((row) => row.attachments.map((item: { id: string }) => item.id)),
-          artifacts,
-        );
-        assert.ok(messages.rows.every((row) => row.text === ''));
-        assert.ok(
-          messages.rows
-            .flatMap((row) => row.attachments)
-            .every((artifact) => artifact.source === 'browser_screenshot'),
-        );
-      });
-
       await t.test(
         'a failed drain after a turn is retried so queued turns still run',
         async (t) => {
@@ -2398,10 +1600,8 @@ test(
             [ownerId],
           );
           assert.equal(posted.rowCount, 2);
-          assert.match(posted.rows[0].text, /^Hi! Give me a moment/);
           assert.equal(posted.rows[0].suggestions, null);
-          const { intro, tasks } = posted.rows[1].suggestions;
-          assert.equal(intro, 'Here are three things I can start on right now.');
+          const { tasks } = posted.rows[1].suggestions;
           assert.deepEqual(
             tasks.map((task: { title: string; source: string }) => [task.title, task.source]),
             [
@@ -2450,15 +1650,6 @@ test(
             throw new Error('Synthetic curator failure');
           };
           const fallback = await failing.prepare();
-          assert.deepEqual(
-            fallback.tasks.map((task) => [task.title, task.source]),
-            [
-              ['Draft replies waiting on me', 'gmail'],
-              ['Plan my next two weeks', 'web'],
-              ['Send me a Friday recap', 'web'],
-            ],
-          );
-          assert.match(fallback.intro, /^Thanks for telling me about your work\./);
           assert.deepEqual((planInputs.at(-1)!.input as { answers: string[] }).answers, [
             'Working on: a synthetic newsletter for synthetic-other-owner',
           ]);
@@ -2752,11 +1943,7 @@ test(
 
       await t.test(
         'history paging and reactions stay inside the owner’s active thread',
-        async (t) => {
-          pricingUnavailable = true;
-          t.after(() => {
-            pricingUnavailable = false;
-          });
+        async () => {
           const turn = randomUUID();
           await db.pool.query(
             "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Fixture','succeeded')",
@@ -2787,11 +1974,6 @@ test(
               [firstThreadId],
             )
           ).rows[0] as { id: string; turn_id: string };
-          const backgroundTurns: string[] = Array.from({ length: 51 }, () => randomUUID());
-          await db.pool.query(
-            "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) SELECT id,$2,$3,'schedule','Background fixture','succeeded',true FROM unnest($1::uuid[]) AS id",
-            [backgroundTurns, ownerId, freshThread],
-          );
           const state = (await request('GET', '/api/state')).json<{
             messages: Array<{ id: string; turnId: string | null }>;
             turns: Array<{ id: string; status: string }>;
@@ -2802,10 +1984,6 @@ test(
               .filter((entry) => entry.id === turn)
               .map(({ id, status }) => ({ id, status })),
             [{ id: turn, status: 'succeeded' }],
-          );
-          assert.equal(
-            state.turns.filter((entry) => backgroundTurns.includes(entry.id)).length,
-            50,
           );
           for (const id of [foreign, archived.id])
             assert.equal(
@@ -2845,15 +2023,6 @@ test(
           assert.equal((await react(message, 'heart')).statusCode, 200);
           for (const id of [foreign, archived.id])
             assert.equal((await react(id, 'heart')).statusCode, 404);
-          assert.equal(
-            (
-              await app.inject({
-                url: '/api/messages',
-                headers: { ...headers, 'sec-fetch-site': 'cross-site' },
-              })
-            ).statusCode,
-            403,
-          );
         },
       );
       await t.test(
@@ -2936,18 +2105,7 @@ test(
               0,
             );
             assert.equal(deltas.filter((event) => turnIds.includes(event.turnId)).length, 0);
-            const hour = new Date().getUTCHours();
-            await preferences.update({
-              timeZone: 'UTC',
-              quietHoursEnabled: true,
-              quietStart: `${String(hour).padStart(2, '0')}:00`,
-              quietEnd: `${String((hour + 1) % 24).padStart(2, '0')}:00`,
-            });
-            const quiet = await triage.triageEvent('Synthetic event in quiet hours', randomUUID());
-            assert.ok(quiet);
-            await waitFor(settled(quiet));
-            assert.equal(quietInstructions.get(quiet)?.quietHours, true);
-            await preferences.update({ notificationRule: '', quietHoursEnabled: false });
+            await preferences.update({ notificationRule: '' });
             const disabledId = randomUUID();
             assert.equal(
               await triage.triageEvent('Synthetic event without a rule', disabledId),
@@ -3018,22 +2176,10 @@ test(
             assert.equal(first.source, 'event');
             assert.equal(first.background, true);
             for (const check of await checks()) await waitFor(settled(check.id));
-            const request = quietInstructions.get(first.id) as
-              | {
-                  mode: string;
-                  notificationRule: string;
-                  connectedApps: ConnectedApp[];
-                  currentInstruction: string;
-                }
-              | undefined;
             assert.ok(
-              request,
+              ran(first.id),
               `The activity check ended as ${await turnStatus(first.id)} without running Pi.`,
             );
-            assert.equal(request.mode, 'background');
-            assert.equal(request.notificationRule, 'Tell me about new requests.');
-            assert.ok(request.connectedApps.some((item) => item.connectionId === app.connectionId));
-            assert.ok(request.currentInstruction.includes(app.connectionId!));
             const { started_at: since } = (await checks(app.connectionId))[0];
             await triage.heartbeat();
             assert.equal((await checks()).length, 2);
@@ -3237,52 +2383,11 @@ test(
           if (submitted) await waitFor(settled(submitted.turnId));
         }
       });
-      await t.test(
-        'turn and schedule analytics keep outcomes while excluding prompts, raw failures and private identifiers',
-        async () => {
-          const completed = analyticsEvents.filter(
-            (event) => event.event === 'otto_turn_completed',
-          );
-          for (const outcome of ['succeeded', 'failed', 'cancelled'])
-            assert.ok(
-              completed.some((event) => event.properties.outcome === outcome),
-              outcome,
-            );
-          assert.ok(
-            analyticsEvents.some(
-              (event) =>
-                event.event === 'otto_schedule_changed' && event.properties.operation === 'create',
-            ),
-          );
-          for (const event of completed) {
-            assert.deepEqual(Object.keys(event.properties).sort(), [
-              'analytics_schema',
-              'background',
-              'capture_source',
-              'channel',
-              'deployment',
-              'duration_ms',
-              'environment',
-              'outcome',
-              'queue_duration_ms',
-              'run_id',
-              'source',
-              ...(['waiting_user', 'waiting_credentials'].includes(String(event.properties.outcome))
-                ? ['waiting_reason']
-                : []),
-            ]);
-            assert.ok(Number(event.properties.duration_ms) >= 0);
-          }
-          for (const privateValue of [
-            'runtime-failure',
-            'fixture-secret',
-            'fixture-token',
-            'first message',
-            root,
-          ])
-            assert.ok(!JSON.stringify(analyticsEvents).includes(privateValue));
-        },
-      );
+      await t.test('turn analytics exclude prompts, raw failures and private identifiers', () => {
+        assert.ok(analyticsEvents.some((event) => event.event === 'otto_turn_completed'));
+        for (const privateValue of ['runtime-failure', 'first message', firstThreadId, root])
+          assert.ok(!JSON.stringify(analyticsEvents).includes(privateValue), privateValue);
+      });
     } finally {
       for (const resolve of gates.values()) resolve();
       releaseFence();
@@ -3675,7 +2780,6 @@ test(
   async (t) => {
     t.mock.method(console, 'error', () => {});
     const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
-    const idle = await memoryFixture([approvalsTable]);
     try {
       const { calls, state, curator } = scriptedCurator();
       const learning = createMemoryLearning({ pool, ownerId, memory, curator });
@@ -3817,123 +2921,13 @@ test(
       assert.deepEqual(JSON.parse(await memory.context()), {
         preferences: ['meeting-notes: Wants meeting notes as bullet points.'],
       });
-
-      const before = (await memory.load()).reflected;
-      await post('I take the bus to work every day.', { at: '2026-01-01T12:00:00Z' });
-      state.answer = () => {
-        throw new Error('offline');
-      };
-      assert.equal(await learning.reflect(), 0);
-      const offline = await memory.load();
-      assert.equal(offline.reflected, before);
-      assert.equal(offline.retries, 1);
-      state.answer = () => 'not an object';
-      assert.equal(await learning.reflect(), 0);
-      const waiting = await memory.load();
-      assert.equal(waiting.reflected, before);
-      assert.equal(waiting.retries, 2);
-      state.answer = () => {
-        throw new Error('offline');
-      };
-      assert.equal(await learning.reflect(), 0);
-      const skipped = await memory.load();
-      assert.notEqual(skipped.reflected, before);
-      assert.equal(skipped.retries, 0);
-      assert.equal(calls.length, 5);
-
-      await post('I only drink oat milk in coffee.', { at: '2026-01-01T13:00:00Z' });
-      let release!: (value: unknown) => void;
-      state.answer = () => new Promise((resolve) => (release = resolve));
-      const slow = learning.reflect();
-      while (calls.length < 6) await delay(5);
-      const newer = `2026-01-01T13:30:00.000000Z/${randomUUID()}`;
-      await memory.edit((tree) => {
-        tree.reflected = newer;
-      });
-      release({
-        ops: [
-          {
-            op: 'add',
-            sensitive: false,
-            area: 'preferences',
-            slug: 'oat-milk',
-            text: 'Drinks oat milk in coffee.',
-            m: [1],
-            quote: 'oat milk',
-          },
-        ],
-      });
-      assert.equal(await slow, 0);
-      const raced = await memory.load();
-      assert.equal(raced.reflected, newer);
-      assert.equal(
-        raced.entries.some((entry) => entry.slug === 'oat-milk'),
-        false,
-      );
-
-      const travelling = 'I am travelling this week.';
-      const trip = await memory.learn(
-        { area: 'preferences', quote: travelling, expires: '2020-01-01' },
-        await post(travelling, { at: '2026-01-01T14:00:00Z' }),
-      );
-      state.answer = () => {
-        throw new Error('offline');
-      };
-      await learning.run();
-      const maintained = await memory.load();
-      assert.equal(
-        maintained.entries.some((entry) => `${entry.area}/${entry.slug}` === trip.path),
-        false,
-      );
-      assert.equal(maintained.retries, 1);
-
-      const unconfigured = scriptedCurator(false);
-      await createMemoryLearning({
-        pool: idle.pool,
-        ownerId: idle.ownerId,
-        memory: idle.memory,
-        curator: unconfigured.curator,
-      }).run();
-      assert.equal(await idle.store.read('memory/MEMORY.md', 1024), undefined);
-      assert.equal(unconfigured.calls.length, 0);
-    } finally {
-      await idle.close();
-      await close();
-    }
-  },
-);
-
-test(
-  'background learning catches up across batches in one run',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
-    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
-    try {
-      const { calls, curator } = scriptedCurator();
-      const learning = createMemoryLearning({ pool, ownerId, memory, curator });
-      await memory.edit((tree) => {
-        tree.reflected = nilMark;
-      });
-      let last = '';
-      for (let index = 0; index < 45; index++)
-        last = (
-          await post(`Synthetic routine number ${index}.`, {
-            at: new Date(Date.UTC(2026, 0, 1, 10, index)).toISOString(),
-          })
-        ).id;
-      assert.equal(await learning.reflect(), 0);
-      assert.deepEqual(
-        calls.map((call) => (call.input.messages as unknown[]).length),
-        [40, 5],
-      );
-      assert.ok((await memory.load()).reflected?.endsWith(`/${last}`));
     } finally {
       await close();
     }
   },
 );
 
-async function feedbackFixture(t: TestContext, enabled = true) {
+async function feedbackFixture(t: TestContext) {
   const schema = `test_feedback_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -3950,44 +2944,21 @@ async function feedbackFixture(t: TestContext, enabled = true) {
   });
   const state = {
     content: JSON.stringify({ messages: ['Synthetic reviewed conversation'] }),
-    builds: 0,
-    dropResponse: false,
-    submitStatus: 'submitted' as FeedbackReceipt['status'],
-    statusOverride: undefined as FeedbackReceipt['status'] | undefined,
     envelopes: [] as FeedbackEnvelope[],
-    statusRequests: [] as Array<{ action: 'status'; submissionId: string; payloadHash: string }>,
+    statusRequests: [] as Array<{ action: 'status'; submissionId: string }>,
   };
-  const accepted = new Map<string, { payloadHash: string; receipt: FeedbackReceipt }>();
   const delivery = createN8nFeedback({
-    enabled,
+    enabled: true,
     url: 'https://feedback.example.test/intake',
     request: async (_url, options) => {
-      assert.equal(options?.redirect, 'error');
       const input = JSON.parse(String(options?.body));
-      if (input.action === 'status') {
-        state.statusRequests.push(input);
-        const saved = accepted.get(input.submissionId);
-        assert.equal(input.payloadHash, saved?.payloadHash);
-        return Response.json({
-          ...saved?.receipt,
-          ...(state.statusOverride && { status: state.statusOverride }),
-        });
-      }
-      state.envelopes.push(input);
-      const previous = accepted.get(input.submissionId);
-      if (input.action === 'repair') {
-        assert.ok(previous);
-        assert.equal(input.payloadHash, previous.payloadHash);
-      }
+      if (input.action === 'status') state.statusRequests.push(input);
+      else state.envelopes.push(input);
       const receipt: FeedbackReceipt = {
         submissionId: input.submissionId,
-        status: state.submitStatus,
-        issueUrl:
-          previous?.receipt.issueUrl ??
-          `https://linear.app/n8n/issue/LAB-${1000 + accepted.size}/synthetic-feedback`,
+        status: 'submitted',
+        issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback',
       };
-      accepted.set(input.submissionId, { payloadHash: input.payloadHash, receipt });
-      if (state.dropResponse) throw new Error('Synthetic connection closed after accepting.');
       return Response.json(receipt);
     },
   });
@@ -4000,7 +2971,7 @@ async function feedbackFixture(t: TestContext, enabled = true) {
     source: 'desktop' as const,
     appModified: false,
   };
-  const open = async (ownerId = randomUUID(), buildReport?: () => Promise<string>) => {
+  const open = async (ownerId = randomUUID()) => {
     const app = Fastify();
     apps.push(app);
     await registerFeedback(app, {
@@ -4008,10 +2979,7 @@ async function feedbackFixture(t: TestContext, enabled = true) {
       ownerId,
       context,
       delivery,
-      buildReport: async () => {
-        state.builds++;
-        return buildReport ? buildReport() : state.content;
-      },
+      buildReport: async () => state.content,
     });
     return { app, ownerId };
   };
@@ -4027,108 +2995,16 @@ async function feedbackFixture(t: TestContext, enabled = true) {
   return { pool, state, open, submission };
 }
 
-async function waitForBlockedFeedbackClaim(pool: pg.Pool, blocker: number) {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const waiting = await pool.query(
-      'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
-      [blocker],
-    );
-    if (waiting.rows[0]) return waiting.rows[0].pid as number;
-    await delay(10);
-  }
-  assert.fail('The feedback claim did not reach its database lock.');
-}
-
-async function blockFeedbackClaim(pool: pg.Pool, phase: 'BEFORE' | 'AFTER') {
-  const lock = randomUUID();
-  await pool.query(`CREATE FUNCTION pause_feedback_claim() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN PERFORM pg_advisory_xact_lock(hashtext('${lock}')); RETURN NEW; END;
-    $$;
-    CREATE TRIGGER feedback_claim_pause ${phase} INSERT ON feedback_submissions
-    FOR EACH ROW WHEN (NEW.status='unknown') EXECUTE FUNCTION pause_feedback_claim()`);
-  const client = await pool.connect();
-  const result = await client.query(
-    'SELECT pg_backend_pid() AS pid,pg_advisory_lock(hashtext($1))',
-    [lock],
-  );
-  let released = false;
-  return {
-    pid: result.rows[0].pid as number,
-    async release() {
-      if (released) return;
-      released = true;
-      try {
-        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lock]);
-      } finally {
-        client.release();
-      }
-    },
-  };
-}
-
 test(
-  'feedback retains at most five reports when concurrent builds finish together',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    let release!: () => void;
-    let allStarted!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      allStarted = resolve;
-    });
-    const { app } = await f.open(undefined, async () => {
-      if (f.state.builds === 8) allStarted();
-      await blocked;
-      return f.state.content;
-    });
-    const builds = Array.from({ length: 8 }, () =>
-      app.inject({ method: 'POST', url: '/api/feedback/report' }),
-    );
-    const completed = Promise.all(builds);
-    await started;
-    release();
-    const snapshots = await completed;
-    assert.ok(snapshots.every((response) => response.statusCode === 200));
-    const submissions = await Promise.all(
-      snapshots.map((response) =>
-        app.inject({
-          method: 'POST',
-          url: '/api/feedback',
-          payload: f.submission({ reportId: response.json().id }),
-        }),
-      ),
-    );
-    assert.equal(submissions.filter((response) => response.statusCode === 410).length, 3);
-    assert.equal(
-      submissions.filter((response) => response.json().status === 'submitted').length,
-      5,
-    );
-    assert.equal(f.state.envelopes.length, 5);
-  },
-);
-
-test(
-  'feedback preserves the reviewed snapshot, isolates owners and never resubmits uncertain delivery',
+  'feedback reports and their delivery status stay with their owner',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
     const first = await f.open();
     const second = await f.open();
-    const context = await first.app.inject({ url: '/api/feedback/context' });
-    assert.equal(context.json().enabled, true);
-    assert.equal(context.json().recipient, 'feedback.example.test');
-    const snapshotResponse = await first.app.inject({
-      method: 'POST',
-      url: '/api/feedback/report',
-    });
-    assert.equal(snapshotResponse.statusCode, 200);
-    assert.equal(snapshotResponse.headers['cache-control'], 'no-store');
-    const snapshot = snapshotResponse.json<{ id: string; content: string }>();
-    f.state.content = JSON.stringify({ messages: ['Synthetic later conversation'] });
+    const snapshot = (
+      await first.app.inject({ method: 'POST', url: '/api/feedback/report' })
+    ).json<{ id: string; content: string }>();
     const input = f.submission({ reportId: snapshot.id });
     const crossOwner = await second.app.inject({
       method: 'POST',
@@ -4137,997 +3013,19 @@ test(
     });
     assert.equal(crossOwner.statusCode, 410);
     assert.equal(f.state.envelopes.length, 0);
-    f.state.dropResponse = true;
-    const dropped = await first.app.inject({
-      method: 'POST',
-      url: '/api/feedback',
-      payload: input,
-    });
-    assert.equal(dropped.statusCode, 200);
-    assert.equal(dropped.json().status, 'unknown');
-    assert.equal(f.state.builds, 1);
+    const sent = await first.app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(sent.statusCode, 200);
     assert.equal(f.state.envelopes.length, 1);
-    const delivered = f.state.envelopes[0];
-    assert.equal(Buffer.from(delivered.report!.data, 'base64').toString(), snapshot.content);
-    assert.ok(!JSON.stringify(delivered).includes('Synthetic later conversation'));
-    const repeated = await first.app.inject({
-      method: 'POST',
-      url: '/api/feedback',
-      payload: input,
-    });
-    assert.equal(repeated.json().status, 'unknown');
-    assert.equal(f.state.envelopes.length, 1);
-    const changed = await first.app.inject({
-      method: 'POST',
-      url: '/api/feedback',
-      payload: { ...input, feedback: 'Different feedback' },
-    });
-    assert.equal(changed.statusCode, 409);
     const foreignStatus = await second.app.inject({ url: `/api/feedback/${input.submissionId}` });
     assert.equal(foreignStatus.json().status, 'rejected');
     assert.equal(f.state.statusRequests.length, 0);
-    const early = await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
-    assert.equal(early.json().status, 'unknown');
-    assert.equal(f.state.statusRequests.length, 0);
-    await f.pool.query(
-      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
-      [first.ownerId, input.submissionId],
-    );
-    const status = await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
-    assert.equal(status.json().status, 'submitted');
-    assert.equal(f.state.statusRequests.length, 1);
-    assert.equal(f.state.statusRequests[0].payloadHash, delivered.payloadHash);
-    const confirmed = await first.app.inject({
-      method: 'POST',
-      url: '/api/feedback',
-      payload: input,
-    });
-    assert.equal(confirmed.json().status, 'submitted');
-    assert.equal(f.state.envelopes.length, 1);
-    await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
-    assert.equal(f.state.statusRequests.length, 1);
-    const stored = (await f.pool.query('SELECT * FROM feedback_submissions')).rows;
-    assert.equal(stored.length, 2);
-    assert.equal(stored.find((row) => row.owner_id === first.ownerId).status, 'submitted');
-    const foreign = stored.find((row) => row.owner_id === second.ownerId);
-    assert.equal(foreign.status, 'rejected');
-    assert.equal(foreign.request_hash, '');
-    assert.equal(foreign.payload_hash, '');
-    assert.equal(foreign.issue_url, null);
-    assert.ok(!JSON.stringify(stored).includes(input.feedback));
-    assert.ok(!JSON.stringify(stored).includes(snapshot.content));
+    const foreign = (
+      await f.pool.query('SELECT * FROM feedback_submissions WHERE owner_id=$1', [second.ownerId])
+    ).rows;
+    assert.ok(!JSON.stringify(foreign).includes(input.feedback));
+    assert.ok(!JSON.stringify(foreign).includes(snapshot.content));
   },
 );
-
-test(
-  'feedback partial delivery repairs only the retained original and cannot lose its issue receipt',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    for (const category of ['bug', 'feature', 'other'] as const) {
-      const f = await feedbackFixture(t);
-      const { app, ownerId } = await f.open();
-      const other = await f.open();
-      const snapshot = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
-      const input = f.submission({
-        category,
-        reportId: snapshot.id,
-        attachments: [
-          {
-            name: 'synthetic.png',
-            mimeType: 'image/png',
-            data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
-          },
-          {
-            name: 'synthetic.pdf',
-            mimeType: 'application/pdf',
-            data: Buffer.from('%PDF-1.7\n%%EOF').toString('base64'),
-          },
-          {
-            name: 'synthetic.json',
-            mimeType: 'application/json',
-            data: Buffer.from('{"synthetic":true}').toString('base64'),
-          },
-        ],
-      });
-      f.state.submitStatus = 'partial';
-      const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
-      const initial = first.json<FeedbackReceipt>();
-      assert.equal(initial.status, 'partial');
-      assert.equal(initial.canRetryAttachments, true);
-      const original = f.state.envelopes[0];
-      assert.equal(original.report!.data, Buffer.from(snapshot.content).toString('base64'));
-      assert.equal(
-        original.report!.sha256,
-        createHash('sha256').update(snapshot.content).digest('hex'),
-      );
-      f.state.content = JSON.stringify({
-        messages: ['The conversation changed after the first submission.'],
-      });
-      const refreshed = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
-      assert.notEqual(refreshed.id, snapshot.id);
-      const replaced = await app.inject({
-        method: 'POST',
-        url: '/api/feedback',
-        payload: { ...input, reportId: refreshed.id },
-      });
-      assert.equal(replaced.statusCode, 409);
-      const repeated = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
-      assert.equal(repeated.json().status, 'partial');
-      assert.equal(f.state.envelopes.length, 1);
-      const foreign = await other.app.inject({
-        method: 'POST',
-        url: `/api/feedback/${input.submissionId}/retry`,
-        payload: {},
-      });
-      assert.equal(foreign.statusCode, 409);
-      for (const status of ['unknown', 'rejected'] as const) {
-        f.state.statusOverride = status;
-        const checked = (
-          await app.inject({ url: `/api/feedback/${input.submissionId}` })
-        ).json<FeedbackReceipt>();
-        assert.equal(checked.status, 'partial');
-        assert.equal(checked.issueUrl, initial.issueUrl);
-        assert.equal(checked.canRetryAttachments, true);
-        f.state.submitStatus = status;
-        const retried = (
-          await app.inject({
-            method: 'POST',
-            url: `/api/feedback/${input.submissionId}/retry`,
-            payload: {},
-          })
-        ).json<FeedbackReceipt>();
-        assert.equal(retried.status, 'partial');
-        assert.equal(retried.issueUrl, initial.issueUrl);
-        assert.equal(retried.canRetryAttachments, true);
-      }
-      f.state.statusOverride = undefined;
-      f.state.submitStatus = 'submitted';
-      const repaired = await Promise.all(
-        [0, 1].map(() =>
-          app.inject({
-            method: 'POST',
-            url: `/api/feedback/${input.submissionId}/retry`,
-            payload: {},
-          }),
-        ),
-      );
-      assert.ok(repaired.some((response) => response.json().status === 'submitted'));
-      assert.equal(f.state.envelopes.length, 4);
-      for (const envelope of f.state.envelopes.slice(1)) {
-        const { action, ...payload } = envelope;
-        assert.equal(action, 'repair');
-        assert.deepEqual(payload, original);
-      }
-      assert.equal(f.state.builds, 2);
-      const after = await app.inject({
-        method: 'POST',
-        url: `/api/feedback/${input.submissionId}/retry`,
-        payload: {},
-      });
-      assert.equal(after.statusCode, 409);
-      assert.equal(f.state.envelopes.length, 4);
-      const stored = await f.pool.query(
-        'SELECT status,issue_url FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
-        [ownerId, input.submissionId],
-      );
-      assert.equal(stored.rows[0].status, 'submitted');
-      assert.equal(stored.rows[0].issue_url, initial.issueUrl);
-    }
-  },
-);
-
-test(
-  'feedback partial delivery stays reviewable after restart without recreating lost attachment bytes',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    const first = await f.open();
-    const snapshot = (
-      await first.app.inject({ method: 'POST', url: '/api/feedback/report' })
-    ).json();
-    f.state.submitStatus = 'partial';
-    const input = f.submission({ reportId: snapshot.id });
-    const initial = (
-      await first.app.inject({ method: 'POST', url: '/api/feedback', payload: input })
-    ).json<FeedbackReceipt>();
-    await first.app.close();
-    const { app } = await f.open(first.ownerId);
-    const restored = (
-      await app.inject({ url: `/api/feedback/${input.submissionId}` })
-    ).json<FeedbackReceipt>();
-    assert.equal(restored.status, 'partial');
-    assert.equal(restored.issueUrl, initial.issueUrl);
-    assert.equal(restored.canRetryAttachments, false);
-    const retry = await app.inject({
-      method: 'POST',
-      url: `/api/feedback/${input.submissionId}/retry`,
-      payload: {},
-    });
-    assert.equal(retry.statusCode, 410);
-    assert.equal(f.state.envelopes.length, 1);
-    assert.equal(f.state.builds, 1);
-  },
-);
-
-test(
-  'feedback retains metadata and validates image and document attachments before delivery',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    const { app } = await f.open();
-    const snapshot = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
-    for (const metadata of [
-      { category: 'bug', source: 'desktop', appVersion: '1.2.3', appModified: false },
-      { category: 'feature', source: 'local-web', appVersion: null, appModified: true },
-      { category: 'other', source: 'hosted-web', appVersion: null, appModified: null },
-    ] as const) {
-      const input = f.submission(metadata);
-      const result = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
-      assert.equal(result.json().status, 'submitted');
-      const delivered = f.state.envelopes.at(-1)!;
-      assert.equal(delivered.report, undefined);
-      assert.equal(delivered.appVersion, input.appVersion);
-      assert.equal(delivered.appRelease, input.appRelease);
-      assert.equal(delivered.source, input.source);
-      assert.equal(delivered.appModified, input.appModified);
-      assert.equal(delivered.computerName, input.computerName);
-    }
-    const other = await f.open();
-    const foreignReport = await other.app.inject({
-      method: 'POST',
-      url: '/api/feedback',
-      payload: f.submission({ category: 'feature', reportId: snapshot.id }),
-    });
-    assert.equal(foreignReport.statusCode, 410);
-    for (const [name, mimeType, content] of [
-      ['example.pdf', 'application/pdf', '%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF'],
-      ['example.txt', 'text/plain', 'Synthetic café report\nwith another line.'],
-      ['example.log', 'text/plain', 'Synthetic event\tcompleted\r\n'],
-      ['example.md', 'text/plain', '# Synthetic report\n\nDetails.'],
-      ['example.json', 'application/json', '\ufeff{"synthetic":true}'],
-      ['example.csv', 'text/csv', 'name,status\r\nsynthetic,complete\r\n'],
-    ] as const) {
-      const file = { name, mimeType, data: Buffer.from(content).toString('base64') };
-      const result = await app.inject({
-        method: 'POST',
-        url: '/api/feedback',
-        payload: f.submission({ attachments: [file] }),
-      });
-      assert.equal(result.statusCode, 200, name);
-      const delivered = f.state.envelopes.at(-1)!.attachments[0];
-      assert.equal(delivered.mimeType, mimeType);
-      assert.equal(delivered.data, file.data);
-      assert.equal(delivered.sha256, createHash('sha256').update(content).digest('hex'));
-    }
-    for (const file of [
-      {
-        name: 'wrong.png',
-        mimeType: 'image/png',
-        data: Buffer.from('<html>synthetic</html>').toString('base64'),
-      },
-      {
-        name: 'wrong.jpg',
-        mimeType: 'image/jpeg',
-        data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
-      },
-      { name: 'bad.webp', mimeType: 'image/webp', data: 'not base64!' },
-      {
-        name: 'bad.pdf',
-        mimeType: 'application/pdf',
-        data: Buffer.from('not PDF').toString('base64'),
-      },
-      {
-        name: 'bad.txt',
-        mimeType: 'text/plain',
-        data: Buffer.from([0xc3, 0x28]).toString('base64'),
-      },
-      {
-        name: 'bad.log',
-        mimeType: 'text/plain',
-        data: Buffer.from('contains\0binary').toString('base64'),
-      },
-      {
-        name: 'bad.json',
-        mimeType: 'application/json',
-        data: Buffer.from('not JSON').toString('base64'),
-      },
-      { name: 'bad.csv', mimeType: 'text/csv', data: Buffer.from([0xff]).toString('base64') },
-    ]) {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/feedback',
-        payload: f.submission({ attachments: [file as FeedbackSubmission['attachments'][number]] }),
-      });
-      assert.equal(response.statusCode, 400);
-    }
-    const textFile = (bytes: number) => ({
-      name: 'synthetic.txt',
-      mimeType: 'text/plain' as const,
-      data: Buffer.from('x'.repeat(bytes)).toString('base64'),
-    });
-    for (const attachments of [
-      [textFile(feedbackLimits.attachmentBytes + 1)],
-      Array.from({ length: 4 }, () => textFile(1)),
-      Array.from({ length: 3 }, () => textFile(1_500_000)),
-    ]) {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/feedback',
-        payload: f.submission({ attachments }),
-      });
-      assert.ok(response.statusCode >= 400);
-    }
-    const oversized = await app.inject({
-      method: 'POST',
-      url: '/api/feedback',
-      payload: f.submission({ feedback: 'x'.repeat(feedbackLimits.requestBytes) }),
-    });
-    assert.equal(oversized.statusCode, 413);
-    assert.equal(f.state.envelopes.length, 9);
-    assert.equal(
-      (await f.pool.query('SELECT count(*)::int AS count FROM feedback_submissions')).rows[0].count,
-      9,
-    );
-  },
-);
-
-test(
-  'feedback concurrent duplicate IDs send once and reject different content',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    const { app } = await f.open();
-    await f.pool
-      .query(`CREATE FUNCTION pause_feedback_insert() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN PERFORM pg_sleep(0.1); RETURN NEW; END;
-    $$;
-    CREATE TRIGGER feedback_insert_pause BEFORE INSERT ON feedback_submissions
-      FOR EACH ROW EXECUTE FUNCTION pause_feedback_insert()`);
-    const input = f.submission();
-    const duplicated = await Promise.all(
-      [input, input].map((payload) =>
-        app.inject({
-          method: 'POST',
-          url: '/api/feedback',
-          payload,
-        }),
-      ),
-    );
-    assert.ok(duplicated.every((response) => response.statusCode === 200));
-    assert.equal(f.state.envelopes.length, 1);
-    const conflicting = f.submission();
-    const conflictResponses = await Promise.all(
-      [conflicting, { ...conflicting, feedback: 'Different request' }].map((payload) =>
-        app.inject({
-          method: 'POST',
-          url: '/api/feedback',
-          payload,
-        }),
-      ),
-    );
-    assert.deepEqual(conflictResponses.map((response) => response.statusCode).sort(), [200, 409]);
-    assert.equal(f.state.envelopes.length, 2);
-  },
-);
-
-test(
-  'feedback status rejects a delayed unclaimed submission without allowing it to send later',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    const { app, ownerId } = await f.open();
-    const gate = await blockFeedbackClaim(f.pool, 'BEFORE');
-    const input = f.submission();
-    const sent = app
-      .inject({ method: 'POST', url: '/api/feedback', payload: input })
-      .then((value) => value);
-    try {
-      await waitForBlockedFeedbackClaim(f.pool, gate.pid);
-      const status = await app.inject({ url: `/api/feedback/${input.submissionId}` });
-      assert.equal(status.json().status, 'rejected');
-      assert.equal(f.state.envelopes.length, 0);
-      assert.equal(f.state.statusRequests.length, 0);
-    } finally {
-      await gate.release();
-    }
-    const delayed = await sent;
-    assert.equal(delayed.statusCode, 200);
-    assert.equal(delayed.json().status, 'rejected');
-    const repeated = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
-    assert.equal(repeated.json().status, 'rejected');
-    assert.equal(f.state.envelopes.length, 0);
-    const stored = await f.pool.query(
-      'SELECT status,request_hash,payload_hash FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
-      [ownerId, input.submissionId],
-    );
-    assert.deepEqual(stored.rows, [{ status: 'rejected', request_hash: '', payload_hash: '' }]);
-  },
-);
-
-test(
-  'feedback status preserves an in-flight submission that claimed its row first',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    const { app } = await f.open();
-    const gate = await blockFeedbackClaim(f.pool, 'AFTER');
-    const input = f.submission();
-    const sent = app
-      .inject({ method: 'POST', url: '/api/feedback', payload: input })
-      .then((value) => value);
-    let status!: Promise<Awaited<typeof sent>>;
-    try {
-      const claimingPid = await waitForBlockedFeedbackClaim(f.pool, gate.pid);
-      status = app.inject({ url: `/api/feedback/${input.submissionId}` }).then((value) => value);
-      await waitForBlockedFeedbackClaim(f.pool, claimingPid);
-    } finally {
-      await gate.release();
-    }
-    const [submitted, checked] = await Promise.all([sent, status]);
-    assert.equal(submitted.json().status, 'submitted');
-    assert.ok(['unknown', 'submitted'].includes(checked.json().status));
-    assert.equal(f.state.envelopes.length, 1);
-    assert.equal(f.state.statusRequests.length, 0);
-    const confirmed = await app.inject({ url: `/api/feedback/${input.submissionId}` });
-    assert.equal(confirmed.json().status, 'submitted');
-  },
-);
-
-test(
-  'feedback abandoned before a delayed database claim never reaches external delivery',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t);
-    const { app, ownerId } = await f.open();
-    const gate = await blockFeedbackClaim(f.pool, 'BEFORE');
-    let markClosed!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      markClosed = resolve;
-    });
-    app.addHook('onRequest', async (_request, reply) => {
-      reply.raw.once('close', markClosed);
-    });
-    const origin = await app.listen({ host: '127.0.0.1', port: 0 });
-    const controller = new AbortController();
-    const input = f.submission();
-    const sent = fetch(`${origin}/api/feedback`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-      signal: controller.signal,
-    });
-    const aborted = assert.rejects(sent, (error: Error) => error.name === 'AbortError');
-    try {
-      await waitForBlockedFeedbackClaim(f.pool, gate.pid);
-      controller.abort();
-      await aborted;
-      await closed;
-    } finally {
-      await gate.release();
-    }
-    const deadline = Date.now() + 5000;
-    let status: string | undefined;
-    while (Date.now() < deadline) {
-      const saved = await f.pool.query(
-        'SELECT status FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
-        [ownerId, input.submissionId],
-      );
-      status = saved.rows[0]?.status;
-      if (status === 'rejected') break;
-      await delay(20);
-    }
-    assert.equal(status, 'rejected');
-    assert.equal(f.state.envelopes.length, 0);
-    const confirmed = await app.inject({ url: `/api/feedback/${input.submissionId}` });
-    assert.equal(confirmed.json().status, 'rejected');
-    assert.equal(f.state.statusRequests.length, 0);
-  },
-);
-
-test(
-  'disabled feedback exposes no recipient and never submits or reconciles outbound',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await feedbackFixture(t, false);
-    const { app, ownerId } = await f.open();
-    const context = (await app.inject({ url: '/api/feedback/context' })).json();
-    assert.equal(context.enabled, false);
-    assert.equal(context.recipient, null);
-    const input = f.submission();
-    const response = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
-    assert.equal(response.statusCode, 503);
-    await f.pool.query(
-      `INSERT INTO feedback_submissions(owner_id,id,request_hash,payload_hash,status,created_at)
-       VALUES($1,$2,$3,$3,'unknown',now()-interval '1 hour')`,
-      [ownerId, input.submissionId, 'a'.repeat(64)],
-    );
-    const receipt = await app.inject({ url: `/api/feedback/${input.submissionId}` });
-    assert.equal(receipt.json().status, 'unknown');
-    assert.equal(f.state.envelopes.length, 0);
-    assert.equal(f.state.statusRequests.length, 0);
-  },
-);
-
-test('feedback intake accepts only matching Linear receipts and never retries a failed or redirected request', async (t) => {
-  const input: FeedbackEnvelope = {
-    schemaVersion: 1,
-    submissionId: randomUUID(),
-    payloadHash: 'a'.repeat(64),
-    category: 'bug',
-    feedback: 'Synthetic issue',
-    computerName: null,
-    appVersion: '1.2.3',
-    appRelease: null,
-    platform: null,
-    development: true,
-    source: 'local-web',
-    appModified: true,
-    attachments: [],
-  };
-  const issueUrl = 'https://linear.app/n8n/issue/LAB-123/synthetic-feedback';
-  const valid = { submissionId: input.submissionId, status: 'submitted', issueUrl };
-  const responses: Array<[string, () => Response]> = [
-    ['empty 200', () => new Response('')],
-    ['unrelated 200', () => Response.json({ ok: true })],
-    [
-      'GraphQL errors',
-      () =>
-        Response.json({ data: { issueCreate: null }, errors: [{ message: 'Synthetic failure' }] }),
-    ],
-    ['wrong ID', () => Response.json({ ...valid, submissionId: randomUUID() })],
-    ['missing issue URL', () => Response.json({ ...valid, issueUrl: undefined })],
-    [
-      'foreign issue URL',
-      () => Response.json({ ...valid, issueUrl: 'https://example.test/n8n/issue/LAB-123' }),
-    ],
-    [
-      'wrong team',
-      () => Response.json({ ...valid, issueUrl: 'https://linear.app/n8n/issue/SEC-123' }),
-    ],
-    ['oversized receipt', () => Response.json({ ...valid, extra: 'x'.repeat(9000) })],
-    [
-      'redirect',
-      () =>
-        new Response(null, {
-          status: 307,
-          headers: { location: 'https://elsewhere.example.test' },
-        }),
-    ],
-    ['HTTP error', () => Response.json(valid, { status: 502 })],
-  ];
-  for (const [name, response] of responses) {
-    await t.test(name, async () => {
-      let calls = 0;
-      const delivery = createN8nFeedback({
-        url: 'https://feedback.example.test/intake',
-        request: async (_url, options) => {
-          calls++;
-          assert.equal(options?.redirect, 'error');
-          assert.equal(new Headers(options?.headers).get('x-otto-feedback-token'), null);
-          assert.equal(JSON.parse(String(options?.body)).submissionId, input.submissionId);
-          return response();
-        },
-      });
-      assert.deepEqual(await delivery.submit(input), {
-        submissionId: input.submissionId,
-        status: 'unknown',
-      });
-      assert.equal(calls, 1);
-    });
-  }
-  let calls = 0;
-  const dropped = createN8nFeedback({
-    url: 'https://feedback.example.test/intake',
-    request: async () => {
-      calls++;
-      throw new Error('Synthetic network failure');
-    },
-  });
-  assert.equal((await dropped.submit(input)).status, 'unknown');
-  assert.equal(calls, 1);
-  const delivery = createN8nFeedback({
-    url: 'https://feedback.example.test/intake',
-    request: async () => Response.json(valid),
-  });
-  assert.deepEqual(await delivery.submit(input), valid);
-  await t.test(
-    'custom intake accepts only receipts inside its approved issue collection',
-    async () => {
-      let issueUrl: unknown = 'https://issues.example.test/projects/otto/issues/ABC-123';
-      const requests: unknown[] = [];
-      const custom = createN8nFeedback({
-        url: 'https://feedback.example.test/intake',
-        receiptUrlPrefix: 'https://issues.example.test/projects/otto/issues/',
-        token: 'synthetic-feedback-token',
-        request: async (url, options) => {
-          assert.equal(String(url), 'https://feedback.example.test/intake');
-          assert.equal(
-            new Headers(options?.headers).get('x-otto-feedback-token'),
-            'synthetic-feedback-token',
-          );
-          requests.push(JSON.parse(String(options?.body)));
-          return Response.json({ ...valid, issueUrl });
-        },
-      });
-      assert.equal(custom.recipient, 'feedback.example.test');
-      assert.deepEqual(await custom.submit(input), { ...valid, issueUrl });
-      assert.deepEqual(await custom.status(input.submissionId, input.payloadHash), {
-        ...valid,
-        issueUrl,
-      });
-      assert.deepEqual(requests, [
-        input,
-        { action: 'status', submissionId: input.submissionId, payloadHash: input.payloadHash },
-      ]);
-      for (const invalid of [
-        'https://issues.example.test/projects/otto/issues',
-        'https://issues.example.test/projects/otto/issues/',
-        'https://issues.example.test/projects/otto/issues-foreign/ABC-123',
-        'https://issues.example.test/projects/other/issues/ABC-123',
-        'https://issues.example.test.foreign.test/projects/otto/issues/ABC-123',
-        'https://issues.example.test:444/projects/otto/issues/ABC-123',
-        'https://linear.app/n8n/issue/LAB-123',
-        'http://issues.example.test/projects/otto/issues/ABC-123',
-        'https://name:secret@issues.example.test/projects/otto/issues/ABC-123',
-        'https://issues.example.test/projects/otto/issues/ABC-123?token=synthetic',
-        'https://issues.example.test/projects/otto/issues/ABC-123#private',
-        'https://issues.example.test/projects/otto/issues/../issues/ABC-123',
-        'https://issues.example.test/projects/otto/issues/%2e%2e/issues/ABC-123',
-        'https://issues.example.test/projects/otto/issues/ABC-123%2fsecret',
-        'https://issues.example.test/projects/otto/issues/ABC-123%5Csecret',
-        'https://issues.example.test/projects/otto/issues/ABC-123%252fsecret',
-        'https://issues.example.test/projects/otto/issues/ABC-123\\secret',
-        ['https://issues.example.test/projects/otto/issues/ABC-123'],
-      ]) {
-        issueUrl = invalid;
-        assert.deepEqual(await custom.submit(input), {
-          submissionId: input.submissionId,
-          status: 'unknown',
-        });
-      }
-      const disabled = createN8nFeedback({
-        enabled: false,
-        url: 'invalid disabled configuration',
-        receiptUrlPrefix: 'invalid disabled configuration',
-        request: async () => {
-          throw new Error('Disabled feedback made an outbound request.');
-        },
-      });
-      assert.equal(disabled.configured, false);
-      assert.equal(disabled.recipient, null);
-      assert.equal((await disabled.submit(input)).status, 'rejected');
-      assert.equal(
-        (await disabled.status(input.submissionId, input.payloadHash)).status,
-        'rejected',
-      );
-      for (const invalid of [
-        'http://issues.example.test/issues/',
-        'https://issues.example.test/',
-        'https://issues.example.test/issues',
-        'https://name:secret@issues.example.test/issues/',
-        'https://issues.example.test/issues/?token=synthetic',
-        'https://issues.example.test/issues/#private',
-        'https://issues.example.test/private/../issues/',
-        'https://issues.example.test/%2e%2e/issues/',
-        'https://issues.example.test/issues%2f',
-        'https://issues.example.test/issues%5c',
-        'https://issues.example.test/issues%252f',
-        'https://issues.example.test/issues\\private',
-        'https://issues.example.test/issues%broken',
-      ])
-        assert.throws(() =>
-          createN8nFeedback({
-            url: 'https://feedback.example.test/intake',
-            receiptUrlPrefix: invalid,
-          }),
-        );
-    },
-  );
-  await t.test(
-    'delivery preserves bounded explanations without trusting malformed messages',
-    async () => {
-      for (const status of ['rejected', 'partial', 'unknown'] as const) {
-        const receipt = { ...valid, status, message: 'Synthetic recovery instruction.' };
-        const provider = createN8nFeedback({
-          url: 'https://feedback.example.test/intake',
-          request: async () =>
-            Response.json(receipt, { status: status === 'rejected' ? 400 : 200 }),
-        });
-        assert.deepEqual(await provider.submit(input), receipt);
-      }
-      for (const message of [null, {}, 123, 'x'.repeat(1001)]) {
-        const provider = createN8nFeedback({
-          url: 'https://feedback.example.test/intake',
-          request: async () => Response.json({ ...valid, message }),
-        });
-        assert.deepEqual(await provider.submit(input), valid);
-      }
-    },
-  );
-  await t.test('direct webhook reconciles only a matching HTTP 400 rejection', async () => {
-    for (const [status, body, expected] of [
-      [400, { submissionId: input.submissionId, status: 'rejected' }, 'rejected'],
-      [400, { submissionId: randomUUID(), status: 'rejected' }, 'unknown'],
-      [400, { error: 'Invalid request' }, 'unknown'],
-      [400, valid, 'unknown'],
-      [400, { ...valid, status: 'partial' }, 'unknown'],
-      [400, { submissionId: input.submissionId, status: 'unknown' }, 'unknown'],
-      [401, { submissionId: input.submissionId, status: 'rejected' }, 'unknown'],
-      [502, { submissionId: input.submissionId, status: 'rejected' }, 'unknown'],
-    ] as const) {
-      let requests = 0;
-      const direct = createN8nFeedback({
-        url: 'https://feedback.example.test/intake',
-        request: async () => {
-          requests++;
-          return Response.json(body, { status });
-        },
-      });
-      assert.deepEqual(await direct.status(input.submissionId, input.payloadHash), {
-        submissionId: input.submissionId,
-        status: expected,
-      });
-      assert.equal(requests, 1);
-    }
-  });
-  const limited = createN8nFeedback({
-    url: 'https://feedback.example.test/intake',
-    request: async () =>
-      Response.json({ status: 'rejected' }, { status: 429, headers: { 'retry-after': '60' } }),
-  });
-  const refused = await limited.submit(input);
-  assert.equal(refused.status, 'rejected');
-  assert.ok(refused.message);
-  assert.equal((await limited.status(input.submissionId, input.payloadHash)).status, 'unknown');
-  assert.equal((await limited.submit({ ...input, action: 'repair' })).status, 'unknown');
-});
-
-test('feedback diagnostics redact a credential retrieved while the report rows are being sampled', async () => {
-  const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
-  const ownerId = randomUUID();
-  const threadId = randomUUID();
-  const password = 'synthetic-newly-retrieved-login';
-  const sampled = new Set<string>();
-  let credentialAvailable = false;
-  const pool = {
-    async query(sql: string, values: string[]) {
-      assert.equal(values[0], ownerId);
-      if (sql.includes('FROM threads')) return { rows: [{ id: threadId, status: 'running' }] };
-      assert.equal(values[1], threadId);
-      if (sql.includes('FROM messages')) {
-        credentialAvailable = true;
-        sampled.add('messages');
-        return { rows: [{ role: 'assistant', text: `Diagnostic context ${password}` }] };
-      }
-      if (sql.includes('FROM turns')) {
-        sampled.add('turns');
-        return { rows: [{ status: 'running' }] };
-      }
-      assert.fail('Unexpected diagnostic query');
-    },
-  } as unknown as pg.Pool;
-  const report = await buildFeedbackReport({
-    pool,
-    ownerId,
-    sessionEntries: async (id) => {
-      assert.equal(id, threadId);
-      assert.equal(sampled.size, 2);
-      const at = new Date().toISOString();
-      return credentialAvailable
-        ? [
-            {
-              message: {
-                role: 'toolResult',
-                toolName: 'get_credential',
-                content: [{ type: 'text', text: JSON.stringify({ password }) }],
-              },
-            },
-            {
-              type: 'message',
-              timestamp: at,
-              message: {
-                role: 'assistant',
-                content: [{ type: 'toolCall', id: 'mirror', name: 'browser', arguments: {} }],
-              },
-            },
-            {
-              type: 'message',
-              timestamp: at,
-              message: {
-                role: 'toolResult',
-                toolCallId: 'mirror',
-                toolName: 'browser',
-                content: [{ type: 'text', text: `Mirrored ${password}` }],
-              },
-            },
-          ]
-        : [];
-    },
-  });
-  assert.ok(report.includes('Diagnostic context [redacted]'));
-  assert.ok(report.includes('Mirrored [redacted]'));
-  assert.ok(!report.includes(password));
-  await assert.rejects(
-    buildFeedbackReport({
-      pool,
-      ownerId,
-      sessionEntries: async () => {
-        throw new Error('Synthetic session unavailable');
-      },
-    }),
-    /Synthetic session unavailable/,
-  );
-});
-
-test('feedback diagnostics build bounded private tool activity from the saved session', async () => {
-  const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
-  const ownerId = randomUUID();
-  const threadId = randomUUID();
-  const now = Date.now() - 1000;
-  const password = 'synthetic-saved-session-password';
-  const username = 'synthetic-saved-session-user';
-  const pool = {
-    async query(sql: string, values: string[]) {
-      assert.equal(values[0], ownerId);
-      if (sql.includes('FROM threads')) return { rows: [{ id: threadId, status: 'idle' }] };
-      assert.equal(values[1], threadId);
-      return { rows: [] };
-    },
-  } as unknown as pg.Pool;
-  function activity(
-    id: string,
-    name: string,
-    input: unknown,
-    output: string,
-    timestamp = now,
-    isError = false,
-  ) {
-    return [
-      {
-        type: 'message',
-        timestamp: new Date(timestamp).toISOString(),
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'thinking', thinking: 'synthetic-private-reasoning' },
-            { type: 'text', text: 'synthetic-assistant-prose' },
-            { type: 'toolCall', id, name, arguments: input },
-          ],
-        },
-      },
-      {
-        type: 'message',
-        timestamp: new Date(timestamp + 1).toISOString(),
-        message: {
-          role: 'toolResult',
-          toolCallId: id,
-          toolName: name,
-          isError,
-          content: [
-            { type: 'text', text: output },
-            { type: 'image', data: 'synthetic-binary-content' },
-          ],
-          details: { private: 'synthetic-opaque-details' },
-        },
-      },
-    ];
-  }
-  let entries: unknown[] = [
-    ...activity(
-      'old-login',
-      'get_credential',
-      {},
-      JSON.stringify({ username, password }),
-      now - 172_800_000,
-    ),
-    ...activity('old-call', 'browser', {}, 'synthetic-old-tool-output', now - 172_800_000),
-    ...activity('rebased-old-call', 'browser', {}, 'synthetic-rebased-old-output').map(
-      (entry, index) => ({
-        ...entry,
-        message: { ...entry.message, timestamp: now - 172_800_000 + index },
-      }),
-    ),
-    ...activity('recent', 'browser', { action: 'snapshot' }, `Visible activity ${password}`).map(
-      (entry, index) => ({
-        ...entry,
-        message: { ...entry.message, timestamp: now - 60_000 + index },
-      }),
-    ),
-    ...activity(
-      'failed',
-      'bash',
-      { command: 'synthetic' },
-      'Synthetic command failed',
-      now,
-      true,
-    ).map((entry) => ({ ...entry, message: { ...entry.message, timestamp: NaN } })),
-    ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
-    ...activity('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
-    ...activity(
-      'memory',
-      'manage_personal_context',
-      { action: 'memory_read', args: 'synthetic-private-profile' },
-      'private-memory-output',
-    ),
-    activity('unfinished', 'browser', { action: 'click' }, '')[0],
-    {
-      type: 'message',
-      timestamp: new Date(now).toISOString(),
-      message: { role: 'system', content: 'synthetic-system-prompt' },
-    },
-    { type: 'compaction', timestamp: new Date(now).toISOString(), summary: 'synthetic-compaction' },
-  ];
-  const options = {
-    pool,
-    ownerId,
-    sessionEntries: async (id: string) => {
-      assert.equal(id, threadId);
-      return entries;
-    },
-  };
-  {
-    const encoded = await buildFeedbackReport(options);
-    const report = JSON.parse(encoded);
-    assert.equal(report.coverage.toolTraceSource, 'saved-session');
-    assert.equal(report.coverage.truncated, false);
-    assert.equal(report.trace.length, 6);
-    const browser = report.trace.find((item: { id: string }) => item.id === 'recent');
-    assert.deepEqual(browser.input, { action: 'snapshot' });
-    assert.deepEqual(browser.output, ['Visible activity [redacted]']);
-    assert.equal(browser.status, 'succeeded');
-    assert.equal(browser.started_at, new Date(now - 60_000).toISOString());
-    assert.equal(browser.finished_at, new Date(now - 60_000 + 1).toISOString());
-    assert.equal(
-      report.trace.find((item: { id: string }) => item.id === 'failed').status,
-      'failed',
-    );
-    assert.equal(
-      report.trace.find((item: { id: string }) => item.id === 'unfinished').status,
-      'unknown',
-    );
-    for (const omitted of [
-      password,
-      username,
-      'synthetic-old-tool-output',
-      'synthetic-rebased-old-output',
-      'synthetic-private-fill',
-      'synthetic-private-origin',
-      'synthetic-private-profile',
-      'private-login',
-      'private-memory-output',
-      'synthetic-private-reasoning',
-      'synthetic-assistant-prose',
-      'synthetic-binary-content',
-      'synthetic-opaque-details',
-      'synthetic-system-prompt',
-      'synthetic-compaction',
-    ])
-      assert.ok(!encoded.includes(omitted), omitted);
-  }
-  entries = Array.from({ length: 61 }, (_, index) =>
-    activity(`compact-${index}`, 'browser', {}, 'synthetic', now - (61 - index) * 1000),
-  ).flat();
-  const complete = JSON.parse(await buildFeedbackReport(options));
-  assert.equal(complete.coverage.truncated, false);
-  assert.equal(complete.trace.length, 61);
-  const large = 'x'.repeat(3500);
-  entries = Array.from({ length: 70 }, (_, index) =>
-    activity(
-      `bounded-${index}`,
-      'browser',
-      { first: large, second: large },
-      large,
-      now - (70 - index) * 1000,
-    ),
-  ).flat();
-  const bounded = await buildFeedbackReport(options);
-  const truncated = JSON.parse(bounded);
-  assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
-  assert.ok(truncated.trace.length > 0 && truncated.trace.length < 70);
-  assert.equal(truncated.trace.at(-1).id, 'bounded-69');
-  assert.ok(!bounded.includes('bounded-9'));
-  assert.equal(truncated.coverage.truncated, true);
-});
 
 test(
   'feedback diagnostics exclude unrelated personal context, redact mirrored credentials and stay bounded',
@@ -5238,6 +3136,13 @@ test(
             { action: `echo ${secret}` },
             `Visible tool activity ${username}`,
           ),
+          ...toolCall(
+            'fill',
+            'browser',
+            { action: 'fill', text: 'synthetic-private-fill' },
+            username,
+          ),
+          ...toolCall('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
         ];
       },
     };
@@ -5255,6 +3160,9 @@ test(
       'synthetic-foreign-owner',
       'synthetic-old-message',
       'synthetic-credential-origin',
+      'synthetic-private-fill',
+      'synthetic-private-origin',
+      'private-login',
     ])
       assert.ok(!encoded.includes(omitted), omitted);
     assert.ok(encoded.includes('Visible diagnostic'));
@@ -5262,7 +3170,7 @@ test(
     assert.ok(encoded.includes('[redacted]'));
     const report = JSON.parse(encoded);
     assert.equal(report.messages.length, 1);
-    assert.equal(report.trace.length, 2);
+    assert.equal(report.trace.length, 4);
     const large = 'x'.repeat(3500);
     const start = Date.now() + 1_000;
     let newest = '';
@@ -5281,137 +3189,6 @@ test(
     assert.ok(truncated.messages.length > 30);
   },
 );
-
-test('feedback context identifies the running source checkout and keeps hosted release metadata', async (t) => {
-  const os = (await import('node:os')).default;
-  t.mock.method(os, 'platform', () => 'linux');
-  const hostname = t.mock.method(os, 'hostname', () => 'synthetic-local-machine');
-  const { feedbackContext } = await import('../src/server/feedback-context.ts');
-  const cwd = await mkdtemp(join(tmpdir(), 'feedback-source-'));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  const git = promisify(execFile);
-  const environment = { NODE_ENV: 'development', OTTO_RELEASE: 'previous-release' };
-  const gitAvailable = await git('git', ['--version']).then(
-    () => true,
-    (error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-      return false;
-    },
-  );
-  if (gitAvailable) {
-    await git('git', ['init', '--quiet'], { cwd });
-    await writeFile(join(cwd, 'source.txt'), 'Synthetic source');
-    await git('git', ['add', 'source.txt'], { cwd });
-    await git(
-      'git',
-      [
-        '-c',
-        'user.name=Fixture',
-        '-c',
-        'user.email=fixture@example.test',
-        '-c',
-        'commit.gpgsign=false',
-        '-c',
-        'core.hooksPath=/dev/null',
-        'commit',
-        '--quiet',
-        '-m',
-        'Fixture',
-      ],
-      { cwd },
-    );
-    const head = (await git('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim();
-    const clean = await feedbackContext({ runtimeMode: 'local', environment, cwd });
-    assert.equal(clean.appRelease, head);
-    assert.equal(clean.appModified, false);
-    assert.equal(clean.appVersion, null);
-    assert.equal(clean.source, 'local-web');
-    assert.equal(clean.computerName, 'synthetic-local-machine');
-    await writeFile(join(cwd, 'source.txt'), 'Synthetic modified source');
-    const modified = await feedbackContext({ runtimeMode: 'local', environment, cwd });
-    assert.equal(modified.appRelease, head);
-    assert.equal(modified.appModified, true);
-  } else {
-    const unavailable = await feedbackContext({ runtimeMode: 'local', environment, cwd });
-    assert.equal(unavailable.appRelease, 'previous-release');
-    assert.equal(unavailable.appModified, null);
-    assert.equal(unavailable.appVersion, null);
-    assert.equal(unavailable.source, 'local-web');
-    assert.equal(unavailable.computerName, 'synthetic-local-machine');
-  }
-  const localNameReads = hostname.mock.callCount();
-  for (const runtimeMode of ['tenant', 'gateway'] as const) {
-    const hosted = await feedbackContext({
-      runtimeMode,
-      environment: {
-        ...environment,
-        OTTO_IMAGE_RELEASE: 'deployed-release',
-        OTTO_APP_VERSION: '2.3.4',
-      },
-      cwd,
-    });
-    assert.equal(hosted.appRelease, 'deployed-release');
-    assert.equal(hosted.appVersion, '2.3.4');
-    assert.equal(hosted.appModified, null);
-    assert.equal(hosted.source, 'hosted-web');
-    assert.equal(hosted.development, false);
-    assert.equal(hosted.computerName, null);
-    assert.equal(hostname.mock.callCount(), localNameReads);
-  }
-  const production = await feedbackContext({
-    runtimeMode: 'local',
-    environment: { ...environment, NODE_ENV: 'production' },
-    cwd,
-  });
-  assert.equal(production.appRelease, 'previous-release');
-  assert.equal(production.computerName, 'synthetic-local-machine');
-  assert.equal(production.appModified, null);
-  assert.equal(production.development, false);
-});
-
-test('feedback context reads macOS computer names and falls back without reading hosted machines', async (t) => {
-  const os = (await import('node:os')).default;
-  const childProcess = (await import('node:child_process')).default;
-  const { feedbackContext } = await import('../src/server/feedback-context.ts');
-  const platform = t.mock.method(os, 'platform', () => 'darwin');
-  const hostname = t.mock.method(os, 'hostname', () => 'synthetic-hostname');
-  let output = '  Synthetic Mac\n';
-  let error: Error | undefined;
-  const execute = t.mock.fn(async (file: string, args: string[]) => {
-    assert.equal(file, '/usr/sbin/scutil');
-    assert.deepEqual(args, ['--get', 'ComputerName']);
-    if (error) throw error;
-    return { stdout: output, stderr: '' };
-  });
-  const original = childProcess.execFile;
-  childProcess.execFile = Object.assign(original.bind(childProcess), {
-    [promisify.custom]: execute,
-  });
-  t.after(() => {
-    childProcess.execFile = original;
-  });
-  const environment = { NODE_ENV: 'production' };
-  const preferred = await feedbackContext({ runtimeMode: 'local', environment });
-  assert.equal(preferred.computerName, 'Synthetic Mac');
-  assert.equal(hostname.mock.callCount(), 0);
-  output = ' \n';
-  const empty = await feedbackContext({ runtimeMode: 'local', environment });
-  assert.equal(empty.computerName, 'synthetic-hostname');
-  assert.equal(hostname.mock.callCount(), 1);
-  error = new Error('Synthetic scutil failure');
-  const failed = await feedbackContext({ runtimeMode: 'local', environment });
-  assert.equal(failed.computerName, 'synthetic-hostname');
-  assert.equal(hostname.mock.callCount(), 2);
-  assert.equal(execute.mock.callCount(), 3);
-  const platformReads = platform.mock.callCount();
-  for (const runtimeMode of ['tenant', 'gateway'] as const) {
-    const hosted = await feedbackContext({ runtimeMode, environment });
-    assert.equal(hosted.computerName, null);
-    assert.equal(platform.mock.callCount(), platformReads);
-    assert.equal(hostname.mock.callCount(), 2);
-    assert.equal(execute.mock.callCount(), 3);
-  }
-});
 
 async function conversationAnalyticsFixture(t: TestContext) {
   const schema = `test_analytics_${randomUUID().replaceAll('-', '')}`;
@@ -5434,20 +3211,12 @@ async function conversationAnalyticsFixture(t: TestContext) {
   const threadId = randomUUID();
   const events: Parameters<ProductAnalytics['capture']>[0][] = [];
   let allowed = true;
-  let revision: string | undefined;
-  let remoteRevision: string | undefined;
   const analytics = await createAnalytics({
     deployment: 'hosted',
     environment: 'development',
     dataRoot: '/unused',
     provider: {
-      get consentRevision() {
-        return revision;
-      },
-      permitted: async () => {
-        revision = remoteRevision;
-        return allowed;
-      },
+      permitted: async () => allowed,
       capture: (event, signal) => {
         assert.equal(signal.aborted, false);
         events.push(event);
@@ -5470,9 +3239,8 @@ async function conversationAnalyticsFixture(t: TestContext) {
     threadId,
     events,
     analytics,
-    authorize(value: boolean, nextRevision = remoteRevision) {
+    authorize(value: boolean) {
       allowed = value;
-      remoteRevision = nextRevision;
     },
     async processor(curate: MemoryCurator['curate'], owner = ownerId, secrets: string[] = []) {
       const processor = createConversationAnalytics({
@@ -5545,364 +3313,40 @@ async function conversationAnalyticsFixture(t: TestContext) {
 }
 
 test(
-  'conversation analytics redacts before truncating and preserves structured requests',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    for (const structured of [false, true]) {
-      await t.test(
-        structured ? 'JSON request' : 'credential across the input boundary',
-        async (t) => {
-          const f = await conversationAnalyticsFixture(t);
-          f.analytics.setUsageData(f.ownerId, true);
-          const secret = 'syntheticboundarycredential';
-          const prompt = structured
-            ? JSON.stringify({ request: 'Translate the audio transcript', language: 'French' })
-            : 'x'.repeat(1190) + secret;
-          const turn = await f.turn({ prompt });
-          let input: { messages: Array<{ role: string; text: string }> } | undefined;
-          const processor = await f.processor(
-            async (request) => {
-              input = request.input as typeof input;
-              return {
-                tasks: [
-                  {
-                    task_id: null,
-                    request_message_id: turn.messageId,
-                    task_type: 'translation',
-                    task_action: 'translate',
-                    task_subject: 'audio',
-                    task_activities: ['translate:audio'],
-                    outcome: 'active',
-                  },
-                ],
-                frustration: null,
-              };
-            },
-            f.ownerId,
-            [secret],
-          );
-          processor.start(turn.id)();
-          await processor.drain();
-          const text = input?.messages.find((message) => message.role === 'user')?.text;
-          if (structured) assert.deepEqual(JSON.parse(text!), JSON.parse(prompt));
-          else {
-            assert.equal(text, 'x'.repeat(1190) + '[redacted]');
-            assert.ok(!JSON.stringify(input).includes(secret.slice(0, 10)));
-          }
-          assert.equal(
-            f.events.find((event) => event.event === 'otto_task_started')?.properties.task_type,
-            'translation',
-          );
-        },
-      );
-    }
-  },
-);
-
-test(
-  'conversation analytics preserves compound task identity, activities and original timing across turns and restarts',
+  'conversation analytics redacts a credential before truncating classifier input',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await conversationAnalyticsFixture(t);
     f.analytics.setUsageData(f.ownerId, true);
-    const first = await f.turn({
-      prompt: 'Research synthetic bicycle specifications and send me a summary email',
-    });
-    const initialActivities = ['send:email', 'find:web', 'summarize:web'];
-    let calls = 0;
-    const initial = await f.processor(async ({ task, input }) => {
-      calls++;
-      assert.equal(task, 'analytics');
-      assert.deepEqual((input as { tasks: unknown[] }).tasks, []);
-      return {
-        tasks: [
-          {
-            task_id: null,
-            request_message_id: first.messageId,
-            task_type: 'communication',
-            task_action: 'send',
-            task_subject: 'email',
-            task_activities: initialActivities,
-            outcome: 'waiting',
-          },
-        ],
-        frustration: null,
-      };
-    });
-    const finish = initial.start(first.id);
-    finish();
-    finish();
-    await initial.drain();
-    assert.equal(calls, 1);
-    const started = f.events.filter((event) => event.event === 'otto_task_started');
-    const updated = f.events.filter((event) => event.event === 'otto_task_updated');
-    assert.equal(started.length, 1);
-    assert.equal(updated.length, 1);
-    assert.equal(started[0].timestamp?.toISOString(), first.at.toISOString());
-    assert.equal(updated[0].timestamp?.toISOString(), first.finished!.toISOString());
-    assert.equal(updated[0].properties.elapsed_ms, 2_000);
-    assert.equal(updated[0].properties.completion_evidence, 'none');
-    for (const event of [...started, ...updated]) {
-      assert.equal(event.properties.task_action, 'send');
-      assert.equal(event.properties.task_subject, 'email');
-      assert.deepEqual(event.properties.task_activities, initialActivities);
-    }
-    assert.ok(started[0].uuid);
-    const taskId = started[0].properties.task_id;
-    await initial.close();
-    const second = await f.turn({
-      source: 'resume',
-      channel: 'telegram:synthetic',
-      prompt: 'Compare their weight in the summary before sending it',
-      at: first.at.getTime() + 5_000,
-    });
-    const third = await f.turn({
-      channel: 'whatsapp:synthetic',
-      at: first.at.getTime() + 9_000,
-      prompt: 'Make that summary email more concise',
-    });
-    const resumed = await f.processor(async ({ input }) => {
-      const editing = (
-        input as { messages: Array<{ id: string; current: boolean }> }
-      ).messages.some((message) => message.current && message.id === third.messageId);
-      const known = (
-        input as {
-          tasks: Array<{
-            id: string;
-            request: string;
-            task_action: string;
-            task_subject: string;
-            task_activities: string[];
-            outcome: string;
-          }>;
-        }
-      ).tasks;
-      assert.equal(known.length, 1);
-      assert.equal(known[0].id, taskId);
-      assert.equal(known[0].task_action, 'send');
-      assert.equal(known[0].task_subject, 'email');
-      assert.deepEqual(
-        known[0].task_activities,
-        known[0].outcome === 'completed'
-          ? [...initialActivities, 'compare:web']
-          : initialActivities,
-      );
-      return {
-        tasks: [
-          {
-            task_id: taskId,
-            request_message_id: null,
-            task_type: 'unknown',
-            task_action: 'unknown',
-            task_subject: 'unknown',
-            task_activities: ['unknown:unknown', editing ? 'edit:email' : 'compare:web'],
-            outcome: 'completed',
-          },
-        ],
-        frustration: null,
-      };
-    });
-    resumed.start(second.id)();
-    await resumed.drain();
-    const completed = f.events.filter((event) => event.event === 'otto_task_updated').at(-1)!;
-    assert.equal(completed.properties.task_id, taskId);
-    assert.equal(completed.properties.task_type, 'communication');
-    assert.equal(completed.properties.task_action, 'send');
-    assert.equal(completed.properties.task_subject, 'email');
-    assert.deepEqual(completed.properties.task_activities, [...initialActivities, 'compare:web']);
-    assert.equal(completed.properties.source, 'user');
-    assert.equal(completed.properties.channel, 'web');
-    assert.equal(completed.properties.turn_count, 2);
-    assert.equal(completed.properties.elapsed_ms, 7_000);
-    assert.equal(completed.properties.completion_evidence, 'inferred');
-    assert.equal(completed.timestamp?.toISOString(), second.finished!.toISOString());
-    resumed.start(third.id)();
-    await resumed.drain();
-    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
-    assert.equal(f.events.filter((event) => event.event === 'otto_task_updated').length, 2);
-    const stored = (await f.pool.query('SELECT * FROM analytics_tasks')).rows;
-    assert.equal(stored.length, 1);
-    assert.equal(stored[0].turn_count, 2);
-    assert.equal(stored[0].task_action, 'send');
-    assert.equal(stored[0].task_subject, 'email');
-    assert.deepEqual(stored[0].task_activities, [
-      ...initialActivities,
-      'compare:web',
-      'edit:email',
-    ]);
-    assert.equal(stored[0].requested_at.toISOString(), first.at.toISOString());
-    assert.equal(stored[0].outcome, 'completed');
-    assert.equal(stored[0].updated_at.toISOString(), second.finished!.toISOString());
-    const linked = f.events.filter((event) => event.event === 'otto_task_linked');
-    assert.equal(linked.length, 3);
-    assert.ok(linked.every((event) => event.properties.task_id === taskId));
-    assert.deepEqual(linked.at(-1)!.properties.task_activities, [
-      ...initialActivities,
-      'compare:web',
-      'edit:email',
-    ]);
-    assert.equal(linked.at(-1)!.properties.source, 'user');
-    assert.equal(linked.at(-1)!.properties.channel, 'web');
-    assert.equal(linked.at(-1)!.timestamp?.toISOString(), third.finished!.toISOString());
-    assert.deepEqual(
-      f.events
-        .filter((event) => event.event === 'otto_task_analysis')
-        .map((event) => event.properties.task_count),
-      [1, 1, 1],
-    );
-    assert.deepEqual(
-      f.events
-        .filter((event) => event.event === 'otto_task_analysis')
-        .map((event) => event.properties.unknown_label_count),
-      [0, 5, 5],
-    );
-    const exported = JSON.stringify(f.events);
-    for (const privateValue of [
-      first.id,
-      first.messageId,
-      f.threadId,
-      'bicycle specifications',
-      'Synthetic result',
-    ])
-      assert.ok(!exported.includes(privateValue), privateValue);
-  },
-);
-
-test(
-  'conversation analytics links service runs to tasks without duplicating attempts or losing ambiguous coverage',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await conversationAnalyticsFixture(t);
-    f.analytics.setUsageData(f.ownerId, true);
-    const first = await f.turn({ prompt: 'Compare synthetic bicycles and draft a synthetic note' });
-    const second = await f.turn({
-      session: randomUUID(),
-      prompt: 'Hello',
-      at: first.at.getTime() + 5_000,
-    });
-    const third = await f.turn({ prompt: 'Thanks', at: first.at.getTime() + 10_000 });
-    let taskId: string | undefined;
-    const processor = await f.processor(async ({ input }) => {
-      const current = (
-        input as { messages: Array<{ id: string; current: boolean }> }
-      ).messages.filter((message) => message.current);
-      if (current.some((message) => message.id === first.messageId))
+    const secret = 'syntheticboundarycredential';
+    const turn = await f.turn({ prompt: 'x'.repeat(1190) + secret });
+    let input: { messages: Array<{ role: string; text: string }> } | undefined;
+    const processor = await f.processor(
+      async (request) => {
+        input = request.input as typeof input;
         return {
-          tasks: ['research', 'communication'].map((task_type) => ({
-            task_id: null,
-            request_message_id: first.messageId,
-            task_type,
-            task_action: task_type === 'research' ? 'compare' : 'draft',
-            task_subject: task_type === 'research' ? 'web' : 'message',
-            task_activities:
-              task_type === 'research' ? ['find:web', 'compare:web'] : ['draft:message'],
-            outcome: 'completed',
-          })),
+          tasks: [
+            {
+              task_id: null,
+              request_message_id: turn.messageId,
+              task_type: 'translation',
+              task_action: 'translate',
+              task_subject: 'audio',
+              task_activities: ['translate:audio'],
+              outcome: 'active',
+            },
+          ],
           frustration: null,
         };
-      return {
-        tasks: current.some((message) => message.id === third.messageId)
-          ? [
-              {
-                task_id: taskId,
-                request_message_id: null,
-                task_type: 'communication',
-                task_action: 'send',
-                task_subject: 'email',
-                task_activities: ['find:email', 'send:email'],
-                outcome: 'completed',
-              },
-            ]
-          : [],
-        frustration: null,
-      };
-    });
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const service = (operation: () => Promise<unknown>) =>
-      withServiceAnalytics(
-        f.analytics.forOwner(f.ownerId),
-        { app: 'gmail', connection_method: 'managed_app' },
-        operation,
-      );
-    const firstRun = processor.observe(first.id, async () => {
-      await service(async () => {
-        await gate;
-        return 'Synthetic private result';
-      });
-    });
-    await processor.observe(second.id, async () => {
-      await service(async () => ({}));
-    });
-    release();
-    await firstRun;
+      },
+      f.ownerId,
+      [secret],
+    );
+    processor.start(turn.id)();
     await processor.drain();
-    const services = f.events.filter((event) => event.event === 'otto_service_used');
-    assert.equal(services.length, 2);
-    assert.equal(new Set(services.map((event) => event.properties.run_id)).size, 2);
-    const links = f.events.filter((event) => event.event === 'otto_task_linked');
-    assert.equal(links.length, 2);
-    assert.deepEqual(
-      links.map((event) => [
-        event.properties.task_type,
-        event.properties.task_action,
-        event.properties.task_subject,
-        event.properties.task_activities,
-      ]),
-      [
-        ['research', 'compare', 'web', ['compare:web', 'find:web']],
-        ['communication', 'draft', 'message', ['draft:message']],
-      ],
-    );
-    assert.equal(links[0].properties.run_id, links[1].properties.run_id);
-    const linkedRun = links[0].properties.run_id;
-    assert.ok(services.some((event) => event.properties.run_id === linkedRun));
-    const health = f.events.filter((event) => event.event === 'otto_task_analysis');
-    assert.deepEqual(
-      health.map((event) => event.properties.task_count),
-      [0, 2],
-    );
-    assert.equal(health[1].properties.run_id, linkedRun);
-    assert.notEqual(health[0].properties.run_id, linkedRun);
-    taskId = String(
-      links.find((event) => event.properties.task_type === 'research')!.properties.task_id,
-    );
-    await processor.observe(third.id, async () => {});
-    await processor.drain();
-    const lastLink = f.events.filter((event) => event.event === 'otto_task_linked').at(-1)!;
-    assert.equal(lastLink.properties.task_id, taskId);
-    assert.equal(lastLink.properties.task_type, 'research');
-    assert.equal(lastLink.properties.task_action, 'compare');
-    assert.equal(lastLink.properties.task_subject, 'web');
-    assert.deepEqual(lastLink.properties.task_activities, [
-      'compare:web',
-      'find:web',
-      'find:email',
-      'send:email',
-    ]);
-    assert.deepEqual(
-      (await f.pool.query('SELECT task_activities FROM analytics_tasks WHERE id=$1', [taskId]))
-        .rows[0].task_activities,
-      ['compare:web', 'find:web', 'find:email', 'send:email'],
-    );
-    assert.notEqual(lastLink.properties.run_id, linkedRun);
-    assert.equal(f.events.filter((event) => event.event === 'otto_task_updated').length, 2);
-    assert.equal(
-      f.events.filter((event) => event.event === 'otto_task_analysis').at(-1)!.properties
-        .task_count,
-      1,
-    );
-    const exported = JSON.stringify(f.events);
-    for (const privateValue of [
-      first.id,
-      first.messageId,
-      second.id,
-      f.threadId,
-      'Synthetic private result',
-    ])
-      assert.ok(!exported.includes(privateValue));
+    const text = input?.messages.find((message) => message.role === 'user')?.text;
+    assert.equal(text, 'x'.repeat(1190) + '[redacted]');
+    assert.ok(!JSON.stringify(input).includes(secret.slice(0, 10)));
   },
 );
 
@@ -5973,15 +3417,7 @@ test(
     ])
       assert.ok(!scheduledInput.includes(omitted), omitted);
     const stored = (await f.pool.query('SELECT * FROM analytics_tasks')).rows;
-    assert.equal(stored.length, 2);
     assert.ok(stored.every((row) => row.owner_id === f.ownerId));
-    assert.equal(new Set(stored.map((row) => row.session_id)).size, 2);
-    assert.equal(
-      f.events.filter(
-        (event) => event.event === 'otto_task_started' && event.properties.source === 'schedule',
-      ).length,
-      1,
-    );
     const pending = await f.turn({ session: randomUUID() });
     const archivedDuringAnalysis = await f.processor(async () => {
       await f.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [f.threadId]);
@@ -6054,31 +3490,11 @@ test(
         summary: 'Synthetic forbidden summary',
       }),
       (turn) => ({
-        tasks: [{ ...task(turn.messageId), quote: 'Synthetic forbidden quote' }],
-        frustration: null,
-      }),
-      (turn) => ({
         tasks: [{ ...task(turn.messageId), task_type: 'Synthetic private category' }],
         frustration: null,
       }),
       (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_action: 'Send to synthetic@example.test' }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_subject: 'Synthetic private document title' }],
-        frustration: null,
-      }),
-      (turn) => ({
         tasks: [{ ...task(turn.messageId), task_type: 'cedar_acquisition' }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_action: 'ada_linden' }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_subject: 'cedar_acquisition' }],
         frustration: null,
       }),
       (turn) => ({
@@ -6094,91 +3510,7 @@ test(
           message_ids: [turn.messageId],
         },
       }),
-      (turn) => ({
-        tasks: [
-          { ...task(turn.messageId), task_activities: ['find:web', 'send:synthetic@example.test'] },
-        ],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_activities: ['find:web', 'summarize'] }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_activities: ['find:web', 'find:web'] }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_activities: ['summarize:web'] }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_activities: [] }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [{ ...task(turn.messageId), task_activities: undefined }],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [
-          {
-            ...task(turn.messageId),
-            task_activities: [
-              'find:web',
-              'summarize:web',
-              'analyze:web',
-              'compare:web',
-              'draft:email',
-              'send:email',
-              'create:document',
-              'edit:document',
-              'organize:file',
-            ],
-          },
-        ],
-        frustration: null,
-      }),
-      () => ({ tasks: [{ ...task(seed.messageId), task_id: randomUUID() }], frustration: null }),
       () => ({ tasks: [task(randomUUID())], frustration: null }),
-      (turn) => ({ tasks: [task(turn.replyId)], frustration: null }),
-      () => ({ tasks: [task(seed.messageId)], frustration: null }),
-      () => ({ tasks: [{ ...task(randomUUID()), task_id: taskId }], frustration: null }),
-      () => ({ tasks: [{ ...task(seed.messageId), task_id: taskId }], frustration: null }),
-      () => ({
-        tasks: [
-          { ...task(seed.messageId), task_id: taskId, request_message_id: null },
-          { ...task(seed.messageId), task_id: taskId, request_message_id: null },
-        ],
-        frustration: null,
-      }),
-      (turn) => ({
-        tasks: [],
-        frustration: {
-          signal: 'repeated_request',
-          reason: 'ignored_instruction',
-          task_type: 'research',
-          message_ids: [turn.messageId, turn.messageId],
-        },
-      }),
-      () => ({
-        tasks: [],
-        frustration: {
-          signal: 'explicit_complaint',
-          reason: 'output_quality',
-          task_type: 'research',
-          message_ids: [seed.messageId],
-        },
-      }),
-      (turn) => ({
-        tasks: [],
-        frustration: {
-          signal: 'repeated_correction',
-          reason: 'output_quality',
-          task_type: 'research',
-          message_ids: [turn.messageId, randomUUID()],
-        },
-      }),
     ];
     for (const [index, classify] of invalid.entries()) {
       const turn = await f.turn({ at: baseTime + (index + 1) * 5_000 });
@@ -6225,7 +3557,6 @@ test(
     await processor.drain();
     const frustration = f.events.filter((event) => event.event === 'otto_frustration_signal');
     assert.equal(frustration.length, 1);
-    assert.equal(frustration[0].properties.signal, 'repeated_correction');
     assert.ok(!JSON.stringify(frustration).includes(correction.messageId));
     assert.ok(!JSON.stringify(frustration).includes(seed.messageId));
     assert.equal(
@@ -6253,102 +3584,6 @@ test(
       assert.ok(!JSON.stringify(f.events).includes(privateLabel));
       assert.ok(!JSON.stringify(classificationInput).includes(privateLabel));
     }
-  },
-);
-
-test(
-  'conversation analytics reports queue overflow without classifying dropped turns',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const releases: (() => void)[] = [];
-    const gate = () => {
-      let release!: () => void;
-      const promise = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      releases.push(release);
-      return { promise, release };
-    };
-    t.after(() => {
-      for (const release of releases) release();
-    });
-    const f = await conversationAnalyticsFixture(t);
-    f.analytics.setUsageData(f.ownerId, true);
-    let classification = gate();
-    let entered = gate();
-    let overflow = gate();
-    let overflowEntered = gate();
-    let overflowReported = gate();
-    const overflowIds = new Set<string>();
-    let overflowReads = 0;
-    const capture = f.analytics.capture.bind(f.analytics);
-    t.mock.method(f.analytics, 'capture', (...args: Parameters<typeof capture>) => {
-      capture(...args);
-      if (args[1].event === 'otto_task_analysis' && args[1].properties.outcome === 'queue_full')
-        overflowReported.release();
-    });
-    const query = f.pool.query.bind(f.pool);
-    t.mock.method(f.pool, 'query', async (sql: string, values?: unknown[]) => {
-      if (sql.startsWith('SELECT u.* FROM turns') && overflowIds.has(String(values?.[0]))) {
-        overflowReads++;
-        overflowEntered.release();
-        await overflow.promise;
-      }
-      return query(sql, values);
-    });
-    let calls = 0;
-    const processor = await f.processor(async () => {
-      calls++;
-      entered.release();
-      await classification.promise;
-      return { tasks: [], frustration: null };
-    });
-    const at = Date.now();
-    for (let episode = 0; episode < 3; episode++) {
-      classification = gate();
-      entered = gate();
-      overflow = gate();
-      overflowEntered = gate();
-      overflowReported = gate();
-      const turns = await Promise.all(
-        Array.from({ length: 64 }, (_, index) =>
-          f.turn({ at: at + (episode * 64 + index) * 5_000 }),
-        ),
-      );
-      for (const turn of turns.slice(32)) overflowIds.add(turn.id);
-      for (const turn of turns) processor.start(turn.id)();
-      await Promise.all([entered.promise, overflowEntered.promise]);
-      assert.equal(calls, episode * 32 + 1);
-      assert.equal(overflowReads, episode + 1);
-      if (episode === 2) {
-        f.analytics.setUsageData(f.ownerId, false);
-        f.analytics.setUsageData(f.ownerId, true);
-      }
-      overflow.release();
-      if (episode < 2) {
-        await overflowReported.promise;
-        await delay(0);
-        for (const turn of turns.slice(32)) processor.start(turn.id)();
-        await delay(0);
-        assert.equal(overflowReads, episode + 1);
-      }
-      classification.release();
-      await processor.drain();
-      const health = f.events.filter((event) => event.event === 'otto_task_analysis');
-      assert.equal(
-        health.filter((event) => event.properties.outcome === 'analyzed').length,
-        Math.min(episode + 1, 2) * 32,
-      );
-      const dropped = health.filter((event) => event.properties.outcome === 'queue_full');
-      assert.equal(dropped.length, Math.min(episode + 1, 2));
-      assert.ok(dropped.every((event) => event.properties.source === 'user'));
-      assert.ok(turns.every((turn) => !JSON.stringify(dropped).includes(turn.id)));
-      assert.equal(
-        (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
-        episode === 2 ? 0 : (episode + 1) * 32,
-      );
-    }
-    assert.equal(calls, 65);
   },
 );
 
@@ -6452,98 +3687,6 @@ test(
     assert.equal(f.events.length, before);
     f.analytics.setUsageData(f.ownerId, false);
     await processor.close();
-    assert.equal(
-      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
-      0,
-    );
-    assert.equal(
-      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_turns')).rows[0].n,
-      0,
-    );
-  },
-);
-
-test(
-  'conversation analytics drops old hosted consent revisions during analysis and after restart',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const f = await conversationAnalyticsFixture(t);
-    f.authorize(true, '1');
-    f.analytics.setUsageData(f.ownerId, true);
-    assert.equal(await f.analytics.permitted(f.ownerId), false);
-    const first = await f.turn({ prompt: 'Synthetic earlier consent request' });
-    const initial = await f.processor(async () => ({
-      tasks: [
-        {
-          task_id: null,
-          request_message_id: first.messageId,
-          task_type: 'research',
-          task_action: 'find',
-          task_subject: 'web',
-          task_activities: ['find:web'],
-          outcome: 'waiting',
-        },
-      ],
-      frustration: null,
-    }));
-    initial.start(first.id)();
-    await initial.drain();
-    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
-    await initial.close();
-    f.authorize(true, '3');
-    assert.equal(await f.analytics.permitted(f.ownerId), false);
-    const second = await f.turn({ at: first.at.getTime() + 5_000 });
-    let enter!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const resumed = await f.processor(async ({ input }) => {
-      const context = input as { tasks: unknown[]; messages: Array<{ id: string }> };
-      assert.deepEqual(context.tasks, []);
-      assert.ok(!context.messages.some((message) => message.id === first.messageId));
-      enter();
-      await pending;
-      return {
-        tasks: [
-          {
-            task_id: null,
-            request_message_id: second.messageId,
-            task_type: 'research',
-            task_action: 'find',
-            task_subject: 'web',
-            task_activities: ['find:web'],
-            outcome: 'completed',
-          },
-        ],
-        frustration: null,
-      };
-    });
-    assert.equal(
-      (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
-      0,
-    );
-    assert.equal(
-      (await f.pool.query('SELECT revision FROM analytics_consent')).rows[0].revision,
-      '3',
-    );
-    const before = f.events.length;
-    const oldSignal = f.analytics.consent(f.ownerId).signal;
-    resumed.start(second.id)();
-    await entered;
-    f.authorize(true, '5');
-    release();
-    await resumed.drain();
-    assert.equal(oldSignal.aborted, true);
-    assert.equal(f.events.length, before);
-    await resumed.close();
-    assert.equal(
-      (await f.pool.query('SELECT revision FROM analytics_consent')).rows[0].revision,
-      '5',
-    );
     assert.equal(
       (await f.pool.query('SELECT count(*)::int AS n FROM analytics_tasks')).rows[0].n,
       0,

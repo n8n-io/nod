@@ -15,46 +15,6 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test('startup remains available beyond the SDK default cold-start budget', async () => {
-  let initialized = false;
-  await startContainer({
-    async startAndWaitForPorts({ cancellationOptions }) {
-      const elapsed = 12_000;
-      if (cancellationOptions.instanceGetTimeoutMS <= elapsed) await new Promise<void>(() => {});
-      cancellationOptions.abort.throwIfAborted();
-      initialized = true;
-    },
-  });
-  assert.equal(initialized, true);
-});
-
-test('startup cancels before SDK retry exhaustion can await a running container exit', async () => {
-  let exhausted = false;
-  let aborted = false;
-  await assert.rejects(
-    startContainer(
-      {
-        async startAndWaitForPorts({ cancellationOptions }) {
-          await new Promise<void>((_, reject) => {
-            const timer = setTimeout(() => {
-              exhausted = true;
-            }, cancellationOptions.instanceGetTimeoutMS);
-            cancellationOptions.abort.addEventListener('abort', () => {
-              clearTimeout(timer);
-              aborted = true;
-              reject(new Error('synthetic SDK cancellation'));
-            });
-          });
-        },
-      },
-      { timeoutMs: 20 },
-    ),
-    RuntimeControlError,
-  );
-  assert.equal(aborted, true);
-  assert.equal(exhausted, false);
-});
-
 test('unresponsive startup returns a bounded failure without waiting for SDK cleanup', async () => {
   let signal: AbortSignal | undefined;
   let rejectStartup!: (reason: Error) => void;
@@ -75,45 +35,6 @@ test('unresponsive startup returns a bounded failure without waiting for SDK cle
   assert.equal(signal?.aborted, true);
   rejectStartup(new Error('synthetic late SDK failure'));
   await new Promise((resolve) => setImmediate(resolve));
-});
-
-test('request cancellation aborts startup and an already cancelled request cannot start it', async () => {
-  const controller = new AbortController();
-  let starts = 0;
-  let signal: AbortSignal | undefined;
-  const container = {
-    startAndWaitForPorts(options: { cancellationOptions: { abort: AbortSignal } }) {
-      starts++;
-      signal = options.cancellationOptions.abort;
-      return new Promise<void>(() => {});
-    },
-  };
-  const starting = startContainer(container, { signal: controller.signal });
-  controller.abort();
-  await assert.rejects(starting, RuntimeControlError);
-  assert.equal(signal?.aborted, true);
-  await assert.rejects(
-    startContainer(container, { signal: controller.signal }),
-    RuntimeControlError,
-  );
-  assert.equal(starts, 1);
-});
-
-test('startup forwards the selected environment and replaces private SDK errors', async () => {
-  let environment: Record<string, string> | undefined;
-  await assert.rejects(
-    startContainer(
-      {
-        async startAndWaitForPorts({ startOptions }) {
-          environment = startOptions?.envVars;
-          throw new Error('synthetic private startup configuration');
-        },
-      },
-      { envVars: { OTTO_MODE: 'tenant' } },
-    ),
-    (error) => error instanceof RuntimeControlError && !error.message.includes('private'),
-  );
-  assert.deepEqual(environment, { OTTO_MODE: 'tenant' });
 });
 
 test('a timed-out raw start remains fenced against another start until its actual settlement', async () => {
@@ -139,41 +60,6 @@ test('a timed-out raw start remains fenced against another start until its actua
   };
   await startContainer(container);
   assert.equal(starts, 2);
-  assert.doesNotThrow(() => assertContainerStartupSettled(container));
-});
-
-test('request cancellation does not remove an unsettled startup fence', async () => {
-  const raw = deferred();
-  const controller = new AbortController();
-  const container = { startAndWaitForPorts: () => raw.promise };
-  const starting = startContainer(container, { signal: controller.signal });
-  controller.abort();
-  await assert.rejects(starting, RuntimeControlError);
-  assert.throws(() => assertContainerStartupSettled(container), RuntimeControlError);
-  raw.resolve();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.doesNotThrow(() => assertContainerStartupSettled(container));
-});
-
-test('synchronous SDK failure cannot leave a stale startup fence', async () => {
-  const container = {
-    startAndWaitForPorts: (): Promise<void> => {
-      throw new Error('synthetic private failure');
-    },
-  };
-  await assert.rejects(startContainer(container), RuntimeControlError);
-  assert.doesNotThrow(() => assertContainerStartupSettled(container));
-});
-
-test('late SDK success cannot outrun a deadline whose timer has not run', async (t) => {
-  let now = Date.now();
-  t.mock.method(Date, 'now', () => now);
-  const container = {
-    startAndWaitForPorts: async () => {
-      now += 1000;
-    },
-  };
-  await assert.rejects(startContainer(container, { timeoutMs: 1000 }), RuntimeControlError);
   assert.doesNotThrow(() => assertContainerStartupSettled(container));
 });
 

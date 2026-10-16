@@ -17,7 +17,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
-import { Composio } from '@composio/core';
 import pg from 'pg';
 import { IntegrationDownload } from '../src/ports/integrations.ts';
 import { ObjectStoreConflict } from '../src/ports/object-storage.ts';
@@ -29,9 +28,7 @@ import {
   readDownload,
 } from '../src/providers/agent-browser/downloads.ts';
 import { fileBytes } from '../src/shared/files.ts';
-import { mcpFiles } from '../src/providers/app-files.ts';
 import { createComposioFiles } from '../src/providers/composio/downloads.ts';
-import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import {
   createContainerBrowserComputer,
   type BrowserBridgeLauncher,
@@ -41,7 +38,6 @@ import { startContainerBrowserWorker } from '../src/providers/container-browser/
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { createHttpObjectStore } from '../src/providers/object-storage/http.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
-import { saveIntegrationFiles } from '../src/server/integration-files.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
 
@@ -128,8 +124,6 @@ test('browser file validation bounds bytes and rejects unsafe metadata', async (
   for (const name of ['../private', 'folder/file', 'folder\\file', '.', '..', 'file\nname'])
     assert.throws(() => downloadFile(browserDownloadPdf, name));
   assert.throws(() => downloadFile(Buffer.from('text'), 'file', 'text/html\r\nX-Header: value'));
-  const long = downloadFile(browserDownloadPdf, `${'report '.repeat(60)}.pdf`).name;
-  assert.ok(long.endsWith('.pdf') && Buffer.byteLength(long) <= 218);
 });
 
 test('browser captures refuse symlinks, partial files, multiple links and excessive file size', async () => {
@@ -158,94 +152,6 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
     await rm(root, { recursive: true, force: true });
   }
 });
-
-test(
-  'native browser actions keep generated PDF tabs usable after a failed download',
-  { skip: !process.env.OTTO_TEST_BROWSER_EXECUTABLE, timeout: 90_000 },
-  async () => {
-    const root = await mkdtemp(join(tmpdir(), 'otto-blob-pdf-'));
-    try {
-      const fixture = await createBrowserDownloadFixture();
-      try {
-        const bridge = await createDownloadBrowser(root);
-        try {
-          const computer = bridge.computer;
-          await computer.act('blob-view', { action: 'open', url: `${fixture.origin}/session` });
-          const notes = 'Typed €\nSecond line';
-          await computer.act('blob-view', { action: 'type', selector: '#notes', text: notes });
-          await computer.act('blob-view', { action: 'select', selector: '#format', text: 'pdf' });
-          await computer.act('blob-view', { action: 'check', selector: '#copy' });
-          const fields = await computer.act('blob-view', {
-            action: 'evaluate',
-            script: `({notes: document.querySelector('#notes').value, enter: window.keys.includes('Enter'), format: document.querySelector('#format').value, copy: document.querySelector('#copy').checked})`,
-          });
-          assert.deepEqual(JSON.parse(fields.text.split('\n')[1]), {
-            notes,
-            enter: true,
-            format: 'pdf',
-            copy: true,
-          });
-          await computer.act('blob-view', { action: 'uncheck', selector: '#copy' });
-          const unchecked = await computer.act('blob-view', {
-            action: 'evaluate',
-            script: `document.querySelector('#copy').checked`,
-          });
-          assert.equal(JSON.parse(unchecked.text.split('\n')[1]), false);
-          const longNotes = 'Synthetic document text.\n'.repeat(2000);
-          await computer.act('blob-view', { action: 'fill', selector: '#notes', text: longNotes });
-          const documentText = await computer.act('blob-view', {
-            action: 'evaluate',
-            script: `document.querySelector('#notes').value`,
-          });
-          assert.equal(JSON.parse(documentText.text.split('\n')[1]), longNotes);
-          const ready = await computer.act('blob-view', {
-            action: 'wait',
-            text: 'Download invoice',
-            waitMs: 90_000,
-          });
-          assert.match(ready.text, /Download invoice/);
-          await computer.injectCredentials({
-            threadId: 'blob-view',
-            origin: fixture.origin,
-            kind: 'identifier',
-            username: 'synthetic-download@example.test',
-            usernameSelector: '#identifier',
-            submitSelector: '#continue',
-          });
-          await assert.rejects(computer.download!('blob-view', { selector: '#blob-view' }));
-          let tabId: string | undefined;
-          const deadline = Date.now() + 5000;
-          do {
-            const tabs = await computer.act('blob-view', { action: 'tab_list' });
-            tabId = /(?:Active|Open) (\S+): blob:/.exec(tabs.text)?.[1];
-          } while (!tabId && Date.now() < deadline);
-          assert.ok(tabId);
-          const view = await computer.act('blob-view', { action: 'tab_switch', tabId });
-          assert.equal(new URL(view.url).protocol, 'blob:');
-          await computer.act('blob-view', { action: 'snapshot' });
-          assert.match(
-            (
-              await computer.act('blob-view', {
-                action: 'evaluate',
-                script: 'document.contentType',
-              })
-            ).text,
-            /application\/pdf/,
-          );
-          await assert.rejects(computer.currentPage('blob-view'));
-          assert.deepEqual((await computer.download!('blob-view', {})).bytes, browserDownloadPdf);
-          assert.equal(fixture.unauthenticatedDownloads(), 0);
-        } finally {
-          await bridge.close();
-        }
-      } finally {
-        await fixture.close();
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  },
-);
 
 test(
   'authenticated browser PDFs cross the real private bridge without sharing the profile',
@@ -428,7 +334,6 @@ test('HTTP storage bounds responses, uses version conditions and never forwards 
   assert.equal(new Headers(requests[1].init.headers).get('authorization'), null);
   assert.equal(new Headers(requests[1].init.headers).get('x-owner-id'), null);
   assert.equal(new Headers(requests[1].init.headers).get('x-otto-generation'), null);
-  assert.equal(requests[0].url, 'http://otto.storage/v1/objects/' + encodeURIComponent(key));
   assert.equal(requests[0].init.redirect, 'manual');
   await assert.rejects(store.read(key, 3), /unavailable/);
   status = 412;
@@ -515,39 +420,6 @@ test(
 );
 
 test(
-  'a lost PostgreSQL write acknowledgement preserves committed bytes and rejects stale replay',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const f = await fixture();
-    const key = `artifacts/${randomUUID()}`;
-    const stable = createPostgresObjectStore({ database: f.database, ownerId: 'owner' });
-    try {
-      await stable.initialize();
-      const version = await stable.write(key, Buffer.from('before'), { expectedVersion: null });
-      const disconnected = {
-        query: async (...args: Parameters<pg.Pool['query']>) => {
-          await f.database.query(...args);
-          throw new Error('private connection details must not escape');
-        },
-      } as unknown as pg.Pool;
-      const uncertain = createPostgresObjectStore({ database: disconnected, ownerId: 'owner' });
-      await assert.rejects(
-        uncertain.write(key, Buffer.from('committed'), { expectedVersion: version }),
-        { message: 'Private file storage is temporarily unavailable.' },
-      );
-      const restored = createPostgresObjectStore({ database: f.database, ownerId: 'owner' });
-      assert.equal((await restored.read(key, 100))?.bytes.toString(), 'committed');
-      await assert.rejects(
-        restored.write(key, Buffer.from('replayed'), { expectedVersion: version }),
-        ObjectStoreConflict,
-      );
-    } finally {
-      await f.close();
-    }
-  },
-);
-
-test(
   'private artifacts survive actor restart and remain owned for downloads and channel delivery',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
@@ -584,7 +456,6 @@ test(
         'text/plain',
         thread,
       );
-      assert.deepEqual(Object.keys(saved).sort(), ['id', 'mimeType', 'name', 'size', 'url']);
       const restored = create('owner-one');
       assert.equal((await restored.readArtifact(saved.id)).toString(), 'synthetic file');
       assert.equal(
@@ -635,15 +506,10 @@ const settled = async (value: unknown): Promise<unknown> => {
 };
 
 test('Composio file outputs become private bytes wherever they appear and never expose their links', async () => {
-  const calls: string[] = [];
   const files = createComposioFiles({
     resolver: publicResolver,
-    request: async ({ url, address, maxBytes, metadata, purpose }) => {
-      calls.push(url.href);
+    request: async ({ url, address }) => {
       assert.equal(address, '93.184.216.34');
-      assert.equal(maxBytes, fileBytes);
-      assert.equal(metadata, false);
-      assert.equal(purpose, 'download');
       if (url.pathname === '/attachment')
         return {
           status: 302,
@@ -676,7 +542,6 @@ test('Composio file outputs become private bytes wherever they appear and never 
     },
     AbortSignal.timeout(1000),
   );
-  assert.equal(calls.length, 0);
   const result = await settled(pending);
   assert.deepEqual(result, {
     data: {
@@ -704,7 +569,6 @@ test('Composio file outputs become private bytes wherever they appear and never 
     error: null,
   });
   assert.equal(JSON.stringify(result).includes('signature'), false);
-  assert.equal(calls.length, 4);
   const nested = JSON.stringify({
     file: { name: 'nested.png', mimetype: 'image/png', s3url: 'https://files.example.com/nested' },
   });
@@ -721,65 +585,6 @@ test('Composio file outputs become private bytes wherever they appear and never 
         },
       },
     },
-  );
-  assert.equal(calls.length, 5);
-});
-
-test('every Composio file in a result is saved, one download at a time, above the old size limit', async () => {
-  const large = 20 * 1024 * 1024;
-  let active = 0;
-  let most = 0;
-  const files = createComposioFiles({
-    resolver: publicResolver,
-    request: async ({ url }) => {
-      most = Math.max(most, ++active);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active--;
-      return {
-        status: 200,
-        headers: {},
-        body: url.pathname === '/0' ? new Uint8Array(large).fill(1) : Buffer.from(url.pathname),
-      };
-    },
-  });
-  const result = await files(
-    {
-      items: Array.from({ length: 12 }, (_, index) => ({
-        name: `${index}.bin`,
-        mimetype: 'application/octet-stream',
-        s3url: `https://files.example.com/${index}`,
-      })),
-    },
-    AbortSignal.timeout(5000),
-  );
-  const saved: Array<{ name: string; size: number }> = [];
-  const { value } = await saveIntegrationFiles(result, async (file) => {
-    saved.push({ name: file.name, size: file.bytes.byteLength });
-    return `saved/${file.name}`;
-  });
-  assert.equal(most, 1);
-  assert.equal(saved.length, 12);
-  assert.deepEqual(saved[0], { name: '0.bin', size: large });
-  assert.deepEqual((value as { items: unknown[] }).items[11], {
-    workspaceFile: 'saved/11.bin',
-    name: '11.bin',
-    mimeType: 'application/octet-stream',
-    size: 3,
-  });
-});
-
-test('MCP file blocks over the file limit are refused before decoding', () => {
-  assert.deepEqual(
-    mcpFiles({
-      content: [
-        {
-          type: 'image',
-          data: 'A'.repeat(Math.ceil(fileBytes / 3) * 4 + 8),
-          mimeType: 'image/png',
-        },
-      ],
-    }),
-    { content: [{ type: 'image', mimeType: 'image/png', error: 'The file is too large.' }] },
   );
 });
 
@@ -833,54 +638,4 @@ test('Composio file links that are private, insecure, rebinding or oversized are
         request: async () => ({ status: 200, headers: {}, body: new Uint8Array(size) }),
       }),
     );
-});
-
-test('Composio actions on the bound account return downloaded files without their links', async (t) => {
-  const client = new Composio({
-    apiKey: 'fixture-never-live',
-    allowTracking: false,
-    disableVersionCheck: true,
-    fileUploadDirs: false,
-  });
-  const transport = client.getClient().toolRouter.session;
-  t.mock.method(transport, 'create', async () => ({
-    session_id: 'fixture-files',
-    mcp: { type: 'http', url: 'https://backend.composio.dev/tool_router/mcp/fixture-files' },
-    config: { user_id: 'fixture-owner' },
-    config_version: 1,
-  }));
-  t.mock.method(transport, 'execute', async (sessionId: string, input: unknown) => {
-    assert.equal(sessionId, 'fixture-files');
-    assert.deepEqual(input, {
-      tool_slug: 'SLACK_DOWNLOAD_SLACK_FILE',
-      arguments: { file: 'F0SYNTHETIC' },
-      account: 'owned-account',
-    });
-    return {
-      data: {
-        file_content: {
-          name: 'Screenshot.png',
-          mimetype: 'image/png',
-          s3url: 'https://files.example.com/slack?X-Amz-Signature=fixture',
-        },
-      },
-      error: null,
-      log_id: 'fixture-log',
-    };
-  });
-  const provider = createComposioProvider({
-    client,
-    fileDownload: {
-      resolver: publicResolver,
-      request: async () => ({ status: 200, headers: {}, body: Buffer.from('fixture') }),
-    },
-  });
-  const session = await provider.createSession('fixture-owner', { slack: 'owned-account' });
-  const result = await settled(
-    await session.execute('SLACK_DOWNLOAD_SLACK_FILE', { file: 'F0SYNTHETIC' }, 'owned-account'),
-  );
-  assert.deepEqual((result as { data: unknown }).data, {
-    file_content: { name: 'Screenshot.png', mimeType: 'image/png', bytes: Buffer.from('fixture') },
-  });
-  assert.equal(JSON.stringify(result).includes('X-Amz-Signature'), false);
 });

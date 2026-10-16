@@ -452,13 +452,6 @@ export function createTasks(options: {
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id);
       CREATE INDEX IF NOT EXISTS turns_task ON turns(task_id) WHERE task_id IS NOT NULL;
-      WITH missing AS (
-        SELECT t.id,gen_random_uuid() AS message_id,t.owner_id,u.thread_id,t.title,t.created_at
-        FROM tasks t JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id WHERE t.message_id IS NULL
-      ), inserted AS (
-        INSERT INTO messages(id,owner_id,thread_id,role,text,created_at)
-        SELECT message_id,owner_id,thread_id,'assistant',title,created_at FROM missing RETURNING id
-      ) UPDATE tasks t SET message_id=m.message_id FROM missing m JOIN inserted i ON i.id=m.message_id WHERE t.id=m.id;
     `);
   }
 

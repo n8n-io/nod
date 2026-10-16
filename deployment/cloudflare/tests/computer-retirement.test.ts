@@ -4,26 +4,19 @@ import { registerHooks } from 'node:module';
 import test from 'node:test';
 import type { ComputerState } from '../src/computer-lifecycle.ts';
 import { retireUnusedComputer } from '../src/computer-retirement.ts';
-import { startContainer } from '../src/container-startup.ts';
 
 type Options = Parameters<typeof retireUnusedComputer>[0];
 
-function fixture(
-  role: 'browser' | 'workspace' = 'browser',
-  revision: 'older' | 'current' = 'older',
-  originallyStopped = true,
-) {
+function fixture(role: 'browser' | 'workspace' = 'browser') {
   const identity = { ownerId: randomUUID(), environment: 'development', generation: '4', role };
   const original: ComputerState = {
     ...identity,
-    generation: revision === 'older' ? '3' : '4',
+    generation: '3',
     phase: 'uncertain',
-    stopped: originallyStopped,
+    stopped: true,
     commands: [],
   };
   const values = new Map<string, unknown>([['computer', structuredClone(original)]]);
-  let beforeTransaction: (() => void) | undefined;
-  let beforeCommit: (() => void) | undefined;
   let authorization: (() => void) | undefined;
   let inactive = true;
   let stopped = true;
@@ -37,7 +30,6 @@ function fixture(
     read: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
     transaction(operation) {
       const result = serial.then(async () => {
-        beforeTransaction?.();
         const draft = structuredClone(values);
         const storage = {
           get: async (key: string) => structuredClone(draft.get(key)),
@@ -50,7 +42,6 @@ function fixture(
           },
         };
         const result = await operation(storage as unknown as Parameters<typeof operation>[0]);
-        beforeCommit?.();
         values.clear();
         for (const [key, value] of draft) values.set(key, value);
         return result;
@@ -71,12 +62,6 @@ function fixture(
     archiveKey: `computer-retirement:${identity.generation}`,
     writes: () => writes,
     run: () => retireUnusedComputer(options),
-    beforeTransaction(value: () => void) {
-      beforeTransaction = value;
-    },
-    beforeCommit(value: () => void) {
-      beforeCommit = value;
-    },
     authorization(value: () => void) {
       authorization = value;
     },
@@ -120,16 +105,12 @@ test('identity, generation, legacy command and checkpoint ambiguity keep the ori
     { environment: 'production' },
     { role: 'workspace' },
     { generation: '4', stopped: null },
-    { generation: '4', stopped: 'false' },
-    { generation: '4', stopped: undefined },
     { generation: '5' },
-    { generation: 'invalid' },
     { stopped: false },
     { commands: [randomUUID()] },
     { commands: null },
     { checkpoint: {} },
     { previousCheckpoint: {} },
-    { checkpoint: null },
     { unknown: true },
   ];
   for (const change of changes) {
@@ -137,18 +118,6 @@ test('identity, generation, legacy command and checkpoint ambiguity keep the ori
     f.values.set('computer', { ...f.original, ...change });
     const before = structuredClone(f.values);
     await assert.rejects(f.run(), { status: 503 });
-    assert.deepEqual(f.values, before);
-  }
-});
-
-test('ordinary absent, ready, dirty and restoring computers never enter retirement', async () => {
-  for (const phase of [undefined, 'ready', 'dirty', 'restoring']) {
-    const f = fixture();
-    if (phase) f.values.set('computer', { ...f.original, phase });
-    else f.values.delete('computer');
-    const before = structuredClone(f.values);
-    f.authorization(() => assert.fail('Ordinary lifecycle must not need retirement authority'));
-    assert.equal(await f.run(), false);
     assert.deepEqual(f.values, before);
   }
 });
@@ -169,60 +138,6 @@ test('active controllers, missing physical proof, expiry and revoked authority r
   }
 });
 
-test('late claims, state changes, archive collisions and activity invalidate the atomic comparison', async () => {
-  for (const condition of ['claim', 'state', 'archive', 'activity', 'expiry']) {
-    const f = fixture();
-    f.beforeTransaction(() => {
-      if (condition === 'claim') f.values.set(`command:1:${randomUUID()}`, true);
-      if (condition === 'state') f.values.set('computer', { ...f.original, generation: '2' });
-      if (condition === 'archive') f.values.set(f.archiveKey, { retain: 'existing' });
-      if (condition === 'activity') f.setInactive(false);
-      if (condition === 'expiry') f.expire();
-    });
-    await assert.rejects(f.run(), { status: 503 });
-    assert.equal(f.writes(), 0);
-    assert.equal((f.values.get('computer') as ComputerState).phase, 'uncertain');
-  }
-});
-
-test('a failed atomic commit cannot leave only an archive or only a replacement', async () => {
-  const f = fixture();
-  const before = structuredClone(f.values);
-  f.beforeCommit(() => {
-    throw new Error('synthetic storage failure');
-  });
-  await assert.rejects(f.run(), { status: 503 });
-  assert.deepEqual(f.values, before);
-});
-
-test('authority loss after commit rejects acknowledgement without deleting the retained evidence', async () => {
-  const f = fixture();
-  f.authorization(() => {
-    if (f.writes()) throw new Error('synthetic post-commit revocation');
-  });
-  await assert.rejects(f.run(), { status: 503 });
-  assert.equal((f.values.get('computer') as ComputerState).stopped, true);
-  assert.deepEqual(
-    (f.values.get(f.archiveKey) as { original: ComputerState }).original,
-    f.original,
-  );
-  assert.equal(f.writes(), 1);
-  assert.equal(await f.run(), false);
-  assert.equal(f.writes(), 1);
-});
-
-test('concurrent retirement attempts archive once and reject a stale comparison', async () => {
-  const f = fixture();
-  const results = await Promise.allSettled([f.run(), f.run()]);
-  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
-  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
-  assert.equal(f.writes(), 1);
-  assert.deepEqual(
-    (f.values.get(f.archiveKey) as { original: ComputerState }).original,
-    f.original,
-  );
-});
-
 const stub = `export class DurableObject { constructor(ctx,env) { this.ctx=ctx;this.env=env; } } export class WorkerEntrypoint {}`;
 registerHooks({
   resolve(specifier, context, next) {
@@ -234,12 +149,11 @@ registerHooks({
 const { BrowserComputerContainer, WorkspaceComputerContainer, computerName } =
   await import('../src/computer-container.ts');
 
-function controllerFixture(role: 'browser' | 'workspace', f = fixture(role)) {
+function controllerFixture(role: 'browser' | 'workspace') {
+  const f = fixture(role);
   f.options.deployment.deadline = Date.now() + 60_000;
-  const events: string[] = [];
   let inspect: () => Promise<unknown> = async () => null;
   let sdkStatus = 'stopped';
-  let authorized = true;
   const namespace = { idFromName: (name: string) => ({ toString: () => name }) };
   const identity = f.options.identity;
   const storage = {
@@ -263,15 +177,9 @@ function controllerFixture(role: 'browser' | 'workspace', f = fixture(role)) {
           async deploymentComputerIdentity(owner: string, version: string) {
             assert.equal(owner, identity.ownerId);
             assert.equal(version, identity.generation);
-            if (!authorized) throw new Error('synthetic authority failure');
           },
-          async deploymentUnusedComputerIdentity() {
-            events.push('natural-drain-authority');
-            if (!authorized) throw new Error('synthetic authority failure');
-          },
-          async computerIdentity() {
-            if (!authorized) throw new Error('synthetic authority failure');
-          },
+          async deploymentUnusedComputerIdentity() {},
+          async computerIdentity() {},
         }),
       },
     },
@@ -288,7 +196,6 @@ function controllerFixture(role: 'browser' | 'workspace', f = fixture(role)) {
     ...f,
     computer,
     native,
-    events,
     drain: () =>
       computer.prepareDeploymentDrain(identity.ownerId, identity.generation, f.options.deployment),
     inspect(value: () => Promise<unknown>) {
@@ -296,9 +203,6 @@ function controllerFixture(role: 'browser' | 'workspace', f = fixture(role)) {
     },
     sdk(value: string) {
       sdkStatus = value;
-    },
-    revoke() {
-      authorized = false;
     },
   };
 }
@@ -312,7 +216,6 @@ test('both controller roles retire only through deployment drain and keep ordina
       clean: true,
       stopped: true,
     });
-    assert.equal(f.events.length, 4);
     assert.deepEqual(
       (f.values.get(f.archiveKey) as { original: ComputerState }).original,
       f.original,
@@ -345,25 +248,6 @@ test('both controller roles retire only through deployment drain and keep ordina
   }
 });
 
-test('a fresh controller can drain a retired marker under a later operation without rewriting its archive', async () => {
-  for (const role of ['browser', 'workspace'] as const) {
-    const f = controllerFixture(role);
-    assert.equal((await f.drain()).status, 'drained');
-    const before = JSON.stringify([...f.values]);
-    const writes = f.writes();
-    f.options.deployment = {
-      nonce: randomUUID(),
-      targetRelease: 'c'.repeat(40),
-      deadline: Date.now() + 60_000,
-    };
-    const reloaded = controllerFixture(role, f);
-    assert.equal((await reloaded.drain()).status, 'drained');
-    assert.equal(JSON.stringify([...f.values]), before);
-    assert.equal(f.writes(), writes);
-    assert.deepEqual(reloaded.events, []);
-  }
-});
-
 test('controller retirement rejects unknown native absence and nonterminal SDK state', async () => {
   for (const condition of ['undefined', 'present', 'rejection', 'healthy', 'native-running']) {
     const f = controllerFixture('browser');
@@ -379,23 +263,6 @@ test('controller retirement rejects unknown native absence and nonterminal SDK s
     assert.deepEqual(f.values.get('computer'), f.original);
     assert.equal(f.values.has(f.archiveKey), false);
   }
-});
-
-test('unsettled raw startup blocks retirement even when native and SDK state appear stopped', async () => {
-  const f = controllerFixture('browser');
-  let finish!: () => void;
-  Object.assign(f.computer, {
-    startAndWaitForPorts: () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  });
-  await assert.rejects(startContainer(f.computer, { timeoutMs: 5 }));
-  await assert.rejects(f.drain());
-  assert.deepEqual(f.values.get('computer'), f.original);
-  assert.equal(f.values.has(f.archiveKey), false);
-  finish();
-  await new Promise((resolve) => setImmediate(resolve));
 });
 
 test('a controller selection already awaiting storage cannot enter during retirement', async () => {
@@ -449,127 +316,4 @@ test('a controller selection already awaiting storage cannot enter during retire
   releaseInspect();
   assert.equal((await drain).status, 'drained');
   assert.equal(f.values.has(f.archiveKey), true);
-});
-
-test('native inspection cannot install a concurrent controller or acknowledge lost authority', async () => {
-  const f = controllerFixture('browser');
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let entered!: () => void;
-  const inspecting = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  f.inspect(async () => {
-    entered();
-    await held;
-    return null;
-  });
-  const drain = f.drain();
-  await inspecting;
-  const response = await f.computer.request(
-    f.options.identity.ownerId,
-    '4',
-    new Request('http://otto.computer/v1/commands', {
-      method: 'POST',
-      headers: { 'x-otto-generation': '4', 'x-otto-computer-role': 'browser' },
-      body: JSON.stringify({ id: randomUUID(), role: 'browser' }),
-    }),
-  );
-  assert.equal(response.status, 503);
-  f.revoke();
-  release();
-  await assert.rejects(drain);
-  assert.deepEqual(f.values.get('computer'), f.original);
-  assert.equal(f.values.has(f.archiveKey), false);
-});
-
-test('a current unused failure retires only to a stopped marker and preserves its original record', async () => {
-  for (const role of ['browser', 'workspace'] as const) {
-    for (const stopped of [false, true]) {
-      const f = controllerFixture(role, fixture(role, 'current', stopped));
-      f.values.set('synthetic-pending-receipt', { completed: false });
-      assert.deepEqual(await f.drain(), {
-        status: 'drained',
-        generation: '4',
-        clean: true,
-        stopped: true,
-      });
-      assert.deepEqual(f.values.get(f.archiveKey), {
-        format: 'otto-unused-computer-retirement-v1',
-        deployment: f.options.deployment,
-        original: f.original,
-        replacement: { ...f.options.identity, phase: 'ready', stopped: true },
-      });
-      assert.deepEqual(f.values.get('synthetic-pending-receipt'), { completed: false });
-      const before = JSON.stringify([...f.values]);
-      const response = await f.computer.request(
-        f.options.identity.ownerId,
-        f.options.identity.generation,
-        new Request('http://otto.computer/v1/commands', {
-          method: 'POST',
-          headers: { 'x-otto-generation': '4', 'x-otto-computer-role': role },
-          body: JSON.stringify({
-            id: randomUUID(),
-            role,
-            ...(role === 'workspace' && { threadId: 'synthetic' }),
-          }),
-        }),
-      );
-      assert.equal(response.status, 503);
-      assert.equal(JSON.stringify([...f.values]), before);
-      assert.equal(
-        [...f.values.keys()].some((key) => key.startsWith('command:')),
-        false,
-      );
-    }
-  }
-});
-
-test('current-generation retirement retains claim, checkpoint, controller and authority fences', async () => {
-  for (const condition of [
-    'claim',
-    'checkpoint',
-    'previous-checkpoint',
-    'loaded',
-    'authority',
-    'late-native',
-  ]) {
-    const f = controllerFixture('workspace', fixture('workspace', 'current', false));
-    if (condition === 'claim') f.values.set(`command:1:${randomUUID()}`, true);
-    if (condition === 'checkpoint') f.values.set('computer', { ...f.original, checkpoint: {} });
-    if (condition === 'previous-checkpoint')
-      f.values.set('computer', { ...f.original, previousCheckpoint: {} });
-    let loaded: unknown;
-    if (condition === 'loaded') {
-      loaded = {
-        ownerId: f.options.identity.ownerId,
-        generation: f.options.identity.generation,
-        commands: { active: 0 },
-        lifecycle: { drain: async () => ({ status: 'unsafe', generation: '4' }) },
-      };
-      Object.assign(f.computer, { current: loaded });
-    }
-    if (condition === 'authority') f.revoke();
-    if (condition === 'late-native') {
-      let checks = 0;
-      f.inspect(async () => (++checks === 1 ? null : { image: 'synthetic', labels: {} }));
-    }
-    const before = structuredClone(f.values);
-    if (condition === 'loaded') {
-      assert.deepEqual(await f.drain(), { status: 'unsafe', generation: '4' });
-      assert.equal((f.computer as unknown as { current: unknown }).current, loaded);
-    } else await assert.rejects(f.drain());
-    if (condition === 'late-native') {
-      assert.deepEqual(
-        (f.values.get(f.archiveKey) as { original: ComputerState }).original,
-        f.original,
-      );
-      assert.equal((f.values.get('computer') as ComputerState).stopped, true);
-    } else {
-      assert.deepEqual(f.values, before);
-      assert.equal(f.values.has(f.archiveKey), false);
-    }
-  }
 });

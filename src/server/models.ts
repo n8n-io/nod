@@ -138,7 +138,7 @@ export function createModelService(options: {
   async function credential(id: string, client: Pool | PoolClient = database) {
     const row = (
       await client.query<Row>(
-        'SELECT provider,method,models,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
+        'SELECT provider,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
         [id, ownerId],
       )
     ).rows[0];
@@ -150,18 +150,6 @@ export function createModelService(options: {
         : undefined
       : (JSON.parse((await vault.read(id, client)).value) as ModelCredential);
     if (!value) return undefined;
-    if (
-      value.type === 'oauth' &&
-      (!value.accountId ||
-        (row.method === 'subscription' &&
-          row.models.some(
-            (model) =>
-              model.spec.api !== 'openai-codex-responses' ||
-              model.spec.provider !== 'openai-codex' ||
-              model.spec.baseUrl !== 'https://chatgpt.com/backend-api',
-          )))
-    )
-      throw new ModelAuthError('Reconnect the selected ChatGPT account in Models.', true);
     remember(value);
     return value;
   }
