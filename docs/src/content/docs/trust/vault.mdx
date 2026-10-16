@@ -68,7 +68,7 @@ A login works only on its exact origin: the protocol, host and port. The browser
 - **Which account.** Otto reuses the one saved login that fits. If several could apply and you haven't said which, it asks.
 - **Whether to sign in.** The same [checker](/trust/approvals/) that decides app actions checks whether your recent messages need this website. If not, Otto asks, for example "Sign in to reports.example.com?". Mentioning a domain isn't consent.
 - **Scheduled runs** are checked against the instruction that created the schedule.
-- **Background work** Otto starts itself asks you first, because no words of yours stand behind it.
+- **Background work** Otto starts itself is checked against your [standing instruction](/trust/approvals/#standing-instructions). If that doesn't need this website, Otto asks you first.
 
 A yes covers that website and account for the rest of the task. A new task is checked again.
 

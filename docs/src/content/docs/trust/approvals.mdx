@@ -7,9 +7,9 @@ sidebar:
 
 Before Otto runs an action in a connected app, or a step in its browser that could send, submit or change something, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it, and background work asks. Saving a note has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it, and background work against your [standing instruction](#standing-instructions). Saving a note has its own rules: see [Memory](/how-it-works/memory/).
 
-Background work, such as on a new email or a check of an app without events, has no words from you behind it. So the checker lets it read and draft, and Otto asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
+Work Otto starts on its own, such as on a new email or a check of an app without events, runs only once you've told Otto what to watch for. It has only your standing instruction behind it. So the checker lets it read and draft and do what that instruction asks. Otto asks you about everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
 ## What the checker sees
 
@@ -33,6 +33,7 @@ For action permission, a decision model selects one category: forbidden or confi
 | The Otto message your latest one answered                                       | Anything Otto read while working                                            |
 | A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat, even when they started a schedule |
 | The action and its arguments as Otto sends them                                 | Other people's words as yours                                               |
+| For background work, your standing instruction, instead of your messages        |                                                                             |
 | How a schedule or memory note Otto would change stands now                      |                                                                             |
 
 For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
@@ -41,13 +42,13 @@ Only your words carry authority. A web page or email can't argue for an action, 
 
 ## What runs directly
 
-Limits in your task request or a schedule's instructions override these defaults, including for reads and drafts. Background work Otto starts uses the defaults below.
+Limits in your task request, a schedule's instructions or your standing instruction override these defaults, including for reads and drafts.
 
 | Kind of work                                      | Reads and drafts | Anything else                                 |
 | ------------------------------------------------- | ---------------- | --------------------------------------------- |
 | A conversation with you                           | Run              | Run if your messages ask for it               |
 | A scheduled run                                   | Run              | Run if the schedule's instruction asks for it |
-| Background work Otto starts, such as on new email | Run              | Ask                                           |
+| Background work Otto starts, such as on new email | Run              | Run if your standing instruction asks for it  |
 
 ```mermaid
 flowchart TD
@@ -65,6 +66,19 @@ On websites, the same checker decides each step that could send, submit or chang
 The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Otto typed or chose on that page. It never sees the page's text. Following links, searching, filtering, closing a popup, declining optional cookies, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, accepting cookies, and changing an account or a setting that saves at once count as acting, and run only when your words ask for them. A reading step that repeats exactly within 10 minutes, under the same words from you, reuses its earlier verdict.
 
 When the checker asks, the question names what the page shows, such as the amount and payee: the question writer and its fact check read the page's visible text, which the checker itself never sees. Your yes approves that one step. Otto runs it once, only while the browser is still on the same page and the control is still there. If the page moved on, nothing runs and Otto looks again. A subagent can't ask you, so it hands the step back to the main task.
+
+## Standing instructions
+
+Tell Otto what to do on its own when something arrives, and background work does it without asking. For example: "Whenever Ana sends an invoice, forward it to accounting@acme.com."
+
+- **Otto offers.** When you act on something background work brought you, such as asking Otto to reply, and it will come up again, Otto offers once to do it without asking next time.
+- **It sits with what Otto watches for.** Otto keeps it next to what you've said is worth interrupting you for. Changing either goes through the same checker, which sees what you set before. So Otto asks you before it adds anything you didn't ask for.
+- **The checker sees only the instruction and the action.** It never sees the email or update that started the work. An action that matches the instruction runs. Anything else, such as a forward to a different address, asks you. It never covers a change to Otto's own schedules, settings, limits or memory.
+- **Change or stop it by telling Otto.** For example, "stop forwarding Ana's invoices". The next action is checked against what you set.
+
+:::caution[Name the action and the target]
+Anyone can send you an email that claims to be from Ana. A standing instruction runs for anything that matches it, so say exactly what to do and where. Then a fake invoice can only reach accounting.
+:::
 
 ## The confirmation
 

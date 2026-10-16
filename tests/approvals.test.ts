@@ -785,8 +785,15 @@ test(
       );
 
       await t.test(
-        'background work shows the checker no owner words, and a scheduled run only its instruction',
+        'background work shows the checker only the standing instruction, and a scheduled run only its instruction',
         async () => {
+          const setRule = (rule: string) =>
+            db.pool.query(
+              `INSERT INTO preferences(owner_id,notification_rule) VALUES($1,$2)
+               ON CONFLICT(owner_id) DO UPDATE SET notification_rule=EXCLUDED.notification_rule`,
+              [ownerId, rule],
+            );
+          await setRule('');
           aligned = false;
           const event = await begin('Synthetic event', { source: 'event' });
           assert.deepEqual(
@@ -795,6 +802,20 @@ test(
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           assert.equal(reviews.at(-1)?.scheduledTaskInstruction, undefined);
+          assert.equal(reviews.at(-1)?.standingInstruction, undefined);
+          const standing = 'Whenever Ana sends an invoice, forward it to accounting@example.test.';
+          await setRule(standing);
+          aligned = (input) => input.standingInstruction === standing;
+          assert.deepEqual(
+            await trust.check(event, 'GMAIL_FORWARD_MESSAGE', {
+              message_id: 'synthetic-invoice',
+              recipient_email: 'accounting@example.test',
+            }),
+            { confirm: false },
+          );
+          assert.equal(reviews.at(-1)?.userMessages, undefined);
+          await trust.check(await begin('Check my inbox.'), 'GMAIL_FETCH_EMAILS', {});
+          assert.equal(reviews.at(-1)?.standingInstruction, undefined);
           const scheduled = await begin('Synthetic scheduled work', { source: 'schedule' });
           assert.deepEqual(
             await trust.check(scheduled, 'GOOGLECALENDAR_PATCH_EVENT', {
@@ -819,6 +840,8 @@ test(
             { confirm: false },
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
+          assert.equal(reviews.at(-1)?.standingInstruction, undefined);
+          await setRule('');
         },
       );
 
