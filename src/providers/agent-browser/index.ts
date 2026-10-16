@@ -1087,8 +1087,8 @@ export function createAgentBrowserComputer(options: {
           }
           const value = read ? read.value : await evaluate(state, script, signal);
           if (!read) {
-            state.refs.clear();
             await markScripted(state);
+            await observe(state, signal).catch(() => state.refs.clear());
           }
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {

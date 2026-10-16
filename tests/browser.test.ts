@@ -3242,24 +3242,15 @@ test('a checked browser step is described from its snapshot and runs only on tha
       (error) => error instanceof BrowserActionError && error.code === 'browser_script_writes',
     );
     assert.equal(page().dom.window.document.body.dataset.changed, undefined);
-    await computer.act('checked', { action: 'snapshot' });
+    const before = await computer.act('checked', { action: 'snapshot' });
+    const searchRef = /textbox "Search" \[ref=(e\d+)\]/.exec(before.text)?.[1];
+    assert.ok(searchRef);
     await computer.act('checked', {
       action: 'evaluate',
       script: "document.querySelector('#search').setAttribute('aria-label', 'Delete account')",
     });
-    await assert.rejects(
-      computer.act('checked', {
-        action: 'click',
-        selector: '@e3',
-        expectOrigin: 'https://1.1.1.1',
-      }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    const fresh = await computer.act('checked', { action: 'snapshot' });
-    const relabelled = /textbox "Delete account" \[ref=(e\d+)\]/.exec(fresh.text)?.[1];
-    assert.ok(relabelled);
     assert.deepEqual(
-      (await computer.currentPage('checked', { action: 'click', selector: `@${relabelled}` }))
+      (await computer.currentPage('checked', { action: 'click', selector: `@${searchRef}` }))
         .controls,
       [{ role: 'textbox', name: 'Delete account' }],
     );

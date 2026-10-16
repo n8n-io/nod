@@ -544,6 +544,13 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
       step.action === 'upload' ? { action: 'click', selector: step.selector } : step,
     );
     signal.throwIfAborted();
+    if (
+      step.action === 'press' &&
+      [...(step.key ?? '')].length === 1 &&
+      step.key!.trim() &&
+      ['textbox', 'searchbox', 'combobox', 'spinbutton'].includes(page.controls?.[0]?.role ?? '')
+    )
+      return {};
     const verdict = await context.browserStep({
       step,
       page,
