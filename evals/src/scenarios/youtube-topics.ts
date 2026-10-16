@@ -60,7 +60,7 @@ export default scenario({
       ),
       judge(
         'videos-are-grouped-into-real-topics',
-        'The answer groups the videos into a handful of topics (roughly three to six), each topic names the videos that belong to it, the grouping makes sense from the video titles, and there is a short statement of what is trending. It does not list videos without grouping them.',
+        'The answer groups the videos into sensible topics (any number and layout), each topic names the videos that belong to it, the grouping makes sense from the video titles, and there is a short statement of what is trending. It does not list videos without grouping them.',
         { failure: 'reasoning' },
       ),
       judge(

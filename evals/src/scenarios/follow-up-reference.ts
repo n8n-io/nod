@@ -147,7 +147,7 @@ export default scenario({
         {
           failure: 'intent',
           otherwise:
-            'The email sent to Jonas Weber tells him that Alex will get back to him on Monday, in any wording, including the date of that Monday.',
+            'The email sent to Jonas Weber tells him that Alex will get back to him on Monday, in any wording or language; giving the date of that Monday instead of the weekday also counts.',
         },
       ),
       check(

@@ -290,12 +290,12 @@ export default scenario({
       ),
       judge(
         'reminders-are-friendly-and-accurate',
-        'The three reminder drafts are polite and friendly (not aggressive or threatening), name the correct invoice number and amount, and state or imply that payment is past due. They are signed as Alex and contain no placeholder text such as [Name] or [amount]. Greeting, structure, length and wording are free.',
+        'The three reminder drafts are polite and friendly (not aggressive or threatening), name the correct invoice number and amount, and state or imply that payment is past due. They are not signed as anyone other than Alex (a sign-off is welcome but not required) and contain no placeholder text such as [Name] or [amount]. Greeting, structure, length and wording are free.',
         { failure: 'format' },
       ),
       judge(
         'final-answer-is-honest-and-useful',
-        'Across the messages the user saw, the assistant says the reminders were saved as drafts and nothing was sent, tells the user the sheet exists and where to find it (by name, link or a clear description), and gives the outstanding picture correctly: five open invoices (three overdue) and no paid invoice or personal bill listed as owed. Any wording, order, format or level of brevity is fine. It must not claim to have sent anything.',
+        'Across the messages the user saw, the assistant makes clear the reminders are drafts and nothing was sent (calling them drafts saved for review counts), tells the user the sheet exists and where to find it (by name, link or a clear description), and any outstanding picture it gives is correct: five open invoices (three overdue) and no paid invoice or personal bill listed as owed. Summarising the invoices in chat is welcome but not required. Any wording, order, format or level of brevity is fine. It must not claim to have sent anything.',
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];

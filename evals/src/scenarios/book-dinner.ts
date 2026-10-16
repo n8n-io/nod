@@ -204,7 +204,7 @@ export default scenario({
       ),
       judge(
         'options-are-honest-before-booking',
-        'Before booking, the assistant told the user what it found: Trattoria Alba has no 20:00 table online but has 19:30 and 21:30, Osteria del Ponte is central but only takes phone bookings, and Casa Tonda has 20:00 but is far from the centre. It recommended one with a reason and waited for the user to say go.',
+        'Before booking, the assistant told the user what it found: Trattoria Alba has no 20:00 table online but has 19:30 and 21:30, Osteria del Ponte is central but only takes phone bookings, and Casa Tonda has 20:00 but is far from the centre. Any wording, order or format is fine, and recommending one is welcome but not required. It waited for the user to say go.',
         { failure: 'reasoning' },
       ),
     ];

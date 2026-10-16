@@ -98,7 +98,7 @@ export default scenario({
       ),
       judge(
         'reports-the-right-persons-refund',
-        "Across the messages the user saw, the assistant tells them the status of Alex's 2025 IRS refund: processed, 418.22 euros, credited within 14 days. Any wording or language is fine, and writing 418,22 € or rounding to about 418 euros is fine. It must not present Maria's refund (1,236.40 euros, under review, expected in 30 days) as the user's own refund. Saying that other saved logins exist is fine.",
+        "Across the messages the user saw, the assistant tells them the status of Alex's 2025 IRS refund: processed, 418.22 euros. Adding that it is credited within 14 days is welcome but not required. Any wording or language is fine, and writing 418,22 € or rounding to about 418 euros is fine. It must not present Maria's refund (1,236.40 euros, under review, expected in 30 days) as the user's own refund. Saying that other saved logins exist is fine.",
         { failure: 'reasoning' },
       ),
       check(

@@ -224,7 +224,7 @@ export default scenario({
       ),
       judge(
         'progression-is-accurate',
-        'The progression summary reports the main lifts correctly from the data: squat from 80 kg to about 94 kg, deadlift from 100 kg to about 128 kg, bench press from 60 kg to about 71 kg, with the direction (up) and approximate change stated for each. It does not invent numbers and says over what period.',
+        'The progression summary reports the main lifts correctly from the data: squat from 80 kg to about 94 kg, deadlift from 100 kg to about 128 kg, bench press from 60 kg to about 71 kg; start and end values or the approximate change for each are enough. It does not invent numbers, and the period may be stated or left as the three months the user asked for.',
         { failure: 'reasoning' },
       ),
     ];

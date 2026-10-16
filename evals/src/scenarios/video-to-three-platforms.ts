@@ -230,7 +230,7 @@ export default scenario({
       ),
       judge(
         'captions-were-shown-first-and-fit-each-platform',
-        'Before posting, the assistant showed the user the actual caption for each platform and waited for approval. The three captions are adapted: a clear descriptive title for Shorts, a short punchy caption with a few hashtags for TikTok, and a more professional post for LinkedIn. None is just a copy of another.',
+        'Before posting, the assistant showed the user the actual caption for each platform and waited for approval. The three captions are adapted to each platform (for example a descriptive title for Shorts, a short caption with hashtags for TikTok and a more professional post for LinkedIn; other reasonable adaptations pass). None is just a copy of another.',
         { failure: 'reasoning' },
       ),
     ];

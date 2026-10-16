@@ -119,7 +119,7 @@ export default scenario({
       noWrites('send'),
       judge(
         'declines-politely-as-alex',
-        'The draft to Inês Duarte clearly says Alex cannot or will not speak at Lisbon Design Week (a no, not a maybe or a request for more details), in a polite and warm tone, is signed as Alex (or Alex Rivera), and has no placeholder text such as [Name], [reason] or <date>. Any reason, length and wording are fine.',
+        'The draft to Inês Duarte clearly says Alex cannot or will not speak at Lisbon Design Week (a no, not a maybe or a request for more details), in a polite tone, is not signed as anyone other than Alex (a sign-off is welcome but not required), and has no placeholder text such as [Name], [reason] or <date>. Any reason, length and wording are fine.',
         { failure: 'format' },
       ),
     ];

@@ -108,7 +108,7 @@ export default scenario({
       ),
       judge(
         'deltas-are-correct',
-        'Every change the assistant reports is correct in direction and approximate size: signups down about 22% (1,840 to 1,435), activation rate up about 4 points (41.2% to 45.4%), monthly recurring revenue up about 1.8%, weekly churn flat at 1.9%, support tickets up about 9% (212 to 231). It reports the signups drop and at least two other real movers, does not describe the flat churn as moving, and does not invent any figure. The order, the grouping and leaving out the smallest changes do not matter.',
+        'Every change the assistant reports is correct in direction and approximate size: signups down about 22% (1,840 to 1,435), activation rate up about 4 points (41.2% to 45.4%), monthly recurring revenue up about 1.8%, weekly churn flat at 1.9%, support tickets up about 9% (212 to 231). It reports the signups drop and at least one other real mover, does not describe the flat churn as moving, and does not invent any figure. The order, the grouping and leaving out the smallest changes do not matter.',
         { failure: 'reasoning' },
       ),
       judge(

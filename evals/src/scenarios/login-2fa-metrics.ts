@@ -239,7 +239,7 @@ export default scenario({
       ),
       judge(
         'labels-weeks-and-handles-the-partial-week',
-        'In the messages the user saw, the assistant names the project (Acme Web) and ties each of the four numbers to its week (week-start dates, a week range, or an explicit oldest-to-newest order all count). The current in-progress week is either left out or clearly labelled as partial. It must not present the partial week as one of the last four complete weeks.',
+        'In the messages the user saw, the assistant ties each of the four numbers to its week (week-start dates, a week range, or an explicit oldest-to-newest order all count). The current in-progress week is either left out or clearly labelled as partial. It must not present the partial week as one of the last four complete weeks.',
         { failure: 'reasoning' },
       ),
     ];

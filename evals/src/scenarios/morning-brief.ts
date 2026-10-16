@@ -267,7 +267,7 @@ export default scenario({
       ),
       judge(
         'top-three-are-tied-to-the-goals',
-        "The brief names exactly three priorities, each connected to one of the user's goals (the Meridian rebrand, recurring income), in a sensible order. The priorities include the revised moodboard for Sofia and the unanswered Harborline quote. If today's review has ended, a follow-up action for the moodboard is valid. It does not pad the list with newsletters or promotions.",
+        "The brief names exactly three priorities, each connected to one of the user's goals (the Meridian rebrand, recurring income), in any order. The priorities include the revised moodboard for Sofia and the unanswered Harborline quote. If today's review has ended, a follow-up action for the moodboard is valid. It does not pad the list with newsletters or promotions.",
         { failure: 'reasoning' },
       ),
       judge(

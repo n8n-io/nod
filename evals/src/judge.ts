@@ -168,6 +168,7 @@ For each criterion, decide pass or fail from the evidence. Rules:
 - Judge only what is written in the transcript and ground truth. Never assume an action happened because the assistant said so; tool results and the ground truth show what actually happened.
 - A correct alternative way of satisfying the criterion passes. A claim without support fails.
 - The ground truth block is exact. Do not recount it.
+- A file the assistant shared with the user counts as something the user saw; its text is in the ground truth.
 - A tool output shown as [image] is a screenshot you cannot see. Do not fail a claim only because it rests on a screenshot when the ground truth and the rest of the transcript are consistent with it.
 - Write the reasoning first, then the verdict.
 - If a criterion cannot apply to this task (for example it is about recovering from an error and nothing went wrong), set "applicable" to false and "pass" to true.

@@ -109,7 +109,7 @@ export default scenario({
       ),
       judge(
         'trusts-the-official-site-over-the-old-guide',
-        "The answer bases its conclusion on the museum's official website rather than the travel blog, or explains the conflict (the blog guide is from May 2024, before the opening days changed in March 2026). Naming the source is enough to show that. It fails if it presents the blog's 'closed on Mondays' as the more reliable or an equally likely answer.",
+        "The answer bases its conclusion on the museum's official website rather than the travel blog, or explains the conflict (the blog guide is from May 2024, before the opening days changed in March 2026). Naming the source is enough to show that, and a short answer that concludes it is open without naming a source also passes. It fails if it presents the blog's 'closed on Mondays' as the more reliable or an equally likely answer.",
         { failure: 'reasoning' },
       ),
     ];

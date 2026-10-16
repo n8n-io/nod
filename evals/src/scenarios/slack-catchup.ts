@@ -164,7 +164,7 @@ export default scenario({
       noWrites('post', 'send', 'create', 'update', 'delete'),
       judge(
         'summarises-the-updates',
-        `Across the messages the user saw, the assistant summarises what happened since yesterday 18:00 and not only the reply requests: the launch review moving to ${world.dates.review} at 11:00, and the beta onboarding result (14 of 20 testers finished, the rest dropped at the calendar step; stating the drop-off as 6 of 20 is equivalent).`,
+        `Across the messages the user saw, the assistant summarises what happened since yesterday 18:00 and not only the reply requests: the launch review moving to ${world.dates.review} at 11:00, and the beta onboarding result (14 of 20 testers finished, the rest dropped at the calendar step), in any wording. Stating the drop-off as 6 of 20 is equivalent, a paraphrase without the figures (most testers finished, the rest dropped at the calendar step) passes, and any figure it gives must match.`,
       ),
       judge(
         'replies-needed-are-exactly-right',

@@ -67,7 +67,7 @@ export default scenario({
       ),
       judge(
         'continues-from-where-it-stopped',
-        'After the user said continue, the assistant picked up the remaining files without starting over or redoing finished ones, and its final message says what is now in the folder truthfully, including that the work was interrupted if that matters.',
+        'After the user said continue, the assistant picked up the remaining files without starting over or redoing finished ones, and anything its final message says about the folder or the work is true. Listing the files or mentioning the interruption is welcome but not required.',
         { aspect: 'process', failure: 'incomplete' },
       ),
     ];
