@@ -7,34 +7,24 @@ sidebar:
 
 Before Otto runs an action in a connected app, or a step in its browser that could send, submit or change something, the Otto server asks one checker whether you asked for it. For work you request, reads and drafts run by default unless your instructions forbid the action or require confirmation first. Anything else runs only when your words ask for it. Otherwise Otto asks you.
 
-The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it, and background work against your [standing instruction](#standing-instructions). Saving a note has its own rules: see [Memory](/how-it-works/memory/).
+The same checker decides when Otto changes its own schedules, notification settings or spending limits, forgets a note, or turns memory on, off or clears it. A scheduled run is checked against the instruction that created it and its scheduled time, and background work against your [standing instruction](#standing-instructions). Saving a note has its own rules: see [Memory](/how-it-works/memory/).
 
 Work Otto starts on its own, such as on a new email or a check of an app without events, runs only once you've told Otto what to watch for. It has only your standing instruction behind it. So the checker lets it read and draft and do what that instruction asks. Otto asks you about everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
 ## What the checker sees
 
-The checker checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
+The checker is your selected model at its fastest setting. It checks every app action, reads included, and answers one question: run it, or ask you? Looking up which app tools exist reads no account data, so it runs without a check.
 
-Otto selects the checker from your current model connection:
+Reading your reply to a confirmation can use a decision model instead. See [Decision checks](/connect/models/#decision-checks).
 
-| Connection                                   | Checker                                                                       |
-| -------------------------------------------- | ----------------------------------------------------------------------------- |
-| OpenAI API key                               | GPT Decisions with the same key                                               |
-| OpenRouter                                   | Jev through the same OpenRouter key, including when your chat model is Claude |
-| Anthropic directly or a ChatGPT subscription | Your selected model at its fastest setting                                    |
-
-In a source install, an optional `TYPESAFE_API_KEY` selects Jev directly for all three checks: action permission, confirmation facts, and approval replies. This takes priority over the connection above. The decision service receives the same evidence that each check received before. See [Model settings](/connect/models/#decision-checks).
-
-For action permission, a decision model selects one category: forbidden or confirmation required, read or private draft, requested change, or unclear. Otto runs only reads, private drafts, and requested changes that pass the policy. A forbidden or unclear action needs your confirmation. Your selected LLM keeps its existing yes-or-no permission check when no decision service applies.
-
-| It sees                                                                         | It never sees                                                               |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| For main chat, your last five messages from the past day and the source request | Tool results, web pages, emails or files                                    |
-| The Otto message your latest one answered                                       | Anything Otto read while working                                            |
-| A scheduled run's instruction, instead of your messages                         | Task cards you tapped on your first chat, even when they started a schedule |
-| The action and its arguments as Otto sends them                                 | Other people's words as yours                                               |
-| For background work, your standing instruction, instead of your messages        |                                                                             |
-| How a schedule or memory note Otto would change stands now                      |                                                                             |
+| It sees                                                                             | It never sees                                                               |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| For main chat, your last five messages from the past day and the source request     | Tool results, web pages, emails or files                                    |
+| The Otto message your latest one answered, not as proof of what you saw or approved | Anything Otto read while working                                            |
+| A scheduled run's instruction and run time, instead of your messages                | Task cards you tapped on your first chat, even when they started a schedule |
+| The action and its arguments as Otto sends them                                     | Other people's words as yours                                               |
+| For background work, your standing instruction, instead of your messages            |                                                                             |
+| How a schedule or memory note Otto would change stands now                          |                                                                             |
 
 For a saved task, the checker sees its original owner request and recent owner messages addressed to that task. It does not use messages addressed only to another task. The main chat also excludes task-only messages and task action proposals from its recent authority. Shared memory, files, task briefs and other task reports do not grant permission. An approval remains bound to the exact action and turn. A reply continues the session that asked. A correction to a task closes its old waiting turn, so its old pending action cannot execute from a later approval reply.
 
@@ -63,7 +53,7 @@ If the checker can't answer, Otto requires confirmation. If the model can't writ
 
 On websites, the same checker decides each step that could send, submit or change something: a click, a key press, choosing an option, ticking a box, a drag, a file upload, accepting a page dialog, or a script that changes the page. Opening a page, reading it, typing into a field without pressing Enter (including single characters pressed into a text field), and read-only scripts skip the checker. Typing skips it even on a page that saves as you type. A download from a link just follows its address. A download from a button is a click, so the checker decides it too.
 
-The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Otto typed or chose on that page. It never sees the page's text. Following links, searching, filtering, closing a popup, declining optional cookies, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, accepting cookies, and changing an account or a setting that saves at once count as acting, and run only when your words ask for them. A reading step that repeats exactly within 10 minutes, under the same words from you, reuses its earlier verdict.
+The checker sees the website, the page address, the control as the page labels it, where a drag drops, any dialog text or file name, and what Otto typed or chose on that page. It never sees the page's text. Following links, searching, filtering, closing a popup, declining optional cookies, adding to a cart, and moving through a form before its final step count as reading, so they run without asking you unless your instructions say to ask first. Submitting a form's final step, sending, posting, ordering, paying, booking, deleting, accepting cookies, and changing an account or a setting that saves at once count as acting, and run only when your words ask for them.
 
 When the checker asks, the question names what the page shows, such as the amount and payee: the question writer and its fact check read the page's visible text, which the checker itself never sees. Your yes approves that one step. Otto runs it once, only while the browser is still on the same page and the control is still there. If the page moved on, nothing runs and Otto looks again. A subagent can't ask you, so it hands the step back to the main task.
 
@@ -82,9 +72,9 @@ Anyone can send you an email that claims to be from Ana. A standing instruction 
 
 ## The confirmation
 
-The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Otto is asking, preserving the material facts in your conversation language. There are no language-specific confirmation templates or yes/no word lists.
+The same selected model writes the question from a frozen copy of the complete action, its arguments and account details. It explains what will happen and why Otto is asking, preserving the material facts in your conversation language. It names the website, account and recipient as the action does, not by what you called them, so a lookalike site can't hide behind the name you used. There are no language-specific confirmation templates or yes/no word lists.
 
-Before showing it, the checker makes a separate call to check the question against those frozen facts without seeing the conversation. The writer and checker receive a sanitized copy of the request, with secret-keyed values and private links redacted. When sanitizing hides a value, both calls are told which fields are hidden, by name and never by value, and the question has to say that part of the action is not shown; a question that presents such an action as complete is rejected. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. An unsupported claim, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
+Before showing it, a separate fact check by your selected model compares the question with those frozen facts without seeing the conversation. The writer and the fact check receive a sanitized copy of the request, with secret-keyed values and private links redacted. When sanitizing hides a value, both calls are told which fields are hidden, by name and never by value, and the question has to say that part of the action is not shown; a question that presents such an action as complete is rejected. A requested value cannot fill in a missing action argument, and current account or target details cannot replace a proposed change. An unsupported claim, an invalid response or an unavailable model leaves the action blocked. These model calls add time and cost; the factual check is also a best-effort judgment.
 
 Your recent messages and explicitly stated remembered preferences guide presentation only. An explicit output-language request applies to that output, and a short reply keeps the established conversation language. Quoted material, account names, region and time zone don't select the language. After a reset, your new messages and any remembered preference guide it again.
 
@@ -92,7 +82,7 @@ Generating a question doesn't approve anything. The server checks the task again
 
 - Your reply answers the newest question you'd seen, not one that arrived after it.
 - A later status message in the same reply channel blocks a bare yes. A status in another channel does not block it. On web, a message that arrived after your displayed view does not replace the question you saw. Reply directly to the question to select it.
-- The checker reads only your reply, never the question or the action, and decides whether it says yes, no or something else. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
+- A separate check reads only your reply, never the question or the action, and decides whether it says yes, no or something else. It uses a decision model when one applies, otherwise your selected model. Any wording or language works, such as "sure, go ahead" or "dale". If it can't read your reply, the question stays open.
 - A yes with a change or condition, a question, an attachment or anything else closes the question without running the action. If you reply directly to a question from background work, that work continues with your message, so you can tell it what to change. Otherwise the task that asked ends and Otto treats your message as a new request. A reply to a question that was already answered or whose task has ended is an ordinary message.
 - A yes runs that exact saved action once, on the account shown. A different recipient or payload needs a new question.
 - Schedule edits and cancellations apply only to the reviewed version and need a fresh review if the schedule changes.

@@ -56,7 +56,7 @@ On the **Tasks** page, open a preview and select **Show activity**. The details 
 
 ## Read task results
 
-Complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
+A task delivers its result where you asked for it, such as a sheet or Gmail drafts. Other complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 

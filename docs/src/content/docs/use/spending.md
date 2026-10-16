@@ -61,7 +61,7 @@ A task checks in with you when its spending since your last message to it passes
 
 The count covers every turn of the task and its helpers, so a task that works in small steps over several days checks in too. A chat reply, a schedule and an event check in the same way. A schedule or event counts from when it started.
 
-All three [decision checks](/connect/models/#decision-checks) count toward the monthly limit. Action and confirmation-fact checks made during a running task also count toward its check-in. Approval-reply checks run before the task resumes. Each request counts once.
+Trust checks, confirmation fact checks and the [decision check](/connect/models/#decision-checks) count toward the monthly limit. Those made during a running task, and its other model calls, also count toward its check-in. The approval-reply check runs before the task resumes. Each request counts once.
 
 Usage on a ChatGPT plan counts at the model's API price here, so plan tasks check in too, even though that usage costs you nothing extra.
 

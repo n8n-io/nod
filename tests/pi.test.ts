@@ -1745,7 +1745,7 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
     },
   };
   const question: DecisionQuestion = {
-    name: 'run',
+    name: 'answer',
     choices: [
       { value: true, description: 'Run.' },
       { value: false, description: 'Ask.' },
@@ -1755,24 +1755,24 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
     model.check({ instructions: 'Apply the owner policy.', input, question }, signal, (event) =>
       usage.push(event),
     );
-  const openai = (choice: unknown = false, name = 'run') => ({
+  const openai = (choice: unknown = false, name = 'answer') => ({
     model: 'gpt-6-luna',
     answers: [{ type: 'choice', name, choice }],
     usage: { input_tokens: 1000, output_tokens: 0 },
   });
   const jev = (choice = 'false') => ({
     model: 'jev-1.13.0',
-    answers: { run: { type: 'choice', choice } },
+    answers: { answer: { type: 'choice', choice } },
     usage: { input_tokens: 1000, output_tokens: 20 },
   });
   for (const provider of ['openai', 'openrouter', 'typesafe'] as const) {
     connection = { provider, key: `fixture-${provider}-key` };
     reply = provider === 'openai' ? openai() : jev();
-    assert.deepEqual(await check(), { run: false });
+    assert.deepEqual(await check(), { answer: false });
     const sent = calls.at(-1)!;
     assert.equal(sent.authorization, `Bearer fixture-${provider}-key`);
     assert.deepEqual(provider === 'openai' ? JSON.parse(sent.body.input) : sent.body.state, input);
-    const supplied = provider === 'openai' ? sent.body.questions[0] : sent.body.questions.run;
+    const supplied = provider === 'openai' ? sent.body.questions[0] : sent.body.questions.answer;
     assert.equal(supplied.instructions, 'Apply the owner policy.');
     assert.equal(supplied.type, 'choice');
     assert.deepEqual(
@@ -1783,7 +1783,7 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
     );
     const recorded = usage.at(-1)!;
     assert.equal(recorded.status, 'succeeded');
-    assert.equal(recorded.operation, 'action_check');
+    assert.equal(recorded.operation, 'approval_reply');
     assert.equal(recorded.inputTokens, 1000);
     assert.equal(recorded.costUsd, provider === 'openai' ? 0.0001 : 0.000042);
     assert.equal(recorded.pricing, 'sdk_estimate');
@@ -1801,7 +1801,7 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
     question: { ...question, instructions: 'Classify the action first.' },
   });
   assert.equal(
-    calls.at(-1)!.body.questions.run.instructions,
+    calls.at(-1)!.body.questions.answer.instructions,
     'Classify the action first.\nApply the owner policy.',
   );
   for (const provider of ['openai', 'openrouter', 'typesafe'] as const) {
@@ -1829,7 +1829,7 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
   }
   connection = { provider: 'openrouter', key: 'fixture-key' };
   reply = { ...jev('true'), usage: { input_tokens: 1000, cost: 0.00007 } };
-  assert.deepEqual(await check(), { run: true });
+  assert.deepEqual(await check(), { answer: true });
   assert.equal(usage.at(-1)?.costUsd, 0.00007);
   assert.equal(usage.at(-1)?.pricing, 'reported');
   const before = calls.length;
@@ -1843,9 +1843,9 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
     openai('other'),
     { ...openai(), answers: [] },
     { ...openai(), answers: [...openai().answers, ...openai().answers] },
-    { ...openai(), answers: [{ type: 'refusal', name: 'run' }] },
+    { ...openai(), answers: [{ type: 'refusal', name: 'answer' }] },
     { ...openai(), usage: { input_tokens: -1 } },
-    { answers: [{ type: 'choice', name: 'run', choice: true }] },
+    { answers: [{ type: 'choice', name: 'answer', choice: true }] },
   ]) {
     reply = invalid;
     const count = calls.length;
@@ -1856,10 +1856,10 @@ test('decision providers preserve inputs, bind answers, and refuse failed reques
   for (const provider of ['openrouter', 'typesafe'] as const) {
     connection = { provider, key: 'fixture-key' };
     for (const answers of [
-      { valid: { type: 'choice', choice: 'true' } },
-      { run: { type: 'choice', choice: true } },
-      { run: { type: 'choice', choice: 'yes' } },
-      { run: { type: 'refusal' } },
+      { other: { type: 'choice', choice: 'true' } },
+      { answer: { type: 'choice', choice: true } },
+      { answer: { type: 'choice', choice: 'yes' } },
+      { answer: { type: 'refusal' } },
     ]) {
       reply = { ...jev(), answers };
       await assert.rejects(check(), /could not complete/);
@@ -1908,8 +1908,8 @@ test('decision routing uses the selected connection and never sends subscription
     const openai = String(url).includes('api.openai.com');
     return Response.json({
       answers: openai
-        ? [{ type: 'choice', name: 'run', choice: false }]
-        : { run: { type: 'choice', choice: 'false' } },
+        ? [{ type: 'choice', name: 'answer', choice: false }]
+        : { answer: { type: 'choice', choice: 'false' } },
       usage: { input_tokens: 100 },
     });
   });
@@ -1956,7 +1956,7 @@ test('decision routing uses the selected connection and never sends subscription
     };
   };
   const question: DecisionQuestion = {
-    name: 'run',
+    name: 'answer',
     choices: [
       { value: true, description: 'Run.' },
       { value: false, description: 'Ask.' },
@@ -1964,11 +1964,11 @@ test('decision routing uses the selected connection and never sends subscription
   };
   const check = () =>
     adapters.decisions!.check({ instructions: 'Apply policy.', input: {}, question });
-  assert.deepEqual(await check(), { run: false });
+  assert.deepEqual(await check(), { answer: false });
   selected = { provider: 'openrouter', method: 'oauth', key: 'fixture-owner-two-key' };
-  assert.deepEqual(await check(), { run: false });
+  assert.deepEqual(await check(), { answer: false });
   selected = { provider: 'openai', method: 'api_key', key: 'fixture-rotated-key' };
-  assert.deepEqual(await check(), { run: false });
+  assert.deepEqual(await check(), { answer: false });
   const count = reads;
   for (const value of [
     { provider: 'anthropic', method: 'api_key', key: 'fixture-anthropic-key' },
@@ -1992,7 +1992,7 @@ test('decision routing uses the selected connection and never sends subscription
   };
   assert.deepEqual(
     await overridden.decisions!.check({ instructions: 'Apply policy.', input: {}, question }),
-    { run: false },
+    { answer: false },
   );
   assert.deepEqual(requests.at(-1), {
     url: 'https://api.typesafe.ai/v1/systemone',

@@ -257,7 +257,10 @@ test('communication blocks unsupported confirmations unless their frozen facts p
     { valid: true, run: true },
   ]) {
     captured.length = 0;
-    await assert.rejects(communication.describe(proposal));
+    await assert.rejects(
+      communication.describe(proposal),
+      /^Error: Otto could not write an accurate confirmation for this action/,
+    );
     assert.deepEqual(captured[1], {
       purpose: 'confirmation_review',
       data: { action: original.action, args: original.args, details: original.details },
@@ -718,16 +721,9 @@ test(
             confirm: true,
             reason: 'unrequested',
           });
-          for (const [category, confirm] of [
-            ['read', false],
-            ['requested', false],
-            ['blocked', true],
-            ['ask', true],
-            ['true', true],
-            ['unknown', true],
-          ] as const) {
-            aligned = category;
-            assert.equal((await trust.check(turn, 'GMAIL_FETCH_EMAILS', {})).confirm, confirm);
+          for (const loose of ['read', 'requested', 'true', 'yes']) {
+            aligned = loose;
+            assert.equal((await trust.check(turn, 'GMAIL_FETCH_EMAILS', {})).confirm, true);
           }
           aligned = false;
           await askFor(turn, email('stranger@example.test'));
@@ -828,10 +824,13 @@ test(
           const authorized = await begin('Synthetic scheduled work', { source: 'schedule' });
           await db.pool.query(
             `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
-             VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,now(),'UTC',$6)`,
+             VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,'2026-10-19T07:00:00Z','Europe/Madrid',$6)`,
             [randomUUID(), ownerId, randomUUID(), randomUUID(), authorized.turnId, instruction],
           );
-          aligned = (input) => input.scheduledTaskInstruction === instruction;
+          aligned = (input) =>
+            input.scheduledTaskInstruction === instruction &&
+            input.scheduledFor === '2026-10-19T09:00:00+02:00' &&
+            input.timeZone === 'Europe/Madrid';
           assert.deepEqual(
             await trust.check(authorized, 'GOOGLECALENDAR_PATCH_EVENT', {
               event_id: 'synthetic-standup',

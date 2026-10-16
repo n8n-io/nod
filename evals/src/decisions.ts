@@ -15,7 +15,7 @@ import { approvalLanguageCases } from './world/approval-language.ts';
 
 interface Case {
   id: string;
-  kind: DecisionQuestion['name'];
+  kind: 'run' | 'answer' | 'valid';
   holdout: boolean;
   input: object;
   expected: string | boolean;
@@ -355,7 +355,7 @@ function literal(node: ts.Node): unknown {
   throw new Error('Expected a literal value.');
 }
 
-function policy(source: string, variable: string, name: DecisionQuestion['name']) {
+function policy(source: string, variable: string, name: Case['kind']) {
   const file = ts.createSourceFile('policy.ts', source, ts.ScriptTarget.Latest, true);
   let instructions: string | undefined;
   let question: DecisionQuestion | undefined;
@@ -564,10 +564,9 @@ export async function runDecisionEval(options: {
     try {
       let instructions = selected.instructions;
       if (arm.endsWith('-llm')) {
-        if (arm !== 'main-llm') {
-          const question = selected.question!;
-          const values =
-            question.name === 'run' ? [true, false] : question.choices.map(({ value }) => value);
+        if (arm !== 'main-llm' && selected.question) {
+          const question = selected.question;
+          const values = question.choices.map(({ value }) => value);
           instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${values.map((value) => JSON.stringify(value)).join(', ')}.`;
         }
         output = await curator.curate(
@@ -599,7 +598,7 @@ export async function runDecisionEval(options: {
           ? (output as Record<string, unknown>)[item.kind]
           : undefined;
       const values =
-        arm.endsWith('-llm') && item.kind === 'run'
+        arm.endsWith('-llm') && item.kind !== 'answer'
           ? [true, false]
           : policies.branch[item.kind].question!.choices.map((choice) => choice.value);
       status = values.includes(value as string | boolean) ? 'scored' : 'error';
@@ -639,7 +638,14 @@ export async function runDecisionEval(options: {
   }
   for (const arm of arms) {
     if (unpriced || spent >= budgetUnits) break;
-    const result = await check(arm, decisionCases[0], 0, true);
+    const canary = decisionCases.find(
+      (item) => arm.endsWith('-llm') || policies.branch[item.kind].question,
+    );
+    if (!canary) {
+      blocked[arm] = 'This revision gives that model path no decision question.';
+      continue;
+    }
+    const result = await check(arm, canary, 0, true);
     if (result.status === 'error')
       blocked[arm] = `Canary request failed (${result.httpStatus ?? 'model error'}).`;
   }
@@ -656,7 +662,8 @@ export async function runDecisionEval(options: {
           const arm = arms[(index + offset) % arms.length];
           if (
             !blocked[arm] &&
-            !(arm === 'main-llm' && item.kind === 'valid' && !policies.main.valid)
+            !(arm === 'main-llm' && item.kind === 'valid' && !policies.main.valid) &&
+            (arm.endsWith('-llm') || policies.branch[item.kind].question)
           )
             await check(arm, item, attempt);
         }

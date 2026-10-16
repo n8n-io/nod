@@ -1,26 +1,15 @@
 import type { RuntimeContext } from '../ports/agent.ts';
-import { clockOptions, formattingLocale, localeRegion } from '../shared/date-locale.ts';
+import {
+  clockOptions,
+  formattingLocale,
+  localeRegion,
+  localTimestamp,
+} from '../shared/date-locale.ts';
 
 export function currentUserTime(timeZone: string | undefined, now = new Date()) {
   const utc = `Current UTC time: ${now.toISOString()}.`;
   if (!timeZone) return `${utc} User time zone: unknown, so ask before relying on local time.`;
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hourCycle: 'h23',
-      timeZoneName: 'longOffset',
-    })
-      .formatToParts(now)
-      .map(({ type, value }) => [type, value]),
-  );
-  const offset = parts.timeZoneName === 'GMT' ? '+00:00' : parts.timeZoneName!.slice(3);
-  const local = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`;
+  const local = localTimestamp(timeZone, now);
   return `${utc} Current local time: ${local}. User time zone: ${timeZone}.`;
 }
 

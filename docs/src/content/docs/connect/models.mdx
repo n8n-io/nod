@@ -99,7 +99,7 @@ Background work, such as memory upkeep, uses a smaller model from the same conne
 
 ## Decision checks
 
-Three checks can use a decision model: whether an action can run, whether a confirmation describes the action accurately, and whether your reply approves it. Your selected model still writes messages and confirmation questions.
+One check can use a decision model: reading whether your reply to a confirmation approves it. Your selected model decides whether an action can run, writes and fact-checks confirmation questions, and writes messages.
 
 | Current connection   | Decision checks                                        |
 | -------------------- | ------------------------------------------------------ |
@@ -110,9 +110,9 @@ Three checks can use a decision model: whether an action can run, whether a conf
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
 
-In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for all three checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, and restart Otto after either change. The key stays on the server and is not added to **Models**.
+In a source install, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for that check. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, and restart Otto after either change. The key stays on the server and is not added to **Models**.
 
-A failed decision request does not switch providers or run the action. An action check asks for confirmation, a failed confirmation fact check blocks the action, and a failed approval-reply check leaves the confirmation pending. See [Approvals and the trust check](/trust/approvals/).
+A failed decision request does not switch providers or approve anything: the confirmation stays pending, and your reply reaches Otto as an ordinary message. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice needs its own key]
 Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An OpenAI key in **Models** or a ChatGPT plan doesn't turn on voice.

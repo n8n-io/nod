@@ -121,7 +121,7 @@ These are initial, reviewed synthetic cases, not a calibrated release gate. Run 
 
 ## Compare decision checks
 
-The `decisions` command compares the three [decision checks](/connect/models/#decision-checks) with a Git revision. It calls live models with synthetic inputs. It does not start Otto, use connected accounts, or run the proposed actions.
+The `decisions` command compares the three trust-check questions (action permission, confirmation facts and approval replies) across model paths and against a Git revision; see [Decision checks](/connect/models/#decision-checks). It calls live models with synthetic inputs. It does not start Otto, use connected accounts, or run the proposed actions.
 
 Fetch the baseline before the run. Choose the chat model that the baseline uses.
 
@@ -130,7 +130,7 @@ git fetch origin main
 pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/main --repeat 3 --label decision-checks
 ```
 
-The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
+The command compares the baseline LLM, the current LLM path, and decision-model paths whose keys are set. Action permission and confirmation facts always use the selected model in production, so only the two LLM paths answer those cases unless the current revision gives that check a decision question. GPT Decisions needs `OPENAI_API_KEY`. Jev through OpenRouter needs `OPENROUTER_API_KEY`. Set both keys to compare all four paths. The current LLM path separates prompt changes from model changes. Keys stay in memory and do not enter the inputs or saved results.
 
 The 55 cases cover action permission, multilingual approval replies, and confirmation facts. They include forbidden reads, changed recipients, conditional replies, prompt injection, standing instructions and their changes, and a long request. Version three adds eight action holdouts. Expected answers are fixed before the first request. The models receive only the input and the production policy.
 
@@ -175,7 +175,7 @@ The saved run label is `decision-checks-main-v2-2026-10-16`. Its fingerprint is 
 
 ### Experiment after the fix on 16 October 2026
 
-The action check now asks the decision model for one of four categories: blocked, read, requested, or ask. Only read and requested permit the action. The policy and owner evidence stay the same. The selected LLM keeps its boolean result.
+This experiment predates [#296](https://github.com/n8n-io/otto/pull/296), which moved action permission back to the selected model. At the time, the action check asked the decision model for one of four categories: blocked, read, requested, or ask. Only read and requested permit the action. The policy and owner evidence stay the same. The selected LLM keeps its boolean result.
 
 Two earlier prompt changes caused unsafe approvals in diagnostic runs and were rejected. The four-category change passed the focused action run. The full comparison then used the same 40 cases and expected answers, plus eight new action holdouts. No expected answer changed.
 

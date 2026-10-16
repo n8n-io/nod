@@ -37,18 +37,18 @@ flowchart LR
 
 Keys set here become server-managed connections. They stay in server memory and aren't copied into the database. You can also add connections in **Models** without any variable. See [Models](/connect/models/).
 
-| Variable             | What it does                                                                                                                 | Default                                                               |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `LLM_PROVIDER`       | The provider of the first model choice: `openai`, `anthropic` or `openrouter`. A model you pick in the app takes priority.   | `openai`                                                              |
-| `LLM_MODEL`          | The first model choice.                                                                                                      | `gpt-6.1-sol`, `claude-opus-5-5` or `openai/gpt-6.1-sol`, by provider |
-| `OPENAI_API_KEY`     | Adds an OpenAI connection. It also turns on voice replies.                                                                   | Empty                                                                 |
-| `ANTHROPIC_API_KEY`  | Adds an Anthropic connection.                                                                                                | Empty                                                                 |
-| `OPENROUTER_API_KEY` | Adds an OpenRouter connection.                                                                                               | Empty                                                                 |
-| `TYPESAFE_API_KEY`   | Selects direct Jev for action permission, confirmation fact checks, and approval replies, regardless of the chat connection. | Empty                                                                 |
-| `TTS_MODEL`          | The OpenAI speech model for voice replies.                                                                                   | `gpt-4o-mini-tts`                                                     |
-| `TTS_VOICE`          | The voice for voice replies. Not in `.env.example`.                                                                          | `coral`                                                               |
+| Variable             | What it does                                                                                                               | Default                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `LLM_PROVIDER`       | The provider of the first model choice: `openai`, `anthropic` or `openrouter`. A model you pick in the app takes priority. | `openai`                                                              |
+| `LLM_MODEL`          | The first model choice.                                                                                                    | `gpt-6.1-sol`, `claude-opus-5-5` or `openai/gpt-6.1-sol`, by provider |
+| `OPENAI_API_KEY`     | Adds an OpenAI connection. It also turns on voice replies.                                                                 | Empty                                                                 |
+| `ANTHROPIC_API_KEY`  | Adds an Anthropic connection.                                                                                              | Empty                                                                 |
+| `OPENROUTER_API_KEY` | Adds an OpenRouter connection.                                                                                             | Empty                                                                 |
+| `TYPESAFE_API_KEY`   | Selects direct Jev for reading approval replies, regardless of the chat connection.                                        | Empty                                                                 |
+| `TTS_MODEL`          | The OpenAI speech model for voice replies.                                                                                 | `gpt-4o-mini-tts`                                                     |
+| `TTS_VOICE`          | The voice for voice replies. Not in `.env.example`.                                                                        | `coral`                                                               |
 
-Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic and ChatGPT subscription connections use the selected chat model for these checks. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
+Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic and ChatGPT subscription connections use the selected chat model for this check. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
 
 ## Apps and Composio
 

@@ -1088,6 +1088,47 @@ test(
   },
 );
 
+test(
+  'in real Chrome a snapshot keeps the plain text around tables and links',
+  { timeout: 120_000 },
+  async (t) => {
+    const server = createHttpServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<!doctype html><meta charset="utf-8"><body><h1>Laptop</h1><p>Before the table, plain text.</p><table><tr><th>Destination</th><th>Cost</th></tr><tr><td>Portugal</td><td>19.00</td></tr></table><p>Free delivery to Spain and Portugal on orders over 1,000.</p><p>See our <a href="/delivery">delivery page</a> for details.</p></body>',
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as { port: number };
+    const directory = await mkdtemp(join(tmpdir(), 'otto-real-text-'));
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      privateNetwork: true,
+      headless: true,
+    });
+    try {
+      try {
+        await computer.act('text', { action: 'open', url: `http://127.0.0.1:${port}/` });
+      } catch {
+        t.skip('Chrome is not available here.');
+        return;
+      }
+      const text = (await computer.act('text', { action: 'snapshot' })).text;
+      for (const line of [
+        'Before the table, plain text.',
+        'Free delivery to Spain and Portugal on orders over 1,000.',
+        'See our ',
+        ' for details.',
+      ])
+        assert.ok(text.includes(line), `${line}\n---\n${text}`);
+    } finally {
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
   const fixture = stagedLoginBrowser();

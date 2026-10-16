@@ -167,6 +167,11 @@ export async function createPayments(
     formatAmount(Number(row.amount_minor), row.currency);
   const cardName = (card: Pick<VaultPaymentCard, 'brand' | 'last4'>) =>
     `${card.brand} ••${card.last4}`;
+  const cardFacts = (card: Pick<VaultPaymentCard, 'brand' | 'last4'>) => ({
+    brand: card.brand,
+    last4: card.last4,
+    savedInOtto: true,
+  });
   const payment = (row: Row) => ({
     id: row.id,
     minor: Number(row.amount_minor),
@@ -338,7 +343,7 @@ export async function createPayments(
       amount: (minor / 10 ** places).toFixed(places),
       amountMinor: minor,
       currency,
-      card: { brand: card.brand, last4: card.last4 },
+      card: cardFacts(card),
       destinations: [...new Set(Object.values(destinations))],
       keepCode: row.keep_notice,
       requires: !inOtto ? 'desktop_private_form' : card.doItForMe ? 'approval' : 'security_code',
@@ -407,7 +412,7 @@ export async function createPayments(
   }
 
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
-    const { paymentId } = z.object({ paymentId: z.uuid() }).strict().parse(raw);
+    const { paymentId } = z.object({ paymentId: z.uuid() }).parse(raw);
     const row = await open(paymentId, { threadId: context.threadId });
     const card = (await options.cards()).find((item) => item.id === row?.card_id);
     if (!row || !card?.doItForMe)
@@ -448,7 +453,7 @@ export async function createPayments(
       args: { card: card.id, doItForMe: parsed.doItForMe },
       details: {
         kind: 'payment_setting',
-        card: { brand: card.brand, last4: card.last4 },
+        card: cardFacts(card),
         doItForMe: parsed.doItForMe,
         keepCode: parsed.doItForMe,
       },

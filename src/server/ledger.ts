@@ -184,7 +184,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {
           return await base.curate(request, signal, (value) => {
-            record({
+            const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
                 request.task === 'review' ? 'review' : request.task === 'plan' ? 'tasks' : 'memory',
@@ -192,7 +192,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
               status: 'succeeded',
               durationMs: 0,
               ...value,
-            });
+            };
+            record(usage);
+            activeExecution.getStore()?.onEvent({ type: 'provider_usage', usage });
             report?.(value);
           });
         } finally {

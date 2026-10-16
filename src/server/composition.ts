@@ -556,8 +556,7 @@ async function initializeApplication(
     if (question) {
       const result = await decisions?.check({ instructions, input, question }, signal);
       if (result !== undefined) return result;
-      const values =
-        question.name === 'run' ? [true, false] : question.choices.map(({ value }) => value);
+      const values = question.choices.map(({ value }) => value);
       instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${values.map((value) => JSON.stringify(value)).join(', ')}.`;
     }
     return onboardingCurator.configured
@@ -1195,7 +1194,13 @@ async function initializeApplication(
         const confirmation = await approvals.request(
           turn,
           'OTTO_payment_approve',
-          { paymentId: result.paymentId },
+          {
+            paymentId: result.paymentId,
+            origin: result.details.origin,
+            amount: result.details.amount,
+            currency: result.details.currency,
+            card: result.details.card,
+          },
           { details: result.details },
         );
         if (
