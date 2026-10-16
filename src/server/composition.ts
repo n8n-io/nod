@@ -896,7 +896,20 @@ async function initializeApplication(
               ? await personal.getSchedule(String(input.id))
               : undefined;
           if (action === 'schedule_cancel' && schedule && !schedule.enabled) return schedule;
-          const verdict = await trust.check(turn, `OTTO_${action}`, input);
+          const current = schedule
+            ? {
+                title: schedule.title,
+                prompt: schedule.prompt,
+                cron: schedule.cron,
+                runAt: schedule.runAt,
+                timeZone: schedule.timeZone,
+              }
+            : undefined;
+          const verdict = await trust.check(
+            turn,
+            `OTTO_${action}`,
+            current ? { ...input, currentSchedule: current } : input,
+          );
           return approvals.request(turn, `OTTO_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
@@ -919,17 +932,7 @@ async function initializeApplication(
               : undefined,
             details: {
               ...(verdict.confirm ? { reason: verdict.reason } : {}),
-              ...(schedule
-                ? {
-                    schedule: {
-                      title: schedule.title,
-                      prompt: schedule.prompt,
-                      cron: schedule.cron,
-                      runAt: schedule.runAt,
-                      timeZone: schedule.timeZone,
-                    },
-                  }
-                : {}),
+              ...(current ? { schedule: current } : {}),
             },
           });
         }
