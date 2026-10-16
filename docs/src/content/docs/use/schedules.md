@@ -51,9 +51,14 @@ Each run appears in **Tasks → Previous**.
 
 ## Work Otto starts on its own
 
-Otto keeps an eye on your connected apps only after you ask. Connecting an app doesn't start it. Tell Otto what's worth interrupting you for, such as "tell me when a client emails" or "flag Slack messages that need my reply".
+Otto keeps an eye on your connected apps only after you say so. Connecting an app doesn't start it.
 
-- **Gmail.** Otto checks for new inbox mail every five minutes. Once you've told Otto what's worth interrupting you for, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Until then, Otto only saves the message.
+- **Otto offers once.** After a task that connects or uses an app like Gmail or Slack, Otto asks in one line whether to flag what needs you there. Say yes and it starts. Ignore or decline it, and Otto doesn't ask again for that app.
+- **Or just tell it.** At any time, say what's worth interrupting you for, such as "tell me when a client emails" or "flag Slack messages that need my reply".
+
+How Otto checks:
+
+- **Gmail.** Otto checks for new inbox mail every five minutes. Once you've said yes, each new message starts a quiet background run that decides whether there's useful work, such as preparing a reply. Until then, Otto only saves the message.
 - **Other connected apps.** Each update works the same way. For an app without updates, Otto checks the account for new activity in the same kind of quiet run, at most every 30 minutes per account.
 
 Work Otto starts on its own only reads and drafts. Sending, deleting or anything else waits for your yes. To stop, tell Otto, for example "stop flagging Slack messages".
