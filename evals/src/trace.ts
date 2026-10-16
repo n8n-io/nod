@@ -210,6 +210,7 @@ export async function collect(options: {
         const id = `${sessionId}:${block.id}`;
         const call: ToolCall = {
           turnId: currentTurns.get(sessionId),
+          browser: browserSessionId(sessionId),
           name: block.name,
           input: block.arguments,
           output: '',
