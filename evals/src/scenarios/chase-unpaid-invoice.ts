@@ -85,7 +85,7 @@ export default scenario({
           .filter(
             (item) =>
               item.kind === 'approval' &&
-              item.action?.startsWith('GMAIL_') &&
+              /^GMAIL_(?:SEND_EMAIL|REPLY_TO_THREAD|SEND_DRAFT)$/.test(item.action ?? '') &&
               /^yes\b/i.test(item.reply ?? '') &&
               item.at > (reminders(run)[0]?.at ?? Infinity),
           )

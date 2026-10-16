@@ -283,10 +283,10 @@ export function createSession(options: {
         at,
       });
       answeredRequests.add(pending.request.id);
-      await post(
-        '/api/messages',
-        { text: value, verificationRequestId: pending.request.id },
-        [409],
+      await post('/api/messages', { text: value, verificationRequestId: pending.request.id }).catch(
+        (error: Error) => {
+          if (!/\(409\):.*no longer available/.test(error.message)) throw error;
+        },
       );
       return true;
     }
