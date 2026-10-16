@@ -1086,7 +1086,10 @@ export function createAgentBrowserComputer(options: {
             devtools.close();
           }
           const value = read ? read.value : await evaluate(state, script, signal);
-          if (!read) await markScripted(state);
+          if (!read) {
+            state.refs.clear();
+            await markScripted(state);
+          }
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
             text: `Script result (JSON):\n${result}`,
@@ -1568,20 +1571,34 @@ export function createAgentBrowserComputer(options: {
 
   async function onTarget(
     state: BrowserState,
-    input: { expectOrigin?: string; selector?: string; targetSelector?: string; action?: string },
+    input: {
+      expectOrigin?: string;
+      expectUrl?: string;
+      selector?: string;
+      targetSelector?: string;
+      action?: string;
+    },
     signal?: AbortSignal,
   ) {
-    if (!input.expectOrigin) return;
+    if (input.expectOrigin === undefined && input.expectUrl === undefined) return;
     const at =
       input.action === 'accept_dialog' && (await openDialog(state, signal))
-        ? state.saved.url
+        ? await dialogPageUrl(state, signal).catch(() => '')
         : await currentUrl(state, signal).catch(() => '');
     const refs = [referenceOf(input.selector), referenceOf(input.targetSelector)];
     if (
-      originOf(at) !== input.expectOrigin ||
+      !at ||
+      (input.expectOrigin !== undefined && originOf(at) !== input.expectOrigin) ||
+      (input.expectUrl !== undefined && redactBrowserUrl(at, state.secrets) !== input.expectUrl) ||
       refs.some((ref) => ref !== undefined && !state.refs.has(ref))
     )
       throw new BrowserActionError('browser_target_changed');
+  }
+
+  async function dialogPageUrl(state: BrowserState, signal?: AbortSignal) {
+    const active = (await browserTabs(state, signal)).find((tab) => tab.active);
+    if (!active?.url) throw new BrowserActionError('browser_target_changed');
+    return active.url;
   }
 
   function originOf(url: string) {
@@ -1602,7 +1619,7 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       if (await privateDocumentOpen(state)) throw new BrowserLockedError();
       const dialog = step?.action === 'accept_dialog' ? await openDialog(state) : undefined;
-      const url = dialog ? state.saved.url : await currentUrl(state);
+      const url = dialog ? await dialogPageUrl(state) : await currentUrl(state);
       const page = { origin: browserUrl(url).origin, url: redactBrowserUrl(url, state.secrets) };
       if (dialog) return { ...page, dialog: dialog.message.slice(0, 2000) };
       return step ? { ...page, ...(await stepControls(state, step)) } : page;

@@ -27,6 +27,10 @@ withheld names action fields the user cannot see because the server hid their va
 const privateLink =
   /(?:https?:\/\/[^\s/"'<>]+)?\/(?:api\/artifacts|vault|credentials|credential-requests|payments|approvals)(?:\/|[?#])[^\s"'<>]*/gi;
 
+export function publicText(value: string) {
+  return redactSecretText(value).replace(privateLink, '[private link]');
+}
+
 export function createCommunication(options: {
   pool: Pool;
   ownerId: string;
@@ -34,8 +38,7 @@ export function createCommunication(options: {
   review: ModelReview;
 }) {
   function privateLinks(value: unknown): unknown {
-    if (typeof value === 'string')
-      return redactSecretText(value).replace(privateLink, '[private link]');
+    if (typeof value === 'string') return publicText(value);
     if (Array.isArray(value)) return value.map(privateLinks);
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(

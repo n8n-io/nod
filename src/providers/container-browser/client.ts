@@ -326,6 +326,7 @@ export function createBridgeComputer(options: {
               name: input.name,
               size: input.bytes.length,
               ...(input.expectOrigin ? { expectOrigin: input.expectOrigin } : {}),
+              ...(input.expectUrl ? { expectUrl: input.expectUrl } : {}),
             },
           },
           signal,

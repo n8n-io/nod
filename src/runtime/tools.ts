@@ -520,21 +520,24 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
   };
   let typedPage = '';
   let typed: string[] = [];
-  let seen = '';
-  const observed = (step: BrowserAction, page: BrowserObservation) => {
+  const observed = (step: { action: string; text?: string }, page: BrowserObservation) => {
     const key = pageKey(page.url);
+    const before = typedPage;
     if (key !== typedPage) {
       typedPage = key;
       typed = [];
     }
-    if (step.action !== 'evaluate') seen = page.text.slice(0, 20_000);
-    if (['fill', 'type', 'select'].includes(step.action) && step.text)
+    if (
+      (before === key || !before) &&
+      ['fill', 'type', 'select'].includes(step.action) &&
+      step.text
+    )
       typed = [...typed, step.text.slice(0, 500)].slice(-10);
     return pageText(page);
   };
   const check = async (
     step: BrowserStep['step'],
-  ): Promise<{ expectOrigin?: string } | { output: unknown }> => {
+  ): Promise<{ expectOrigin?: string; expectUrl?: string } | { output: unknown }> => {
     if (!context.browserStep) return {};
     const page = await computer.currentPage(
       browserId,
@@ -544,11 +547,11 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     const verdict = await context.browserStep({
       step,
       page,
-      ...(pageKey(page.url) === typedPage ? { typed, ...(seen ? { seen } : {}) } : { typed: [] }),
+      typed: pageKey(page.url) === typedPage ? typed : [],
       subagent: Boolean(turn.execution.parentRunId),
     });
     signal.throwIfAborted();
-    if (verdict === 'run') return { expectOrigin: page.origin };
+    if (verdict === 'run') return { expectOrigin: page.origin, expectUrl: page.url };
     if (verdict === 'refused')
       throw new Error(
         "This step needs the owner's yes, and a subagent cannot ask. Stop and return it to the parent agent with the website, the control and what it would submit.",
@@ -628,7 +631,8 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
         const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
         const checked = await check({ action, selector: rest.selector, path: rest.path });
         if ('output' in checked) return checked.output;
-        return pageText(
+        return observed(
+          { action },
           await computer.upload(
             browserId,
             { selector: rest.selector, name: basename(rest.path), bytes, ...checked },

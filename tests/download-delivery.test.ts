@@ -178,6 +178,7 @@ test(
       cleanup.push(() => channels!.close());
       channels.registerRoutes(app);
       await threads.startThreadWorkers({
+        browserStep: async () => 'run',
         writeArtifact: async (threadId, path, bytes, signal) => {
           await stagingCompletion;
           signal?.throwIfAborted();

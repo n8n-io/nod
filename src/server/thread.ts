@@ -143,7 +143,7 @@ export interface ThreadDependencies {
     signal: AbortSignal,
     launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
-  browserStep?: (
+  browserStep: (
     turn: TurnRef,
     request: BrowserStep,
     signal: AbortSignal,
@@ -1248,28 +1248,24 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           }),
         ),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
-      ...(dependencies.browserStep
-        ? {
-            browserStep: fenced((request: BrowserStep) =>
-              dependencies.browserStep!(
-                ref,
-                request.step.action === 'upload' && taskContext
-                  ? {
-                      ...request,
-                      step: {
-                        ...request.step,
-                        path: posix.resolve(
-                          `/workspace/${threadId}/tasks/${taskContext.id}`,
-                          request.step.path,
-                        ),
-                      },
-                    }
-                  : request,
-                signal,
-              ),
-            ),
-          }
-        : {}),
+      browserStep: fenced((request: BrowserStep) =>
+        dependencies.browserStep(
+          ref,
+          request.step.action === 'upload' && taskContext
+            ? {
+                ...request,
+                step: {
+                  ...request.step,
+                  path: posix.resolve(
+                    `/workspace/${threadId}/tasks/${taskContext.id}`,
+                    request.step.path,
+                  ),
+                },
+              }
+            : request,
+          signal,
+        ),
+      ),
       ...(dependencies.requestPayment
         ? {
             requestPayment: fenced((input: unknown) =>

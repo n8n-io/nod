@@ -57,6 +57,7 @@ export interface BrowserAction {
   timeZone?: string;
   locale?: string;
   expectOrigin?: string;
+  expectUrl?: string;
   readOnly?: boolean;
 }
 export interface BrowserControl {
@@ -83,6 +84,7 @@ export interface BrowserUploadInput {
   name: string;
   bytes: Uint8Array;
   expectOrigin?: string;
+  expectUrl?: string;
 }
 export type CredentialKind = 'identifier' | 'password' | 'otp';
 export interface BrowserPage {

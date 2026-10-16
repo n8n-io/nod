@@ -23,7 +23,7 @@ const browserErrors = {
   browser_card_changed:
     'The checkout page changed. The operation may have reached the site. Check the result before another attempt.',
   browser_target_changed:
-    'The page changed before Otto acted, so nothing was clicked or submitted. Take a fresh snapshot and choose the control again.',
+    'Otto could not confirm it was still on the page and control it checked, so nothing was done. Take a fresh snapshot and choose the control again.',
   browser_script_writes: 'This script changes the page, so it needs a check before it runs.',
 } as const;
 

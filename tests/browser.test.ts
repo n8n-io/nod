@@ -3188,7 +3188,7 @@ test(
   },
 );
 
-test('a checked browser step runs only on the page and control the checker saw', async () => {
+test('a checked browser step is described from its snapshot and runs only on that page and control', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-checked-step-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
@@ -3242,6 +3242,19 @@ test('a checked browser step runs only on the page and control the checker saw',
       (error) => error instanceof BrowserActionError && error.code === 'browser_script_writes',
     );
     assert.equal(page().dom.window.document.body.dataset.changed, undefined);
+    await computer.act('checked', { action: 'snapshot' });
+    await computer.act('checked', {
+      action: 'evaluate',
+      script: "document.querySelector('#search').setAttribute('aria-label', 'Delete account')",
+    });
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'click',
+        selector: '@e3',
+        expectOrigin: 'https://1.1.1.1',
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

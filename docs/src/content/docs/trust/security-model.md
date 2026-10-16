@@ -9,14 +9,14 @@ This page sets out who Otto trusts with what, which rules the server enforces, a
 
 ## Who holds what authority
 
-| Part             | What it can do                                                        | What it's trusted with                            |
-| ---------------- | --------------------------------------------------------------------- | ------------------------------------------------- |
-| You              | Ask for work, approve actions, choose accounts, change permissions    | Everything                                        |
-| Otto server      | Hold keys, check policy, decrypt values, record every use             | Keys and secret values                            |
-| Browser provider | Check field origins and pages, enter values, submit                   | Secret values during entry                        |
-| Model            | Plan, choose accounts, fields and buttons                             | Account names, statuses and website results       |
-| Checker          | Decide each app action from your messages or a schedule's instruction | Your recent messages and the action, nothing else |
-| Website          | Receive what's submitted to its origin                                | The values entered on it                          |
+| Part             | What it can do                                                                         | What it's trusted with                                                                                                                                                           |
+| ---------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You              | Ask for work, approve actions, choose accounts, change permissions                     | Everything                                                                                                                                                                       |
+| Otto server      | Hold keys, check policy, decrypt values, record every use                              | Keys and secret values                                                                                                                                                           |
+| Browser provider | Check field origins and pages, enter values, submit                                    | Secret values during entry                                                                                                                                                       |
+| Model            | Plan, choose accounts, fields and buttons                                              | Account names, statuses and website results                                                                                                                                      |
+| Checker          | Decide each app action and browser step from your messages or a schedule's instruction | Your recent messages and the action. For a browser step, the website, page address, control label, dialog text or file name, and what Otto typed or chose; never the page's text |
+| Website          | Receive what's submitted to its origin                                                 | The values entered on it                                                                                                                                                         |
 
 ## Trust boundaries
 

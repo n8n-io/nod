@@ -250,6 +250,7 @@ test(
     let presentInterruption: NonNullable<ThreadDependencies['present']> = async () =>
       interruptedText;
     const dependencies: ThreadDependencies = {
+      browserStep: async () => 'run',
       analytics: captureAnalytics,
       present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),

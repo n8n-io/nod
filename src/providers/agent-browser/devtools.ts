@@ -419,15 +419,42 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         };
         const at = (fraction: number, size: number) =>
           Math.max(0, Math.min(Math.ceil(size) - 1, Math.round(fraction * size)));
+        const x = at(query.point.x, view.clientWidth);
+        const y = at(query.point.y, view.clientHeight);
         ({ backendNodeId } = (await send(
           'DOM.getNodeForLocation',
-          {
-            x: at(query.point.x, view.clientWidth),
-            y: at(query.point.y, view.clientHeight),
-            ignorePointerEventsNone: true,
-          },
+          { x, y, ignorePointerEventsNone: true },
           page,
         )) as { backendNodeId?: number });
+        const owner = backendNodeId
+          ? (
+              (await send('DOM.describeNode', { backendNodeId }, page)) as {
+                node: { nodeName: string; frameId?: string };
+              }
+            ).node
+          : undefined;
+        if (owner?.frameId && ['IFRAME', 'FRAME'].includes(owner.nodeName)) {
+          for (const child of [...sessions].filter((item) => item !== page)) {
+            if ((await tree(child).catch(() => []))[0]?.id !== owner.frameId) continue;
+            const { model } = (await send('DOM.getBoxModel', { backendNodeId }, page)) as {
+              model: { content: number[] };
+            };
+            const inner = (await send(
+              'DOM.getNodeForLocation',
+              {
+                x: Math.round(x - model.content[0]!),
+                y: Math.round(y - model.content[1]!),
+                ignorePointerEventsNone: true,
+              },
+              child,
+            ).catch(() => undefined)) as { backendNodeId?: number } | undefined;
+            if (inner?.backendNodeId) {
+              backendNodeId = inner.backendNodeId;
+              session = child;
+            }
+            break;
+          }
+        }
       } else if (query.selector) {
         const { root } = (await send('DOM.getDocument', { depth: 0 }, page)) as {
           root: { nodeId: number };
@@ -465,7 +492,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
             {
               contextId: await world(page, main.id),
               expression:
-                '(() => { let node = document.activeElement; while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement; return node === document.body ? null : node; })()',
+                '(() => { let node = document.activeElement; while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement; return node === document.body && !node.isContentEditable ? null : node; })()',
               objectGroup: 'otto-control',
             },
             page,

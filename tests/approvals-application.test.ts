@@ -441,6 +441,7 @@ test(
             const dialog = await propose('accept_dialog', {}, 'browser');
             const [card] = await approvalsFor(dialog);
             assert.equal(card.args.dialog, 'Send 120 EUR to the synthetic payee?');
+            assert.equal(browserActs.filter((act) => act.action === 'accept_dialog').length, 0);
             const accepted = await request('POST', '/api/messages', {
               text: 'Yes',
               replyToMessageId: card.confirmation_message_id,

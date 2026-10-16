@@ -48,7 +48,6 @@ export interface BrowserStep {
   step: BrowserAction | { action: 'upload'; selector: string; path: string };
   page: BrowserPage;
   typed: string[];
-  seen?: string;
   subagent: boolean;
 }
 

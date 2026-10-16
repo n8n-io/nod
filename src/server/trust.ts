@@ -19,7 +19,7 @@ answer is yes only when the user unconditionally approves the action as asked, i
 
 export function createTrust(options: { pool: Pool; ownerId: string; review: ModelReview }) {
   const { pool, ownerId } = options;
-  const allowedSteps = new Map<string, number>();
+  const readSteps = new Map<string, number>();
 
   async function conversation(
     threadId: string,
@@ -80,7 +80,7 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
           : undefined;
     const input = { ...words, action: { name: action, arguments: args } };
     const step = action === 'OTTO_browser' ? JSON.stringify([origin.source, input]) : undefined;
-    if (step && (allowedSteps.get(step) ?? 0) > Date.now()) return { confirm: false };
+    if (step && (readSteps.get(step) ?? 0) > Date.now()) return { confirm: false };
     const answer = await options
       .review(checkInstructions, input, undefined, {
         name: 'run',
@@ -121,10 +121,12 @@ The following policy supplies the target and sign-in rules. Its true/false termi
       });
     const run = answer && typeof answer === 'object' && (answer as { run?: unknown }).run;
     if (run === true || run === 'read' || run === 'requested') {
-      if (step) {
-        allowedSteps.delete(step);
-        allowedSteps.set(step, Date.now() + 10 * 60_000);
-        if (allowedSteps.size > 500) allowedSteps.delete(allowedSteps.keys().next().value!);
+      if (step && run === 'read') {
+        const now = Date.now();
+        for (const [key, expiry] of readSteps) if (expiry <= now) readSteps.delete(key);
+        readSteps.delete(step);
+        readSteps.set(step, now + 10 * 60_000);
+        if (readSteps.size > 500) readSteps.delete(readSteps.keys().next().value!);
       }
       return { confirm: false };
     }

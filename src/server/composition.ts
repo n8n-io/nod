@@ -81,7 +81,7 @@ import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
-import { createCommunication } from './communication.ts';
+import { createCommunication, publicText } from './communication.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
@@ -681,7 +681,7 @@ async function initializeApplication(
       locale: _locale,
       expectOrigin: _expectOrigin,
       readOnly: _readOnly,
-      waitMs: _waitMs,
+      expectUrl: _expectUrl,
       ...command
     } = step as BrowserAction;
     return {
@@ -720,7 +720,12 @@ async function initializeApplication(
         command.action === 'accept_dialog' ? (command as BrowserAction) : undefined,
       )
       .catch(() => undefined);
-    if (current?.origin !== expectOrigin || current.url !== args.page) throw notRun();
+    if (
+      current?.origin !== expectOrigin ||
+      current.url !== args.page ||
+      current.dialog !== args.dialog
+    )
+      throw notRun();
     try {
       const page =
         command.action === 'upload'
@@ -733,10 +738,12 @@ async function initializeApplication(
                 fileBytes,
               ),
               expectOrigin,
+              expectUrl: String(args.page),
             })
           : await computer.act(browserId, {
               ...(command as BrowserAction),
               expectOrigin,
+              expectUrl: String(args.page),
             });
       return { url: page.url, page: page.text };
     } catch (error) {
@@ -971,11 +978,31 @@ async function initializeApplication(
         const verdict = await trust.check(turn, 'OTTO_browser', args);
         if (!verdict.confirm) return 'run';
         if (request.subagent) return 'refused';
+        const visible =
+          turn.browserId &&
+          (await computer
+            .act(
+              turn.browserId,
+              { action: 'evaluate', script: 'document.body.innerText', readOnly: true },
+              signal,
+            )
+            .then(
+              (page) => {
+                try {
+                  return JSON.parse(page.text.slice(page.text.indexOf('\n') + 1)) as unknown;
+                } catch {
+                  return undefined;
+                }
+              },
+              () => undefined,
+            ));
         const result = await approvals.request(turn, 'OTTO_browser', args, {
           signal,
           details: {
             reason: verdict.reason,
-            ...(request.seen ? { pageOttoSaw: request.seen } : {}),
+            ...(typeof visible === 'string' && visible.trim()
+              ? { pageText: publicText(visible.slice(0, 20_000)) }
+              : {}),
           },
         });
         return result && typeof result === 'object' && 'requiresConfirmation' in result

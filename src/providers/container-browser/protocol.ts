@@ -75,7 +75,8 @@ const browserAction = z
     offset: z.number().int().min(0).optional(),
     timeZone: z.string().max(100).optional(),
     locale: z.string().max(35).optional(),
-    expectOrigin: z.string().max(2048).optional(),
+    expectOrigin: z.string().min(1).max(2048).optional(),
+    expectUrl: z.string().min(1).max(8192).optional(),
     readOnly: z.boolean().optional(),
   })
   .strict();
@@ -171,7 +172,8 @@ export const browserRequest = z.discriminatedUnion('method', [
             .min(1)
             .regex(/^[^/\\\u0000-\u001f\u007f]+$/),
           size: z.number().int().min(1).max(fileBytes),
-          expectOrigin: z.string().max(2048).optional(),
+          expectOrigin: z.string().min(1).max(2048).optional(),
+          expectUrl: z.string().min(1).max(8192).optional(),
         })
         .strict(),
     })
