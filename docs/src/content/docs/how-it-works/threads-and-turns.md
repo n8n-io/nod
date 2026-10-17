@@ -113,7 +113,7 @@ See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context
 A session opens its browser on its first browser call, so a session that never browses never starts one. Sessions never share a browser.
 
 - A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
-- A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it.
+- A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it. If you later continue that task, it starts a fresh, signed-out browser. A reset conversation's browser never comes back.
 - The browser container keeps four browsers live at once. At that limit, a new browser replaces the least recently used one that has been idle for five minutes. A browser waiting for you is never replaced during its 30-minute hold. The replaced browser closes and keeps its profile until it's used again.
 - A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. Browsers don't close just because they're idle.
 - When no browser can close yet, a new one waits for a free slot until its session stops. **Stop** cancels the wait at once.

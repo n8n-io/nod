@@ -94,6 +94,8 @@ async function dispatch(
       return computer.hold(request.threadId, request.held);
     case 'close':
       return computer.close(request.threadId);
+    case 'clear':
+      return computer.clear(request.threadId);
     case 'discard':
       return computer.discard(request.threadId);
     case 'view':

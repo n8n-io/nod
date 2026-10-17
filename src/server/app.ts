@@ -71,7 +71,10 @@ export interface AppDependencies {
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
-  computer?: Pick<Computer, 'act' | 'screenshot' | 'control' | 'view' | 'screenStatus' | 'discard'>;
+  computer?: Pick<
+    Computer,
+    'act' | 'screenshot' | 'control' | 'view' | 'screenStatus' | 'clear' | 'discard'
+  >;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
@@ -324,7 +327,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   app.post('/api/thread/stop', async () => {
     const { browsers } = await stopThread();
-    for (const id of browsers) void dependencies.computer?.discard(id).catch(() => {});
+    for (const id of browsers) void dependencies.computer?.clear(id).catch(() => {});
     return { ok: true };
   });
   app.get('/api/events', async (request, reply) => {

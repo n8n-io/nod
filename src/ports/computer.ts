@@ -164,6 +164,7 @@ export interface Computer {
   currentPage(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
   hold(threadId: string, held: boolean): Promise<void>;
   close(threadId: string): Promise<void>;
+  clear(threadId: string): Promise<void>;
   discard(threadId: string): Promise<void>;
   dispose(): Promise<void>;
 }

@@ -20,6 +20,7 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     control: async () => {},
     view: async function* () {},
     screenStatus: () => ({ state: 'unavailable' }),
+    clear: async () => {},
     discard: async () => {},
     screenshot: async () => null,
     injectCredentials: async () => {},

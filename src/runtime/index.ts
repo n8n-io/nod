@@ -735,7 +735,7 @@ export function createAgentRuntime(dependencies: {
           )
           .catch(() => {});
         if (sessionId !== threadId && !waitingForUser && (browsed || context.resumed))
-          await computer.discard(browserId).catch(() => {});
+          await computer.clear(browserId).catch(() => {});
         finished();
       }
     }

@@ -427,6 +427,10 @@ export function createBridgeComputer(options: {
     close: async (id) => {
       await call({ method: 'close', threadId: threadIdentity(id) });
     },
+    clear: async (id) => {
+      await call({ method: 'clear', threadId: threadIdentity(id) });
+      screens.delete(threadIdentity(id));
+    },
     discard: async (id) => {
       await call({ method: 'discard', threadId: threadIdentity(id) });
       screens.delete(threadIdentity(id));

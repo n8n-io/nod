@@ -103,7 +103,7 @@ export function createTasks(options: {
   pool: Pool;
   ownerId: string;
   refresh?: () => void;
-  discardBrowser?: (id: string) => Promise<void>;
+  clearBrowser?: (id: string) => Promise<void>;
 }) {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
@@ -524,7 +524,7 @@ export function createTasks(options: {
 
   async function afterStop(cancelled: { ids: string[]; browsers: string[] }) {
     abortTurns(cancelled.ids);
-    await Promise.allSettled(cancelled.browsers.map((id) => options.discardBrowser?.(id)));
+    await Promise.allSettled(cancelled.browsers.map((id) => options.clearBrowser?.(id)));
     refresh();
   }
 

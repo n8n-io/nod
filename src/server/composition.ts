@@ -614,7 +614,7 @@ async function initializeApplication(
     pool,
     ownerId,
     refresh,
-    discardBrowser: (id) => adapters.computer.discard(id),
+    clearBrowser: (id) => adapters.computer.clear(id),
   });
   await tasks.initialize();
   const triage = createTriage({

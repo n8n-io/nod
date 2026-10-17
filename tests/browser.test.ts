@@ -104,6 +104,7 @@ test(
         control: async (id, input) => {
           controls.push([id, input]);
         },
+        clear: async () => {},
         discard: async () => {},
         act: async (id, input) => {
           controls.push([id, input]);
@@ -1129,7 +1130,7 @@ test(
   },
 );
 
-test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
+test('discarding a thread closes its browser and deletes only its throwaway data; clearing a finished session lets it start fresh', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
@@ -1178,6 +1179,12 @@ test('discarding a thread closes its browser and deletes only its throwaway data
     assert.equal(computer.screenStatus!('old').state, 'unavailable');
     assert.equal(
       (await computer.act('other', { action: 'snapshot' })).url,
+      'https://1.1.1.1/login',
+    );
+    await computer.clear!('other');
+    assert.deepEqual(await readdir(join(runtime, 'profiles')), [savedProfile]);
+    assert.equal(
+      (await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' })).url,
       'https://1.1.1.1/login',
     );
   } finally {
@@ -1302,7 +1309,7 @@ test('every session drives its own browser, so background work never waits for t
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-session-'));
   const threadId = randomUUID();
   const opened = new Map<string, string>();
-  const discarded: string[] = [];
+  const cleared: string[] = [];
   const held: string[] = [];
   const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
   const runtime = createAgentRuntime({
@@ -1322,8 +1329,8 @@ test('every session drives its own browser, so background work never waits for t
         if (action.action === 'open' && action.url) opened.set(id, action.url);
         return { text: 'Fixture page', url: 'https://example.com' };
       },
-      discard: async (id) => {
-        discarded.push(id);
+      clear: async (id) => {
+        cleared.push(id);
       },
       hold: async (id, value) => {
         if (value) held.push(id);
@@ -1394,10 +1401,10 @@ test('every session drives its own browser, so background work never waits for t
         [finished, 'https://example.com/finished'],
       ]),
     );
-    assert.deepEqual(discarded, [finished]);
+    assert.deepEqual(cleared, [finished]);
     assert.deepEqual(held.sort(), [asking, threadId].sort());
     assert.equal((await turn(asking, async () => {}, true)).status, 'succeeded');
-    assert.deepEqual(discarded, [finished, asking]);
+    assert.deepEqual(cleared, [finished, asking]);
   } finally {
     deadline.abort();
     busy.resolve();

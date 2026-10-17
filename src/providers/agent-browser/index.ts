@@ -1917,9 +1917,17 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
+  async function clear(rawId: string): Promise<void> {
+    await remove(threadIdentity(rawId));
+  }
+
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
+    await remove(id);
+  }
+
+  async function remove(id: string): Promise<void> {
     await closeBrowser(id);
     await Promise.all([
       rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
@@ -1953,6 +1961,7 @@ export function createAgentBrowserComputer(options: {
     currentPage: tracked(currentPage),
     hold: tracked(hold),
     close: tracked(closeBrowser),
+    clear: tracked(clear),
     discard: tracked(discard),
     dispose: async () => {
       disposed = true;
