@@ -235,7 +235,7 @@ export default scenario({
       ),
       judge(
         'schedule-prompt-can-run-alone',
-        'The saved schedule prompt is complete enough to run later without this conversation: it names the spreadsheet (Spending 2026) and enough about where the data sits to find it, says to compare month-to-date spending per category with the monthly budget, and says to message the user only when a category is over budget and otherwise stay silent.',
+        'The saved schedule prompt is complete enough to run later without this conversation: it names the spreadsheet (Spending 2026) and enough about where the data sits to find it, says to compare month-to-date spending with the monthly budget per category, or the way the user last asked if they changed it, and says to message the user only when that comparison is over budget and otherwise stay silent.',
         { aspect: 'process', failure: 'incomplete' },
       ),
     ];
