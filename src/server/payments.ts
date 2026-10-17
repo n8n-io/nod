@@ -411,6 +411,13 @@ export async function createPayments(
     return result;
   }
 
+  async function withdraw(paymentId: string) {
+    await pool.query(
+      "UPDATE vault_payments SET status='superseded' WHERE id=$1 AND owner_id=$2 AND status='pending'",
+      [paymentId, ownerId],
+    );
+  }
+
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
     const { paymentId } = z.object({ paymentId: z.uuid() }).parse(raw);
     const row = await open(paymentId, { threadId: context.threadId });
@@ -521,5 +528,5 @@ export async function createPayments(
     );
   }
 
-  return { request, approve, submitCode, requestSetting, setting, registerRoutes };
+  return { request, withdraw, approve, submitCode, requestSetting, setting, registerRoutes };
 }

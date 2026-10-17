@@ -1191,18 +1191,23 @@ async function initializeApplication(
         const result = await payments.request(turn, input);
         await show(result.image);
         if (result.paymentId === undefined) return { question: result.question, url: result.url };
-        const confirmation = await approvals.request(
-          turn,
-          'OTTO_payment_approve',
-          {
-            paymentId: result.paymentId,
-            origin: result.details.origin,
-            amount: result.details.amount,
-            currency: result.details.currency,
-            card: result.details.card,
-          },
-          { details: result.details },
-        );
+        const confirmation = await approvals
+          .request(
+            turn,
+            'OTTO_payment_approve',
+            {
+              paymentId: result.paymentId,
+              origin: result.details.origin,
+              amount: result.details.amount,
+              currency: result.details.currency,
+              card: result.details.card,
+            },
+            { details: result.details },
+          )
+          .catch(async (error: unknown) => {
+            await payments.withdraw(result.paymentId!);
+            throw error;
+          });
         if (
           confirmation &&
           typeof confirmation === 'object' &&
