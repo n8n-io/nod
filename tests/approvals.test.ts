@@ -1075,6 +1075,58 @@ test(
       );
 
       await t.test(
+        'a task started from an answer keeps the request the answer belongs to',
+        async (t) => {
+          const request = 'Find a fixture table and book it only when I say go.';
+          const asked = await begin(request);
+          t.after(() => finish(asked.turnId, 'cancelled'));
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Which fixture city?')",
+            [randomUUID(), ownerId, asked.threadId, asked.turnId],
+          );
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+            [asked.turnId],
+          );
+          const answer = await thread.submitUserMessage('Fixture city.');
+          assert.equal((await row(answer.turnId)).parent_turn_id, asked.turnId);
+          const reply = await running(answer.turnId);
+          t.after(() => finish(reply.turnId, 'cancelled'));
+          const task = (await tasks.execute(
+            reply,
+            {
+              action: 'start',
+              title: 'Fixture table',
+              message: 'Looking for fixture tables.',
+              doneWhen: 'Options shown',
+              now: 'Searching',
+            },
+            answer.messageId,
+          )) as { id: string };
+          t.after(async () => {
+            await db.pool.query(
+              "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+              [task.id],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+          });
+          const worker = await running(
+            (
+              await db.pool.query("SELECT id FROM turns WHERE task_id=$1 AND source='task'", [
+                task.id,
+              ])
+            ).rows[0].id,
+          );
+          await tasks.inherit(worker);
+          await trust.check(worker, 'OTTO_browser', { website: 'https://tables.example.test' });
+          assert.deepEqual(
+            reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text),
+            [request, 'Fixture city.'],
+          );
+        },
+      );
+
+      await t.test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
         async () => {
           aligned = false;
