@@ -100,6 +100,7 @@ export default scenario({
   complexity: 'complex',
   stance: 'regression',
   seconds: 900,
+  window: { from: 7, to: 20 },
   timeZone: 'Europe/Madrid',
   calibration: 'pending',
   user: {

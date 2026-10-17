@@ -527,6 +527,7 @@ Follow these rules:
 - Write the brief like a real user. Everything you grade must be in the brief or discoverable from it.
 - Grade the end state, not the route. Any correct path must pass, and any wrong answer must fail.
 - Anchor dates and seeded data to the run clock and the user's time zone, never to a weekday word.
+- The harness fires a schedule at once, not at its time. When a scenario only makes sense at its time of day, such as a check every morning at 8:00, set `window` to the local hours it may run, for example `{ from: 7, to: 20 }`. Outside them the run skips it; `--ignore-window` runs it anyway.
 - Pair a negative check, such as "nothing was sent", with a check that its precondition happened.
 - Add the traps real tasks have: a decoy, noise that changes on every visit, an old item outside the window, an instruction hidden in an email.
 - Make fake sites behave like real ones. Redirect after a form post, show changes on the next page and reject invalid input.
