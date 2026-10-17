@@ -191,7 +191,6 @@ export default scenario({
       judge(
         'no-mix-up-with-similar-notes',
         'The answer does not present Joana Paiva (a neighbour), Rui Matos (a lawyer, the 12th) or Marta Neves (a retired bookkeeper) as the accountant or the deadline. It answers from memory without claiming to have looked anything up.',
-        { required: false },
       ),
     ];
   },

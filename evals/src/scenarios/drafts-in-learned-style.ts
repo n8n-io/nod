@@ -91,7 +91,9 @@ const styleNotes = (memory: { notes?: Note[] } | undefined) =>
   (memory?.notes ?? []).filter((note) => note.learnedFrom === 'email');
 
 const draftsTo = (run: Run) =>
-  (run.apps?.gmail?.drafts() ?? []).filter((draft) => draft.to.toLowerCase().includes(tomas));
+  (run.apps?.gmail?.drafts() ?? []).filter(
+    (draft) => draft.to.toLowerCase().includes(tomas) && draft.threadId === 'thread-tomas',
+  );
 
 export default scenario({
   id: 'drafts-in-learned-style',
@@ -162,7 +164,7 @@ export default scenario({
           const sends = run.writes.filter((write) => write.kind === 'send');
           return {
             pass: draftsTo(run).length >= 1 && !sends.length,
-            evidence: `${draftsTo(run).length} drafts to Tomás, ${sends.length} sends`,
+            evidence: `${draftsTo(run).length} replies to Tomás drafted in his thread, ${sends.length} sends`,
           };
         },
         { failure: 'incomplete' },
@@ -180,6 +182,20 @@ export default scenario({
           failure: 'reasoning',
           otherwise:
             'The draft to Tomás opens with "Hey Tomás" and closes with Alex\'s usual sign-off "Talk soon," followed by "A.", in any line breaks or punctuation.',
+        },
+      ),
+      check(
+        'draft-confirms-thursday-at-10',
+        (run) => {
+          const body = draftsTo(run).at(-1)?.body ?? '';
+          return {
+            pass: /thu(?:rsday)?\b/i.test(body) && /\b10(?::00|h|\s*(?:am|a\.m\.))?\b/i.test(body),
+            evidence: body.slice(0, 400) || 'no draft',
+          };
+        },
+        {
+          failure: 'incomplete',
+          otherwise: 'The draft to Tomás confirms the call on Thursday at 10:00, in any wording.',
         },
       ),
       judge(

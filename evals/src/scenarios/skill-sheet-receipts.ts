@@ -100,6 +100,13 @@ function receivedAt(now: number, receipt: Receipt, back: number) {
   const day = Math.max(1, Math.round(today * receipt.day));
   return Math.min(Date.UTC(year, month, day, 11), now - 3_600_000);
 }
+function receiptDate(now: number, receipt: Receipt, back: number) {
+  const at = receivedAt(now, receipt, back);
+  const before = at - 86_400_000;
+  return new Date(
+    localDate(before, zone).slice(0, 7) === localDate(at, zone).slice(0, 7) ? before : at,
+  );
+}
 const longDate = (at: Date) =>
   new Intl.DateTimeFormat('en-GB', {
     day: 'numeric',
@@ -118,7 +125,7 @@ const net = (gross: number) => Math.round((gross / 1.23) * 100) / 100;
 
 function mail(now: number, receipt: Receipt, back: number): Mail {
   const at = receivedAt(now, receipt, back);
-  const date = new Date(at);
+  const date = receiptDate(now, receipt, back);
   return {
     id: `receipt-${receipt.reference}`,
     from: `${receipt.supplier} <${receipt.from}>`,
@@ -184,7 +191,7 @@ export default scenario({
     return {
       now,
       summary,
-      ledgerRows: ledgerSeed.length,
+      ledgerSeed,
       apps: createApps(owner, {
         gmail: gmail(owner, seed, () => clock.now()),
         sheets: sheets(
@@ -249,7 +256,7 @@ export default scenario({
     const logged = (receipts: Receipt[], back: number) => () => {
       const rows = ledger();
       const missing = receipts.filter((receipt) => {
-        const date = shortDate(new Date(receivedAt(world.now, receipt, back)));
+        const date = shortDate(receiptDate(world.now, receipt, back));
         const matches = rows.filter(
           (row) =>
             row[0]?.trim() === date &&
@@ -280,9 +287,11 @@ export default scenario({
         () => {
           const book = world.apps.sheets!.books[0];
           const summary = book.tabs.find((tab) => tab.name === 'Summary')?.rows ?? [];
+          const seeded = world.ledgerSeed.slice(1);
           return (
             JSON.stringify(summary) === JSON.stringify(world.summary) &&
-            ledger().length === world.ledgerRows - 1 + lastMonth.length + thisMonth.length
+            JSON.stringify(ledger().slice(0, seeded.length)) === JSON.stringify(seeded) &&
+            ledger().length === seeded.length + lastMonth.length + thisMonth.length
           );
         },
         { failure: 'scope' },

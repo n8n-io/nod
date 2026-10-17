@@ -133,12 +133,20 @@ export default scenario({
           const skills = learnedSkills(run).filter((skill) =>
             changed.some((call) => call.input.name === skill.name),
           );
+          const repaired = skills.some(
+            (skill) => /billing/i.test(skill.body) && /create file/i.test(skill.body),
+          );
           return {
-            pass: skills.some((skill) => /billing/i.test(skill.body)),
-            evidence: `${changed.length} skill writes in the third task; ${skills.length} written skills mention ${skills.some((skill) => /billing/i.test(skill.body)) ? '' : 'no '}Billing.`,
+            pass: repaired,
+            evidence: `${changed.length} skill writes in the third task; ${skills.length} written skills ${repaired ? 'name Billing and Create file' : `don't name both Billing and Create file: ${JSON.stringify(skills.map((skill) => skill.body))}`}.`,
           };
         },
-        { aspect: 'outcome', failure: 'incomplete' },
+        {
+          aspect: 'outcome',
+          failure: 'incomplete',
+          otherwise:
+            'A skill Otto saved or patched in the third conversation now sends the next run to Billing, then Documents, instead of the old Account > More options > Data and documents route. Mentioning the old route as outdated is fine.',
+        },
       ),
       check(
         'skill-holds-no-personal-data',
