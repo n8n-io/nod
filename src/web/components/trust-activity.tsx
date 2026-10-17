@@ -294,7 +294,7 @@ function Sentence({
 }: {
   view: TrustView;
   vault: VaultActivity;
-  rule?: string;
+  rule: string;
   onSaved(): void;
 }) {
   const format = useDateFormat();
@@ -393,19 +393,15 @@ function Sentence({
         ) : (
           'Nothing yet this week.'
         )}
-        {rule !== undefined && (
-          <>
-            <br />
-            On its own, Otto{' '}
-            <Value
-              text={rule ? 'follows your instruction' : 'watches nothing'}
-              label="Standing instruction"
-            >
-              {(close) => <StandingInstruction rule={rule} onSaved={close} />}
-            </Value>
-            {rule ? <>: “{rule}”</> : '.'}
-          </>
-        )}
+        <br />
+        On its own, Otto{' '}
+        <Value
+          text={rule ? 'follows your instruction' : 'watches nothing'}
+          label="Standing instruction"
+        >
+          {(close) => <StandingInstruction rule={rule} onSaved={close} />}
+        </Value>
+        {rule ? <>: “{rule}”</> : '.'}
       </p>
       {limit?.reached && (
         <Notice kind="info">
@@ -560,7 +556,7 @@ export function TrustActivity({
 }: {
   view: TrustView;
   vault: VaultActivity;
-  rule?: string;
+  rule: string;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
   onSaved(): void;
 }) {

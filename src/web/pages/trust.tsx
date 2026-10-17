@@ -413,16 +413,16 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         className="vault-panel"
       >
         <div hidden={view !== 'activity'}>
-          {activity.data && trust.data ? (
+          {activity.data && trust.data && preferences.data ? (
             <TrustActivity
               view={trust.data}
               vault={activity.data}
-              rule={preferences.data?.notificationRule}
+              rule={preferences.data.notificationRule}
               opener={opener}
               onSaved={() => void trust.refresh()}
             />
-          ) : activity.error || trust.error ? (
-            <Notice>{activity.error || trust.error}</Notice>
+          ) : activity.error || trust.error || preferences.error ? (
+            <Notice>{activity.error || trust.error || preferences.error}</Notice>
           ) : (
             <Loading label="Opening activity…" />
           )}
