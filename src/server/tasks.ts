@@ -590,9 +590,12 @@ export function createTasks(options: {
         command === 'stop' && !target
           ? [reply({ stopped: 'all_active_work_and_open_tasks' })]
           : tasks.length
-            ? tasks.map((task) =>
+            ? tasks.map((task, index) =>
                 reply(
-                  { task: taskFacts(task, Boolean(target)) },
+                  {
+                    task: taskFacts(task, Boolean(target) || command === 'status'),
+                    ...(index === 0 ? { first: true } : {}),
+                  },
                   task.questionMessageId ?? task.messageId,
                 ),
               )

@@ -83,7 +83,7 @@ Use Telegram's **Reply** control to send an update or answer to a task. Other me
 | Command   | Result                                                                                                  |
 | --------- | ------------------------------------------------------------------------------------------------------- |
 | `/tasks`  | List open tasks and their current state.                                                                |
-| `/status` | List open tasks. Reply to a task message with `/status` to see its goal, steps and current state.       |
+| `/status` | Show each open task's goal, steps and current state. Reply to a task message to see only that task.     |
 | `/stop`   | Stop all active work and close open tasks. Reply to a task message with `/stop` to stop only that task. |
 
 The task list sends one message per task. You can reply to that message, the task's first message, a progress message, a question, a file, a result or a status response. If Otto cannot match a reply to a task, `/stop` asks you to select a task. It does not stop all work.
