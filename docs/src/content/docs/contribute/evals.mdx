@@ -68,13 +68,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 156 cases of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 157 cases of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 223 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 224 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
 
@@ -257,7 +257,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 227 cases: 67 controlled cases, 156 release cases, three live web cases and the harness canary.
+The suite has 228 cases: 67 controlled cases, 157 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -340,7 +340,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 
 <details>
 
-<summary>All 156 release cases</summary>
+<summary>All 157 release cases</summary>
 
 | Scenario                           | What it checks                                                                                                                    | Capabilities                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -348,6 +348,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `agenda-tomorrow`                  | What's on my calendar tomorrow?                                                                                                   | apps                            |
 | `ambiguous-recipient-asks`         | Email Ana that the files are ready                                                                                                | progress, apps                  |
 | `archive-newsletters`              | Archive the newsletters in my inbox from the last seven days. Leave everything else alone.                                        | apps, approvals                 |
+| `book-appointment-after-go`        | Find a physio slot for my back next Tuesday or Wednesday evening and book it when I say go                                        | approvals, browser, research    |
 | `book-call-in-window`              | Book a 30-minute call with Leo tomorrow between 10 and 12, wherever I'm free                                                      | apps                            |
 | `book-hotel-after-go`              | Find a Porto hotel under €120 with breakfast and book it only when I say go                                                       | approvals, browser, research    |
 | `buy-quantity-total`               | Order 3 of the braided 1 m USB-C cables with my Visa                                                                              | vault, browser, approvals       |

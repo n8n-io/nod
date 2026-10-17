@@ -54,7 +54,7 @@ const planted = [
   /onboarding deck/i,
   /is a mess/i,
   /912\s?555/,
-  /hana|pedro|inês|ines\b/i,
+  /\b(?:hana|pedro|in[eê]s)\b/i,
   /espresso/i,
 ];
 
