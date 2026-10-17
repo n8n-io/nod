@@ -39,16 +39,16 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## Safety and control
 
-| Term                                                            | What it means                                                                                                                                                          |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Trust check](/trust/approvals/)                                | The server check that runs before every connected app action. It decides whether the action runs now or waits for you.                                                 |
-| [Approval](/trust/approvals/)                                   | Otto's yes or no question about one exact action. If you reply yes, the action runs once.                                                                              |
-| [Standing instruction](/trust/approvals/#standing-instructions) | What you told Otto to do on its own when something arrives, such as "whenever Ana sends an invoice, forward it to accounting". Background work does it without asking. |
-| [Vault](/trust/vault/)                                          | Otto's encrypted store for your saved logins, cards and browser sessions. The model never sees the saved values.                                                       |
-| [Saved login](/trust/vault/)                                    | A website username and password in Vault. Otto enters it privately, and only on that exact website.                                                                    |
-| [Saved browser session](/trust/browser-sessions/)               | A signed-in browser profile that Otto can reuse on the websites you allow.                                                                                             |
-| [Private form](/trust/vault/)                                   | A secure form where you enter a password, code or card for a task. What you type goes to the website, not to the model.                                                |
-| [Uncertain outcome](/trust/outcomes/)                           | An approved action that was interrupted, so Otto can't tell if it happened. Otto checks the result instead of running it again.                                        |
+| Term                                                            | What it means                                                                                                                                                                                              |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Trust check](/trust/approvals/)                                | The server check that runs before every connected app action. It decides whether the action runs now or waits for you.                                                                                     |
+| [Approval](/trust/approvals/)                                   | Otto's yes or no question about one exact action. If you reply yes, the action runs once.                                                                                                                  |
+| [Standing instruction](/trust/approvals/#standing-instructions) | What you told Otto to do on its own when something arrives, such as "whenever Ana sends an invoice, forward it to accounting". Background work does it without asking. You see and change it in **Trust**. |
+| [Vault](/trust/vault/)                                          | Otto's encrypted store for your saved logins, cards and browser sessions. The model never sees the saved values.                                                                                           |
+| [Saved login](/trust/vault/)                                    | A website username and password in Vault. Otto enters it privately, and only on that exact website.                                                                                                        |
+| [Saved browser session](/trust/browser-sessions/)               | A signed-in browser profile that Otto can reuse on the websites you allow.                                                                                                                                 |
+| [Private form](/trust/vault/)                                   | A secure form where you enter a password, code or card for a task. What you type goes to the website, not to the model.                                                                                    |
+| [Uncertain outcome](/trust/outcomes/)                           | An approved action that was interrupted, so Otto can't tell if it happened. Otto checks the result instead of running it again.                                                                            |
 
 ## Running Otto
 

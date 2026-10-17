@@ -13,12 +13,12 @@ Otto itself doesn't charge you. Your model provider bills you for the requests O
 
 Open **Trust** in the sidebar (⌘I on a Mac, Ctrl+I elsewhere). **Activity** opens first.
 
-- **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what Otto did this week. Select a value to see more or change it.
+- **The sentence at the top.** This month's spending, your monthly limit and when a task checks in, then what Otto did this week and the [standing instruction](/trust/approvals/#standing-instructions) it follows on its own. Select a value to see more or change it.
 - **The list.** Every request that cost money or acted in a connected app, and every sign-in and card use, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Approved action**, what Otto did and the cost.
 
 Select this month's total to see a chart and a forecast, such as "On track for $12.40". Every app action is recorded, reads included.
 
-![Trust → Activity: October spending of $7.52 of a $25 limit, tasks that check in at $5, and today's app actions, sign-in and card use.](../../../assets/screens/trust-light.png)
+![Trust → Activity: October spending of $18.42 of a $40 limit, tasks that check in at $5, the instruction Otto follows on its own, and today's tasks, sign-in and schedule run.](../../../assets/screens/trust-light.png)
 
 ## Set a monthly limit
 
