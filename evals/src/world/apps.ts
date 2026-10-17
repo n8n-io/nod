@@ -1794,6 +1794,19 @@ export function createApps(
         },
       };
     },
+    async sentEmails(accountId) {
+      if (accounts.get(accountId)?.service !== 'gmail') return [];
+      return (world.gmail?.mails ?? [])
+        .filter((mail) => mail.labels.includes('SENT') && !mail.labels.includes('DRAFT'))
+        .sort((a, b) => b.at - a.at)
+        .slice(0, 30)
+        .map((mail) => ({
+          from: addresses(mail.from)[0],
+          to: [mail.to, mail.cc].filter(Boolean).flatMap(addresses),
+          automated: false,
+          text: mail.body,
+        }));
+    },
     async inboxSnippets(accountId) {
       if (accounts.get(accountId)?.service !== 'gmail') return [];
       return (world.gmail?.mails ?? [])
