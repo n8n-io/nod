@@ -49,7 +49,7 @@ The `tasks` table is the source of truth for task state. Task messages, web card
 | `turn_events` | Tool and helper activity for the task's activity view.                                                                            |
 | `model_usage` | Model requests and their cost.                                                                                                    |
 
-Each turn sees the tasks of the active conversation, including finished ones with their results. After a conversation reset in a development build, tasks from the archived conversation stay on the Tasks page but leave the turn context.
+Each turn sees up to 100 tasks of the active conversation, open ones first, then finished ones with their results, newest first. After a conversation reset in a development build, tasks from the archived conversation stay saved and on the Tasks page, which lists the newest 100, but leave the turn context.
 
 A model-written task list in the workspace does not replace the ledger. The existing turn queue runs the sessions. The task system does not add another scheduler or cost ledger.
 
