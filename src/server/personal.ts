@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
 import { controlInput, forgetInput, forgetReview, type MemoryService } from './memory.ts';
+import type { LearnedSkills } from './learned-skills.ts';
 import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { activeThreadSql } from './thread.ts';
@@ -38,6 +39,7 @@ export function profileNotes(profile: Record<string, unknown>) {
 
 type PersonalDependencies = ScheduleDependencies & {
   memory?: MemoryService;
+  learnedSkills?: LearnedSkills;
 };
 
 export function createPersonalService(dependencies: PersonalDependencies) {
@@ -45,6 +47,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   const preferences = createPreferencesStore(pool, ownerId);
   const schedules = createSchedules(dependencies);
   const memory = dependencies.memory;
+  const learnedSkills = dependencies.learnedSkills;
 
   async function initialize(options: { workers?: boolean } = {}) {
     if (memory && (await pool.query("SELECT to_regclass('profiles') AS name")).rows[0].name) {
@@ -227,6 +230,13 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     app.post('/api/memory/archive/restore', (request) => changed(memory?.restore(request.body)));
     app.post('/api/memory/archive/forget', (request) =>
       changed(memory?.forgetArchived(request.body)),
+    );
+    const skillName = (params: unknown) => (params as { name: string }).name;
+    app.patch('/api/memory/skills/:name', (request) =>
+      changed(learnedSkills?.change(skillName(request.params), request.body)),
+    );
+    app.delete('/api/memory/skills/:name', (request) =>
+      changed(learnedSkills?.forget(skillName(request.params))),
     );
     schedules.registerRoutes(app);
   }

@@ -132,7 +132,7 @@ export function createTasks(options: {
 
   async function read(
     client: Pick<PoolClient, 'query'>,
-    filter: { id?: string; closed?: boolean } = {},
+    filter: { id?: string; closed?: boolean; thread?: string } = {},
   ): Promise<Task[]> {
     const rows = (
       await client.query<Row>(
@@ -147,8 +147,9 @@ export function createTasks(options: {
            WHERE u.status='waiting' AND m.owner_id=u.owner_id AND m.turn_id=u.id AND m.role='assistant' AND m.text<>''
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1) q ON true
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3 OR t.state='open')
+           AND ($4::uuid IS NULL OR u.thread_id=$4)
          ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
-        [ownerId, filter.id ?? null, filter.closed ?? false],
+        [ownerId, filter.id ?? null, filter.closed ?? false, filter.thread ?? null],
       )
     ).rows;
     return rows.map((row) => {
@@ -621,7 +622,7 @@ export function createTasks(options: {
     context,
     resolveReply,
     chatCommand,
-    read: () => read(pool, { closed: true }),
+    read: (thread?: string) => read(pool, { closed: true, thread }),
     registerRoutes,
   };
 }

@@ -280,3 +280,15 @@
     display: none;
   }
 }
+.memory-skill-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-control);
+  line-height: 1.6;
+}
+textarea.memory-skill-body {
+  color: var(--foreground);
+}

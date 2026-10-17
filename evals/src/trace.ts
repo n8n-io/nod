@@ -291,10 +291,21 @@ export async function collect(options: {
   const view = (await (await stack.request('/api/memory')).json()) as {
     notes?: Array<{ path: string; text: string; status: string }>;
     archive?: Array<{ path: string; text: string; reason: string }>;
+    skills?: Array<{ name: string; description: string; body: string; updated: string }>;
   };
   const memory = JSON.stringify({
     notes: (view.notes ?? []).map(({ path, text, status }) => ({ path, text, status })),
     archive: (view.archive ?? []).map(({ path, text, reason }) => ({ path, text, reason })),
+    ...(view.skills?.length
+      ? {
+          skills: view.skills.map(({ name, description, body, updated }) => ({
+            name,
+            description,
+            body,
+            updated,
+          })),
+        }
+      : {}),
   });
   const approvals = (
     await stack.pool.query(

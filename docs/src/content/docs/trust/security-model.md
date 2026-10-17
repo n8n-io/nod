@@ -82,6 +82,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The model can type any value it knows into a page, including a secret you typed into chat.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click. The trust check judges a browser step from what it does (a click, a key press or a script), the website and page, the control's label when there is one, any dialog text or file name, and what Otto typed. It never sees the page's text, and a deceptive site can mislabel a control.
 - The checker can be wrong, and the model isn't immune to prompt injection.
+- Otto writes [learned skills](/how-it-works/memory/#learned-skills) from what it did and read, so a page or an email can shape one, and a skill can steer later tasks. A skill never grants permission, and the trust check never sees it.
 - A standing instruction runs for any new email or update that matches it, including one that only claims to come from the sender you named.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.

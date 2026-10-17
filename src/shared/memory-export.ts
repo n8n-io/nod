@@ -103,6 +103,19 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
             .join('\n')}`,
         ]
       : []),
-    ...(view.notes.length ? [] : ['Nothing yet.']),
+    ...(view.skills.length
+      ? [
+          `## Skills Otto learned\n\nHow Otto did a task, written by Otto so it can follow the same steps next time.\n\n${view.skills
+            .map(
+              (skill) =>
+                `### ${text(skill.name)}\n\n${text(skill.description)} Updated on ${day(skill.updated)}.\n\n${skill.body
+                  .split('\n')
+                  .map((row) => `    ${row}`)
+                  .join('\n')}`,
+            )
+            .join('\n\n')}`,
+        ]
+      : []),
+    ...(view.notes.length || view.skills.length ? [] : ['Nothing yet.']),
   ].join('\n\n')}\n`;
 }

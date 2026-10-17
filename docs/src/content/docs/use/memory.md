@@ -21,12 +21,18 @@ You can see everything Otto remembers, where it learned it, and change or forget
 
 ## Where Otto learns from
 
-Otto learns only from your own messages. It never learns from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
+Notes come only from your own messages. Otto never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
 
 - **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Otto looks through your recent short messages for lasting facts. It skips messages with attachments.
 
 Otto saves silently. It doesn't post a notice in chat.
+
+## Skills Otto learns
+
+After a task that took several steps or a workaround, Otto writes down how it did it: the steps on that site or app, the gotchas and what to check at the end. The next time the same job comes up, it follows its own skill instead of working it out again. When a site changes, Otto fixes the skill.
+
+Skills hold no personal details: names, addresses, contact details, order or account numbers, amounts and message content are replaced with placeholders before saving. Because Otto writes them from what it did and read, a web page can shape a skill. A skill never lets Otto act: sending, paying or deleting still goes through the [trust check](/trust/approvals/).
 
 ## How a memory grows
 
@@ -58,18 +64,19 @@ When you connect Gmail, Otto reads your own text from recent sent emails. It rem
 
 ## Review and change memory
 
-Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed** or **Let go**, or search. Notes from chat show the messages they came from.
+Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed**, **Let go** or **Skills**, or search. Notes from chat show the messages they came from, and skills show the task they came from.
 
-| To                           | Do this                                       |
-| ---------------------------- | --------------------------------------------- |
-| Fix a note                   | Select **Edit**                               |
-| Tell Otto a guess is right   | Select **Confirm**                            |
-| Keep a note only for a while | Select **End date**                           |
-| Remove a note for good       | Select **Forget**                             |
-| Restore an older note        | Open it under **Let go**, then **Bring back** |
-| Add something yourself       | Select **Add note**                           |
-| Download everything          | Select **Export** for a Markdown file         |
-| Stop saving new notes        | Turn off **Save new notes**                   |
+| To                           | Do this                                               |
+| ---------------------------- | ----------------------------------------------------- |
+| Fix a note                   | Select **Edit**                                       |
+| Tell Otto a guess is right   | Select **Confirm**                                    |
+| Keep a note only for a while | Select **End date**                                   |
+| Remove a note for good       | Select **Forget**                                     |
+| Fix or remove a skill        | Open it under **Skills**, then **Edit** or **Forget** |
+| Restore an older note        | Open it under **Let go**, then **Bring back**         |
+| Add something yourself       | Select **Add note**                                   |
+| Download everything          | Select **Export** for a Markdown file                 |
+| Stop saving new notes        | Turn off **Save new notes**                           |
 
 You can also tell Otto in chat, for example "forget my old address" or "stop remembering things".
 

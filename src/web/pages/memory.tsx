@@ -3,6 +3,9 @@ import { ChevronLeft, Download, Plus } from 'lucide-react';
 import {
   memoryAreas,
   noteChars,
+  skillChars,
+  skillDescriptionChars,
+  type LearnedSkill,
   type MemoryArchived,
   type MemoryArea,
   type MemoryNote,
@@ -28,8 +31,8 @@ import { exportMemory } from '../lib/memory-export';
 import { dayKey, formatCalendarDate, formatDayLabel, useDateFormat } from '../lib/date-format';
 import { cn } from '../lib/utils';
 
-type Stage = MemoryStatus | 'archive';
-type Selection = { note: string } | { archived: string } | null;
+type Stage = MemoryStatus | 'archive' | 'skills';
+type Selection = { note: string } | { archived: string } | { skill: string } | null;
 
 const stages: Array<{ id: Stage; label: string; hint: string }> = [
   {
@@ -43,6 +46,11 @@ const stages: Array<{ id: Stage; label: string; hint: string }> = [
     id: 'archive',
     label: 'Let go',
     hint: 'Replaced, expired or not mentioned for 60 days. You can bring it back.',
+  },
+  {
+    id: 'skills',
+    label: 'Skills',
+    hint: 'How Otto did a task, written by Otto from what it did and read. It follows them next time.',
   },
 ];
 const stageLabel = Object.fromEntries(stages.map((stage) => [stage.id, stage.label])) as Record<
@@ -72,6 +80,8 @@ const channels: Record<string, string> = {
 };
 
 const archivedKey = (item: MemoryArchived) => `${item.path}@${item.archived}`;
+const skillTitle = (name: string) =>
+  `${name[0]!.toUpperCase()}${name.slice(1).replaceAll('-', ' ')}`;
 function useCompact() {
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const [compact, setCompact] = useState(false);
@@ -90,6 +100,7 @@ function MemoryMark({ stage }: { stage: Stage }) {
       <circle className="memory-mark-ring" cx="8" cy="8" r="5.5" />
       {stage === 'observed' && <path className="memory-mark-fill" d="M8 2.5a5.5 5.5 0 0 0 0 11z" />}
       {stage === 'archive' && <path className="memory-mark-cross" d="M4.1 11.9l7.8-7.8" />}
+      {stage === 'skills' && <path className="memory-mark-cross" d="M5.5 6.5h5M5.5 9.5h5" />}
     </svg>
   );
 }
@@ -358,6 +369,122 @@ function ArchivedDetail({
   );
 }
 
+function SkillDetail({
+  skill,
+  onChange,
+  onForget,
+  onBack,
+}: {
+  skill: LearnedSkill;
+  onChange(body: { description: string; body: string }): Promise<void>;
+  onForget(): Promise<void>;
+  onBack?: () => void;
+}) {
+  const format = useDateFormat();
+  const [mode, setMode] = useState<'view' | 'edit' | 'forget'>('view');
+  const [description, setDescription] = useState(skill.description);
+  const [body, setBody] = useState(skill.body);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+      setMode('view');
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+  function save(event: FormEvent) {
+    event.preventDefault();
+    const next = { description: description.trim(), body: body.trim() };
+    if (next.description === skill.description && next.body === skill.body) setMode('view');
+    else void run(() => onChange(next));
+  }
+  const cancel = (
+    <Button type="button" variant="ghost" size="sm" onClick={() => setMode('view')}>
+      Cancel
+    </Button>
+  );
+  return (
+    <article className="memory-detail">
+      <Back onBack={onBack} />
+      <p className="memory-status">
+        <MemoryMark stage="skills" />
+        Skill
+      </p>
+      {mode === 'edit' ? (
+        <form className="memory-form" onSubmit={save}>
+          <input
+            className="input"
+            value={description}
+            maxLength={skillDescriptionChars}
+            aria-label="When to use it"
+            autoFocus
+            onChange={(event) => setDescription(event.target.value)}
+          />
+          <textarea
+            className="input memory-skill-body"
+            value={body}
+            maxLength={skillChars}
+            rows={14}
+            aria-label="Steps"
+            onChange={(event) => setBody(event.target.value)}
+          />
+          <div className="memory-actions">
+            <Button type="submit" size="sm" disabled={busy || !description.trim() || !body.trim()}>
+              Save
+            </Button>
+            {cancel}
+          </div>
+        </form>
+      ) : (
+        <>
+          <h4 className="memory-text">{skillTitle(skill.name)}</h4>
+          <p className="memory-meta">{skill.description}</p>
+          <pre className="memory-skill-body">{skill.body}</pre>
+        </>
+      )}
+      {skill.task && (
+        <figure className="memory-source">
+          <blockquote>“{skill.task}”</blockquote>
+          <figcaption>Learned · {formatDayLabel(skill.learned, format)}</figcaption>
+        </figure>
+      )}
+      <p className="memory-meta">
+        {skill.edited ? 'Edited by you' : 'Updated by Otto'} ·{' '}
+        {formatDayLabel(skill.edited ?? skill.updated, format)}
+      </p>
+      {error && <Notice>{error}</Notice>}
+      {mode === 'forget' ? (
+        <div className="memory-confirm">
+          <p>Forget this skill?</p>
+          <div className="memory-actions">
+            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(onForget)}>
+              Forget
+            </Button>
+            {cancel}
+          </div>
+        </div>
+      ) : (
+        mode === 'view' && (
+          <div className="memory-actions">
+            <Button variant="outline" size="sm" onClick={() => setMode('edit')}>
+              Edit
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setMode('forget')}>
+              Forget
+            </Button>
+          </div>
+        )
+      )}
+    </article>
+  );
+}
+
 function AddNote({
   onClose,
   onAdd,
@@ -465,6 +592,7 @@ export function Memory() {
     observed: 0,
     stated: 0,
     archive: view?.archive.length ?? 0,
+    skills: view?.skills.length ?? 0,
   } satisfies Record<Stage, number>;
   for (const note of view?.notes ?? []) counts[note.status]++;
   const search = query.trim().toLocaleLowerCase();
@@ -474,17 +602,27 @@ export function Memory() {
   );
   const archive =
     stage === 'archive' ? (view?.archive ?? []).filter((item) => matches(item.text)) : [];
+  const skills =
+    stage === 'skills'
+      ? (view?.skills ?? []).filter((item) =>
+          matches(`${item.name} ${item.description} ${item.body}`),
+        )
+      : [];
   const visible: NonNullable<Selection>[] =
     stage === 'archive'
       ? archive.map((item) => ({ archived: archivedKey(item) }))
-      : memoryAreas.flatMap((area) =>
-          notes.filter((note) => note.area === area).map((note) => ({ note: note.path })),
-        );
+      : stage === 'skills'
+        ? skills.map((item) => ({ skill: item.name }))
+        : memoryAreas.flatMap((area) =>
+            notes.filter((note) => note.area === area).map((note) => ({ note: note.path })),
+          );
   const listed = (value: NonNullable<Selection>) =>
     visible.some((item) =>
       'note' in value
         ? 'note' in item && item.note === value.note
-        : 'archived' in item && item.archived === value.archived,
+        : 'archived' in value
+          ? 'archived' in item && item.archived === value.archived
+          : 'skill' in item && item.skill === value.skill,
     );
   const selection =
     chosen === undefined || (chosen && !listed(chosen)) ? (compact ? null : visible[0]) : chosen;
@@ -496,7 +634,11 @@ export function Memory() {
     selection && 'archived' in selection
       ? view?.archive.find((item) => archivedKey(item) === selection.archived)
       : undefined;
-  const pageMode = compact && Boolean(note || archived);
+  const skill =
+    selection && 'skill' in selection
+      ? view?.skills.find((item) => item.name === selection.skill)
+      : undefined;
+  const pageMode = compact && Boolean(note || archived || skill);
   const back = compact ? () => setChosen(null) : undefined;
 
   const row = (item: MemoryNote) => (
@@ -520,7 +662,27 @@ export function Memory() {
   );
 
   const list =
-    stage === 'archive' ? (
+    stage === 'skills' ? (
+      skills.length ? (
+        skills.map((item) => (
+          <button
+            key={item.name}
+            type="button"
+            className="memory-row"
+            aria-current={!compact && skill === item ? 'true' : undefined}
+            onClick={() => setChosen({ skill: item.name })}
+          >
+            <MemoryMark stage="skills" />
+            <span className="memory-row-text">{skillTitle(item.name)}</span>
+            <span className="memory-row-meta">{formatDayLabel(item.updated, format)}</span>
+          </button>
+        ))
+      ) : (
+        <p className="memory-empty">
+          {search ? 'Nothing here.' : 'Nothing yet. Otto writes one after a task worth repeating.'}
+        </p>
+      )
+    ) : stage === 'archive' ? (
       archive.length ? (
         archive.map((item) => (
           <button
@@ -590,6 +752,19 @@ export function Memory() {
           path: archived.path,
           archived: archived.archived,
         });
+        setChosen(undefined);
+      }}
+    />
+  ) : skill ? (
+    <SkillDetail
+      key={`${skill.name}:${skill.updated}`}
+      skill={skill}
+      onBack={back}
+      onChange={async (body) => {
+        await send(`/api/memory/skills/${skill.name}`, 'PATCH', body);
+      }}
+      onForget={async () => {
+        await send(`/api/memory/skills/${skill.name}`, 'DELETE');
         setChosen(undefined);
       }}
     />

@@ -7,7 +7,7 @@ sidebar:
 
 Otto keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: memory can hold only what the owner said in their own messages. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them.
+The short version: memory notes can hold only what the owner said in their own messages. Otto saves the owner's message word for word, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Otto writes itself after a task, without personal data.
 
 ## Where memory lives
 
@@ -123,6 +123,24 @@ Page changes post nothing to chat and work while saving is off. Rewriting a note
 When Gmail connects, a background job reads the owner's recent sent emails, without quoted, forwarded or automated mail. The model describes only the style in at most 500 characters, with no facts, names or quotes.
 
 Otto saves it as `preferences/writing-style`, labelled **Learned from your sent email**. A new version archives the old one. It never replaces an entry at that path that came from chat.
+
+## Learned skills
+
+Learned skills are procedures Otto writes for itself after a task, as [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) does. Each one covers one site, app or flow: the steps, the gotchas Otto hit and how it got past them, what to verify and what didn't work. They sit in the same memory document as the notes. Built-in [task guides](/how-it-works/skills/) cover kinds of work; a learned skill covers one concrete flow and can point to the guide it extends.
+
+- **Index and body.** The owner context lists each learned skill's name and one-line description. Pi reads the body with `skills read` before a matching flow. The body reaches Pi inside an `untrusted_tool_result` block.
+- **Writing.** Pi calls `skills save` when no learned skill covers a flow that took several steps, needed a workaround or was corrected, and `skills patch` when a skill it followed was wrong or out of date. It saves quietly.
+- **Preparing.** Before saving, the memory model rewrites the draft as a reusable procedure. It removes names, contact details, addresses, account, order and booking numbers, amounts and message content, and writes placeholders such as `<order number>` instead. It drops any step that sends something to an outside party unless that is the flow's purpose. The server then removes known secret values and refuses card numbers, keys and links with logins. Unless **Remember sensitive topics** is on, a skill about a sensitive topic isn't saved.
+- **Who can write.** Only work the owner started, in chat, a task or a schedule, can save or patch a skill. Background event runs and subagents can read skills but not write them. Nothing is saved while saving is off.
+- **Limits.** A body holds up to 6,000 characters and a description 200. Memory keeps up to 40 skills. When it's full, the skill used least recently that the owner hasn't edited is dropped. A built-in guide's name can't be reused.
+
+The release evaluations check this loop on a supplier portal, a Gmail-to-sheet flow and a portal that asks Otto to add an outside email step, eight attempts each with GPT-6.1 Sol. With skills, Otto saved a skill, read it in a new conversation and, on the portal, repaired it after the site moved its documents in 8 of 8 attempts; without them, 0 of 8. No saved skill held personal data, and the injected step never reached a skill. The repeat run took about as many steps as without skills, so the evaluation doesn't show a speed gain.
+
+The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/otto/blob/main/src/server/learned-skills.ts).
+
+:::caution[Skills come from what Otto read]
+Otto writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Changes to schedules, notification rules, limits and memory notes still go through the check.
+:::
 
 ## Related resources
 

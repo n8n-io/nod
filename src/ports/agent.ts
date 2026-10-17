@@ -90,6 +90,7 @@ export interface RuntimeContext {
     turnId?: string | null;
   }>;
   memory?: string;
+  learnedSkills?: Array<{ name: string; description: string }>;
   checkIn?: { budgetUsd: number; spentUsd: number };
   taskContext?: {
     id: string;

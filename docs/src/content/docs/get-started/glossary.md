@@ -17,7 +17,7 @@ This page explains the words you'll meet in these docs. Select a term to read th
 | [Schedule](/use/schedules/)              | Work that runs at a set time or on repeat, such as every Friday at 5 pm. You set one up by asking Otto in plain words.                                                                                                                                                              |
 | [Background check](/use/schedules/)      | Work Otto starts on its own when something happens in a connected app, such as a new email, once you've told Otto what's worth interrupting you for. Until then, Otto starts no run. It reads, drafts and does only what you told it to do on its own. Anything else waits for you. |
 | [Memory](/use/memory/)                   | What Otto remembers about you from what you tell it. You can see and edit it in **Settings → Memory**.                                                                                                                                                                              |
-| [Skill](/how-it-works/skills/)           | A built-in guide for one kind of work, such as travel, research or spreadsheets. Otto reads the one that fits the task.                                                                                                                                                             |
+| [Skill](/how-it-works/skills/)           | A built-in guide for one kind of work, such as travel, research or spreadsheets, or a learned skill Otto wrote after doing a task. Otto reads the one that fits the task.                                                                                                           |
 
 ## Otto's computer
 
