@@ -2204,8 +2204,8 @@ test(
             ])
           ).rows[0].id as string;
           await db.pool.query(
-            "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,$2,'Saved task','Fixture done','Fixture step')",
-            [randomUUID(), ownerId],
+            "INSERT INTO tasks(id,owner_id,turn_id,title,done_when,now_text,state,result) VALUES($1,$2,$3,'Saved task','Fixture done','Fixture step','done','Archived task result')",
+            [randomUUID(), ownerId, old.turnId],
           );
           assert.equal(
             (
@@ -2407,6 +2407,20 @@ test(
           assert.equal(current.workspacePath, join(root, 'workspaces', freshThread));
           assert.notEqual(current.workspacePath, heldContext.workspacePath);
           assert.deepEqual(current.history, []);
+          assert.deepEqual(current.tasks, []);
+          await db.pool.query(
+            "INSERT INTO tasks(id,owner_id,turn_id,title,done_when,now_text,state,result) VALUES($1,$2,$3,'Fresh task','Fixture done','Fixture step','done','Fresh task result')",
+            [randomUUID(), ownerId, fresh.json().turnId],
+          );
+          const followUp = await request('POST', '/api/messages', {
+            text: 'Fresh follow-up',
+            threadId: freshThread,
+          });
+          await waitFor(async () => (await turnStatus(followUp.json().turnId)) === 'succeeded');
+          assert.deepEqual(
+            ran(followUp.json().turnId)!.tasks?.map((task) => task.title),
+            ['Fresh task'],
+          );
           assert.equal(
             deltas.find((event) => event.turnId === held.turnId)?.threadId,
             firstThreadId,
