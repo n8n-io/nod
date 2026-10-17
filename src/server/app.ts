@@ -327,7 +327,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   app.post('/api/thread/stop', async () => {
     const { browsers } = await stopThread();
-    for (const id of browsers) void dependencies.computer?.clear(id).catch(() => {});
+    await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
     return { ok: true };
   });
   app.get('/api/events', async (request, reply) => {
