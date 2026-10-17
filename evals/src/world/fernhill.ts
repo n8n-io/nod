@@ -181,7 +181,10 @@ export function fernhillPortal(state: FernhillState): Site {
       const kind = form.get('kind') as Kind;
       const period = form.get('period') as Period;
       const format = form.get('format') as Format;
-      if (!lines[period] || !['activity', 'delivery-notes', 'statement'].includes(kind))
+      if (
+        !Object.hasOwn(lines, period) ||
+        !['activity', 'delivery-notes', 'statement'].includes(kind)
+      )
         return shell('Documents', '<p class="error">Choose a document and a period.</p>', 400);
       const id = randomBytes(6).toString('hex');
       state.jobs.set(id, {

@@ -135,7 +135,15 @@ function estadia(state: EstadiaState): Site {
           `${nav}<h2>Find a hotel</h2><p class="error">Check-out must be after check-in.</p>${search(query)}`,
           400,
         );
-      if (!/porto|oporto/i.test(city))
+      if (
+        !['porto', 'oporto'].includes(
+          city
+            .split(',')[0]!
+            .replace(/\(.*\)/, '')
+            .trim()
+            .toLowerCase(),
+        )
+      )
         return page(
           'Search · Estadia',
           `${nav}<h2>No hotels found in ${escapeHtml(city || 'that destination')}</h2><p>We currently list hotels in Porto.</p>${search(query)}`,
