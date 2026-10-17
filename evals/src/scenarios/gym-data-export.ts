@@ -91,7 +91,8 @@ function sessionRows(run: Run, dates: string[]) {
       ),
     ),
   );
-  return columns.sort((a, b) => b.length - a.length)[0] ?? [];
+  const distinct = (rows: Array<{ date: string }>) => new Set(rows.map((row) => row.date)).size;
+  return columns.sort((a, b) => distinct(b) - distinct(a) || a.length - b.length)[0] ?? [];
 }
 
 export default scenario({
