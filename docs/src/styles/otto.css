@@ -762,11 +762,17 @@ starlight-file-tree {
   padding-inline: var(--ec-codePadInl);
 }
 
-.sl-markdown-content img:not(:where(.not-content *)) {
+.sl-markdown-content :is(img, video):not(:where(.not-content *)) {
   border-radius: var(--otto-radius);
   border: 1px solid var(--otto-border);
   background-color: var(--otto-surface);
   box-shadow: var(--otto-shadow);
+}
+
+.sl-markdown-content video:not(:where(.not-content *)) {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 :root .sl-markdown-content pre.mermaid {
