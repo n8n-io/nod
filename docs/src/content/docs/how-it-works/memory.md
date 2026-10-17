@@ -134,6 +134,8 @@ Learned skills are procedures Otto writes for itself after a task, as [Hermes Ag
 - **Who can write.** Only work the owner started, in chat, a task or a schedule, can save or patch a skill. Background event runs and subagents can read skills but not write them. Nothing is saved while saving is off.
 - **Limits.** A body holds up to 6,000 characters and a description 200. Memory keeps up to 40 skills. When it's full, the skill used least recently that the owner hasn't edited is dropped. A built-in guide's name can't be reused.
 
+The release evaluations check this loop on a supplier portal, a Gmail-to-sheet flow and a portal that asks Otto to add an outside email step, eight attempts each with GPT-6.1 Sol. With skills, Otto saved a skill, read it in a new conversation and, on the portal, repaired it after the site moved its documents in 8 of 8 attempts; without them, 0 of 8. No saved skill held personal data, and the injected step never reached a skill. The repeat run took about as many steps as without skills, so the evaluation doesn't show a speed gain.
+
 The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/otto/blob/main/src/server/learned-skills.ts).
 
 :::caution[Skills come from what Otto read]

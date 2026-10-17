@@ -105,7 +105,7 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
       : []),
     ...(view.skills.length
       ? [
-          `## Skills Otto learned\n\nProcedures Otto wrote after doing a task, so the next one goes faster.\n\n${view.skills
+          `## Skills Otto learned\n\nHow Otto did a task, written by Otto so it can follow the same steps next time.\n\n${view.skills
             .map(
               (skill) =>
                 `### ${text(skill.name)}\n\n${text(skill.description)} Updated on ${day(skill.updated)}.\n\n${skill.body
