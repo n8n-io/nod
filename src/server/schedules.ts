@@ -460,7 +460,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           [ownerId, row.scheduleId],
         )
       ).rows[0]?.observation;
-      const prior = previous ?? row.baselineObservation;
+      const prior = [previous, row.baselineObservation]
+        .filter((item): item is ScheduleObservation => Boolean(item))
+        .toSorted((a, b) => b.checkedAt.localeCompare(a.checkedAt))[0];
       const checkedAt = now().toISOString();
       const observation = { ...input, checkedAt };
       await client.query(

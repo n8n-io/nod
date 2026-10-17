@@ -508,6 +508,22 @@ test(
           )) as { previous: { value: string } | null };
           assert.equal(recorded.previous?.value, 'Pro 29 EUR');
           await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run!.turnId]);
+          clock = new Date(clock.getTime() + 60_000);
+          await personal.manage('schedule_update', {
+            id: schedule.id,
+            baselineObservation: { ...baseline, value: 'Pro 35 EUR' },
+          });
+          clock = new Date((await saved(schedule.id)).nextRun!);
+          await deliver([await jobFor(schedule.id)]);
+          const next = (await runs(schedule.id)).find((item) => item.turnId !== run!.turnId);
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [next!.turnId]);
+          const rebased = (await personal.manage(
+            'schedule_record_observation',
+            { ...baseline, value: 'Pro 45 EUR' },
+            { sourceMessageId: null, turnId: next!.turnId },
+          )) as { previous: { value: string } | null };
+          assert.equal(rebased.previous?.value, 'Pro 35 EUR');
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [next!.turnId]);
           clock = before;
         },
       );
