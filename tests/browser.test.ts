@@ -3778,6 +3778,14 @@ test(
         method: 'GET',
         to: `${origin}/search`,
       });
+      await computer.act('submits', {
+        action: 'evaluate',
+        script: "document.querySelector('form button').focus()",
+      });
+      assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
+        method: 'POST',
+        to: `${origin}/book`,
+      });
       assert.deepEqual(posts, []);
     } finally {
       await computer.dispose();
