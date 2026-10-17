@@ -50,7 +50,7 @@ export const skillBody = z
   .trim()
   .min(1)
   .max(skillChars)
-  .refine((value) => !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(value));
+  .refine((value) => !/[^\P{Cc}\t\n]/u.test(value));
 const skillSchema = z.object({
   name: skillName,
   description: skillDescription,
