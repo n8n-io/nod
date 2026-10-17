@@ -123,8 +123,12 @@ export function createLearnedSkills(options: {
       memory.edit((fresh) => {
         const now = new Date().toISOString();
         const existing = fresh.skills.find((item) => item.name === input.name);
-        if (input.action === 'patch' && existing?.updated !== current?.updated)
-          throw new Error('The skill changed. Read it again before you patch it.');
+        if (existing?.updated !== current?.updated)
+          throw new Error(
+            'The skill changed while it was prepared. Read it again before you save it.',
+          );
+        if (fresh.sensitive !== tree.sensitive)
+          throw new Error('The sensitive-topics setting changed. Save the skill again.');
         const next: Skill = {
           name: input.name,
           ...skill,

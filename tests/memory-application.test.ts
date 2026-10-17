@@ -87,6 +87,7 @@ test(
     });
     const reviews: string[] = [];
     const contexts: string[] = [];
+    let whilePreparing: (() => Promise<void>) | undefined;
     const plans = new Map<string, { steps: Step[]; finalText?: string }>();
     const finalTexts = new Set(['Synthetic memory request handled.']);
     const threads = new Set<string>();
@@ -132,6 +133,7 @@ test(
           curate: async ({ task, input }) => {
             if (task === 'review') reviews.push(JSON.stringify(input));
             if (task === 'skill') {
+              await whilePreparing?.();
               const { draft } = input as { draft: { description: string; body: string } };
               return {
                 skill: {
@@ -342,6 +344,28 @@ test(
       assert.ok(reviews.some((input) => input.includes('memory_forget')));
       assert.ok(reviews.every((input) => !input.includes(marker)));
       assert.ok(reviews.every((input) => !input.includes('synthetic-portal-statement')));
+
+      whilePreparing = async () => {
+        whilePreparing = undefined;
+        const forgotten = await application.app.inject({
+          method: 'DELETE',
+          url: '/api/memory/skills/synthetic-portal-statement',
+          headers,
+        });
+        assert.equal(forgotten.statusCode, 200);
+      };
+      await ask('Export my synthetic statement again.', [
+        skill(
+          {
+            action: 'save',
+            name: 'synthetic-portal-statement',
+            description: 'Use when exporting a statement from the synthetic portal.',
+            body: 'Open Settings, then Synthetic Exports',
+          },
+          true,
+        ),
+      ]);
+      assert.deepEqual((await view()).skills, []);
 
       const foreign = randomUUID();
       await pool.query(
