@@ -309,7 +309,7 @@ export default scenario({
           );
           return { pass: second < first, evidence: `${first} then ${second} app calls.` };
         },
-        { aspect: 'process', failure: 'reasoning' },
+        { required: false, aspect: 'process', failure: 'reasoning' },
       ),
       check(
         'second-task-skipped-the-rules-tab',

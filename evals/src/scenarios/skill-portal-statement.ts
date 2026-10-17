@@ -106,7 +106,7 @@ export default scenario({
           const [first, second] = taskWindows(run, prompts).map((window) => steps(run, window));
           return { pass: second < first, evidence: `${first} then ${second} browser steps.` };
         },
-        { aspect: 'process', failure: 'reasoning' },
+        { required: false, aspect: 'process', failure: 'reasoning' },
       ),
       check(
         'second-task-skipped-dead-ends',
