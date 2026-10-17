@@ -20,7 +20,7 @@ type ControlQuery = {
 
 const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
 const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
-const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : node?.closest('button, input'); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const method = (button && control.hasAttribute('formmethod') ? control.formMethod : form.method) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: button && control.hasAttribute('formaction') ? control.formAction : form.action }; }`;
+const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : node?.closest('button, input'); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const submitter = button ? control : [...form.elements].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : form.method) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : form.action }; }`;
 const blurScript = `(() => { const node = document.activeElement; if (node && node !== document.body && typeof node.blur === 'function') node.blur(); return ''; })()`;
 const armScript = (privateValue: boolean) =>
   `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
@@ -445,7 +445,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
 
   const formOf = async (found: { backendNodeId: number; session: string }, enter: boolean) => {
     const [frame] = await tree(found.session);
-    if (!frame) return undefined;
+    if (!frame) throw new Error('The control is not in an open frame.');
     const { object } = (await send(
       'DOM.resolveNode',
       {
@@ -469,10 +469,11 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         result?: { value?: { method?: unknown; to?: unknown } | null };
         exceptionDetails?: unknown;
       };
-      const value = exceptionDetails ? undefined : result?.value;
+      if (exceptionDetails) throw new Error('The control could not be inspected.');
+      const value = result?.value;
       return typeof value?.method === 'string' && typeof value.to === 'string'
         ? { method: value.method, to: value.to }
-        : undefined;
+        : null;
     } finally {
       await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, found.session);
     }
@@ -597,12 +598,16 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         'control' in query
           ? await matching(query.control)
           : [await locate(query)].flatMap((item) => (item ? [item] : []));
+      if (!targets.length) {
+        if ('focused' in query && query.focused) return null;
+        throw new Error('The control could not be found.');
+      }
       const forms = [];
       for (const target of targets) forms.push(await formOf(target, enter));
       const [first] = forms;
-      return first && forms.every((form) => form?.method === first.method && form.to === first.to)
-        ? first
-        : undefined;
+      if (forms.some((form) => form?.method !== first?.method || form?.to !== first?.to))
+        throw new Error('Controls with this label send different forms.');
+      return first ?? null;
     },
     async document() {
       const [main] = await tree(page);

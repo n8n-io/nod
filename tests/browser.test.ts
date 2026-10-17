@@ -3730,7 +3730,7 @@ test('a checked browser step is described from its snapshot and runs only on tha
 test(
   'a checked step reports the form it would send without sending it',
   { timeout: 60_000 },
-  async () => {
+  async (t) => {
     const posts: string[] = [];
     const server = createHttpServer(async (request, response) => {
       response.setHeader('content-type', 'text/html');
@@ -3740,7 +3740,7 @@ test(
         return;
       }
       response.end(
-        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form>',
+        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form>',
       );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -3753,9 +3753,18 @@ test(
       headless: true,
     });
     try {
-      const snapshot = (await computer.act('submits', { action: 'open', url: origin })).text;
-      const ref = (name: string) =>
-        `@${new RegExp(`button "${name}" \\[ref=(e\\d+)\\]`).exec(snapshot)?.[1]}`;
+      let snapshot: string;
+      try {
+        snapshot = (await computer.act('submits', { action: 'open', url: origin })).text;
+      } catch {
+        t.skip('Chrome is not available here.');
+        return;
+      }
+      const ref = (name: string) => {
+        const found = new RegExp(`button "${name}" \\[ref=(e\\d+)\\]`).exec(snapshot)?.[1];
+        assert.ok(found, `No ${name} button in the snapshot.`);
+        return `@${found}`;
+      };
       const submits = async (step: BrowserAction) =>
         (await computer.currentPage('submits', step)).submits;
       assert.deepEqual(await submits({ action: 'click', selector: ref('19:30') }), {
@@ -3772,7 +3781,7 @@ test(
       });
       assert.equal(await submits({ action: 'click', selector: '#plain' }), undefined);
       assert.equal(await submits({ action: 'click', selector: '#toggle' }), undefined);
-      assert.equal(await submits({ action: 'click', selector: ref('Same') }), undefined);
+      assert.equal(await submits({ action: 'click', selector: ref('Same') }), 'unknown');
       assert.deepEqual(await submits({ action: 'click', selector: ref('Menu') }), {
         method: 'POST',
         to: `${origin}/reserve`,
@@ -3789,6 +3798,15 @@ test(
       assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
         method: 'POST',
         to: `${origin}/book`,
+      });
+      await computer.act('submits', {
+        action: 'fill',
+        selector: 'input[name=city]',
+        text: 'Porto',
+      });
+      assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
+        method: 'POST',
+        to: `${origin}/reserve-now`,
       });
       assert.deepEqual(posts, []);
     } finally {

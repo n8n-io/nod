@@ -23,7 +23,6 @@ import { createConversationAnalytics } from './conversation-analytics.ts';
 import {
   BrowserActionError,
   type BrowserAction,
-  type BrowserPage,
   type Computer,
   type Workspace,
 } from '../ports/computer.ts';
@@ -774,8 +773,7 @@ async function initializeApplication(
       current?.origin !== expectOrigin ||
       current.url !== args.page ||
       current.dialog !== args.dialog ||
-      current.submits?.method !== (args.submits as BrowserPage['submits'])?.method ||
-      current.submits?.to !== (args.submits as BrowserPage['submits'])?.to
+      JSON.stringify(current.submits) !== JSON.stringify(args.submits)
     )
       throw notRun();
     try {

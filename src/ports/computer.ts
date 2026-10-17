@@ -93,7 +93,7 @@ export interface BrowserPage {
   origin: string;
   url: string;
   controls?: BrowserControl[];
-  submits?: { method: string; to: string };
+  submits?: { method: string; to: string } | 'unknown';
   dropTarget?: BrowserControl[];
   dialog?: string;
 }

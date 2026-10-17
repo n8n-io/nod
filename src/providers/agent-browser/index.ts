@@ -1573,15 +1573,20 @@ export function createAgentBrowserComputer(options: {
     if (ref && !control) return undefined;
     const devtools = await inspector(state).catch(() => undefined);
     try {
-      const found = await devtools
-        ?.submits(control ? { control } : target, enter)
-        .catch(() => undefined);
-      return (
-        found && {
-          method: found.method.slice(0, 20),
-          to: redactBrowserUrl(found.to, state.secrets).slice(0, 2048),
-        }
-      );
+      const found = devtools
+        ? await devtools
+            .submits(control ? { control } : target, enter)
+            .catch(() => 'unknown' as const)
+        : ('unknown' as const);
+      if (found === 'unknown' || !found) return found ?? undefined;
+      const to = redactBrowserUrl(found.to, state.secrets);
+      return {
+        method: found.method.slice(0, 20),
+        to:
+          to.length > 2048
+            ? `${to.slice(0, 2048)}… (${to.length} characters, sha256 ${createHash('sha256').update(to).digest('hex').slice(0, 16)})`
+            : to,
+      };
     } finally {
       devtools?.close();
     }
