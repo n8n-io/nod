@@ -731,6 +731,7 @@ async function initializeApplication(
       page: page.url,
       step: step.action,
       ...(page.controls?.length ? { control: page.controls } : {}),
+      ...(page.submits ? { submits: page.submits } : {}),
       ...(page.dropTarget?.length ? { dropTarget: page.dropTarget } : {}),
       ...(page.dialog !== undefined ? { dialog: page.dialog } : {}),
       ...(step.action === 'upload' ? { file: basename(step.path) } : {}),
