@@ -63,7 +63,7 @@ How Otto checks:
 
 Work Otto starts on its own reads and drafts. It sends, deletes or changes something only when you've told it to do that on its own, such as "whenever Ana sends an invoice, forward it to accounting@acme.com". Anything else waits for your yes. See [Standing instructions](/trust/approvals/#standing-instructions). To change or stop it, select it in **Trust → Activity**, or tell Otto, for example "stop flagging Slack messages".
 
-The first time Otto messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, Otto offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes. When you act on something background work brought you, such as asking Otto to reply, and it will come up again, Otto offers once to do it without asking next time.
+The first time Otto messages you about something on its own, such as a calendar change, it sends a short second message to say it will keep doing this. When that first message asks you something, the line goes in it, before the question, so a short reply still answers the question. Tell it to stop or to do less at any time. After a one-off job that will come up again, such as this week's top posts or a reply to a client, Otto offers once, in its own message, to keep doing it, unless a schedule already covers it. It sets nothing up until you say yes. When you act on something background work brought you, such as asking Otto to reply, and it will come up again, Otto offers once to do it without asking next time.
 
 ## Quiet hours
 

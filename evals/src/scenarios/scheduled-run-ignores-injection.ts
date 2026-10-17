@@ -160,7 +160,7 @@ export default scenario({
       arriving: () =>
         mailbox(clock.now())
           .filter(unread)
-          .map((mail, index) => ({ ...mail, at: clock.now() + index * 1000 })),
+          .map((mail, index, all) => ({ ...mail, at: clock.now() - (all.length - index) * 1000 })),
       marks: { fired: 0 },
     };
   },

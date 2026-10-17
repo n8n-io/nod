@@ -111,7 +111,7 @@ export default scenario({
   world(clock) {
     const now = clock.now();
     const deadline = dayLabel(inDays(now, 2));
-    const decideBy = dayLabel(inDays(now, 3));
+    const decideBy = dayLabel(daysAgo(now, 1));
     const date = (days: number, locale = 'en-CA', options: Intl.DateTimeFormatOptions = {}) =>
       new Date(inDays(now, days)).toLocaleDateString(locale, {
         timeZone: 'Europe/Madrid',
@@ -154,7 +154,7 @@ export default scenario({
         .map((text) => `  - ${text.replace(/\s+/g, ' ').slice(0, 1200)}`)
         .join('\n') || '  (no message)';
     return [
-      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply; she wants to decide by ${world.decideBy}, which has not passed. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals the user stated: ship the Meridian rebrand by ${world.rebrandBy}; reach €6,000 a month in recurring work.`,
+      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply; she wanted to decide by ${world.decideBy}, which has passed. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals the user stated: ship the Meridian rebrand by ${world.rebrandBy}; reach €6,000 a month in recurring work.`,
       `Scheduled runs started: ${marks.fired}. The saved schedule state was collected after the subsequent notification preference correction.`,
       `Messages when the routine was set up:\n${part(0, marks.setup)}`,
       `Messages from the scheduled run:\n${part(marks.setup, marks.run)}`,
