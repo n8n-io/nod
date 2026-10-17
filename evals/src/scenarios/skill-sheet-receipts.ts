@@ -98,7 +98,10 @@ function receivedAt(now: number, receipt: Receipt, back: number) {
   if (back) return Date.UTC(year, month, receipt.day, 11);
   const today = Number(localDate(now, zone).slice(8));
   const day = Math.max(1, Math.round(today * receipt.day));
-  return Math.min(Date.UTC(year, month, day, 11), now - 3_600_000);
+  const earlier = now - 3_600_000;
+  const latest =
+    localDate(earlier, zone).slice(0, 7) === localDate(now, zone).slice(0, 7) ? earlier : now;
+  return Math.min(Date.UTC(year, month, day, 11), latest);
 }
 function receiptDate(now: number, receipt: Receipt, back: number) {
   const at = receivedAt(now, receipt, back);
@@ -188,9 +191,40 @@ export default scenario({
         `=SUMIF(Ledger!C:C,"${code}",Ledger!D:D)`,
       ]),
     ];
+    const fixed = [
+      { name: 'Summary', rows: summary },
+      {
+        name: 'Codes',
+        rows: [
+          ['Category', 'Code'],
+          ['Office supplies', 'OFS'],
+          ['Software', 'SWR'],
+          ['Travel', 'TRV'],
+          ['Meals', 'MLS'],
+          ['Equipment', 'EQP'],
+        ],
+      },
+      {
+        name: 'How to log',
+        rows: [
+          ['Rules for the Ledger tab'],
+          ['One row per receipt, added below the last row of Ledger.'],
+          [
+            'Date: the receipt date in the email, written DD/MM/YYYY. Not the date the email arrived.',
+          ],
+          ['Supplier: the company name only.'],
+          ['Code: the category code from the Codes tab.'],
+          [
+            'Net: the amount without VAT. Our receipts include 23% VAT, so Net = Gross / 1.23, two decimals.',
+          ],
+          ['VAT: Gross minus Net. Gross: the total paid.'],
+          ['Never edit Summary; it updates itself.'],
+        ],
+      },
+    ];
     return {
       now,
-      summary,
+      fixed,
       ledgerSeed,
       apps: createApps(owner, {
         gmail: gmail(owner, seed, () => clock.now()),
@@ -201,34 +235,9 @@ export default scenario({
               tabs: [
                 { name: 'Summary', rows: summary.map((row) => [...row]) },
                 { name: 'Ledger', rows: ledgerSeed.map((row) => [...row]) },
-                {
-                  name: 'Codes',
-                  rows: [
-                    ['Category', 'Code'],
-                    ['Office supplies', 'OFS'],
-                    ['Software', 'SWR'],
-                    ['Travel', 'TRV'],
-                    ['Meals', 'MLS'],
-                    ['Equipment', 'EQP'],
-                  ],
-                },
-                {
-                  name: 'How to log',
-                  rows: [
-                    ['Rules for the Ledger tab'],
-                    ['One row per receipt, added below the last row of Ledger.'],
-                    [
-                      'Date: the receipt date in the email, written DD/MM/YYYY. Not the date the email arrived.',
-                    ],
-                    ['Supplier: the company name only.'],
-                    ['Code: the category code from the Codes tab.'],
-                    [
-                      'Net: the amount without VAT. Our receipts include 23% VAT, so Net = Gross / 1.23, two decimals.',
-                    ],
-                    ['VAT: Gross minus Net. Gross: the total paid.'],
-                    ['Never edit Summary; it updates itself.'],
-                  ],
-                },
+                ...fixed
+                  .slice(1)
+                  .map((tab) => ({ name: tab.name, rows: tab.rows.map((row) => [...row]) })),
               ],
             },
           ],
@@ -286,10 +295,14 @@ export default scenario({
         'nothing-else-changed',
         () => {
           const book = world.apps.sheets!.books[0];
-          const summary = book.tabs.find((tab) => tab.name === 'Summary')?.rows ?? [];
           const seeded = world.ledgerSeed.slice(1);
           return (
-            JSON.stringify(summary) === JSON.stringify(world.summary) &&
+            book.tabs.length === world.fixed.length + 1 &&
+            world.fixed.every(
+              (tab) =>
+                JSON.stringify(book.tabs.find((item) => item.name === tab.name)?.rows) ===
+                JSON.stringify(tab.rows),
+            ) &&
             JSON.stringify(ledger().slice(0, seeded.length)) === JSON.stringify(seeded) &&
             ledger().length === seeded.length + lastMonth.length + thisMonth.length
           );

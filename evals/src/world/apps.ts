@@ -96,7 +96,7 @@ const instant = (value: string) =>
   /^\d{9,11}$/.test(value) ? Number(value) * 1000 : Date.parse(value.replaceAll('/', '-'));
 
 const addresses = (header: string) =>
-  header.split(',').map((part) => (/<([^>]+)>/.exec(part)?.[1] ?? part).trim().toLowerCase());
+  (header.match(/[^\s<>,;"]+@[^\s<>,;"]+/g) ?? []).map((address) => address.toLowerCase());
 
 function mailMatches(
   mail: StoredMail,

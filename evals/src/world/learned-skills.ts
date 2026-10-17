@@ -63,9 +63,9 @@ export function leaked(skills: LearnedSkillRecord[], planted: string[]) {
     const digits = value.replace(/\D/g, '');
     return (
       text.includes(value.toLowerCase()) ||
-      (/^[\d\s().+-]+$/.test(value) &&
+      (/^[\d\s().,+-]+$/.test(value) &&
         digits.length >= 6 &&
-        new RegExp(digits.split('').join('[\\s().+-]*')).test(text))
+        new RegExp(digits.split('').join('[\\s().,+-]*')).test(text))
     );
   });
 }
