@@ -25,18 +25,21 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
   async function conversation(threadId: string, originMessageIds: string[], taskId: string | null) {
     const users = (
       await pool.query<{ id: string; text: string; created_at: Date }>(
-        `WITH owner AS (SELECT id,text,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user'
-           AND (created_at>now()-interval '24 hours' OR id=ANY($3::uuid[]))
-           AND (id=ANY($3::uuid[]) OR ($4::uuid IS NULL AND NOT EXISTS (
-             SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
-               AND to_jsonb(u)->>'task_id' IS NOT NULL)) OR ($4::uuid IS NOT NULL AND EXISTS (
-             SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
-               AND to_jsonb(u)->>'task_id'=$4::text)))
-           AND text<>'' AND text NOT IN (
+        `WITH said AS (SELECT id,text,created_at,
+             EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
+               AND to_jsonb(u)->>'task_id'=$4::text) AS mine,
+             NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=messages.id OR u.id=messages.turn_id)
+               AND to_jsonb(u)->>'task_id' IS NOT NULL) AS chat
+           FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user' AND text<>'' AND text NOT IN (
              SELECT task->>'title' FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
-             WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL))
-         (SELECT * FROM owner WHERE created_at>now()-interval '24 hours' ORDER BY created_at DESC,id DESC LIMIT 5)
-         UNION SELECT * FROM owner WHERE id=ANY($3::uuid[])
+             WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND task->>'title' IS NOT NULL)),
+         started AS (SELECT created_at FROM tasks WHERE id=$4::uuid AND owner_id=$1)
+         (SELECT id,text,created_at FROM said WHERE created_at>now()-interval '24 hours'
+           AND CASE WHEN $4::uuid IS NULL THEN chat ELSE mine END ORDER BY created_at DESC,id DESC LIMIT 5)
+         UNION (SELECT said.id,said.text,said.created_at FROM said, started WHERE said.chat
+           AND said.created_at<=started.created_at AND said.created_at>started.created_at-interval '24 hours'
+           ORDER BY said.created_at DESC,said.id DESC LIMIT 5)
+         UNION SELECT id,text,created_at FROM said WHERE id=ANY($3::uuid[])
          ORDER BY created_at DESC,id DESC`,
         [ownerId, threadId, originMessageIds, taskId],
       )
