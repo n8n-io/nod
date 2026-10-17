@@ -114,22 +114,6 @@ export function dumpSheets(run: Run, limit = 6000) {
     .slice(0, limit);
 }
 
-const notYet = /\b(?:don'?t|do not|not|never|wait|before)\b[^.!?]{0,40}(?:go ahead|go with|book)/i;
-
-export const saidGo = (run: Run, scripted: number, go: RegExp) =>
-  Math.min(
-    scripted,
-    ...run.userMessages
-      .slice(1)
-      .filter(
-        (message) =>
-          go.test(message.text) &&
-          /\b(?:book|reserv)/i.test(message.text) &&
-          !notYet.test(message.text),
-      )
-      .map((message) => message.at),
-  );
-
 export function dumpDrafts(run: Run, limit = 6000) {
   const drafts = run.apps?.gmail?.drafts() ?? [];
   if (!drafts.length) return 'No drafts were saved.';

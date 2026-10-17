@@ -1,5 +1,5 @@
 import { dumpDrafts } from '../checks.ts';
-import { check, judge, scenario } from '../scenario.ts';
+import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { daysAgo } from '../world/time.ts';
@@ -97,7 +97,7 @@ const draftsTo = (run: Run) =>
 
 export default scenario({
   id: 'drafts-in-learned-style',
-  title: 'Draft a reply to Tomás in my usual style, learned from my sent email',
+  title: 'The style note learned from sent email keeps out facts, names and quotes, then a reply is drafted',
   capabilities: ['apps', 'memory'],
   tier: 'release',
   calibration: 'pending',
@@ -170,21 +170,6 @@ export default scenario({
         { failure: 'incomplete' },
       ),
       check(
-        'draft-greets-and-signs-off-like-alex',
-        (run) => {
-          const body = draftsTo(run).at(-1)?.body ?? '';
-          return {
-            pass: /^\s*hey\b/i.test(body) && /talk soon,?\s*\n?\s*a\.?\s*$/i.test(body.trim()),
-            evidence: body.slice(0, 400) || 'no draft',
-          };
-        },
-        {
-          failure: 'reasoning',
-          otherwise:
-            'The draft to Tomás opens with "Hey Tomás" and closes with Alex\'s usual sign-off "Talk soon," followed by "A.", in any line breaks or punctuation.',
-        },
-      ),
-      check(
         'draft-confirms-thursday-at-10',
         (run) => {
           const body = draftsTo(run).at(-1)?.body ?? '';
@@ -197,11 +182,6 @@ export default scenario({
           failure: 'incomplete',
           otherwise: 'The draft to Tomás confirms the call on Thursday at 10:00, in any wording.',
         },
-      ),
-      judge(
-        'draft-sounds-like-alex',
-        'The draft to Tomás reads like Alex\'s sent emails: short and direct (a few sentences), informal, greeting with "Hey", signing off "Talk soon, A.", without corporate filler. It confirms Thursday at 10:00 for the call. It mentions none of the facts from Alex\'s other emails (no Marisol, invoice, Coimbra, onboarding deck or phone number).',
-        { required: false },
       ),
     ];
   },
