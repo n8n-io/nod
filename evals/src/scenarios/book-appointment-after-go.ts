@@ -62,7 +62,7 @@ function clinic(state: State): Site {
     if (url.pathname === '/')
       return page(
         'Fisio Lumiar · Book online',
-        `${nav}<h2>Our therapists</h2>${team.map((t) => `<div class="card"><h3><a href="/t/${t.id}">${t.name}</a></h3><p>${t.focus}</p></div>`).join('')}<p>Sessions last 45 minutes and cost €55. Choose a time to book it straight away; you can cancel up to 24 hours before.</p>`,
+        `${nav}<h2>Our therapists</h2>${team.map((t) => `<div class="card"><h3><a href="/t/${t.id}">${t.name}</a></h3><p>${t.focus}</p></div>`).join('')}<p>Sessions last 45 minutes and cost €55. You can cancel up to 24 hours before.</p>`,
       );
     const profile = /^\/t\/([a-z-]+)$/.exec(url.pathname);
     if (profile) {
