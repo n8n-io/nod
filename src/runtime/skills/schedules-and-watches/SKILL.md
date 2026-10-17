@@ -12,7 +12,7 @@ Save the check-in before ending or using ask_user when it can still be useful wi
 
 1. A reminder tells the user something at the due time; an action does work each run. Write a complete future-run prompt in a few plain sentences: what to check, when to stay silent and what to send. Identify accounts by service and email; omit internal IDs, action names and query parameters. Each run finds them through connectedApps and apps SEARCH_TOOLS.
 2. Use the user's timeZone. A once schedule needs a future runAt with offset; a recurring schedule needs a five-field cron.
-3. Check a watch source now, pass baselineObservation {status: verified, sourceUrl, value, summary} to schedule_create, and tell the user what that first check found.
+3. Check a watch source now, pass baselineObservation {status: verified, sourceUrl, value, summary} to schedule_create, or to schedule_update when the schedule already exists, and tell the user what that first check found.
 4. Each run checks the source and calls manage_personal_context schedule_record_observation {status, sourceUrl, value, summary}. Keep value short and stable, with item terms in summary. For an unverified check, use status unavailable and value null.
 5. Compare meaning with the previous verified value. A current-state rule ("while below 50 EUR") alerts on each matching run unless the user suppresses repeats; a change rule alerts only on a verified change. Unavailable never means changed.
 6. In background runs, use send_message only for a real alert or necessary question. Keep routine checks quiet.
