@@ -352,6 +352,7 @@ async function e2bFixture() {
         currentPage: async () => ({
           origin: 'https://example.test',
           url: 'https://example.test/login',
+          submits: 'unknown',
         }),
       } satisfies Computer;
     },
@@ -484,6 +485,10 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
       password: 'synthetic private value',
     });
     assert.equal((await first.computer.screenshot('task-one'))?.toString(), 'masked image');
+    assert.equal(
+      (await first.computer.currentPage('task-one', { action: 'click', selector: '@e1' })).submits,
+      'unknown',
+    );
     const workspace = first.workspace.open({
       threadId: 'task-one',
       workspacePath: join(f.root, 'workspaces/task-one'),
