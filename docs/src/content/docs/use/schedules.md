@@ -37,13 +37,13 @@ You can also tell Otto in chat, for example "stop the morning summary".
 flowchart TD
   due[Schedule is due]:::accent --> run[Otto runs it<br/>in the background]
   run --> check[Trust check<br/>against your instruction]
-  check --> useful{{Useful result<br/>or question?}}
+  check --> useful{{Something you asked to get,<br/>a useful result or a question?}}
   useful -- yes --> send[Message in the chat<br/>where you set it up]:::go
   useful -- no --> quiet[Stays quiet]:::muted
 ```
 
 - **It runs next to your chat.** A schedule doesn't wait for the conversation, and the conversation doesn't wait for it.
-- **It only messages you when it matters.** That means a useful result, a problem or a question. Routine checks stay quiet.
+- **What you asked to get arrives every time.** A summary, brief or reminder comes on every run. A watch or check-in messages you only when something needs you, such as a real price drop, a problem or a question. Routine checks stay quiet.
 - **It replies where you asked.** A schedule you set up on Telegram sends its messages to Telegram.
 - **Approvals still apply.** Each action is checked against the instruction that created the schedule. If an action isn't covered, Otto asks you first. See [Approvals](/trust/approvals/).
 
