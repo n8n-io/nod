@@ -97,7 +97,8 @@ const draftsTo = (run: Run) =>
 
 export default scenario({
   id: 'drafts-in-learned-style',
-  title: 'The style note learned from sent email keeps out facts, names and quotes, then a reply is drafted',
+  title:
+    'The style note learned from sent email keeps out facts, names and quotes, then a reply is drafted',
   capabilities: ['apps', 'memory'],
   tier: 'release',
   calibration: 'pending',
