@@ -39,7 +39,7 @@ Each session runs one turn at a time. Different sessions run in parallel. There 
 
 ## One task ledger
 
-The `tasks` table is the source of truth for task state. Task messages, web cards and Telegram status messages show that state; they are not separate task records.
+The `tasks` table is the source of truth for task state. Task messages, web cards and Telegram status replies show that state; they are not separate task records. The model writes every task message from that state, in the owner's language.
 
 | Record        | Owns                                                                                                                              |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -94,7 +94,7 @@ Shared information does not grant permission. For a task started from chat, the 
 
 Web chat and the Tasks page show the same compact preview. Expand it for steps, activity, the completion condition and task controls. Activity shows tool and helper events, not private model reasoning.
 
-Telegram shows the task as text messages. Questions, progress and results reply to its first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
+Telegram shows the task as messages Otto writes. Its questions and result reply to its first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
 
 These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in Otto's private forms.
 

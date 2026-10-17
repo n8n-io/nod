@@ -884,6 +884,7 @@ async function initializeApplication(
       (await integrations.connectedApps())
         .filter((app) => app.status === 'connected')
         .map((app) => app.name),
+    present: communication.present,
   });
   const localConsent = await localAccounts?.readConsent(ownerId);
   analytics.setUsageData(

@@ -280,6 +280,7 @@ export function createOnboardingSuggestions(options: {
   inbox(signal: AbortSignal): Promise<InboxSnippet[]>;
   telegram(): Promise<boolean>;
   apps(): Promise<string[]>;
+  present(threadId: string, input: { kind: string; [key: string]: unknown }): Promise<string>;
 }) {
   const owner = options.ownerId;
   let preparing: Promise<PreparedSuggestions> | undefined;
@@ -571,6 +572,12 @@ export function createOnboardingSuggestions(options: {
       pending.rows[0].suggestions?.tasks.map((task) => task.title) ?? [],
       gmail,
     );
+    const text = (
+      await options
+        .present(turn.threadId, { kind: 'tips', tips: picked.map((id) => tips[id]) })
+        .catch(() => '')
+    ).trim();
+    if (!text) return;
     await transaction(async (client) => {
       const thread = await lockThread(client, owner);
       if (thread.id !== turn.threadId) return;
@@ -585,16 +592,7 @@ export function createOnboardingSuggestions(options: {
         [owner, turn.threadId, turn.turnId],
       );
       if (!claimed.rowCount) return;
-      await insert(
-        client,
-        thread.id,
-        [
-          'A few other things I can do for you:',
-          ...picked.map((id) => `- ${tips[id]}`),
-          '',
-          'Just ask in your own words.',
-        ].join('\n'),
-      );
+      await insert(client, thread.id, text);
     }, pool);
     refresh();
   }

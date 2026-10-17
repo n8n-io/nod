@@ -977,11 +977,22 @@ test(
           const source = (await row(parent.turnId)).message_id;
           const assigned = await tasks.execute(
             parent,
-            { action: 'start', title: 'Flight dates', doneWhen: 'Dates checked', now: 'Reading' },
+            {
+              action: 'start',
+              title: 'Flight dates',
+              message: 'Checking flight dates.',
+              doneWhen: 'Dates checked',
+              now: 'Reading',
+            },
             source,
           );
           assert.ok('id' in assigned);
           const task = assigned as { id: string; messageId: string };
+          assert.equal(
+            (await db.pool.query('SELECT text FROM messages WHERE id=$1', [task.messageId])).rows[0]
+              .text,
+            'Checking flight dates.',
+          );
           t.after(async () => {
             await db.pool.query('DELETE FROM messages WHERE id=$1', [oldStatus]);
             await db.pool.query(

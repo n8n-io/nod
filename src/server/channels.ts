@@ -34,7 +34,7 @@ export type ChannelPresentation =
   | { kind: 'paired'; channel: string }
   | {
       kind: 'command';
-      command: 'memory' | 'usage';
+      command: 'memory' | 'usage' | 'tasks' | 'status' | 'stop';
       data: object;
       attachments?: 'none' | 'pending' | 'linked' | 'in_otto';
     };
@@ -97,7 +97,7 @@ interface ChannelOptions {
     hasReply?: boolean,
   ) => Promise<{
     threadId: string;
-    replies: Array<{ text: string; replyToMessageId?: string }>;
+    replies: Array<{ text: string; replyToMessageId?: string; presentation?: ChannelPresentation }>;
     afterCommit?: () => Promise<void>;
   }>;
 }

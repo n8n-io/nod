@@ -163,6 +163,8 @@ test(
         inbox: async () => structuredClone(inbox),
         telegram: async () => false,
         apps: async () => currentApps.map((app) => app.name),
+        present: async (_thread, input) =>
+          `A few other things: ${(input.tips as string[]).join(' ')}`,
       });
     const onboarding = onboardingFor(ownerId);
     await onboarding.initialize();

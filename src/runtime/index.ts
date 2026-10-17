@@ -26,7 +26,6 @@ import type { Turn } from './turn.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import { delimit } from './untrusted.ts';
 import type { Task } from '../shared/contracts.ts';
-import { taskSummary } from '../shared/task-status.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 const inlineChars = 40_000;
@@ -185,7 +184,6 @@ export function createAgentRuntime(dependencies: {
     signal.addEventListener('abort', abort, { once: true });
 
     let taskResult = '';
-    let reportedTaskResult = '';
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -443,33 +441,9 @@ export function createAgentRuntime(dependencies: {
         context.taskContext,
         context.background,
       );
-      const task = context.task;
       const shared = {
         context: {
           ...context,
-          task: task
-            ? async (input: unknown) => {
-                const result = await task(input);
-                const action = (input as { action?: string }).action;
-                if (
-                  context.channel === 'telegram' &&
-                  (action === 'update' || action === 'finish') &&
-                  result &&
-                  typeof result === 'object' &&
-                  'id' in result &&
-                  'status' in result
-                ) {
-                  const updated = result as Task;
-                  await deliverReply(
-                    taskSummary(updated),
-                    undefined,
-                    updated.messageId ?? undefined,
-                  );
-                  if (action === 'finish') reportedTaskResult = updated.result.trim();
-                }
-                return result;
-              }
-            : undefined,
           integration: (action: string, args: Record<string, unknown>, callSignal?: AbortSignal) =>
             context.integration(action, args, callSignal, admissions.getStore()?.admit),
           manage: (action: string, args: Record<string, unknown>) =>
@@ -690,10 +664,7 @@ export function createAgentRuntime(dependencies: {
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
       let result =
-        context.taskContext &&
-        taskResult &&
-        taskResult.trim() !== lastReply &&
-        taskResult.trim() !== reportedTaskResult
+        context.taskContext && taskResult && taskResult.trim() !== lastReply
           ? taskResult
           : undefined;
       if (status === 'succeeded' && followUps.length) {

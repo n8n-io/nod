@@ -76,15 +76,9 @@ Mobile web uses the same compact previews. Open a preview to read the steps, rep
 
 ## Telegram without a task page
 
-Telegram shows each task as a text message. The first message shows its name and status. Progress and completion messages reply to that message. A progress message shows the current step. A question or approval request also stays linked to the task.
+Telegram shows each task as messages Otto writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
 
-```text
-Working · Compare travel options
-Check the train times
-Step 2/3: Compare travel time and price
-```
-
-Use Telegram's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands work without a model request:
+Use Telegram's **Reply** control to send an update or answer to a task. Other messages go to the main chat. These commands answer from Otto's task records, and Otto words the reply:
 
 | Command   | Result                                                                                                  |
 | --------- | ------------------------------------------------------------------------------------------------------- |

@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, TaskStatus } from '../shared/contracts.ts';
-import { taskSummary } from '../shared/task-status.ts';
+import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
   abortTurns,
@@ -32,6 +32,7 @@ const input = z.discriminatedUnion('action', [
     .object({
       action: z.literal('start'),
       title: z.string().trim().min(1),
+      message: z.string().trim().min(1).max(2000),
       doneWhen: z.string().trim().min(1),
       now,
       brief: z.string().trim().min(1).optional(),
@@ -97,6 +98,27 @@ function status(row: Row): TaskStatus {
   if (row.waiting_for.length) return 'waiting';
   if (row.next_check && row.next_check.getTime() > Date.now()) return 'scheduled';
   return 'stalled';
+}
+
+function taskFacts(task: Task, detail: boolean) {
+  const index = task.stepIndex ?? 0;
+  return {
+    title: task.title,
+    status: task.status,
+    now: task.now,
+    ...(task.question ? { question: task.question } : {}),
+    ...(task.result ? { result: task.result } : {}),
+    ...(detail
+      ? {
+          doneWhen: task.doneWhen,
+          ...(task.steps?.length ? { steps: task.steps, stepIndex: index } : {}),
+        }
+      : task.steps?.[index]
+        ? { step: task.steps[index], stepNumber: index + 1, stepCount: task.steps.length }
+        : {}),
+    ...(task.waitingFor.length ? { waitingFor: task.waitingFor } : {}),
+    ...(task.nextCheck ? { nextCheck: task.nextCheck } : {}),
+  };
 }
 
 export function createTasks(options: {
@@ -292,11 +314,7 @@ export function createTasks(options: {
       id = randomUUID();
       const independent = current.session_id === turn.threadId;
       if (independent && !sourceMessageId) throw failure('A new task needs an owner request.');
-      const messageId = await insertAssistantMessage(
-        client,
-        turn,
-        `${independent ? 'Queued' : 'Working'} · ${request.title}\n${request.now}\n\nReply to this message to continue this task.`,
-      );
+      const messageId = await insertAssistantMessage(client, turn, request.message);
       const sessionId = independent ? id : current.session_id;
       await client.query(
         `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,brief,now_text,steps,waiting_for,next_check,applied_revision)
@@ -535,20 +553,30 @@ export function createTasks(options: {
     hasReply = Boolean(replyToMessageId),
   ): Promise<{
     threadId: string;
-    replies: Array<{ text: string; replyToMessageId?: string }>;
+    replies: Array<{ text: string; replyToMessageId?: string; presentation: ChannelPresentation }>;
     afterCommit?: () => Promise<void>;
   }> {
     const thread = await lockThread(client);
+    const timeZone = (
+      await client.query<{ time_zone: string | null }>(
+        'SELECT time_zone FROM preferences WHERE owner_id=$1',
+        [ownerId],
+      )
+    ).rows[0]?.time_zone;
+    const reply = (data: object, replyTo?: string | null) => ({
+      text: '',
+      ...(replyTo ? { replyToMessageId: replyTo } : {}),
+      presentation: {
+        kind: 'command' as const,
+        command,
+        data: { ...data, ...(timeZone ? { timeZone } : {}) },
+      },
+    });
     const target = replyToMessageId
       ? await resolveReply(client, thread.id, replyToMessageId)
       : undefined;
     if (hasReply && !target)
-      return {
-        threadId: thread.id,
-        replies: [
-          { text: 'Reply to a task message to select that task. Use /tasks to see open tasks.' },
-        ],
-      };
+      return { threadId: thread.id, replies: [reply({ repliedTo: 'not_a_task_message' })] };
     const cancelled =
       command === 'stop'
         ? target
@@ -560,17 +588,15 @@ export function createTasks(options: {
       threadId: thread.id,
       replies:
         command === 'stop' && !target
-          ? [{ text: 'Stopped active work and closed open tasks.' }]
+          ? [reply({ stopped: 'all_active_work_and_open_tasks' })]
           : tasks.length
-            ? tasks.map((task) => ({
-                text:
-                  taskSummary(task, Boolean(target)) +
-                  (target
-                    ? ''
-                    : '\n\nReply to continue. Reply /status for details or /stop to stop this task.'),
-                replyToMessageId: task.questionMessageId ?? task.messageId ?? undefined,
-              }))
-            : [{ text: 'No open tasks.' }],
+            ? tasks.map((task) =>
+                reply(
+                  { task: taskFacts(task, Boolean(target)) },
+                  task.questionMessageId ?? task.messageId,
+                ),
+              )
+            : [reply({ tasks: [] })],
       afterCommit: cancelled ? () => afterStop(cancelled) : undefined,
     };
   }
