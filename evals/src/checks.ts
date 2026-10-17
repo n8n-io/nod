@@ -121,7 +121,12 @@ export const saidGo = (run: Run, scripted: number, go: RegExp) =>
     scripted,
     ...run.userMessages
       .slice(1)
-      .filter((message) => go.test(message.text) && !notYet.test(message.text))
+      .filter(
+        (message) =>
+          go.test(message.text) &&
+          /\b(?:book|reserv)/i.test(message.text) &&
+          !notYet.test(message.text),
+      )
       .map((message) => message.at),
   );
 
