@@ -3740,7 +3740,7 @@ test(
         return;
       }
       response.end(
-        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form>',
+        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form>',
       );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -3773,6 +3773,10 @@ test(
       assert.equal(await submits({ action: 'click', selector: '#plain' }), undefined);
       assert.equal(await submits({ action: 'click', selector: '#toggle' }), undefined);
       assert.equal(await submits({ action: 'click', selector: ref('Same') }), undefined);
+      assert.deepEqual(await submits({ action: 'click', selector: ref('Menu') }), {
+        method: 'POST',
+        to: `${origin}/reserve`,
+      });
       await computer.act('submits', { action: 'fill', selector: 'input[name=q]', text: 'tables' });
       assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
         method: 'GET',

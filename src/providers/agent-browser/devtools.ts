@@ -16,7 +16,6 @@ type ControlQuery = {
   selector?: string;
   point?: { x: number; y: number };
   focused?: boolean;
-  control?: { role: string; name: string };
 };
 
 const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
@@ -422,23 +421,61 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
         if (result?.objectId) backendNodeId = await describe({ objectId: result.objectId });
         await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, page);
       }
-    } else if (query.control) {
-      const { root } = (await send('DOM.getDocument', { depth: 0 }, page)) as {
-        root: { nodeId: number };
-      };
-      const { nodes } = (await send(
-        'Accessibility.queryAXTree',
-        { nodeId: root.nodeId, accessibleName: query.control.name, role: query.control.role },
-        page,
-      )) as { nodes: Array<{ ignored?: boolean; backendDOMNodeId?: number }> };
-      const found = new Set(
+    }
+    return backendNodeId ? { backendNodeId, session } : undefined;
+  };
+
+  const matching = async (control: { role: string; name: string }) => {
+    const { root } = (await send('DOM.getDocument', { depth: 0 }, page)) as {
+      root: { nodeId: number };
+    };
+    const { nodes } = (await send(
+      'Accessibility.queryAXTree',
+      { nodeId: root.nodeId, accessibleName: control.name, role: control.role },
+      page,
+    )) as { nodes: Array<{ ignored?: boolean; backendDOMNodeId?: number }> };
+    return [
+      ...new Set(
         nodes.flatMap((node) =>
           !node.ignored && node.backendDOMNodeId ? [node.backendDOMNodeId] : [],
         ),
-      );
-      if (found.size === 1) backendNodeId = [...found][0];
+      ),
+    ].map((backendNodeId) => ({ backendNodeId, session: page }));
+  };
+
+  const formOf = async (found: { backendNodeId: number; session: string }, enter: boolean) => {
+    const [frame] = await tree(found.session);
+    if (!frame) return undefined;
+    const { object } = (await send(
+      'DOM.resolveNode',
+      {
+        backendNodeId: found.backendNodeId,
+        executionContextId: await world(found.session, frame.id),
+        objectGroup: 'otto-control',
+      },
+      found.session,
+    )) as { object: { objectId: string } };
+    try {
+      const { result, exceptionDetails } = (await send(
+        'Runtime.callFunctionOn',
+        {
+          objectId: object.objectId,
+          functionDeclaration: submitsScript,
+          arguments: [{ value: enter }],
+          returnByValue: true,
+        },
+        found.session,
+      )) as {
+        result?: { value?: { method?: unknown; to?: unknown } | null };
+        exceptionDetails?: unknown;
+      };
+      const value = exceptionDetails ? undefined : result?.value;
+      return typeof value?.method === 'string' && typeof value.to === 'string'
+        ? { method: value.method, to: value.to }
+        : undefined;
+    } finally {
+      await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, found.session);
     }
-    return backendNodeId ? { backendNodeId, session } : undefined;
   };
 
   return {
@@ -552,40 +589,20 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       }
       return controls;
     },
-    async submits(query: ControlQuery, enter: boolean) {
-      const found = await locate(query);
-      const [frame] = found ? await tree(found.session) : [];
-      if (!found || !frame) return undefined;
-      const { object } = (await send(
-        'DOM.resolveNode',
-        {
-          backendNodeId: found.backendNodeId,
-          executionContextId: await world(found.session, frame.id),
-          objectGroup: 'otto-control',
-        },
-        found.session,
-      )) as { object: { objectId: string } };
-      try {
-        const { result, exceptionDetails } = (await send(
-          'Runtime.callFunctionOn',
-          {
-            objectId: object.objectId,
-            functionDeclaration: submitsScript,
-            arguments: [{ value: enter }],
-            returnByValue: true,
-          },
-          found.session,
-        )) as {
-          result?: { value?: { method?: unknown; to?: unknown } | null };
-          exceptionDetails?: unknown;
-        };
-        const value = exceptionDetails ? undefined : result?.value;
-        return typeof value?.method === 'string' && typeof value.to === 'string'
-          ? { method: value.method, to: value.to }
-          : undefined;
-      } finally {
-        await send('Runtime.releaseObjectGroup', { objectGroup: 'otto-control' }, found.session);
-      }
+    async submits(
+      query: ControlQuery | { control: { role: string; name: string } },
+      enter: boolean,
+    ) {
+      const targets =
+        'control' in query
+          ? await matching(query.control)
+          : [await locate(query)].flatMap((item) => (item ? [item] : []));
+      const forms = [];
+      for (const target of targets) forms.push(await formOf(target, enter));
+      const [first] = forms;
+      return first && forms.every((form) => form?.method === first.method && form.to === first.to)
+        ? first
+        : undefined;
     },
     async document() {
       const [main] = await tree(page);
