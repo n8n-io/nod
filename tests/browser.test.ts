@@ -3656,6 +3656,7 @@ test('a checked browser step is described from its snapshot and runs only on tha
       origin: 'https://1.1.1.1',
       url: 'https://1.1.1.1/login',
       controls: [{ role: 'textbox', name: 'Search' }],
+      submits: 'unknown',
     });
     const next = { action: 'click', selector: '@e2' } as const;
     await assert.rejects(

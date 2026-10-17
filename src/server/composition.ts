@@ -748,6 +748,10 @@ async function initializeApplication(
       command,
     };
   };
+  const formSent = (value: unknown) => {
+    const form = value as { method?: unknown; to?: unknown } | string | undefined;
+    return typeof form === 'object' ? `${String(form.method)} ${String(form.to)}` : String(form);
+  };
   const replayBrowserStep = async (
     args: Record<string, unknown>,
     provenance: { threadId: string; turnId: string },
@@ -773,7 +777,7 @@ async function initializeApplication(
       current?.origin !== expectOrigin ||
       current.url !== args.page ||
       current.dialog !== args.dialog ||
-      JSON.stringify(current.submits) !== JSON.stringify(args.submits)
+      formSent(current.submits) !== formSent(args.submits)
     )
       throw notRun();
     try {
