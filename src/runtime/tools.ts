@@ -410,7 +410,7 @@ export const toolDefinitions = {
         {
           action: Type.Literal('start'),
           title: Type.String({ minLength: 1 }),
-          message: Type.String({ minLength: 1, maxLength: 2000 }),
+          message: Type.String({ minLength: 1 }),
           doneWhen: Type.String({ minLength: 1 }),
           now: taskNow,
           brief: Type.Optional(Type.String({ minLength: 1 })),

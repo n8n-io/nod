@@ -32,7 +32,7 @@ const input = z.discriminatedUnion('action', [
     .object({
       action: z.literal('start'),
       title: z.string().trim().min(1),
-      message: z.string().trim().min(1).max(2000),
+      message: z.string().trim().min(1),
       doneWhen: z.string().trim().min(1),
       now,
       brief: z.string().trim().min(1).optional(),
