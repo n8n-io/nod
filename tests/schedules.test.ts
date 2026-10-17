@@ -480,6 +480,37 @@ test(
           assert.equal((await saved(schedule.id)).nextRun, '2035-11-03T09:05:00.000Z');
         },
       );
+      await t.test(
+        'a baseline added to an existing watch is what its next run compares with',
+        async () => {
+          const before = clock;
+          const schedule = await create({ cron: '0 9 * * 1' });
+          const baseline = {
+            status: 'verified',
+            sourceUrl: 'https://watch.example.test/pricing',
+            value: 'Pro 29 EUR',
+            summary: 'Synthetic pricing baseline.',
+          };
+          await personal.manage('schedule_update', {
+            id: schedule.id,
+            baselineObservation: baseline,
+          });
+          assert.equal((await saved(schedule.id)).baselineObservation?.value, 'Pro 29 EUR');
+          assert.equal((await saved(schedule.id)).nextRun, schedule.nextRun);
+          clock = new Date(schedule.nextRun!);
+          await deliver([await jobFor(schedule.id)]);
+          const [run] = await runs(schedule.id);
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [run!.turnId]);
+          const recorded = (await personal.manage(
+            'schedule_record_observation',
+            { ...baseline, value: 'Pro 39 EUR' },
+            { sourceMessageId: null, turnId: run!.turnId },
+          )) as { previous: { value: string } | null };
+          assert.equal(recorded.previous?.value, 'Pro 29 EUR');
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run!.turnId]);
+          clock = before;
+        },
+      );
       await t.test('edits, pauses and deletions fence already claimed jobs', async () => {
         const schedule = await create({ kind: 'once', runAt: '2035-11-03T14:30:00Z' });
         const stale = await jobFor(schedule.id);

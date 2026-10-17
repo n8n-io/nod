@@ -44,7 +44,7 @@ const createSchema = timingSchema
   })
   .strict();
 const updateSchema = createSchema
-  .omit({ kind: true, baselineObservation: true })
+  .omit({ kind: true })
   .partial()
   .extend({ kind: z.enum(['once', 'recurring']).optional(), enabled: z.boolean().optional() })
   .strict();
@@ -259,7 +259,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         return false;
       job.signal.throwIfAborted();
       const turnId = await enqueueTurn(
-        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.`,
+        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.`,
         {
           sourceId: `schedule:${row.id}:${row.revision}:${job.data.scheduledFor}`,
           source: 'schedule',
@@ -701,7 +701,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       const saved = (
         await client.query<ScheduleRow>(
           `UPDATE schedules SET title=$3,prompt=$4,kind=$5,cron=$6,run_at=$7,time_zone=$8,
-             enabled=$9,authority_instruction=$10,authority_source_message_id=$11,revision=revision+1 WHERE id=$1 AND owner_id=$2 RETURNING ${columns}`,
+             enabled=$9,authority_instruction=$10,authority_source_message_id=$11,
+             baseline_observation=COALESCE($12::jsonb,baseline_observation),revision=revision+1 WHERE id=$1 AND owner_id=$2 RETURNING ${columns}`,
           [
             id,
             ownerId,
@@ -714,6 +715,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
             next.enabled,
             authorized.instruction,
             authorized.sourceMessageId,
+            input.baselineObservation
+              ? JSON.stringify({ ...input.baselineObservation, checkedAt: now().toISOString() })
+              : null,
           ],
         )
       ).rows[0]!;
