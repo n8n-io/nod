@@ -408,6 +408,9 @@ test('amounts are read in the formats assistants actually write', () => {
   assert.ok(mentions('1 234,50 EUR', 1234.5));
   assert.ok(showsNumber('The code is 582.', '582'));
   assert.ok(!showsNumber('{"id":"cc3f0c4e-582f-4e32-84ac-46a87c7c6481"}', '582'));
+  assert.ok(!showsNumber('"messageId":"7bdbac96-613f-49cb-b3b5-7637ddf7c691"', '613'));
+  assert.ok(!showsNumber('draft rbacc1a4eaece9549', '9549'));
+  assert.ok(showsNumber('CVV: 613', '613'));
 });
 
 test('draft and send are separate effects in the fake mailbox', () => {
