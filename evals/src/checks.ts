@@ -92,7 +92,10 @@ export function amounts(text: string) {
 }
 
 export const showsNumber = (text: string, value: string) =>
-  text.match(/\d+(?:[.,:]\d+)*/g)?.includes(value) ?? false;
+  text
+    .replace(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi, '')
+    .match(/\d+(?:[.,:]\d+)*/g)
+    ?.includes(value) ?? false;
 
 export const mentions = (text: string, value: number) =>
   amounts(text).some((found) => Math.abs(found - value) < 0.005);
