@@ -1,5 +1,7 @@
 export const memoryAreas = ['about', 'preferences', 'people', 'routines', 'lessons'] as const;
 export const noteChars = 4000;
+export const skillDescriptionChars = 200;
+export const skillChars = 6000;
 
 export type MemoryArea = (typeof memoryAreas)[number];
 export type MemoryStatus = 'stated' | 'observed' | 'tentative';
@@ -35,11 +37,22 @@ export interface MemoryArchived {
   sources: MemorySource[];
 }
 
+export interface LearnedSkill {
+  name: string;
+  description: string;
+  body: string;
+  learned: string;
+  updated: string;
+  edited: string | null;
+  task: string | null;
+}
+
 export interface MemoryView {
   saving: boolean;
   sensitive: boolean;
   notes: MemoryNote[];
   archive: MemoryArchived[];
+  skills: LearnedSkill[];
 }
 
 export interface MemoryUpdate extends MemoryView {

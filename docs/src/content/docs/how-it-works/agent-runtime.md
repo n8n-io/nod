@@ -53,27 +53,27 @@ In both modes, when a loaded session ends with tool calls that have no result, e
 
 Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto/blob/main/src/runtime/tools.ts).
 
-| Tool                                                                | What it does                                                                                                                                 |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                  |
-| `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/).                                                                  |
-| `send_message`                                                      | Sends a message now. The only delivery in background turns.                                                                                  |
-| `follow_up`                                                         | In a chat or saved task, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job. |
-| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                              |
-| `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                    |
-| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.                                                        |
-| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                  |
-| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                                                                    |
-| `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                                                                           |
-| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                             |
-| `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                |
-| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                      |
-| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                              |
-| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops a task. It grants no permission.                                 |
-| `share_file`                                                        | Sends a workspace file to you.                                                                                                               |
-| `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                  |
-| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
-| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                              |
+| Tool                                                                | What it does                                                                                                                                                     |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                                      |
+| `skills`                                                            | Reads a task guide from the trusted [skill library](/how-it-works/skills/), or reads, saves and patches a [learned skill](/how-it-works/memory/#learned-skills). |
+| `send_message`                                                      | Sends a message now. The only delivery in background turns.                                                                                                      |
+| `follow_up`                                                         | In a chat or saved task, queues one short line that goes out as its own message right after the reply, such as an offer to keep doing a job.                     |
+| `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                                                  |
+| `react_to_message`                                                  | Now and then, reacts to the user's message with one emoji, on web, Telegram and WhatsApp. At most one every five minutes.                                        |
+| `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and more.                                                                            |
+| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model.                                                                                      |
+| `pay`                                                               | Pays at a checkout with a Vault card after your approval.                                                                                                        |
+| `payment_setting`                                                   | Turns **Do it for me** on or off for a card, after a confirmation.                                                                                               |
+| `browser_session`                                                   | Creates a browser profile to sign in to, or opens a saved one after the same check as a sign-in.                                                                 |
+| `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                                    |
+| `manage_apps`                                                       | Lists, discovers, connects or proposes app connections.                                                                                                          |
+| `manage_personal_context`                                           | Schedules, notification preferences, memory, history and usage.                                                                                                  |
+| `task`                                                              | Starts saved task sessions, sends owner updates, reports progress and stops a task. It grants no permission.                                                     |
+| `share_file`                                                        | Sends a workspace file to you.                                                                                                                                   |
+| `create_audio`                                                      | Turns text into speech and sends it to you.                                                                                                                      |
+| `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                                              |
+| `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                                                  |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
 
@@ -117,7 +117,7 @@ The prompt has three layers, built in [`src/runtime/prompt.ts`](https://github.c
 | Layer         | Contains                                                                                                                         | Sent                       |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
 | Static prompt | Otto's personality and rules, the conversation and background rules, the core guides, the skill catalog and Pi's tool guidelines | Once per session           |
-| Owner context | Account details, date format and the memory index                                                                                | Again only when it changes |
+| Owner context | Account details, date format, the memory index and the learned skill index                                                       | Again only when it changes |
 | Turn message  | Mode, time, channel, message ID, reply target, recent conversation and the instruction                                           | Every turn                 |
 
 The core guides are `connected-apps`, `schedules-and-watches`, `artifacts` and `video-links`. Pi's own tool guidelines are appended to the static prompt, because Otto's custom prompt would otherwise drop them.

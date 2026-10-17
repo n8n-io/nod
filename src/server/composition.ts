@@ -129,6 +129,7 @@ import { createOnboardingInterview } from './onboarding-interview.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
+import { createLearnedSkills } from './learned-skills.ts';
 import { createSpeech } from './speech.ts';
 import {
   activeThread,
@@ -563,12 +564,13 @@ async function initializeApplication(
       ? onboardingCurator.curate({ task: 'review', instructions, input }, signal)
       : undefined;
   };
+  const skillLibrary = createSkillLibrary(
+    fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
+    coreSkills,
+  );
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
-    skills: createSkillLibrary(
-      fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
-      coreSkills,
-    ),
+    skills: skillLibrary,
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
@@ -598,6 +600,12 @@ async function initializeApplication(
         .map((entry) => entry.text),
   });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+  const learnedSkills = createLearnedSkills({
+    memory,
+    curator,
+    builtIn: [...skillLibrary.catalog.map((skill) => skill.name), ...coreSkills],
+    redact: createErrorRedactor(secrets),
+  });
   const personal = createPersonalService({
     analytics: captureAnalytics,
     pool,
@@ -606,6 +614,7 @@ async function initializeApplication(
     enqueueTurn,
     refresh,
     memory,
+    learnedSkills,
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
@@ -1007,6 +1016,7 @@ async function initializeApplication(
       accountProfile,
       connectedApps: integrations.connectedApps,
       memoryContext: memory.context,
+      learnedSkills: learnedSkills.index,
       taskContext: tasks.context,
       taskLedger: tasks.read,
       task: tasks.execute,
@@ -1171,6 +1181,17 @@ async function initializeApplication(
             admit,
             details: verdict.confirm ? { reason: verdict.reason } : {},
           });
+        }
+        if (action === 'skill_read') return learnedSkills.read(String(args.name));
+        if (action === 'skill_save' || action === 'skill_patch') {
+          const origin = await turnOrigin(turn.turnId);
+          if (!origin || !['user', 'schedule', 'task'].includes(origin.source))
+            throw new Error(
+              'Only work the owner started, in chat, a task or a schedule, can save a skill.',
+            );
+          return learnedSkills.learn(args, turn.turnId, (write) =>
+            withTurnLock(turn.turnId, write),
+          );
         }
         await admit?.(false);
         if (action === 'memory_learn')

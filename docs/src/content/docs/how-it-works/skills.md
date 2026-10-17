@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-The skill library is a set of task guides that the model loads only when a task needs them. The prompt stays small, and the model still gets detailed advice for common work.
+The skill library is a set of task guides that the model loads only when a task needs them. The prompt stays small, and the model still gets detailed advice for common work. Otto also writes [learned skills](/how-it-works/memory/#learned-skills) for itself after a task; they live in memory, not in this library.
 
 The short version: the system prompt lists each guide's name and description. The model reads a full guide with the `skills` tool when a task matches it.
 
@@ -50,10 +50,11 @@ Seven guides have a reference for one specific case: recurring meetings, data im
 
 ## How the model reads a guide
 
-The `skills` tool has two actions:
+The `skills` tool has these actions:
 
-- `{action: "list"}` returns names and descriptions.
-- `{action: "read", name}` loads `SKILL.md`. Add `file: "references/<name>.md"` to load one reference.
+- `{action: "list"}` returns the names and descriptions of the guides and of the learned skills.
+- `{action: "read", name}` loads a guide's `SKILL.md` or a learned skill. Add `file: "references/<name>.md"` to load one reference of a guide.
+- `{action: "save", name, description, body}` and `{action: "patch", name, old, new}` write a learned skill. See [Learned skills](/how-it-works/memory/#learned-skills).
 
 The system prompt tells the model to pick a guide by the task's purpose, the user's constraints and the required result. A compound task can load more than one guide. After compaction, the model can read a guide again.
 
@@ -83,7 +84,7 @@ The library reads only its own folder in the server source tree. Pi's default sk
 - Each read must stay inside the selected skill folder after the real path is resolved.
 - Only regular Markdown files can be read.
 
-Skill content is trusted server guidance. Reading it doesn't mark the thread as exposed to outside content.
+Guide content is trusted server guidance. Reading it doesn't mark the thread as exposed to outside content. A learned skill is different: Otto wrote it from what it did and read, so its body reaches the model as untrusted data.
 
 :::caution[Guides grant nothing]
 A guide adds no tools, account access or permission, and it can't override the user's choices. Booking approvals and spending limits in a guide are model instructions, not server checks. A guide never authorizes repeating an action whose outcome is uncertain.

@@ -194,6 +194,7 @@ export function createMemoryService(options: {
         if (input.clear) {
           tree.entries = [];
           tree.archive = [];
+          tree.skills = [];
         }
         tree.reflected = mark;
         tree.retries = 0;
@@ -417,9 +418,21 @@ export function createMemoryService(options: {
         { id: row.id, text: row.text, at: row.created_at.toISOString(), channel: row.channel },
       ]),
     );
+    const learnedIn = tree.skills.flatMap((skill) => skill.turn ?? []);
+    const turns = new Map(
+      learnedIn.length
+        ? (
+            await options.pool.query(
+              'SELECT id,left(prompt,200) AS prompt FROM turns WHERE owner_id=$1 AND id=ANY($2::uuid[])',
+              [options.ownerId, learnedIn],
+            )
+          ).rows.map((row) => [row.id as string, String(row.prompt)])
+        : [],
+    );
     return memoryView(
       tree,
       (source) => found.get(source) ?? { id: source, text: null, at: null, channel: null },
+      (turn) => (turn && turns.get(turn)) || null,
     );
   }
 

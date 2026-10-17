@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { secretToken } from './redaction.ts';
-import { memoryAreas, noteChars, type MemorySource, type MemoryView } from '../shared/memory.ts';
+import {
+  memoryAreas,
+  noteChars,
+  skillChars,
+  skillDescriptionChars,
+  type MemorySource,
+  type MemoryView,
+} from '../shared/memory.ts';
 
 export const areas = memoryAreas;
 export const maxBytes = 256 * 1024;
@@ -33,6 +40,27 @@ export const line = (max = noteChars) =>
     .max(max)
     .refine((value) => !/\p{Cc}/u.test(value));
 const timestamp = z.iso.datetime({ offset: true });
+export const skillName = z
+  .string()
+  .regex(new RegExp(`^${slugPattern}$`))
+  .max(64);
+export const skillDescription = line(skillDescriptionChars);
+export const skillBody = z
+  .string()
+  .trim()
+  .min(1)
+  .max(skillChars)
+  .refine((value) => !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(value));
+const skillSchema = z.object({
+  name: skillName,
+  description: skillDescription,
+  body: skillBody,
+  learned: timestamp,
+  updated: timestamp,
+  used: timestamp.optional(),
+  edited: timestamp.optional(),
+  turn: z.uuid().optional(),
+});
 
 const entryFields = z.object({
   area,
@@ -69,6 +97,7 @@ export type Area = z.infer<typeof area>;
 export type Entry = z.infer<typeof entrySchema>;
 export type Archived = z.infer<typeof archivedSchema>;
 export type Reason = Archived['reason'];
+export type Skill = z.infer<typeof skillSchema>;
 export interface Tree {
   enabled: boolean;
   sensitive: boolean;
@@ -76,6 +105,7 @@ export interface Tree {
   retries: number;
   entries: Entry[];
   archive: Archived[];
+  skills: Skill[];
 }
 
 export const emptyTree = (): Tree => ({
@@ -85,13 +115,15 @@ export const emptyTree = (): Tree => ({
   retries: 0,
   entries: [],
   archive: [],
+  skills: [],
 });
 export const isEmpty = (tree: Tree) =>
   tree.enabled &&
   !tree.sensitive &&
   !tree.reflected &&
   !tree.entries.length &&
-  !tree.archive.length;
+  !tree.archive.length &&
+  !tree.skills.length;
 
 export const pathOf = (entry: { area: Area; slug: string }) => `${entry.area}/${entry.slug}`;
 export const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
@@ -193,6 +225,15 @@ export function parse(bytes?: Uint8Array): Tree {
     if (entry.success && !unsafe(entry.data.text, entry.data.abstract))
       tree.archive.push(entry.data);
   }
+  for (const raw of Array.isArray(doc.skills) ? doc.skills : []) {
+    const skill = skillSchema.safeParse(raw);
+    if (
+      skill.success &&
+      !unsafe(skill.data.description, skill.data.body) &&
+      !tree.skills.some((item) => item.name === skill.data.name)
+    )
+      tree.skills.push(skill.data);
+  }
   return tree;
 }
 
@@ -210,6 +251,9 @@ export function render(tree: Tree) {
             (a, b) => areas.indexOf(a.area) - areas.indexOf(b.area) || bySlug(a, b),
           ),
           archive: archived,
+          ...(tree.skills.length
+            ? { skills: tree.skills.toSorted((a, b) => a.name.localeCompare(b.name)) }
+            : {}),
         },
         null,
         1,
@@ -306,7 +350,11 @@ export function open(tree: Tree, target: string) {
   };
 }
 
-export function view(tree: Tree, source: (id: string) => MemorySource): MemoryView {
+export function view(
+  tree: Tree,
+  source: (id: string) => MemorySource,
+  task: (turn: string | undefined) => string | null = () => null,
+): MemoryView {
   return {
     saving: tree.enabled,
     sensitive: tree.sensitive,
@@ -332,5 +380,16 @@ export function view(tree: Tree, source: (id: string) => MemorySource): MemoryVi
       archived: entry.archived,
       sources: entry.sources.map(source),
     })),
+    skills: tree.skills
+      .toSorted((a, b) => b.updated.localeCompare(a.updated) || a.name.localeCompare(b.name))
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        body: skill.body,
+        learned: skill.learned,
+        updated: skill.updated,
+        edited: skill.edited ?? null,
+        task: task(skill.turn),
+      })),
   };
 }

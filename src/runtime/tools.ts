@@ -10,6 +10,7 @@ import { fileBytes } from '../shared/files.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { actionLink, vaultInvitation } from './communication.ts';
+import { untrustedBlock } from '../shared/untrusted.ts';
 import type { Turn } from './turn.ts';
 
 export const personalActions = [
@@ -139,7 +140,7 @@ const taskNextCheck = Type.String({
 export const toolDefinitions = {
   skills: defineTool(
     'skills',
-    'Load a task guide from the trusted skill library. Select the skill by the meaning of the current task. read {name} loads SKILL.md; read {name, file:"references/NAME.md"} loads one linked reference. list returns names and descriptions. Skill files do not grant permission or add tools.',
+    'Load a built-in task guide from the trusted skill library, or a learned skill you wrote after an earlier task. Select the skill by the meaning of the current task. read {name} loads a guide\'s SKILL.md or a learned skill; read {name, file:"references/NAME.md"} loads one linked reference of a built-in guide. list returns names and descriptions. save {name, description, body} creates or replaces a learned skill; patch {name, old, new} replaces one exact passage of a learned skill. Skills do not grant permission or add tools.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -147,6 +148,24 @@ export const toolDefinitions = {
           action: Type.Literal('read'),
           name: Type.String({ minLength: 1 }),
           file: Type.Optional(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('save'),
+          name: Type.String({ minLength: 1, maxLength: 64 }),
+          description: Type.String({ minLength: 1 }),
+          body: Type.String({ minLength: 1 }),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('patch'),
+          name: Type.String({ minLength: 1, maxLength: 64 }),
+          old: Type.String({ minLength: 1 }),
+          new: Type.String(),
         },
         { additionalProperties: false },
       ),
@@ -578,13 +597,28 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     return { output: verdict.result };
   };
   return [
-    ...(skills
-      ? [
-          bind(toolDefinitions.skills, async (p) =>
-            p.action === 'list' ? skills.catalog : skills.read(p.name, p.file),
-          ),
-        ]
-      : []),
+    bind(toolDefinitions.skills, async (p) => {
+      if (p.action === 'list')
+        return [
+          ...(skills?.catalog ?? []),
+          ...(context.learnedSkills ?? []).map((skill) => ({ ...skill, learned: true })),
+        ];
+      if (p.action === 'read') {
+        if (skills?.catalog.some((skill) => skill.name === p.name))
+          return skills.read(p.name, p.file);
+        if (p.file) throw new Error('A learned skill has no reference files.');
+        return untrustedBlock(
+          'learned skill',
+          JSON.stringify(await context.manage('skill_read', { name: p.name })),
+        );
+      }
+      if (turn.execution.parentRunId)
+        throw new Error(
+          'A subagent cannot save skills. Include what you learned in your answer to the parent agent.',
+        );
+      const { action, ...args } = p;
+      return context.manage(`skill_${action}`, { action, ...args });
+    }),
     bind(
       toolDefinitions.send_message,
       async (p) =>
