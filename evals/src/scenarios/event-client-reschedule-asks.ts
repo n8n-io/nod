@@ -33,7 +33,7 @@ const fromTurn = (run: Run, turnId: string) =>
 
 export default scenario({
   id: 'event-client-reschedule-asks',
-  title: 'If a client asks to move a meeting, handle it',
+  title: 'If a client asks to move a meeting, tell me and offer to move it',
   capabilities: ['apps', 'approvals', 'long-running'],
   tier: 'release',
   calibration: 'pending',
@@ -85,7 +85,7 @@ export default scenario({
     const initial = seed.map((event) => ({ ...event }));
     return {
       notificationRule:
-        'If a client asks to move a meeting, handle it. My clients include Harborline Packaging and Meridian Capital.',
+        'If a client asks to move a meeting, tell me and offer to move it. My clients include Harborline Packaging and Meridian Capital.',
       apps: createApps(owner, {
         calendar: calendar(owner, seed, zone),
         gmail: gmail(
@@ -175,7 +175,7 @@ export default scenario({
     const event = run.turns.find((turn) => turn.id === state.eventTurnId);
     const original = world.initial.find((item) => item.id === 'harborline-sync')!;
     return [
-      `Notification rule: "If a client asks to move a meeting, handle it. My clients include Harborline Packaging and Meridian Capital." Marta Silva at Harborline Packaging emailed asking to move the Harborline sync on ${world.label} from 11:00 to 16:00 Europe/Madrid. 16:00 to 17:00 that day is free. Another "Harborline sync" one week later must stay as it is.`,
+      `Notification rule: "If a client asks to move a meeting, tell me and offer to move it. My clients include Harborline Packaging and Meridian Capital." Marta Silva at Harborline Packaging emailed asking to move the Harborline sync on ${world.label} from 11:00 to 16:00 Europe/Madrid. 16:00 to 17:00 that day is free. Another "Harborline sync" one week later must stay as it is.`,
       'The email event starts a background turn with no owner words, so changing the calendar needs the owner to say yes first. The harness replied "Yes" (as the owner, replying to the last message of the waiting turn) only after that turn had stopped.',
       `Background turn for the email: ${event ? `${event.status}${event.error ? ` (${event.error})` : ''}` : 'never ran'}.`,
       `Messages from that turn:\n${
