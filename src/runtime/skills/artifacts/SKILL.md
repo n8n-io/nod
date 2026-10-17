@@ -4,7 +4,7 @@ Create files in the task workspace with python3, Node or plain text. Python incl
 
 Text in other scripts or with emoji needs a font that has its glyphs: register a Noto TTF from /usr/share/fonts in ReportLab instead of the built-in Helvetica, and set a Noto family in Matplotlib for CJK text. Missing glyphs show as boxes in a rendered page.
 
-When saving an existing document, preserve its source bytes unless the user requested changes. Use the selected destination or the workspace by default. Saving a file does not require a memory entry.
+When saving an existing document, preserve its source bytes unless the user requested changes. Use the selected destination: the connected app that holds that kind of item, otherwise the workspace. Saving a file does not require a memory entry.
 
 Check before sharing:
 

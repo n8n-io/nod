@@ -56,7 +56,7 @@ On the **Tasks** page, open a preview and select **Show activity**. The details 
 
 ## Read task results
 
-A task delivers its result where you asked for it, such as a sheet or Gmail drafts. Other complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
+A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Otto creates it in that app even if you don't name it. Other complete reports can be Markdown documents. Otto sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 
