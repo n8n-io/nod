@@ -9,6 +9,7 @@ import type {
   VaultSession,
 } from '../../shared/contracts';
 import type { TrustView } from '../../shared/trust';
+import type { AccountPreferences } from '../../shared/account';
 import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
 import { TrustActivity } from '../components/trust-activity';
@@ -52,6 +53,7 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
   const activity = usePageData<VaultActivity>('/api/vault/activity');
   const trust = usePageData<TrustView>('/api/trust');
+  const preferences = usePageData<AccountPreferences>('/api/preferences');
   const phone = usePhone();
   const tabsId = useId();
   const addRequested = window.location.hash
@@ -411,15 +413,16 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         className="vault-panel"
       >
         <div hidden={view !== 'activity'}>
-          {activity.data && trust.data ? (
+          {activity.data && trust.data && preferences.data ? (
             <TrustActivity
               view={trust.data}
               vault={activity.data}
+              rule={preferences.data.notificationRule}
               opener={opener}
               onSaved={() => void trust.refresh()}
             />
-          ) : activity.error || trust.error ? (
-            <Notice>{activity.error || trust.error}</Notice>
+          ) : activity.error || trust.error || preferences.error ? (
+            <Notice>{activity.error || trust.error || preferences.error}</Notice>
           ) : (
             <Loading label="Opening activity…" />
           )}

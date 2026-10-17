@@ -4,6 +4,7 @@ import { CalendarClock, MessageCircle, ScanSearch, Undo2, Zap } from 'lucide-rea
 import type { TrustEntry, TrustPage, TrustSource, TrustView } from '../../shared/trust';
 import type { VaultActivity, VaultActivityEntry } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
+import { savePreferences } from '../lib/preferences';
 import {
   formatDayLabel,
   formatNumber,
@@ -232,13 +233,68 @@ function TaskLimit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
   );
 }
 
+function StandingInstruction({ rule, onSaved }: { rule: string; onSaved(): void }) {
+  const [draft, setDraft] = useState(rule);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function save(notificationRule: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await savePreferences({ notificationRule });
+      onSaved();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setBusy(false);
+    }
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void save(draft.trim());
+  }
+  return (
+    <form className="trust-rule-form" onSubmit={submit}>
+      <textarea
+        className="input"
+        rows={4}
+        maxLength={4000}
+        value={draft}
+        autoFocus
+        aria-label="Standing instruction"
+        placeholder="Whenever Ana sends an invoice, forward it to accounting@acme.com."
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <div className="trust-rule-actions">
+        <Button size="sm" type="submit" disabled={busy || draft.trim() === rule}>
+          Save
+        </Button>
+        {rule && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void save('')}
+          >
+            Stop
+          </Button>
+        )}
+      </div>
+      <small>Otto reads and drafts on its own, and does only what this says.</small>
+      {error && <Notice>{error}</Notice>}
+    </form>
+  );
+}
+
 function Sentence({
   view,
   vault,
+  rule,
   onSaved,
 }: {
   view: TrustView;
   vault: VaultActivity;
+  rule: string;
   onSaved(): void;
 }) {
   const format = useDateFormat();
@@ -337,6 +393,15 @@ function Sentence({
         ) : (
           'Nothing yet this week.'
         )}
+        <br />
+        On its own, Otto{' '}
+        <Value
+          text={rule ? 'follows your instruction' : 'watches nothing'}
+          label="Standing instruction"
+        >
+          {(close) => <StandingInstruction rule={rule} onSaved={close} />}
+        </Value>
+        {rule ? <>: “{rule}”</> : '.'}
       </p>
       {limit?.reached && (
         <Notice kind="info">
@@ -485,17 +550,19 @@ function Statement({
 export function TrustActivity({
   view,
   vault,
+  rule,
   opener,
   onSaved,
 }: {
   view: TrustView;
   vault: VaultActivity;
+  rule: string;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
   onSaved(): void;
 }) {
   return (
     <div className="trust-activity">
-      <Sentence view={view} vault={vault} onSaved={onSaved} />
+      <Sentence view={view} vault={vault} rule={rule} onSaved={onSaved} />
       <Statement view={view} vault={vault} opener={opener} />
     </div>
   );

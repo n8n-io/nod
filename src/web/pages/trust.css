@@ -81,6 +81,20 @@
   appearance: none;
   margin: 0;
 }
+.trust-rule-form {
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 64px));
+}
+.trust-rule-form textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+}
+.trust-rule-actions {
+  display: flex;
+  gap: 4px;
+}
 .trust-task-limit {
   display: grid;
   justify-items: start;
