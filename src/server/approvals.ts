@@ -105,13 +105,14 @@ export async function turnOrigin(turnId: string) {
     if (!chain || !origin) return undefined;
     const run =
       origin.source === 'schedule' ? await scheduleAuthority(client, origin.id) : undefined;
+    const said =
+      origin.source === 'user'
+        ? chain.flatMap((turn) => (turn.message_id ? [turn.message_id] : []))
+        : [];
     return {
       taskId: current.task_id,
       source: origin.source,
-      messageIds:
-        origin.source === 'user'
-          ? chain.flatMap((turn) => (turn.message_id ? [turn.message_id] : []))
-          : [],
+      messageIds: said.length > 5 ? [...said.slice(0, 4), said.at(-1)!] : said,
       channel: current.channel,
       scheduleInstruction: run?.authority_instruction ?? undefined,
       ...(run
