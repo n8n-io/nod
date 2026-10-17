@@ -80,6 +80,8 @@ const channels: Record<string, string> = {
 };
 
 const archivedKey = (item: MemoryArchived) => `${item.path}@${item.archived}`;
+const skillTitle = (name: string) =>
+  `${name[0]!.toUpperCase()}${name.slice(1).replaceAll('-', ' ')}`;
 function useCompact() {
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const [compact, setCompact] = useState(false);
@@ -412,7 +414,7 @@ function SkillDetail({
       <Back onBack={onBack} />
       <p className="memory-status">
         <MemoryMark stage="skills" />
-        {skill.name}
+        Skill
       </p>
       {mode === 'edit' ? (
         <form className="memory-form" onSubmit={save}>
@@ -441,7 +443,8 @@ function SkillDetail({
         </form>
       ) : (
         <>
-          <h4 className="memory-text">{skill.description}</h4>
+          <h4 className="memory-text">{skillTitle(skill.name)}</h4>
+          <p className="memory-meta">{skill.description}</p>
           <pre className="memory-skill-body">{skill.body}</pre>
         </>
       )}
@@ -670,7 +673,7 @@ export function Memory() {
             onClick={() => setChosen({ skill: item.name })}
           >
             <MemoryMark stage="skills" />
-            <span className="memory-row-text">{item.description}</span>
+            <span className="memory-row-text">{skillTitle(item.name)}</span>
             <span className="memory-row-meta">{formatDayLabel(item.updated, format)}</span>
           </button>
         ))
