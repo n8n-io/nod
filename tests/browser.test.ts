@@ -3570,7 +3570,7 @@ test(
       await computer.act('state', { action: 'open', url: `${origin}/card` });
       const fields = {
         number: '#number',
-        expiryMonth: { selector: '#month', format: 'MMM', locale: 'en' },
+        expiryMonth: '#month',
         expiryYear: { selector: '#year', format: 'YY' },
         expiry: { selector: '#expiry', format: 'YYYY-MM' },
       };
