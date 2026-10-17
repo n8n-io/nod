@@ -50,7 +50,7 @@ const parallelTools = new Set([
   'task',
   'react_to_message',
 ]);
-const orderedTools = new Set(['apps', 'manage_personal_context']);
+const orderedTools = new Set(['apps', 'manage_personal_context', 'skills']);
 const admissions = new AsyncLocalStorage<{
   asked: boolean;
   admit(asks: boolean): Promise<void>;

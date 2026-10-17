@@ -1189,6 +1189,7 @@ async function initializeApplication(
             throw new Error(
               'Only work the owner started, in chat, a task or a schedule, can save a skill.',
             );
+          await admit?.(false);
           return learnedSkills.learn(args, turn.turnId, (write) =>
             withTurnLock(turn.turnId, write),
           );

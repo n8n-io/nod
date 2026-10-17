@@ -77,13 +77,19 @@ export function createLearnedSkills(options: {
       await options.curator.curate({
         task: 'skill',
         instructions: instructions(sensitive),
-        input: { draft },
+        input: {
+          draft: {
+            name: draft.name,
+            description: options.redact(draft.description),
+            body: options.redact(draft.body),
+          },
+        },
       }),
     );
     if (!reply.success) throw new Error('The skill could not be prepared. Nothing was saved.');
     if (!reply.data.skill) return undefined;
-    const description = skillDescription.safeParse(options.redact(reply.data.skill.description));
-    const body = skillBody.safeParse(options.redact(reply.data.skill.body));
+    const description = skillDescription.safeParse(reply.data.skill.description);
+    const body = skillBody.safeParse(reply.data.skill.body);
     if (!description.success || !body.success)
       throw new Error('The prepared skill was too long or empty. Nothing was saved.');
     if (unsafe(description.data, body.data))
@@ -130,11 +136,11 @@ export function createLearnedSkills(options: {
         if (fresh.sensitive !== tree.sensitive)
           throw new Error('The sensitive-topics setting changed. Save the skill again.');
         const next: Skill = {
+          ...existing,
           name: input.name,
           ...skill,
           learned: existing?.learned ?? now,
           updated: now,
-          ...(existing?.used ? { used: existing.used } : {}),
           ...((existing?.turn ?? turn) ? { turn: existing?.turn ?? turn } : {}),
         };
         fresh.skills = [...fresh.skills.filter((item) => item !== existing), next];

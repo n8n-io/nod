@@ -472,7 +472,15 @@ function SkillDetail({
       ) : (
         mode === 'view' && (
           <div className="memory-actions">
-            <Button variant="outline" size="sm" onClick={() => setMode('edit')}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDescription(skill.description);
+                setBody(skill.body);
+                setMode('edit');
+              }}
+            >
               Edit
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setMode('forget')}>

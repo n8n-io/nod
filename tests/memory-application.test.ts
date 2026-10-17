@@ -86,6 +86,7 @@ test(
       delete process.env.OTTO_SKILL_FIXTURE_API_KEY;
     });
     const reviews: string[] = [];
+    const skillDrafts: string[] = [];
     const contexts: string[] = [];
     let whilePreparing: (() => Promise<void>) | undefined;
     const plans = new Map<string, { steps: Step[]; finalText?: string }>();
@@ -133,6 +134,7 @@ test(
           curate: async ({ task, input }) => {
             if (task === 'review') reviews.push(JSON.stringify(input));
             if (task === 'skill') {
+              skillDrafts.push(JSON.stringify(input));
               await whilePreparing?.();
               const { draft } = input as { draft: { description: string; body: string } };
               return {
@@ -301,6 +303,23 @@ test(
       assert.ok(learned[0].body.includes(marker));
       assert.ok(!learned[0].body.includes('Memory Fixture'));
       assert.ok(!learned[0].body.includes(skillSecret));
+      assert.ok(skillDrafts.length && skillDrafts.every((draft) => !draft.includes(skillSecret)));
+      const edited = await application.app.inject({
+        method: 'PATCH',
+        url: '/api/memory/skills/synthetic-portal-statement',
+        headers,
+        payload: { description: 'Use when exporting the synthetic portal statement.' },
+      });
+      assert.equal(edited.statusCode, 200, edited.body);
+      await ask('Export my synthetic statement once more.', [
+        skill({
+          action: 'save',
+          name: 'synthetic-portal-statement',
+          description: 'Use when exporting a statement from the synthetic portal.',
+          body: `1. ${marker}.`,
+        }),
+      ]);
+      assert.ok((await view()).skills[0].edited);
 
       const routineStart = 'Every weekday I review my synthetic project notes before lunch.';
       await ask(routineStart, [], '');

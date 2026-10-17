@@ -32,7 +32,7 @@ Otto saves silently. It doesn't post a notice in chat.
 
 After a task that took several steps or a workaround, Otto writes down how it did it: the steps on that site or app, the gotchas and what to check at the end. The next time the same job comes up, it follows its own skill instead of working it out again. When a site changes, Otto fixes the skill. Otto saves skills only while **Save new notes** is on, and not for a task you ask it not to remember.
 
-Skills hold no personal details: names, addresses, contact details, order or account numbers, amounts and message content are replaced with placeholders before saving. Because Otto writes them from what it did and read, a web page can shape a skill. A skill never lets Otto act: sending, paying or deleting still goes through the [trust check](/trust/approvals/).
+Before a skill is saved, the memory model replaces names, addresses, contact details, order or account numbers, amounts and message content with placeholders. It's a model, so it can miss something; every skill is under **Skills** for you to check. Because Otto writes them from what it did and read, a web page can shape a skill. A skill never lets Otto act: sending, paying or deleting still goes through the [trust check](/trust/approvals/).
 
 ## How a memory grows
 

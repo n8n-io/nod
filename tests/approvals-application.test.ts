@@ -50,9 +50,10 @@ test(
       {
         subagents: boolean;
         sequential?: boolean;
-        calls: Array<{ action: string; args: Record<string, unknown> }>;
+        calls: Array<{ tool?: string; action: string; args: Record<string, unknown> }>;
       }
     >();
+    const batchErrors: string[] = [];
     const parts = new Map<string, { action: string; args: Record<string, unknown> }>();
     let partsWaiting = 0;
     let partsArrived = () => {};
@@ -115,6 +116,10 @@ test(
                   }
                   await Promise.allSettled(
                     batch.calls.map((call, index) => {
+                      if (call.tool)
+                        return tool(call.tool)
+                          .execute({ action: call.action, ...call.args })
+                          .catch((error: Error) => batchErrors.push(error.message));
                       if (!batch.subagents) return tool('apps').execute(call);
                       const title = `${options.turnId}-${index}`;
                       parts.set(title, call);
@@ -925,6 +930,48 @@ test(
         assert.equal(declined.statusCode, 200, declined.body);
         await waitFor(declined.json().turnId, 'succeeded');
         cleared.clear();
+      });
+
+      await t.test('a skill save issued after a call that asks never runs', async () => {
+        const text = `Synthetic skill after an ask ${randomUUID()}`;
+        batches.set(text, {
+          subagents: false,
+          calls: [
+            {
+              action: 'GMAIL_SEND_EMAIL',
+              args: {
+                recipient_email: 'asked@example.test',
+                subject: 'Synthetic invoices',
+                body: 'Synthetic content.',
+              },
+            },
+            {
+              tool: 'skills',
+              action: 'save',
+              args: {
+                name: 'synthetic-portal-export',
+                description: 'Use when exporting from the synthetic portal.',
+                body: 'Open Synthetic Exports.',
+              },
+            },
+          ],
+        });
+        batchErrors.length = 0;
+        const response = await request('POST', '/api/messages', { text });
+        assert.equal(response.statusCode, 200, response.body);
+        const turn = response.json().turnId as string;
+        await waitFor(turn, 'waiting');
+        assert.deepEqual(batchErrors, [
+          "This turn is waiting for the owner's answer. Ask again after it.",
+        ]);
+        const [card] = await approvalsFor(turn);
+        const declined = await request('POST', '/api/messages', {
+          text: 'No',
+          replyToMessageId: card.confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(declined.statusCode, 200, declined.body);
+        await waitFor(declined.json().turnId, 'succeeded');
       });
 
       await t.test(
