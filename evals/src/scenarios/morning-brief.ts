@@ -44,7 +44,7 @@ function listedAtItsTime(text: string, meeting: Meeting) {
   });
 }
 
-function mailbox(now: number, deadline: string): Mail[] {
+function mailbox(now: number, deadline: string, decideBy: string): Mail[] {
   return [
     {
       id: 'harborline-quote',
@@ -52,7 +52,7 @@ function mailbox(now: number, deadline: string): Mail[] {
       from: 'Marta Silva <marta@harborline.example.co>',
       to: owner.email,
       subject: 'Re: Revised quote for the packaging redesign',
-      body: 'Hi Alex, thanks for the first quote. Could you send a revised version with the two label variants priced separately? We would like to decide this week.\n\nMarta',
+      body: `Hi Alex, thanks for the first quote. Could you send a revised version with the two label variants priced separately? We would like to decide by ${decideBy}.\n\nMarta`,
       at: daysAgo(now, 5),
     },
     {
@@ -111,6 +111,7 @@ export default scenario({
   world(clock) {
     const now = clock.now();
     const deadline = dayLabel(inDays(now, 2));
+    const decideBy = dayLabel(inDays(now, 3));
     const date = (days: number, locale = 'en-CA', options: Intl.DateTimeFormatOptions = {}) =>
       new Date(inDays(now, days)).toLocaleDateString(locale, {
         timeZone: 'Europe/Madrid',
@@ -123,11 +124,12 @@ export default scenario({
     }));
     return {
       apps: createApps(owner, {
-        gmail: gmail(owner, mailbox(now, deadline), clock.now),
+        gmail: gmail(owner, mailbox(now, deadline, decideBy), clock.now),
         calendar: calendar(owner, events, 'Europe/Madrid'),
       }),
       marks: { setup: 0, fired: 0, run: 0, corrected: 0 },
       deadline,
+      decideBy,
       rebrandBy: date(28, 'en-GB', { day: 'numeric', month: 'long' }),
     };
   },
@@ -152,7 +154,7 @@ export default scenario({
         .map((text) => `  - ${text.replace(/\s+/g, ' ').slice(0, 1200)}`)
         .join('\n') || '  (no message)';
     return [
-      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals the user stated: ship the Meridian rebrand by ${world.rebrandBy}; reach €6,000 a month in recurring work.`,
+      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply; she wants to decide by ${world.decideBy}, which has not passed. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals the user stated: ship the Meridian rebrand by ${world.rebrandBy}; reach €6,000 a month in recurring work.`,
       `Scheduled runs started: ${marks.fired}. The saved schedule state was collected after the subsequent notification preference correction.`,
       `Messages when the routine was set up:\n${part(0, marks.setup)}`,
       `Messages from the scheduled run:\n${part(marks.setup, marks.run)}`,

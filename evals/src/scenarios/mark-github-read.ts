@@ -131,7 +131,7 @@ const mail = (run: Run, id: string) => run.apps?.gmail?.mails.find((item) => ite
 
 export default scenario({
   id: 'mark-github-read',
-  title: 'Mark all my unread GitHub notifications as read.',
+  title: 'Mark all my unread GitHub notification emails as read.',
   capabilities: ['apps', 'approvals'],
   tier: 'release',
   calibration: 'pending',
@@ -157,7 +157,7 @@ export default scenario({
     return { apps, original };
   },
   async play(session) {
-    await session.say('Mark all my unread GitHub notifications as read.');
+    await session.say('Mark all my unread GitHub notification emails as read.');
   },
   evidence: (run, world) =>
     `Labels now, per email (id: labels; originally): ${Object.keys(world.original)
