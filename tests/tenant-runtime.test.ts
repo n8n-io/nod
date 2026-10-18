@@ -1081,7 +1081,7 @@ describe('tenant store', () => {
         try {
           for (const queue of queues)
             await queue.stop({ graceful: true, timeout: 1000 }).catch(() => {});
-          await Promise.all(runtimePools.map((pool) => pool.end().catch(() => {})));
+          await Promise.all(runtimePools.map((pool) => pool.end()));
           await admin?.end();
           if (created) {
             const deadline = Date.now() + 5_000;
@@ -1419,6 +1419,7 @@ describe('tenant store', () => {
         async () => {
           await queues[1].stop({ graceful: true, timeout: 1000 });
           await poolB.end();
+          runtimePools.splice(runtimePools.indexOf(poolB), 1);
           await admin!.query('CREATE SCHEMA otto_auth');
           const authPool = new pg.Pool({
             connectionString: url.href,

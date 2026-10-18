@@ -274,7 +274,8 @@ export function createTenantRuntimeHost(options: {
     const entry = entries.get(ownerId);
     if (healthy(entry)) return entry;
     if (entry) await stop(entry);
-    if (closed || deployment) throw new Error('The account runtime is unavailable.');
+    if (closed || deployment || (removing.has(ownerId) && !internal))
+      throw new Error('The account runtime is unavailable.');
     let operation = pending.get(ownerId);
     if (!operation) {
       operation = start(ownerId);
@@ -470,9 +471,10 @@ export function createTenantRuntimeHost(options: {
       !forgetAccount
     )
       throw new DeploymentControlError(409);
-    if (await options.transport.deploymentClosed?.()) throw new DeploymentControlError(409);
     removing.add(ownerId);
     try {
+      if (await options.transport.deploymentClosed?.()) throw new DeploymentControlError(409);
+      if (deployment) throw new DeploymentControlError(409);
       await pending.get(ownerId)?.catch(() => {});
       const registered = Boolean(await tenants.get(ownerId));
       const status = await options.transport.status(ownerId);

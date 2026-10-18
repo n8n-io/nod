@@ -146,7 +146,10 @@ export function createCloudflareRuntimeTransport(
           redirect: 'error',
           signal: AbortSignal.timeout(300_000),
         });
-        if (!response.ok) throw new Error();
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw new Error();
+        }
         return z
           .object({ objects: z.number().int().nonnegative() })
           .strict()

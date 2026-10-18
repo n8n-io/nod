@@ -135,7 +135,7 @@ test('account removal waits for no deployment, blocks a deployment while it runs
     during = [await gate.deprovisioning(ownerId, true), await gate.deprovisioning(ownerId, false)];
     return Response.json({ ok: true, report: { dryRun: true } });
   });
-  await gate.deprovision(removal(true));
+  assert.deepEqual(await gate.deprovision(removal(true)), { ok: true, report: { dryRun: true } });
   assert.deepEqual(during, [true, false]);
   f.reply(async () => Response.json({ ok: true, receipts: [] }));
   await gate.handle(f.request());

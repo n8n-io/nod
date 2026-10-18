@@ -9,6 +9,7 @@ export interface ChannelSetupConfiguration {
 export interface ChannelSetupVerifier {
   verify(provider: ChannelProvider, input: unknown): Promise<ChannelSetupConfiguration>;
   register?(provider: ChannelProvider, configuration: ChannelSetupConfiguration): Promise<void>;
+  unregister?(provider: ChannelProvider, environment: Record<string, string>): Promise<void>;
 }
 export class ChannelSetupFailure extends Error {
   constructor(

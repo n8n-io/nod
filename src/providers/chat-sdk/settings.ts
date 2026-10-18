@@ -212,5 +212,16 @@ export function createChatSdkSetupVerifier(
         throw new ChannelSetupFailure('webhook_failed');
       }
     },
+    async unregister(provider, environment) {
+      if (provider !== 'telegram' || !environment.TELEGRAM_WEBHOOK_SECRET_TOKEN) return;
+      const { botToken } = telegramInput.pick({ botToken: true }).parse({
+        botToken: environment.TELEGRAM_BOT_TOKEN,
+      });
+      await json(`https://api.telegram.org/bot${botToken}/deleteWebhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ drop_pending_updates: true }),
+      });
+    },
   };
 }

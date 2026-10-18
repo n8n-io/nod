@@ -129,7 +129,7 @@ Run this check on the development environment after a change to computer network
 1. As owner A, start a listener and print the workspace's address:
 
    ```sh
-   (python3 -m http.server 8080 --bind 0.0.0.0 >/dev/null 2>&1 &)
+   setsid python3 -m http.server 8080 --bind 0.0.0.0 </dev/null >/dev/null 2>&1 &
    python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('1.1.1.1', 53)); print(s.getsockname()[0])"
    ```
 
@@ -266,7 +266,7 @@ The dry run prints counts and changes nothing. The removal refuses while a deplo
 
 </Steps>
 
-Every step can be repeated, so if the command stops partway or times out, run it again until it reports the account removed. Step 1 starts a stopped runtime, so the user's own schedules or app events can still run briefly before step 2. If the runtime can't start to disconnect apps, add `--skip-release` and revoke those external accounts by hand, since the removal then leaves them at the providers. R2 aborts incomplete multipart uploads on its own after seven days. The tenant and computer Durable Objects keep only identity and checkpoint references, which no new account reuses.
+Every step can be repeated, so if the command stops partway or times out, run it again until it reports the account removed. Step 1 starts a stopped runtime, so the user's own schedules or app events can still run briefly before step 2. If the runtime can't start to disconnect apps, add `--skip-release` and revoke those external accounts by hand, since the removal then leaves them at the providers. Otto deletes its own tokens for MCP sign-ins but can't revoke them at the service, which may list Otto as a connected app until the user removes it. R2 aborts incomplete multipart uploads on its own after seven days. The tenant and computer Durable Objects keep only identity and checkpoint references, which no new account reuses.
 
 Run it once on development with a test account before you use it in production.
 

@@ -465,6 +465,7 @@ test(
     let applied: Record<string, string> = {};
     let failApply = false;
     let loseRegistrationResponse = false;
+    let removals = 0;
     let settings: Awaited<ReturnType<typeof createChannelSettings>>;
     const options = {
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
@@ -478,6 +479,10 @@ test(
             });
           if (path.endsWith('/getWebhookInfo'))
             return Response.json({ ok: true, result: { url: '' } });
+          if (path === `https://api.telegram.org/bot${token}/deleteWebhook`) {
+            removals += 1;
+            return Response.json({ ok: true, result: true });
+          }
           assert.equal(path, `https://api.telegram.org/bot${token}/setWebhook`);
           const body = JSON.parse(String(init?.body));
           const persisted = await settings.environment();
@@ -600,6 +605,7 @@ test(
         200,
       );
       assert.deepEqual(await settings.environment(), { TELEGRAM_ENABLED: 'false' });
+      assert.equal(removals, 1);
       const attempts = registrations.length;
       settings = await createChannelSettings(pool, { ...options, ownerId: 'local-development' });
       assert.equal(await settings.recover(), true);
