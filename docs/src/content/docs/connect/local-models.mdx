@@ -111,6 +111,19 @@ Otto checks the address by listing the server's models. The connection shows the
 
 After you pull or load another model, select the refresh button next to the connection.
 
+## Set the server in `.env`
+
+In a source install, you can set the server in `.env` instead of in the app. It then shows **Server settings** in **Models**, and you remove it from `.env`.
+
+```sh title=".env"
+LLM_PROVIDER=compatible
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
+OPENAI_COMPATIBLE_API_KEY=
+LLM_MODEL=gpt-oss:20b
+```
+
+Leave `OPENAI_COMPATIBLE_API_KEY` empty if the server doesn't need a key, and `LLM_MODEL` empty to use the server's first model. Restart Otto after you edit `.env`. If the server isn't running when Otto starts, start it and select the refresh button next to the connection. See [Configuration](/deploy/configuration/#models).
+
 ## Other OpenAI-compatible services
 
 The same connection works with hosted services that offer an OpenAI-compatible API. Enter the service's address and your API key.

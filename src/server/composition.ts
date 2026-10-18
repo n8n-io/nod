@@ -9,7 +9,7 @@ import {
   type BrowserStep,
   type RuntimeObservation,
 } from '../ports/agent.ts';
-import { lightestEffort } from '../shared/models.ts';
+import { lightestEffort, type ModelProvider } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import {
@@ -68,7 +68,7 @@ import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
-import { createModelService } from './models.ts';
+import { createModelService, endpointAddress } from './models.ts';
 import { createIntegrationKeyService } from './integration-key.ts';
 import { createIntegrationAccess } from './integration-access.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
@@ -205,8 +205,14 @@ export function createDefaultAdapters(
   )
     throw new Error('Set OTTO_FEEDBACK_RECEIPT_URL_PREFIX when using a custom feedback intake.');
   const provider = env.LLM_PROVIDER || 'openai';
-  if (!['openai', 'anthropic', 'openrouter'].includes(provider))
-    throw new Error('LLM_PROVIDER must be openai, anthropic or openrouter.');
+  if (!['openai', 'anthropic', 'openrouter', 'compatible'].includes(provider))
+    throw new Error('LLM_PROVIDER must be openai, anthropic, openrouter or compatible.');
+  const endpoint =
+    env.OPENAI_COMPATIBLE_BASE_URL && endpointAddress(env.OPENAI_COMPATIBLE_BASE_URL);
+  if (env.OPENAI_COMPATIBLE_BASE_URL && !endpoint)
+    throw new Error(
+      'OPENAI_COMPATIBLE_BASE_URL must be a plain http or https address, such as http://localhost:11434/v1.',
+    );
   const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
   const keyStore = checkedKeyStore(
     pool,
@@ -231,12 +237,23 @@ export function createDefaultAdapters(
     origin: publicOrigin,
     local: runtimeMode === 'local',
     bootstrap: {
-      provider: provider as keyof typeof agentModels,
+      provider: provider as ModelProvider,
       model,
-      keys: {
-        openai: env.OPENAI_API_KEY,
-        anthropic: env.ANTHROPIC_API_KEY,
-        openrouter: env.OPENROUTER_API_KEY,
+      credentials: {
+        ...(env.OPENAI_API_KEY && { openai: { type: 'api_key', key: env.OPENAI_API_KEY } }),
+        ...(env.ANTHROPIC_API_KEY && {
+          anthropic: { type: 'api_key', key: env.ANTHROPIC_API_KEY },
+        }),
+        ...(env.OPENROUTER_API_KEY && {
+          openrouter: { type: 'api_key', key: env.OPENROUTER_API_KEY },
+        }),
+        ...(endpoint && {
+          compatible: {
+            type: 'endpoint',
+            url: endpoint,
+            ...(env.OPENAI_COMPATIBLE_API_KEY && { key: env.OPENAI_COMPATIBLE_API_KEY }),
+          },
+        }),
       },
     },
     changed: refresh,

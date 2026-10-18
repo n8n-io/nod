@@ -135,15 +135,17 @@ Spoken replies need an OpenAI API key in server settings (`OPENAI_API_KEY`). An 
 
 ## Set connections in server settings
 
-In a source install, you can add connections in `.env` instead. They show **Server settings** in **Models**, and you remove them from `.env`, not from the app. OpenAI-compatible servers are added only in the app.
+In a source install, you can add connections in `.env` instead. They show **Server settings** in **Models**, and you remove them from `.env`, not from the app.
 
-| Setting              | What it does                                                            |
-| -------------------- | ----------------------------------------------------------------------- |
-| `OPENAI_API_KEY`     | Adds an OpenAI connection. Also enables voice.                          |
-| `ANTHROPIC_API_KEY`  | Adds an Anthropic connection.                                           |
-| `OPENROUTER_API_KEY` | Adds an OpenRouter connection.                                          |
-| `LLM_PROVIDER`       | Sets the first choice: `openai` (default), `anthropic` or `openrouter`. |
-| `LLM_MODEL`          | Sets the first model. Leave it empty for the service default.           |
+| Setting                      | What it does                                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`             | Adds an OpenAI connection. Also enables voice.                                                              |
+| `ANTHROPIC_API_KEY`          | Adds an Anthropic connection.                                                                               |
+| `OPENROUTER_API_KEY`         | Adds an OpenRouter connection.                                                                              |
+| `OPENAI_COMPATIBLE_BASE_URL` | Adds an [OpenAI-compatible server](/connect/local-models/), such as `http://localhost:11434/v1` for Ollama. |
+| `OPENAI_COMPATIBLE_API_KEY`  | The key for that server, if it needs one.                                                                   |
+| `LLM_PROVIDER`               | Sets the first choice: `openai` (default), `anthropic`, `openrouter` or `compatible`.                       |
+| `LLM_MODEL`                  | Sets the first model. Leave it empty for the service default, or the server's first model.                  |
 
 ```sh title=".env"
 LLM_PROVIDER=anthropic

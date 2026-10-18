@@ -32,6 +32,24 @@ const selectionSchema = z
   })
   .strict();
 class ConnectionError extends Error {}
+
+export function endpointAddress(address: string) {
+  let url: URL;
+  try {
+    url = new URL(address.includes('://') ? address : `http://${address}`);
+  } catch {
+    return undefined;
+  }
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    return undefined;
+  return url.href.replace(/\/+$/, '');
+}
 interface Row {
   id: string;
   provider: ModelProvider;
@@ -52,7 +70,7 @@ export function createModelService(options: {
   bootstrap?: {
     provider: ModelProvider;
     model?: string;
-    keys: Partial<Record<ModelProvider, string>>;
+    credentials: Partial<Record<ModelProvider, ModelCredential>>;
   };
   changed?(): void;
 }) {
@@ -143,11 +161,8 @@ export function createModelService(options: {
       )
     ).rows[0];
     if (!row) return undefined;
-    const key = row.managed ? options.bootstrap?.keys[row.provider] : undefined;
     const value = row.managed
-      ? key
-        ? { type: 'api_key' as const, key }
-        : undefined
+      ? options.bootstrap?.credentials[row.provider]
       : (JSON.parse((await vault.read(id, client)).value) as ModelCredential);
     if (!value) return undefined;
     remember(value);
@@ -587,14 +602,15 @@ export function createModelService(options: {
         }
       }
       await reload();
-      const sources = Object.entries(options.bootstrap?.keys ?? {}).sort(
+      const sources = Object.entries(options.bootstrap?.credentials ?? {}).sort(
         ([a], [b]) =>
           Number(b === options.bootstrap?.provider) - Number(a === options.bootstrap?.provider),
       );
-      for (const [provider, key] of sources) {
-        if (!key) continue;
+      for (const [provider, value] of sources) {
+        if (!value) continue;
+        if (provider === 'compatible' && !options.local)
+          throw new Error('OPENAI_COMPATIBLE_BASE_URL works only in local Otto.');
         const existing = rows.find((row) => row.provider === provider && row.managed);
-        const value = { type: 'api_key' as const, key };
         let definitions: ModelDefinition[] | undefined;
         try {
           definitions = await catalog(provider as ModelProvider, 'api_key', value);
@@ -626,38 +642,21 @@ export function createModelService(options: {
         throw new ConnectionError(
           'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
         );
-      let url: URL | undefined;
-      try {
-        url = new URL(address.includes('://') ? address : `http://${address}`);
-      } catch {}
-      if (
-        !url ||
-        !['http:', 'https:'].includes(url.protocol) ||
-        url.username ||
-        url.password ||
-        url.search ||
-        url.hash
-      )
+      const url = endpointAddress(address);
+      if (!url)
         throw new ConnectionError('Enter a server address such as http://localhost:11434/v1.');
-      const base = url.href.replace(/\/+$/, '');
-      for (const candidate of base.endsWith('/v1') ? [base] : [base, `${base}/v1`]) {
-        const value: ModelCredential = {
-          type: 'endpoint',
-          url: candidate,
-          ...(key ? { key } : {}),
-        };
-        remember(value);
-        const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {});
-        if (!definitions) continue;
-        if (!definitions.length)
-          throw new ConnectionError(
-            'This server has no models Otto can use. Otto needs models with tool support.',
-          );
-        return save('compatible', 'api_key', value, definitions);
-      }
-      throw new ConnectionError(
-        'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
-      );
+      const value: ModelCredential = { type: 'endpoint', url, ...(key ? { key } : {}) };
+      remember(value);
+      const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {
+        throw new ConnectionError(
+          'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
+        );
+      });
+      if (!definitions.length)
+        throw new ConnectionError(
+          'This server has no models Otto can use. Otto needs models with tool support.',
+        );
+      return save('compatible', 'api_key', value, definitions);
     },
     async select(input: ModelSelection) {
       const value = selectionSchema.parse(input);

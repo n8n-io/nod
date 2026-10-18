@@ -174,11 +174,19 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     const headers: Record<string, string> = credential.key
       ? { Authorization: `Bearer ${credential.key}` }
       : {};
+    let found: { url: string; data: unknown[] } | undefined;
+    for (const url of credential.url.endsWith('/v1')
+      ? [credential.url]
+      : [credential.url, `${credential.url}/v1`]) {
+      found = await json(`${url}/models`, { headers, redirect: 'error' })
+        .then((body) => ({ url, data: z.object({ data: z.array(z.unknown()) }).parse(body).data }))
+        .catch(() => undefined);
+      if (found) break;
+    }
+    if (!found) throw new Error('The server’s model list could not be loaded.');
     const size = z.number().int().positive().optional().catch(undefined);
     const listed = entries(
-      z
-        .object({ data: z.unknown() })
-        .parse(await json(`${credential.url}/models`, { headers, redirect: 'error' })).data,
+      found.data,
       z.object({
         id: z.string().min(1).max(200),
         context_length: size,
@@ -186,7 +194,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         max_model_len: size,
       }),
     );
-    const root = credential.url.replace(/\/v1$/, '');
+    const root = found.url.replace(/\/v1$/, '');
     const ollamaJson = (path: string, init: RequestInit = {}) =>
       request(`${root}${path}`, {
         ...init,
@@ -224,7 +232,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             name: entry.id,
             api: 'openai-completions',
             provider: 'compatible',
-            baseUrl: credential.url,
+            baseUrl: found.url,
             compat: {
               supportsStore: false,
               supportsDeveloperRole: false,
