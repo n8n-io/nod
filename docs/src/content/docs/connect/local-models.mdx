@@ -1,0 +1,153 @@
+---
+title: Local models
+description: Run Otto on a model on your own computer with Ollama, LM Studio, vLLM or llama.cpp, or connect any service with an OpenAI-compatible API.
+sidebar:
+  order: 2
+---
+
+import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+Otto can use a model that runs on your own computer, or on any server with an OpenAI-compatible API. Model requests then go only to the address you enter, and a local model costs nothing per request.
+
+Local models work in the [desktop app](/get-started/install-desktop/) and [source installs](/get-started/install-from-source/). Hosted Otto doesn't offer them.
+
+:::caution[Your model also decides when Otto asks you]
+Otto's [trust check](/trust/approvals/) runs on your selected model. It decides whether your words cover each app action, website step and sign-in, or whether Otto asks you first. Smaller models make that call less reliably: they can ask more often, or run something you didn't ask for. Use the largest model your computer runs well.
+:::
+
+## Before you start
+
+You need two things from the model server:
+
+- **A model that supports tool calls.** Otto does all its work through tools, so a model without them can only chat.
+- **At least 64,000 tokens of context.** Otto's instructions and tools take about 20,000 tokens before your first message. Most servers start with 4,096, and some cut Otto's instructions off without an error.
+
+## Set up your server
+
+<Tabs syncKey="local-server">
+<TabItem label="Ollama">
+
+<Steps>
+
+1. Install [Ollama](https://ollama.com) and pull a model that supports tools. On ollama.com, filter models by **Tools**.
+
+   ```sh title="Terminal"
+   ollama pull gpt-oss:20b
+   ```
+
+2. Start Ollama with a larger context. In the Ollama app, set **Context length** in **Settings** instead.
+
+   ```sh title="Terminal"
+   OLLAMA_CONTEXT_LENGTH=65536 ollama serve
+   ```
+
+3. Use the address `http://localhost:11434/v1` in Otto.
+
+</Steps>
+
+Otto reads each Ollama model's details. It lists only models that support tools, sends images to vision models, offers the model's thinking levels and uses its context length.
+
+</TabItem>
+<TabItem label="LM Studio">
+
+<Steps>
+
+1. In [LM Studio](https://lmstudio.ai), download a model that supports tools.
+2. Load it with **Context Length** set to 65,536 or more.
+3. Start the server from the **Developer** tab, or run `lms server start`.
+4. Use the address `http://localhost:1234/v1` in Otto.
+
+</Steps>
+
+</TabItem>
+<TabItem label="vLLM">
+
+<Steps>
+
+1. Start [vLLM](https://docs.vllm.ai) with tool calls on. Choose the [tool call parser](https://docs.vllm.ai/en/latest/features/tool_calling.html) that matches your model.
+
+   ```sh title="Terminal"
+   vllm serve <model> --max-model-len 65536 --enable-auto-tool-choice --tool-call-parser <parser>
+   ```
+
+2. Use the address `http://localhost:8000/v1` in Otto. If you started vLLM with `--api-key`, add that key too.
+
+</Steps>
+
+</TabItem>
+<TabItem label="llama.cpp">
+
+<Steps>
+
+1. Start [llama.cpp](https://github.com/ggml-org/llama.cpp)'s server. `--jinja` turns on tool calls.
+
+   ```sh title="Terminal"
+   llama-server -m <model>.gguf -c 65536 --jinja
+   ```
+
+2. Use the address `http://localhost:8080/v1` in Otto.
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+## Connect Otto
+
+<Steps>
+
+1. Open the account menu, select **Models**, then select **Add server** next to **OpenAI-compatible**. During onboarding, pick the **OpenAI-compatible** card instead.
+2. Check the **Server address**. Otto fills in Ollama's address, `http://localhost:11434/v1`. If you leave out `/v1`, Otto tries it for you.
+3. Add an **API key** only if the server needs one. During onboarding, select **Add an API key** first.
+4. Select **Save connection**, or **Connect** during onboarding.
+
+</Steps>
+
+![Onboarding with the OpenAI-compatible card selected and the server address http://localhost:11434/v1 filled in next to Connect.](../../../assets/screens/local-models-onboarding.png)
+
+Otto checks the address by listing the server's models. The connection shows the server's host, such as `localhost:11434`. If you haven't chosen a model yet, Otto selects the server's first one. To switch, select the model name above the message box.
+
+![The Models dialog lists the OpenAI-compatible server localhost:11434 with one model, selected, next to the Add server button.](../../../assets/screens/local-models-settings.png)
+
+After you pull or load another model, select the refresh button next to the connection.
+
+## Other OpenAI-compatible services
+
+The same connection works with hosted services that offer an OpenAI-compatible API. Enter the service's address and your API key.
+
+| Service     | Address                          |
+| ----------- | -------------------------------- |
+| Groq        | `https://api.groq.com/openai/v1` |
+| Together AI | `https://api.together.xyz/v1`    |
+| DeepSeek    | `https://api.deepseek.com/v1`    |
+
+Otto lists every model such a service returns, including ones that can't chat. Pick a chat model that supports tools.
+
+## What changes with these connections
+
+| Area                | With a local or OpenAI-compatible model                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spending            | Otto doesn't know the server's prices, so it records each request at $0. The [monthly limit and task check-ins](/use/spending/) don't stop this work. A paid service still bills you.    |
+| Images              | Only Ollama models that report vision get screenshots and images. Models on other servers get text only.                                                                                 |
+| Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                |
+| Decision checks     | Your selected model reads your replies to confirmations and checks emails that give account access. See [Decision checks](/connect/models/#decision-checks).                             |
+| Background work     | Memory upkeep and other background work use your selected model.                                                                                                                         |
+| Where requests go   | Model requests go only to the address you enter. Web search, websites, your apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                         |
+| Where your key goes | An API key stays in Otto's encrypted key store and is added to each request by the Otto server, like any other model key. See [Where your keys go](/connect/models/#where-your-keys-go). |
+
+## Troubleshooting
+
+| Problem                                                        | Fix                                                                                                                                            |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Otto couldn’t list this server’s models**                    | Check that the server is running, and that the address and API key are right. `curl http://localhost:11434/v1/models` should list your models. |
+| **This server has no models Otto can use**                     | Otto needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                   |
+| Otto ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                     |
+| A new model doesn't appear                                     | Select the refresh button next to the connection.                                                                                              |
+| Otto asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                          |
+
+## Related resources
+
+- [Models](/connect/models/)
+- [Approvals and the trust check](/trust/approvals/)
+- [Spending](/use/spending/)
+- [Your data and privacy](/trust/privacy/)

@@ -75,7 +75,7 @@ const models = {
     },
   ],
   selection: { connectionId: 'fixture-model', modelId: 'fixture-model', effort: 'high' },
-  subscriptionAvailable: false,
+  local: false,
 };
 await mkdir(resolve('.local'), { recursive: true });
 await writeFile(output, '[]\n');

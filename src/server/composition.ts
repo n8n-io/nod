@@ -264,7 +264,11 @@ export function createDefaultAdapters(
         return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim() };
       if (!models.configured) return;
       const access = await models.resolve();
-      if (access.method === 'subscription' || access.provider === 'anthropic') return;
+      if (
+        access.method === 'subscription' ||
+        (access.provider !== 'openai' && access.provider !== 'openrouter')
+      )
+        return;
       const credential = await access.read();
       if (credential?.type !== 'api_key') throw new Error('The model connection is unavailable.');
       return { provider: access.provider, key: credential.key };

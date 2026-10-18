@@ -100,9 +100,9 @@ export function createModelService(options: {
       throw new ConnectionError('This sign-in request has expired. Start a new connection.');
   }
   function remember(value: ModelCredential) {
-    const values = (value.type === 'api_key' ? [value.key] : [value.access, value.refresh]).filter(
-      (secret) => !secrets.has(secret),
-    );
+    const values = (
+      value.type === 'oauth' ? [value.access, value.refresh] : value.key ? [value.key] : []
+    ).filter((secret) => !secrets.has(secret));
     for (const secret of values) secrets.add(secret);
     if (values.length) for (const observer of observers) observer(values);
   }
@@ -262,7 +262,9 @@ export function createModelService(options: {
         const label =
           value.type === 'oauth'
             ? (value.email ?? 'ChatGPT account')
-            : modelSource({ provider, method });
+            : value.type === 'endpoint'
+              ? new URL(value.url).host
+              : modelSource({ provider, method });
         await client.query(
           `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
         ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status WHERE model_connections.owner_id=excluded.owner_id`,
@@ -292,7 +294,7 @@ export function createModelService(options: {
     const preferred =
       (subscription && definitions.find((model) => model.choice.id === 'gpt-6-sol')) ||
       definitions.find((model) => model.choice.id === preferredId) ||
-      (subscription ? definitions[0] : undefined);
+      (subscription || provider === 'compatible' ? definitions[0] : undefined);
     if (
       preferred &&
       status === 'connected' &&
@@ -553,7 +555,7 @@ export function createModelService(options: {
           models: models.map((model) => model.choice),
         })),
         selection,
-        subscriptionAvailable: options.local,
+        local: options.local,
       };
     },
     async initialize() {
@@ -616,6 +618,46 @@ export function createModelService(options: {
       const value: ModelCredential = { type: 'api_key', key };
       remember(value);
       return save(provider, 'api_key', value, await catalog(provider, 'api_key', value));
+    },
+    async addEndpoint(address: string, key?: string) {
+      if (!options.local)
+        throw new ConnectionError('OpenAI-compatible servers are available in local Otto.');
+      if (!options.keyStore.configured)
+        throw new ConnectionError(
+          'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
+        );
+      let url: URL | undefined;
+      try {
+        url = new URL(address.includes('://') ? address : `http://${address}`);
+      } catch {}
+      if (
+        !url ||
+        !['http:', 'https:'].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash
+      )
+        throw new ConnectionError('Enter a server address such as http://localhost:11434/v1.');
+      const base = url.href.replace(/\/+$/, '');
+      for (const candidate of base.endsWith('/v1') ? [base] : [base, `${base}/v1`]) {
+        const value: ModelCredential = {
+          type: 'endpoint',
+          url: candidate,
+          ...(key ? { key } : {}),
+        };
+        remember(value);
+        const definitions = await backend.catalog('compatible', 'api_key', value).catch(() => {});
+        if (!definitions) continue;
+        if (!definitions.length)
+          throw new ConnectionError(
+            'This server has no models Otto can use. Otto needs models with tool support.',
+          );
+        return save('compatible', 'api_key', value, definitions);
+      }
+      throw new ConnectionError(
+        'Otto couldn’t list this server’s models. Check the address, the API key and that the server is running.',
+      );
     },
     async select(input: ModelSelection) {
       const value = selectionSchema.parse(input);
@@ -707,6 +749,17 @@ export function createModelService(options: {
             .strict()
             .parse(request.body);
           await service.addKey(input.provider, input.key);
+          return service.view();
+        });
+        routes.post('/api/models/endpoints', async (request) => {
+          const input = z
+            .object({
+              url: z.string().trim().min(1).max(2000),
+              key: z.string().trim().max(32000).optional(),
+            })
+            .strict()
+            .parse(request.body);
+          await service.addEndpoint(input.url, input.key || undefined);
           return service.view();
         });
         routes.put('/api/models/selection', async (request) => {

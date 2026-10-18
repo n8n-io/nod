@@ -862,14 +862,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       },
     });
     const services: ReturnType<typeof createModelService>[] = [];
-    const create = async (ownerId: string, selectedBackend = backend) => {
+    const create = async (ownerId: string, selectedBackend = backend, local = true) => {
       const service = createModelService({
         database,
         ownerId,
         keyStore,
         backend: selectedBackend,
         origin: 'http://127.0.0.1:4310',
-        local: true,
+        local,
       });
       await service.initialize();
       services.push(service);
@@ -954,6 +954,38 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     );
     await owner.remove(first);
     assert.equal(await captured.read(), undefined);
+  });
+
+  test('OpenAI-compatible servers connect only in local Otto and keep their key encrypted', async (t) => {
+    const f = await fixture(t);
+    const { createServer } = await import('node:http');
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '');
+      const found = request.url === '/v1/models';
+      response.writeHead(found ? 200 : 404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(found ? { data: [{ id: 'fixture-local' }] } : {}));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+    const hosted = await f.create('fixture-hosted', createPiModelBackend(), false);
+    await assert.rejects(hosted.addEndpoint(address, 'fixture-endpoint-key'));
+    assert.deepEqual(requests, []);
+    const owner = await f.create('fixture-owner', createPiModelBackend());
+    const id = await owner.addEndpoint(`${address}/`, 'fixture-endpoint-key');
+    await owner.select({ connectionId: id, modelId: 'fixture-local', effort: 'off' });
+    assert.deepEqual(await (await owner.resolve()).read(), {
+      type: 'endpoint',
+      url: `${address}/v1`,
+      key: 'fixture-endpoint-key',
+    });
+    const stored = JSON.stringify([
+      (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+      (await f.database.query('SELECT * FROM model_connections')).rows,
+    ]);
+    assert.ok(!stored.includes('fixture-endpoint-key'));
   });
 
   test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {

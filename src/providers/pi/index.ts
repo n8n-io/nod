@@ -223,7 +223,8 @@ export function createPiAgent(options: {
         access?.definition.choice.id ||
         options.model ||
         agentModels[options.provider as keyof typeof agentModels];
-      const selectedModel = connection?.model ?? runtime.getModel(options.provider, modelId);
+      const selectedModel =
+        connection?.model ?? (modelId ? runtime.getModel(options.provider, modelId) : undefined);
       if (!selectedModel)
         throw new Error('The configured model is not present in the installed Pi catalog.');
       const model =

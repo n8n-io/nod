@@ -4,7 +4,14 @@ import type { ModelConnection, ModelProvider, ModelsResponse } from '../../../..
 import { modelProviderNames, modelSource } from '../../../../shared/models';
 import { agentModels } from '../../../../shared/model-defaults';
 import { Button, Input } from '../../../components/ui';
-import { modelReady, modelSelection, useModelSignIn, useModels } from '../../../hooks/use-models';
+import { ModelPicker } from '../../../components/models';
+import {
+  localServerAddress,
+  modelReady,
+  modelSelection,
+  useModelSignIn,
+  useModels,
+} from '../../../hooks/use-models';
 import { api, ApiError, errorMessage } from '../../../lib/api';
 import { sessionStore } from '../../../lib/session';
 import type { StepProps } from '..';
@@ -42,15 +49,17 @@ const providers: Record<
     placeholder: 'sk-or-…',
     hint: 'openrouter.ai/keys',
   },
+  compatible: {
+    sub: 'Ollama, LM Studio or vLLM',
+    placeholder: localServerAddress,
+    hint: '',
+  },
 };
 
-const order: ModelProvider[] = ['openai', 'anthropic', 'openrouter'];
 const invalidKey = 'That key didn’t work. Check it and try again.';
 
 function oauthFor(provider: ModelProvider, data: ModelsResponse | null | undefined) {
-  return provider === 'openai' && !data?.subscriptionAvailable
-    ? undefined
-    : providers[provider].oauth;
+  return provider === 'openai' && !data?.local ? undefined : providers[provider].oauth;
 }
 
 function recommended(source: ModelConnection) {
@@ -94,11 +103,18 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   const [choice, setChoice] = useState<ModelProvider | null>(null);
   const [method, setMethod] = useState<'oauth' | 'key' | null>(null);
   const [key, setKey] = useState('');
+  const [url, setUrl] = useState(localServerAddress);
   const [keyError, setKeyError] = useState('');
   const [checking, setChecking] = useState(false);
   const [callback, setCallback] = useState('');
   const keyField = useRef<HTMLInputElement>(null);
   const connections = data?.connections ?? [];
+  const order: ModelProvider[] = [
+    'openai',
+    'anthropic',
+    'openrouter',
+    ...(data?.local ? (['compatible'] as const) : []),
+  ];
   const selected = connections.find((item) => item.id === data?.selection?.connectionId);
   const usable = (provider: ModelProvider) =>
     connections.filter((item) => item.provider === provider && item.status !== 'reconnect');
@@ -152,6 +168,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     setChoice(next);
     setMethod(null);
     setKey('');
+    setUrl(localServerAddress);
     setKeyError('');
     setCallback('');
   }
@@ -168,20 +185,30 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
     event.preventDefault();
     if (checking) return;
     const value = key.trim();
-    if (!value) return setKeyError('Paste your API key first.');
-    if (value.length < 8) return setKeyError(invalidKey);
+    const endpoint = provider === 'compatible';
+    if (endpoint && !url.trim()) return setKeyError('Enter the server address first.');
+    if (!endpoint && !value) return setKeyError('Paste your API key first.');
+    if (!endpoint && value.length < 8) return setKeyError(invalidKey);
     setKeyError('');
     setChecking(true);
     try {
-      const result = await api<ModelsResponse>('/api/models/keys', {
-        method: 'POST',
-        body: JSON.stringify({ provider, key: value }),
-      });
+      const result = await api<ModelsResponse>(
+        endpoint ? '/api/models/endpoints' : '/api/models/keys',
+        {
+          method: 'POST',
+          body: JSON.stringify(
+            endpoint ? { url: url.trim(), key: value } : { provider, key: value },
+          ),
+        },
+      );
       models.update(() => result);
       setKey('');
+      setUrl(localServerAddress);
     } catch (cause) {
       setKeyError(
-        cause instanceof ApiError && cause.status === 400 ? invalidKey : errorMessage(cause),
+        cause instanceof ApiError && cause.status === 400 && !endpoint
+          ? invalidKey
+          : errorMessage(cause),
       );
     } finally {
       setChecking(false);
@@ -210,13 +237,16 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           <Check size={18} strokeWidth={2.5} />
         </span>
         <div className="ob-brain-status-text" data-analytics-public>
-          <p className="ob-brain-title">Connected to {modelSource(shown)}</p>
+          <p className="ob-brain-title">
+            Connected to {shown.provider === 'compatible' ? shown.label : modelSource(shown)}
+          </p>
           <p className="ob-brain-note">
             {shown.status === 'loading'
               ? 'Refresh to load the models for this account.'
               : 'You can add more later in Settings.'}
           </p>
         </div>
+        {shown.provider === 'compatible' && ready && <ModelPicker manageConnections={false} />}
         {(shown.status === 'loading' || (!ready && !recommendation) || models.error) && (
           <Button
             variant="outline"
@@ -308,7 +338,76 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
         </button>
       </div>
     );
-  else
+  else if (provider === 'compatible') {
+    const connect = (
+      <Button type="submit" variant="outline" disabled={checking} data-analytics-public>
+        {checking && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+        {checking ? 'Checking' : 'Connect'}
+      </Button>
+    );
+    panel = (
+      <form className="ob-brain-form" onSubmit={(event) => void saveKey(event)} noValidate>
+        <label className="ob-brain-title" htmlFor="ob-brain-url" data-analytics-public>
+          Server address
+        </label>
+        <div className="ob-brain-row">
+          <Input
+            id="ob-brain-url"
+            type="url"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={2000}
+            placeholder={providers.compatible.placeholder}
+            value={url}
+            disabled={checking}
+            aria-invalid={!!keyError}
+            data-analytics-private
+            onChange={(event) => {
+              setUrl(event.target.value);
+              setKeyError('');
+            }}
+          />
+          {method !== 'key' && connect}
+        </div>
+        {method === 'key' && (
+          <div className="ob-brain-row">
+            <Input
+              ref={keyField}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={32000}
+              placeholder="API key"
+              aria-label="API key"
+              value={key}
+              disabled={checking}
+              data-analytics-private
+              onChange={(event) => {
+                setKey(event.target.value);
+                setKeyError('');
+              }}
+            />
+            {connect}
+          </div>
+        )}
+        <Problem>{keyError}</Problem>
+        <p className="ob-brain-note" data-analytics-public>
+          I also use this model to decide when to ask you before acting. Smaller models decide less
+          reliably.
+        </p>
+        {method !== 'key' && (
+          <button
+            type="button"
+            className="ob-link"
+            data-analytics-public
+            onClick={() => switchMethod('key')}
+          >
+            Add an API key
+          </button>
+        )}
+      </form>
+    );
+  } else
     panel = (
       <form className="ob-brain-form" onSubmit={(event) => void saveKey(event)} noValidate>
         <label

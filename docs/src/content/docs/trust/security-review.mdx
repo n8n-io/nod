@@ -83,7 +83,7 @@ Tests use synthetic data and disposable databases. They never call a live model 
 
 **Does Otto train on our data?** Otto doesn't train models. The model provider you connect processes requests under its own terms.
 
-**Can we choose the model?** Yes. Users connect OpenAI, Anthropic, OpenRouter or a ChatGPT plan. Operators can also provide server-managed keys. There's no setting yet that limits which providers users can add.
+**Can we choose the model?** Yes. Users connect OpenAI, Anthropic, OpenRouter or a ChatGPT plan. In local Otto they can also add an OpenAI-compatible server, such as Ollama, at any address. Hosted Otto refuses these, so a tenant can't point its server at internal addresses. The trust check then runs on that model. Operators can also provide server-managed keys. There's no setting yet that limits which providers users can add.
 
 **Is there single sign-on or an admin console?** Not yet. Hosted mode uses Google sign-in, and each user has one private runtime. There are no organization accounts.
 

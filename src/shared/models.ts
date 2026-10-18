@@ -1,4 +1,4 @@
-export type ModelProvider = 'openai' | 'anthropic' | 'openrouter';
+export type ModelProvider = 'openai' | 'anthropic' | 'openrouter' | 'compatible';
 export type ModelMethod = 'api_key' | 'subscription' | 'oauth';
 export type ModelEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -33,19 +33,20 @@ export interface ModelConnection {
 export interface ModelsResponse {
   connections: ModelConnection[];
   selection: ModelSelection | null;
-  subscriptionAvailable: boolean;
+  local: boolean;
 }
 
 export const modelProviderNames = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   openrouter: 'OpenRouter',
+  compatible: 'OpenAI-compatible',
 } as const;
 
 export function modelSource(connection: Pick<ModelConnection, 'provider' | 'method'>) {
   return connection.method === 'subscription'
     ? 'ChatGPT plan'
-    : connection.provider === 'openrouter'
-      ? 'OpenRouter'
+    : connection.provider === 'openrouter' || connection.provider === 'compatible'
+      ? modelProviderNames[connection.provider]
       : `${modelProviderNames[connection.provider]} API`;
 }

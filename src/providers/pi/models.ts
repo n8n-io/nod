@@ -7,6 +7,7 @@ import {
   type CredentialStore,
 } from '@earendil-works/pi-ai';
 import { ModelRuntime, type ProviderModelConfig } from '@earendil-works/pi-coding-agent';
+import { Agent } from 'undici';
 import { z } from 'zod';
 import { decodeJwt } from 'jose';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
@@ -87,6 +88,54 @@ async function modelListRestricted(response: Response) {
   }
 }
 
+const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+let endpointConnections: Agent | undefined;
+const ollamaShowSchema = z.object({
+  capabilities: z.array(z.string()).catch([]),
+  model_info: z.record(z.string(), z.unknown()).catch({}),
+  parameters: z.string().catch(''),
+  thinking: z
+    .object({ values: z.array(z.union([z.string(), z.boolean()])) })
+    .optional()
+    .catch(undefined),
+});
+
+function ollamaModel(show: z.infer<typeof ollamaShowSchema>) {
+  const trained = Object.entries(show.model_info).find(
+    ([key, value]) => key.endsWith('.context_length') && typeof value === 'number' && value > 0,
+  )?.[1] as number | undefined;
+  const configured = Number(/^num_ctx\s+(\d+)$/m.exec(show.parameters)?.[1]) || undefined;
+  const contextWindow = Math.min(trained ?? Infinity, configured ?? Infinity);
+  const values = show.thinking?.values;
+  const named = levels.filter((level) => values?.includes(level));
+  const thinkingLevelMap = !show.capabilities.includes('thinking')
+    ? undefined
+    : !values
+      ? { off: 'none' }
+      : named.length
+        ? {
+            off: values.includes(false) || values.includes('none') ? 'none' : null,
+            ...Object.fromEntries(
+              levels.map((level) => [level, named.includes(level) ? level : null]),
+            ),
+          }
+        : values.includes(true)
+          ? {
+              off: 'none',
+              ...Object.fromEntries(
+                levels.map((level) => [level, level === 'high' ? 'high' : null]),
+              ),
+            }
+          : undefined;
+  return {
+    tools: show.capabilities.includes('tools'),
+    images: show.capabilities.includes('vision'),
+    contextWindow: Number.isFinite(contextWindow) ? contextWindow : undefined,
+    reasoning: !!thinkingLevelMap,
+    thinkingLevelMap,
+  };
+}
+
 export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): ModelBackend {
   const request = options.fetch ?? fetch;
   let catalogRuntime: Promise<ModelRuntime> | undefined;
@@ -118,6 +167,79 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       },
       spec: JSON.parse(JSON.stringify(model)),
     };
+  }
+  async function endpointCatalog(credential?: ModelCredential) {
+    if (credential?.type !== 'endpoint') throw new Error('Add the server address in Models.');
+    const headers: Record<string, string> = credential.key
+      ? { Authorization: `Bearer ${credential.key}` }
+      : {};
+    const size = z.number().int().positive().optional().catch(undefined);
+    const listed = entries(
+      z
+        .object({ data: z.unknown() })
+        .parse(await json(`${credential.url}/models`, { headers, redirect: 'error' })).data,
+      z.object({
+        id: z.string().min(1).max(200),
+        context_length: size,
+        context_window: size,
+        max_model_len: size,
+      }),
+    );
+    const root = credential.url.replace(/\/v1$/, '');
+    const ollamaJson = (path: string, init: RequestInit = {}) =>
+      request(`${root}${path}`, {
+        ...init,
+        headers: { ...headers, ...init.headers },
+        redirect: 'error',
+        signal: AbortSignal.timeout(15000),
+      })
+        .then((response) => (response.ok ? response.json() : undefined))
+        .catch(() => undefined);
+    const ollama = z
+      .object({ version: z.string() })
+      .safeParse(await ollamaJson('/api/version')).success;
+    const models = await Promise.all(
+      listed.map(async (entry) => {
+        const shown = ollama
+          ? ollamaShowSchema.safeParse(
+              await ollamaJson('/api/show', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: entry.id }),
+              }),
+            )
+          : undefined;
+        const known = shown?.success ? ollamaModel(shown.data) : undefined;
+        if (known && !known.tools) return [];
+        const contextWindow =
+          known?.contextWindow ??
+          entry.context_length ??
+          entry.context_window ??
+          entry.max_model_len ??
+          128_000;
+        return [
+          definition({
+            id: entry.id,
+            name: entry.id,
+            api: 'openai-completions',
+            provider: 'compatible',
+            baseUrl: credential.url,
+            compat: {
+              supportsStore: false,
+              supportsDeveloperRole: false,
+              maxTokensField: 'max_tokens',
+            },
+            reasoning: known?.reasoning ?? false,
+            thinkingLevelMap: known?.thinkingLevelMap,
+            input: known?.images ? ['text', 'image'] : ['text'],
+            contextWindow,
+            maxTokens: Math.min(32_768, Math.floor(contextWindow / 2)),
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          } as Model<Api>),
+        ];
+      }),
+    );
+    return models.flat();
   }
   return {
     async signIn({ signal: requestedSignal }) {
@@ -302,6 +424,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       return ready;
     },
     async catalog(provider: ModelProvider, method: ModelMethod, credential?: ModelCredential) {
+      if (provider === 'compatible') return endpointCatalog(credential);
+      if (credential?.type === 'endpoint') throw new Error('This model connection is unavailable.');
       const subscription = method === 'subscription';
       const account = subscription && credential ? codexCredential(credential) : undefined;
       const local = (await runtime()).getModels(subscription ? 'openai-codex' : provider);
@@ -482,7 +606,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       return { type: 'api_key', key: result.key };
     },
     async refresh(credential) {
-      if (credential.type === 'api_key') return credential;
+      if (credential.type !== 'oauth') return credential;
       const current = codexCredential(credential);
       try {
         const next = codexCredential(await oauth.refresh(current, AbortSignal.timeout(15000)));
@@ -521,11 +645,15 @@ export async function createPiModelRuntime(access: ModelAccess) {
       if (providerId !== provider) return undefined;
       const credential = await access.read();
       if (!credential) throw new Error('The selected model connection is unavailable.');
-      const value = subscription ? codexCredential(credential) : credential;
-      const key = value.type === 'api_key' ? value.key : value.access;
-      for (const secret of value.type === 'api_key' ? [key] : [key, value.refresh, value.accountId])
-        secrets.add(secret);
-      return subscription ? { ...codexCredential(value), refresh: '' } : { type: 'api_key', key };
+      if (subscription) {
+        const value = codexCredential(credential);
+        for (const secret of [value.access, value.refresh, value.accountId]) secrets.add(secret);
+        return { ...value, refresh: '' };
+      }
+      if (credential.type === 'oauth')
+        throw new Error('The selected model connection is unavailable.');
+      if (credential.key) secrets.add(credential.key);
+      return { type: 'api_key', key: credential.key || 'none' };
     },
     async list() {
       return [{ providerId: provider, type: subscription ? 'oauth' : 'api_key' }];
@@ -553,6 +681,18 @@ export async function createPiModelRuntime(access: ModelAccess) {
       ...options,
       maxRetries: 0,
       ...(subscription ? { transport: 'sse' as const } : {}),
+      ...(access.provider === 'compatible'
+        ? {
+            fetch: (input: string | URL | Request, init?: RequestInit) =>
+              fetch(input, {
+                ...init,
+                dispatcher: (endpointConnections ??= new Agent({
+                  headersTimeout: 0,
+                  bodyTimeout: 0,
+                })),
+              } as RequestInit),
+          }
+        : {}),
       onPayload: async (payload, target) => {
         const changed = await options?.onPayload?.(payload, target);
         const body = (changed ?? payload) as Record<string, unknown>;

@@ -2,7 +2,7 @@
 title: MCP servers, APIs and CLIs
 description: Connect Notion and Linear through their MCP servers, and let Otto set up other services through an MCP server, an HTTP API or a command-line tool.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 Besides [Composio apps](/connect/apps/), Otto connects to Notion and Linear through their own MCP servers. For other services, it can set up an MCP server, an HTTP API or a command-line tool (CLI).

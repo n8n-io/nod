@@ -71,6 +71,9 @@
 .model-provider-logo.openrouter {
   mask-image: url('/logos/openrouter.svg');
 }
+.model-provider-logo.compatible {
+  mask-image: url('/logos/server.svg');
+}
 .model-key-form {
   display: grid;
   gap: 12px;
@@ -79,6 +82,12 @@
 .model-key-form > div {
   display: flex;
   gap: 4px;
+}
+.model-key-note {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.6;
+  margin: 0;
 }
 .model-connection {
   padding-top: 16px;

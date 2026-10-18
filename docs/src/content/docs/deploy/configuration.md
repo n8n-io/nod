@@ -48,7 +48,7 @@ Keys set here become server-managed connections. They stay in server memory and 
 | `TTS_MODEL`          | The OpenAI speech model for voice replies.                                                                                 | `gpt-4o-mini-tts`                                                     |
 | `TTS_VOICE`          | The voice for voice replies. Not in `.env.example`.                                                                        | `coral`                                                               |
 
-Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic and ChatGPT subscription connections use the selected chat model for this check. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
+Without `TYPESAFE_API_KEY`, an OpenAI API connection uses GPT Decisions and an OpenRouter connection uses Jev through OpenRouter. Direct Anthropic, ChatGPT subscription and OpenAI-compatible connections use the selected chat model for this check. Your selected model still writes messages. See [Decision checks](/connect/models/#decision-checks) for billing, data routing, and failure behavior.
 
 ## Apps and Composio
 

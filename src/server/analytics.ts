@@ -280,6 +280,10 @@ export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAn
       { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
     ],
     [
+      'POST /api/models/endpoints',
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
+    ],
+    [
       'POST /api/models/oauth',
       {
         event: 'otto_settings_updated',

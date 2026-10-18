@@ -1962,7 +1962,7 @@ test('decision routing uses the selected connection and never sends subscription
   });
   const models = adapters.models!;
   let selected: {
-    provider: 'openai' | 'openrouter' | 'anthropic';
+    provider: 'openai' | 'openrouter' | 'anthropic' | 'compatible';
     method: 'api_key' | 'oauth' | 'subscription';
     key: string;
   } = { provider: 'openai', method: 'api_key', key: 'fixture-owner-one-key' };
@@ -2015,6 +2015,7 @@ test('decision routing uses the selected connection and never sends subscription
   for (const value of [
     { provider: 'anthropic', method: 'api_key', key: 'fixture-anthropic-key' },
     { provider: 'openai', method: 'subscription', key: 'fixture-subscription-token' },
+    { provider: 'compatible', method: 'api_key', key: 'fixture-compatible-key' },
   ] as const) {
     selected = value;
     assert.equal(await check(), undefined);
@@ -2662,6 +2663,91 @@ test('OpenRouter requests in both formats make one provider attempt', async () =
     assert.equal(calls, 1, failed.errorMessage);
   }
   assert.equal(apis.size, 2);
+});
+
+test('OpenAI-compatible servers get tool models, a system message and one attempt without the key', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const shows: Record<string, unknown> = {
+    'fixture-agent:8b': {
+      capabilities: ['completion', 'tools', 'vision', 'thinking'],
+      model_info: { 'llama.context_length': 131072 },
+      parameters: 'num_ctx 65536',
+      thinking: { values: ['low', 'medium', 'high'] },
+    },
+    'fixture-chat:1b': { capabilities: ['completion'], model_info: {} },
+    'fixture-embed': { capabilities: ['embedding'], model_info: {} },
+  };
+  const bodies: Record<string, unknown>[] = [];
+  const headers: (string | undefined)[] = [];
+  const server = createServer((request, response) => {
+    let text = '';
+    request.on('data', (chunk) => (text += chunk));
+    request.on('end', () => {
+      const send = (status: number, value: unknown) => {
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(value));
+      };
+      if (request.url === '/v1/models')
+        return send(200, { data: Object.keys(shows).map((id) => ({ id })) });
+      if (request.url === '/api/version') return send(200, { version: '0.0.0' });
+      if (request.url === '/api/show') return send(200, shows[JSON.parse(text).model]);
+      if (request.url === '/v1/chat/completions') {
+        bodies.push(JSON.parse(text));
+        headers.push(request.headers.authorization);
+        return send(503, { error: { message: `Synthetic failure fixture-endpoint-key` } });
+      }
+      send(404, {});
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const address = server.address() as import('node:net').AddressInfo;
+  const credential = {
+    type: 'endpoint' as const,
+    url: `http://127.0.0.1:${address.port}/v1`,
+    key: 'fixture-endpoint-key',
+  };
+  const definitions = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+  assert.deepEqual(
+    definitions.map(({ choice }) => choice),
+    [
+      {
+        id: 'fixture-agent:8b',
+        name: 'fixture-agent:8b',
+        efforts: ['low', 'medium', 'high'],
+        images: true,
+        contextWindow: 65536,
+      },
+    ],
+  );
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'compatible',
+    method: 'api_key',
+    definition: definitions[0],
+    effort: 'low',
+    read: async () => credential,
+  });
+  const failed = await runtime.completeSimple(
+    model,
+    {
+      systemPrompt: 'Synthetic instructions',
+      messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }],
+    },
+    { maxRetries: 5, reasoning: 'low' },
+  );
+  assert.equal(failed.stopReason, 'error');
+  assert.ok(!JSON.stringify(failed).includes('fixture-endpoint-key'));
+  assert.equal(bodies.length, 1);
+  assert.equal(headers[0], 'Bearer fixture-endpoint-key');
+  const [body] = bodies as { messages: { role: string }[]; reasoning_effort?: string }[];
+  assert.deepEqual(
+    body.messages.map(({ role }) => role),
+    ['system', 'user'],
+  );
+  assert.equal(body.reasoning_effort, 'low');
+  assert.ok('max_tokens' in body && !('max_completion_tokens' in body));
 });
 
 test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {

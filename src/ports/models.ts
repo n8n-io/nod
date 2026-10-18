@@ -2,6 +2,7 @@ import type { ModelChoice, ModelProvider, ModelMethod, ModelEffort } from '../sh
 
 export type ModelCredential =
   | { type: 'api_key'; key: string }
+  | { type: 'endpoint'; url: string; key?: string }
   | {
       type: 'oauth';
       access: string;

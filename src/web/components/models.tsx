@@ -6,6 +6,7 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  Server,
   SlidersHorizontal,
   UserRound,
   X,
@@ -14,7 +15,7 @@ import type { ModelConnection, ModelProvider, ModelsResponse } from '../../share
 import { modelProviderNames, modelSource } from '../../shared/models';
 import { agentModels } from '../../shared/model-defaults';
 import { BrandMark } from './brand';
-import { modelSelection, useModelSignIn, useModels } from '../hooks/use-models';
+import { localServerAddress, modelSelection, useModelSignIn, useModels } from '../hooks/use-models';
 import {
   Button,
   Dialog,
@@ -42,10 +43,18 @@ function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) 
   return (
     <span className={`model-connection-avatar${initials ? '' : ' neutral'}`} aria-hidden="true">
       {initials ||
-        (connection.method === 'api_key' ? <KeyRound size={16} /> : <UserRound size={24} />)}
-      <span className="model-connection-provider">
-        <span className={`model-provider-logo ${connection.provider}`} />
-      </span>
+        (connection.provider === 'compatible' ? (
+          <Server size={16} />
+        ) : connection.method === 'api_key' ? (
+          <KeyRound size={16} />
+        ) : (
+          <UserRound size={24} />
+        ))}
+      {connection.provider !== 'compatible' && (
+        <span className="model-connection-provider">
+          <span className={`model-provider-logo ${connection.provider}`} />
+        </span>
+      )}
     </span>
   );
 }
@@ -58,10 +67,15 @@ export function ModelSettings({
   const models = useModels();
   const [keyProvider, setKeyProvider] = useState<ModelProvider | null>(null);
   const [key, setKey] = useState('');
+  const [url, setUrl] = useState('');
   const flow = useModelSignIn(models);
   const { signIn, pending: signingIn, connect } = flow;
   const [callback, setCallback] = useState('');
-  const dirty = models.busy || signingIn || !!signIn || Boolean(key.trim());
+  const dirty =
+    models.busy ||
+    signingIn ||
+    !!signIn ||
+    Boolean(key.trim() || (url.trim() && url.trim() !== localServerAddress));
   const available = models.data?.connections.filter(
     (connection) => connection.status === 'connected' && connection.models.length > 0,
   ).length;
@@ -87,7 +101,14 @@ export function ModelSettings({
         Connect as many services as you want. All their models appear in one list.
       </p>
       <div className="model-services">
-        {(['openai', 'anthropic', 'openrouter'] as ModelProvider[]).map((provider) => (
+        {(
+          [
+            'openai',
+            'anthropic',
+            'openrouter',
+            ...(data.local ? ['compatible'] : []),
+          ] as ModelProvider[]
+        ).map((provider) => (
           <section
             className="model-service"
             key={provider}
@@ -100,18 +121,19 @@ export function ModelSettings({
                   <h4>{modelProviderNames[provider]}</h4>
                   <p>
                     {provider === 'openai'
-                      ? data.subscriptionAvailable
+                      ? data.local
                         ? 'API key or ChatGPT plan'
                         : 'API key'
                       : provider === 'anthropic'
                         ? 'API key for Claude models'
-                        : 'Many models with one connection'}
+                        : provider === 'openrouter'
+                          ? 'Many models with one connection'
+                          : 'Ollama, LM Studio, vLLM or any other server'}
                   </p>
                 </div>
               </div>
               <div className="model-service-actions">
-                {(provider === 'openrouter' ||
-                  (provider === 'openai' && data.subscriptionAvailable)) && (
+                {(provider === 'openrouter' || (provider === 'openai' && data.local)) && (
                   <Button
                     type="button"
                     className="model-connect-button"
@@ -131,11 +153,12 @@ export function ModelSettings({
                   disabled={busy}
                   onClick={() => {
                     setKey('');
+                    setUrl(localServerAddress);
                     setKeyProvider(keyProvider === provider ? null : provider);
                   }}
                 >
-                  <KeyRound size={16} />
-                  Add API key
+                  {provider === 'compatible' ? <Plus size={16} /> : <KeyRound size={16} />}
+                  {provider === 'compatible' ? 'Add server' : 'Add API key'}
                 </Button>
               </div>
             </div>
@@ -147,31 +170,70 @@ export function ModelSettings({
                   const value = key;
                   setKey('');
                   void models
-                    .change('/api/models/keys', 'POST', { provider, key: value })
+                    .change(
+                      provider === 'compatible' ? '/api/models/endpoints' : '/api/models/keys',
+                      'POST',
+                      provider === 'compatible'
+                        ? { url: url.trim(), key: value }
+                        : { provider, key: value },
+                    )
                     .then((saved) => {
-                      if (saved) setKeyProvider(null);
+                      if (saved) {
+                        setUrl('');
+                        setKeyProvider(null);
+                      }
                     });
                 }}
               >
+                {provider === 'compatible' && (
+                  <Field label="Server address">
+                    <Input
+                      inputMode="url"
+                      value={url}
+                      required
+                      maxLength={2000}
+                      placeholder={localServerAddress}
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoFocus
+                      disabled={busy}
+                      onChange={(event) => setUrl(event.target.value)}
+                    />
+                  </Field>
+                )}
                 <Field
-                  label={`${modelProviderNames[provider]} API key`}
-                  hint="Your saved key stays private."
+                  label={
+                    provider === 'compatible'
+                      ? 'API key (optional)'
+                      : `${modelProviderNames[provider]} API key`
+                  }
+                  hint={provider === 'compatible' ? undefined : 'Your saved key stays private.'}
                 >
                   <Input
                     type="password"
                     value={key}
-                    required
-                    minLength={8}
+                    required={provider !== 'compatible'}
+                    minLength={provider === 'compatible' ? undefined : 8}
                     maxLength={32000}
                     autoComplete="off"
                     spellCheck={false}
-                    autoFocus
+                    autoFocus={provider !== 'compatible'}
                     disabled={busy}
                     onChange={(event) => setKey(event.target.value)}
                   />
                 </Field>
+                {provider === 'compatible' && (
+                  <p className="model-key-note">
+                    Otto also uses this model to decide when to ask you before acting. Smaller
+                    models decide less reliably.
+                  </p>
+                )}
                 <div>
-                  <Button type="submit" size="sm" disabled={busy || !key.trim()}>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={busy || !(provider === 'compatible' ? url.trim() : key.trim())}
+                  >
                     {busy ? 'Connecting…' : 'Save connection'}
                   </Button>
                   <Button
@@ -181,6 +243,7 @@ export function ModelSettings({
                     disabled={busy}
                     onClick={() => {
                       setKey('');
+                      setUrl('');
                       setKeyProvider(null);
                     }}
                   >
@@ -202,7 +265,7 @@ export function ModelSettings({
                           ? 'Reconnect to continue'
                           : connection.status === 'loading'
                             ? 'Connected · Load models to continue'
-                            : `${modelSource(connection)} · ${connection.models.length} models`}
+                            : `${modelSource(connection)} · ${connection.models.length} ${connection.models.length === 1 ? 'model' : 'models'}`}
                         {connection.managed && ' · Server settings'}
                       </span>
                     </div>
@@ -320,8 +383,10 @@ export function ModelSettings({
             Provider conditions
           </a>
         </p>
-        {!data.subscriptionAvailable && (
-          <p className="model-footnote">ChatGPT plan sign-in is available in local Otto.</p>
+        {!data.local && (
+          <p className="model-footnote">
+            ChatGPT plan sign-in and OpenAI-compatible servers are available in local Otto.
+          </p>
         )}
         <p className="model-footnote">Voice needs an OpenAI API key in server settings.</p>
       </details>

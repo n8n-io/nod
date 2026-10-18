@@ -7,6 +7,8 @@ import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
 export type Models = ReturnType<typeof useModels>;
 
+export const localServerAddress = 'http://localhost:11434/v1';
+
 export function useModels() {
   const page = usePageData<ModelsResponse>('/api/models');
   const pending = useRef(false);

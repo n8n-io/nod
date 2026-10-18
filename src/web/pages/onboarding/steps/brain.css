@@ -7,6 +7,9 @@
   grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
   gap: 16px;
 }
+.ob-brain-cards:has(> :nth-child(4)) {
+  grid-template-columns: repeat(auto-fit, minmax(max(176px, 40%), 1fr));
+}
 .ob-brain-rise {
   --rise-from: translateY(14px) scale(0.97);
   display: grid;
@@ -90,6 +93,9 @@
 }
 .ob-brain-logo.openrouter {
   mask-image: url('/logos/openrouter.svg');
+}
+.ob-brain-logo.compatible {
+  mask-image: url('/logos/server.svg');
 }
 .ob-brain-panel {
   display: grid;
