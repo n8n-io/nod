@@ -154,6 +154,20 @@ function open(path: string) {
   }
 }
 
+function questionIds(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const ids = [
+    ...new Set(
+      value
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (!ids.length) throw new Error('--questions needs at least one question ID.');
+  return ids;
+}
+
 export async function main(args: Args) {
   const root = resultsRoot(text(args, 'out'));
   const [first, ...others] = args.positional;
@@ -248,9 +262,7 @@ export async function main(args: Args) {
         sample: text(args, 'sample') === undefined ? undefined : whole(args, 'sample', 1),
         chatSample:
           text(args, 'chat-sample') === undefined ? undefined : whole(args, 'chat-sample', 1),
-        questions: text(args, 'questions')
-          ? [...new Set(text(args, 'questions')!.split(','))]
-          : undefined,
+        questions: questionIds(text(args, 'questions')),
         concurrency: whole(args, 'concurrency', 6),
         budget: number(args, 'budget', 0),
         resume: has(args, 'resume'),
