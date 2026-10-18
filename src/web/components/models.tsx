@@ -262,7 +262,9 @@ export function ModelSettings({
                       <strong>{connection.label}</strong>
                       <span className={`model-connection-meta ${connection.status}`}>
                         {connection.status === 'reconnect'
-                          ? 'Reconnect to continue'
+                          ? connection.provider === 'compatible'
+                            ? 'Can’t reach the server · Refresh to retry'
+                            : 'Reconnect to continue'
                           : connection.status === 'loading'
                             ? 'Connected · Load models to continue'
                             : `${modelSource(connection)} · ${connection.models.length} ${connection.models.length === 1 ? 'model' : 'models'}`}

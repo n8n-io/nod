@@ -2763,6 +2763,55 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
   assert.deepEqual(headers, ['Bearer fixture-endpoint-key', undefined]);
 });
 
+test('LM Studio servers list chat models with their loaded context and vision', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const server = createServer((request, response) => {
+    const body =
+      request.url === '/v1/models'
+        ? {
+            data: ['fixture/vision-chat', 'fixture/embed', 'fixture/unlisted'].map((id) => ({
+              id,
+            })),
+          }
+        : request.url === '/api/v1/models'
+          ? {
+              models: [
+                {
+                  key: 'fixture/vision-chat',
+                  type: 'llm',
+                  max_context_length: 262144,
+                  loaded_instances: [{ config: { context_length: 65536 } }],
+                  capabilities: { vision: true, trained_for_tool_use: true },
+                },
+                { key: 'fixture/embed', type: 'embedding', max_context_length: 2048 },
+              ],
+            }
+          : undefined;
+    response.writeHead(body ? 200 : 404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(body ?? {}));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const definitions = await createPiModelBackend().catalog('compatible', 'api_key', {
+    type: 'endpoint',
+    url: `http://127.0.0.1:${port}`,
+  });
+  assert.deepEqual(
+    definitions.map(({ choice, spec }) => [
+      choice.id,
+      choice.images,
+      choice.contextWindow,
+      spec.baseUrl,
+    ]),
+    [
+      ['fixture/vision-chat', true, 65536, `http://127.0.0.1:${port}/v1`],
+      ['fixture/unlisted', false, 128_000, `http://127.0.0.1:${port}/v1`],
+    ],
+  );
+});
+
 test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const backend = createPiModelBackend({

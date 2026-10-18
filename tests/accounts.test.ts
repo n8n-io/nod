@@ -992,6 +992,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       url: address,
       key: 'fixture-endpoint-key',
     });
+    assert.equal(await owner.addEndpoint(address, 'fixture-rotated-key'), id);
+    assert.equal(owner.view().connections.length, 1);
+    assert.deepEqual(await (await owner.resolve()).read(), {
+      type: 'endpoint',
+      url: address,
+      key: 'fixture-rotated-key',
+    });
     const bootstrap = {
       provider: 'compatible' as const,
       credentials: {
@@ -1017,6 +1024,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     ]);
     assert.ok(!stored.includes('fixture-endpoint-key'));
     assert.ok(!stored.includes('fixture-server-key'));
+    assert.ok(!stored.includes('fixture-rotated-key'));
   });
 
   test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {

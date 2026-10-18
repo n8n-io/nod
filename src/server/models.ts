@@ -656,7 +656,18 @@ export function createModelService(options: {
         throw new ConnectionError(
           'This server has no models Otto can use. Otto needs models with tool support.',
         );
-      return save('compatible', 'api_key', value, definitions);
+      await reload();
+      const same = (
+        await Promise.all(
+          rows
+            .filter((row) => row.provider === 'compatible' && !row.managed)
+            .map(async (row) => ({
+              id: row.id,
+              value: await credential(row.id).catch(() => undefined),
+            })),
+        )
+      ).find((row) => row.value?.type === 'endpoint' && row.value.url === url)?.id;
+      return save('compatible', 'api_key', value, definitions, same, { replace: !!same });
     },
     async select(input: ModelSelection) {
       const value = selectionSchema.parse(input);

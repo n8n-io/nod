@@ -59,6 +59,8 @@ Otto reads each Ollama model's details. It lists only models that support tools,
 
 </Steps>
 
+With LM Studio 0.4 or later, Otto reads each model's details. It skips embedding models, sends images to vision models and uses the context length the model is loaded with, so the model list shows when that's too small.
+
 </TabItem>
 <TabItem label="vLLM">
 
@@ -109,7 +111,7 @@ Otto checks the address by listing the server's models. The connection shows the
 
 ![The Models dialog lists the OpenAI-compatible server localhost:11434 with one model, selected, next to the Add server button.](../../../assets/screens/local-models-settings.png)
 
-After you pull or load another model, select the refresh button next to the connection.
+After you pull or load another model, select the refresh button next to the connection. To change a server's key, add the same address again: Otto updates that connection instead of adding a second one.
 
 ## Set the server in `.env`
 
@@ -141,7 +143,7 @@ Otto lists every model such a service returns, including ones that can't chat. P
 | Area                | With a local or OpenAI-compatible model                                                                                                                                                         |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Spending            | Otto doesn't know the server's prices, so it records each request at $0. That usage doesn't count toward the [monthly limit or task check-ins](/use/spending/). A paid service still bills you. |
-| Images              | Only Ollama models that report vision get screenshots and images. Models on other servers get text only.                                                                                        |
+| Images              | Ollama and LM Studio models that support vision get screenshots and images. Models on other servers get text only.                                                                              |
 | Thinking levels     | Only Ollama models offer them. Other servers use the model's own default.                                                                                                                       |
 | Decision checks     | Your selected model reads your replies to confirmations and checks emails that give account access. See [Decision checks](/connect/models/#decision-checks).                                    |
 | Background work     | Memory upkeep and other background work use your selected model.                                                                                                                                |
@@ -156,6 +158,7 @@ Otto lists every model such a service returns, including ones that can't chat. P
 | **This server has no models Otto can use**                     | Otto needs a model with tool support, and from Ollama it lists only those. Pull or load one, then try again.                                   |
 | Otto ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                     |
 | A new model doesn't appear                                     | Select the refresh button next to the connection.                                                                                              |
+| **Can’t reach the server** next to a connection                | Start the server, then select the refresh button next to the connection.                                                                       |
 | Otto asks before almost everything, or acts without asking     | The model is too small for the trust check. Switch to a larger model.                                                                          |
 
 ## Related resources
