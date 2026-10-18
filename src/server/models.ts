@@ -36,7 +36,11 @@ class ConnectionError extends Error {}
 export function endpointAddress(address: string) {
   let url: URL;
   try {
-    url = new URL(address.includes('://') ? address : `http://${address}`);
+    url = new URL(
+      /^[a-z][a-z\d+.-]*:/i.test(address) && !/^[^/:]+:\d+(\/|$)/.test(address)
+        ? address
+        : `http://${address}`,
+    );
   } catch {
     return undefined;
   }
@@ -44,8 +48,7 @@ export function endpointAddress(address: string) {
     !['http:', 'https:'].includes(url.protocol) ||
     url.username ||
     url.password ||
-    url.search ||
-    url.hash
+    /[?#]/.test(url.href)
   )
     return undefined;
   return url.href.replace(/\/+$/, '');

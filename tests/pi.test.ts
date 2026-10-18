@@ -2763,14 +2763,19 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
   assert.deepEqual(headers, ['Bearer fixture-endpoint-key', undefined]);
 });
 
-test('LM Studio servers list chat models with their loaded context and vision', async (t) => {
+test('LM Studio servers list tool-trained chat models with their loaded context and vision', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const server = createServer((request, response) => {
     const body =
       request.url === '/v1/models'
         ? {
-            data: ['fixture/vision-chat', 'fixture/embed', 'fixture/unlisted'].map((id) => ({
+            data: [
+              'fixture/vision-chat',
+              'fixture/embed',
+              'fixture/no-tools',
+              'fixture/unlisted',
+            ].map((id) => ({
               id,
             })),
           }
@@ -2785,6 +2790,11 @@ test('LM Studio servers list chat models with their loaded context and vision', 
                   capabilities: { vision: true, trained_for_tool_use: true },
                 },
                 { key: 'fixture/embed', type: 'embedding', max_context_length: 2048 },
+                {
+                  key: 'fixture/no-tools',
+                  type: 'llm',
+                  capabilities: { vision: false, trained_for_tool_use: false },
+                },
               ],
             }
           : undefined;

@@ -841,6 +841,38 @@ describe('filesystem Vault key', { skip: process.platform === 'win32' }, () => {
   });
 });
 
+test('server addresses keep host and port, add http and refuse other schemes, sign-ins, queries and fragments', async () => {
+  const { endpointAddress } = await import('../src/server/models.ts');
+  assert.deepEqual(
+    [
+      'localhost:11434',
+      'localhost:11434/v1/',
+      '192.168.1.5:8080',
+      '[::1]:1234/v1',
+      'ollama.local',
+      'https://api.example.test/openai/v1',
+      'file:/tmp',
+      'ftp://example.test',
+      'http://user:secret@localhost:11434',
+      'http://localhost:11434?',
+      'http://localhost:11434/v1#',
+    ].map(endpointAddress),
+    [
+      'http://localhost:11434',
+      'http://localhost:11434/v1',
+      'http://192.168.1.5:8080',
+      'http://[::1]:1234/v1',
+      'http://ollama.local',
+      'https://api.example.test/openai/v1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ],
+  );
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');

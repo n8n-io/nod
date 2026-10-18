@@ -144,12 +144,18 @@ const lmStudioModelSchema = z.object({
   loaded_instances: z
     .array(z.object({ config: z.object({ context_length: z.number().int().positive() }) }))
     .catch([]),
-  capabilities: z.object({ vision: z.boolean().catch(false) }).catch({ vision: false }),
+  capabilities: z
+    .object({
+      vision: z.boolean().catch(false),
+      trained_for_tool_use: z.boolean().optional().catch(undefined),
+    })
+    .catch({ vision: false }),
 });
 
 function lmStudioModel(model: z.infer<typeof lmStudioModelSchema>) {
   return {
-    usable: ['llm', 'vlm'].includes(model.type),
+    usable:
+      ['llm', 'vlm'].includes(model.type) && model.capabilities.trained_for_tool_use !== false,
     images: model.capabilities.vision || model.type === 'vlm',
     contextWindow: model.loaded_instances[0]?.config.context_length ?? model.max_context_length,
     reasoning: false,
@@ -198,10 +204,18 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     for (const url of credential.url.endsWith('/v1')
       ? [credential.url]
       : [credential.url, `${credential.url}/v1`]) {
-      found = await json(`${url}/models`, { headers, redirect: 'error' })
-        .then((body) => ({ url, data: z.object({ data: z.array(z.unknown()) }).parse(body).data }))
-        .catch(() => undefined);
-      if (found) break;
+      const response = await request(`${url}/models`, {
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.timeout(15000),
+      });
+      const list = z
+        .object({ data: z.array(z.unknown()) })
+        .safeParse(response.ok ? await response.json().catch(() => undefined) : undefined);
+      if (list.success) {
+        found = { url, data: list.data.data };
+        break;
+      }
     }
     if (!found) throw new Error('The server’s model list could not be loaded.');
     const size = z.number().int().positive().optional().catch(undefined);
