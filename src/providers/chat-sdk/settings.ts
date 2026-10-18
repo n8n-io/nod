@@ -213,7 +213,7 @@ export function createChatSdkSetupVerifier(
       }
     },
     async unregister(provider, environment) {
-      if (provider !== 'telegram' || !environment.TELEGRAM_WEBHOOK_SECRET_TOKEN) return;
+      if (provider !== 'telegram' || environment.TELEGRAM_MODE !== 'webhook') return;
       const { botToken } = telegramInput.pick({ botToken: true }).parse({
         botToken: environment.TELEGRAM_BOT_TOKEN,
       });
