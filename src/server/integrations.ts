@@ -2226,9 +2226,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               entry.slug === request.params.slug &&
               entry.status === 'disconnected',
           );
-          return options.discovered.signIn(
+          return options.discovered.authorize(
             request.params.slug,
-            undefined,
             expired ? input.connectionId : undefined,
           );
         }

@@ -90,9 +90,7 @@ export function createChannelAccountRegistry(options: {
       return transaction(async (client) => {
         await client.query("SET LOCAL lock_timeout='5s'");
         await client.query("SET LOCAL statement_timeout='5s'");
-        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-          JSON.stringify(['otto-channel-account', schema, ...values.slice(0, 3)]),
-        ]);
+        await client.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`);
         if (lease) {
           const checked = await client.query<{ valid: boolean }>(
             `WITH locked_tenant AS MATERIALIZED (
@@ -150,9 +148,13 @@ export function createChannelAccountRegistry(options: {
     initialize: () =>
       protect(() =>
         transaction(async (client) => {
-          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-            `otto:channel-account-registry:${schema}`,
-          ]);
+          await client.query("SET LOCAL lock_timeout='5s'");
+          if ((await client.query('SELECT to_regclass($1) AS found', [table])).rows[0].found)
+            await client.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`);
+          else
+            await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+              `otto:channel-account-registry:${schema}`,
+            ]);
           await client.query(`CREATE TABLE IF NOT EXISTS ${table} (
             environment text NOT NULL,
             provider text NOT NULL CHECK (provider IN ('telegram','whatsapp')),

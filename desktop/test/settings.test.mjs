@@ -328,6 +328,7 @@ async function runningDesktop(
   request,
   {
     allowStart = false,
+    reportReady = true,
     environment = {},
     platform = 'darwin',
     packaged = false,
@@ -423,6 +424,10 @@ async function runningDesktop(
           child.killed = true;
           child.emit('exit', 0);
         };
+        if (reportReady)
+          setImmediate(() =>
+            child.emit('message', { type: 'otto-ready', port: Number(options.env.PORT) }),
+          );
         children.push(child);
         return child;
       },
@@ -493,6 +498,7 @@ async function runningDesktop(
     engine = {};
     enginePreferencesReady = true;
     engineOrigin = 'http://127.0.0.1:4310';
+    engineBound = true;
     onboardingCompleted = true;
     status.phase = 'ready';
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
@@ -779,6 +785,25 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(current.isDestroyed(), false);
   assert.equal(current.url, new URL(requests.at(-1)).origin);
   assert.equal(f.children.length, 2);
+});
+
+test('the engine token waits for the engine Otto started to report its port', async (t) => {
+  const requests = [];
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      requests.push(url);
+      return Response.json({ ok: true });
+    },
+    { allowStart: true, reportReady: false },
+  );
+  f.crash();
+  const prepared = f.prepare();
+  while (!f.children.length) await new Promise((accept) => setTimeout(accept, 20));
+  await new Promise((accept) => setTimeout(accept, 1000));
+  f.children[0].emit('exit', 1);
+  assert.equal((await prepared).phase, 'error');
+  assert.deepEqual(requests, []);
 });
 
 async function fixture(t) {

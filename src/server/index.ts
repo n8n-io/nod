@@ -116,7 +116,10 @@ if (runtimeMode === 'tenant')
     ownerId,
     generation: runtimeGeneration,
   });
-else if (desktopMode) process.send?.({ type: 'otto-ready', port: listeningPort });
+else if (desktopMode)
+  (
+    process as NodeJS.Process & { parentPort?: { postMessage(message: unknown): void } }
+  ).parentPort?.postMessage({ type: 'otto-ready', port: listeningPort });
 else
   console.log(
     `Otto is ready at http://localhost:${listeningPort}${runtimeMode === 'local' ? `/#access=${await accessKey(dataRoot)}` : ''}`,

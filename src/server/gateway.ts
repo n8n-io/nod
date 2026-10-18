@@ -124,7 +124,8 @@ export async function createGateway(options: {
     throw new Error('Public application origins require HTTPS.');
   const app = Fastify({
     logger: false,
-    bodyLimit: 16 * 1024 * 1024,
+    bodyLimit: 64 * 1024,
+    requestTimeout: 10 * 60_000,
     trustProxy: false,
     forceCloseConnections: true,
   });
@@ -454,24 +455,54 @@ export async function createGateway(options: {
       });
     return sendFetchResponse(reply, result);
   }
-  let uploads = Promise.resolve();
+  const uploads = new Map<string, Promise<void>>();
+  const uploadSlots: (() => void)[] = [];
+  let uploading = 0;
   app.post(
     '/api/uploads',
     {
       bodyLimit: fileBytes + 1024 * 1024,
       onRequest: async (request, reply) => {
-        if (!(await accounts.requirePrincipal(request, reply))) return reply;
-        const previous = uploads;
+        const session = await accounts.requirePrincipal(request, reply);
+        if (!session) return reply;
+        const owner = session.user.id;
+        const previous = uploads.get(owner) ?? Promise.resolve();
+        let closed = false;
         let release!: () => void;
         const done = new Promise<void>((resolve) => (release = resolve));
-        uploads = previous.then(() => done);
-        reply.raw.once('close', release);
+        const lane = previous.then(() => done);
+        uploads.set(owner, lane);
+        void lane.then(() => {
+          if (uploads.get(owner) === lane) uploads.delete(owner);
+        });
+        reply.raw.once('close', () => {
+          closed = true;
+          release();
+        });
         await previous;
+        if (uploading < 2) uploading += 1;
+        else await new Promise<void>((resolve) => uploadSlots.push(resolve));
+        const free = () => {
+          const next = uploadSlots.shift();
+          if (next) next();
+          else uploading -= 1;
+        };
+        if (closed) free();
+        else reply.raw.once('close', free);
       },
     },
     forward,
   );
-  app.all('/api/*', forward);
+  app.all(
+    '/api/*',
+    {
+      bodyLimit: 16 * 1024 * 1024,
+      onRequest: async (request, reply) => {
+        if (!(await accounts.requirePrincipal(request, reply))) return reply;
+      },
+    },
+    forward,
+  );
   app.addHook('onClose', async () => options.runtimes.close());
   return app;
 }

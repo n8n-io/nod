@@ -56,7 +56,7 @@ const receipt = (event, fields = {}) => appendFileSync(fixture.events,
     dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
 app.whenReady().then(() => {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('Fixture encryption is unavailable.');
-  if (app.getVersion() === '1.0.0')
+  if (app.getVersion() === fixture.installed)
     writeFileSync(fixture.encrypted, safeStorage.encryptString(fixture.sentinel), { mode: 0o600, flag: 'wx' });
   const encrypted = readFileSync(fixture.encrypted);
   const owner = JSON.parse(readFileSync(fixture.ownerFile)).ownerId;
@@ -71,7 +71,7 @@ app.whenReady().then(() => {
     managedOwner: 'otto_' + createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex'),
     identityProof: sign(null, Buffer.from(fixture.challenge + ':' + app.getVersion()), identity).toString('base64url'),
   });
-  if (app.getVersion() === '1.0.1') return setTimeout(() => app.quit(), 500);
+  if (app.getVersion() !== fixture.installed) return setTimeout(() => app.quit(), 500);
   autoUpdater.on('error', (error) => {
     receipt('error', { message: String(error.message).slice(0, 2000) });
     app.quit();
@@ -101,11 +101,14 @@ app.whenReady().then(() => {
       platform: 'darwin',
       arch: process.arch,
       asar: false,
-      extendInfo: { NSAppTransportSecurity: { NSAllowsArbitraryLoads: true } },
+      extendInfo: {
+        ElectronSquirrelPreventDowngrades: true,
+        NSAppTransportSecurity: { NSAllowsArbitraryLoads: true },
+      },
     });
     const bundle = join(application, `${fixture.name}.app`);
     await signApplication(bundle, configuration.devDependencies.electron, signingConfiguration());
-    if (fixture.version === '1.0.0') await run('/bin/mv', [bundle, fixture.application]);
+    if (fixture.version === fixture.installed) await run('/bin/mv', [bundle, fixture.application]);
     else await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', bundle, fixture.archive]);
   }
 }
@@ -210,7 +213,7 @@ async function main() {
   try {
     await new Promise((accept) => server.listen(0, '127.0.0.1', accept));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    for (const kind of ['install', 'reject']) {
+    for (const kind of ['install', 'reject', 'downgrade']) {
       const owner = randomUUID();
       const integrationRoot = join(root, `${kind}-profile`, 'profiles', 'local');
       const identityDirectory = join(integrationRoot, 'integration-identity');
@@ -228,6 +231,7 @@ async function main() {
         application: join(root, `OttoFixture-${kind}.app`),
         archive: join(root, `${kind}.zip`),
         feed: `${origin}/${kind}/feed`,
+        installed: kind === 'downgrade' ? '1.0.2' : '1.0.0',
         kind,
       };
       fixture.caches = [fixture.identifier, `${fixture.identifier}.ShipIt`].map((id) =>
@@ -261,8 +265,9 @@ async function main() {
     await writeFile(
       plan,
       JSON.stringify([
-        ...fixtures.map((fixture) => ({ ...fixture, version: '1.0.0' })),
+        ...fixtures.map((fixture) => ({ ...fixture, version: fixture.installed })),
         { ...fixtures[0], version: '1.0.1' },
+        { ...fixtures[2], version: '1.0.1' },
       ]),
     );
     await withAppleSigning(process.execPath, [source, '--package', plan], {
@@ -315,7 +320,9 @@ async function main() {
       );
       const archive = await readFile(fixture.archive);
       const entry = {
-        id: fixture.kind === 'install' ? 'UPD-NATIVE.v3' : 'UPD-SIGNATURE.v3',
+        id: { install: 'UPD-NATIVE.v3', reject: 'UPD-SIGNATURE.v3', downgrade: 'UPD-DOWNGRADE.v1' }[
+          fixture.kind
+        ],
         startedAt: new Date().toISOString(),
         archive: { bytes: archive.length, sha256: sha256(archive) },
         checks: [],
@@ -356,7 +363,9 @@ async function main() {
         'UPD-BASE',
         events.some(
           (event) =>
-            event.event === 'ready' && event.version === '1.0.0' && event.dataHash === before,
+            event.event === 'ready' &&
+            event.version === fixture.installed &&
+            event.dataHash === before,
         ),
       );
       check(
@@ -386,12 +395,15 @@ async function main() {
         );
       } else {
         check(
-          'UPD-REJECT',
-          version === '1.0.0' &&
+          fixture.kind === 'reject' ? 'UPD-REJECT' : 'UPD-NO-DOWNGRADE',
+          version === fixture.installed &&
             events.some(
               (event) =>
                 event.event === 'error' &&
-                /sign|signature|requirement|validation/i.test(event.message),
+                (fixture.kind === 'reject'
+                  ? /sign|signature|requirement|validation/i
+                  : /downgrade|lower version/i
+                ).test(event.message),
             ) &&
             !events.some((event) => event.event === 'downloaded') &&
             installedSignature ===
@@ -512,12 +524,12 @@ async function main() {
       report.checks.push({ id: 'UPD-CLEANUP', pass: false, error: error.message });
     }
     report.finishedAt = new Date().toISOString();
-    report.pass = !failure && report.cases.length === 2;
+    report.pass = !failure && report.cases.length === 3;
     await writeFile(join(output, `${Date.now()}.json`), JSON.stringify(report, null, 2));
   }
   if (failure) throw failure;
   process.stdout.write(
-    'Native update installation, signature rejection, encrypted profile and integration identity preservation passed.\n',
+    'Native update installation, signature and downgrade rejection, encrypted profile and integration identity preservation passed.\n',
   );
 }
 

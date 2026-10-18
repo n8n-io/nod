@@ -331,6 +331,21 @@ test('connected CLI commands run capability-free as their own user in /var/tmp',
   assert.equal(lstatSync(join(root, 'private')).mode & 0o777, 0o700);
 });
 
+test('a computer an older generation left uncertain recovers when the next generation stops it', async (t) => {
+  for (const role of ['browser', 'workspace'] as const) {
+    await t.test(role, async () => {
+      const f = fixture(role, 'uncertain', true);
+      f.generation('2');
+      assert.deepEqual(await f.computer.stopComputer(f.ownerId, '2'), { stopped: true });
+      assert.equal(f.state().generation, '1');
+      assert.equal(f.state().phase, 'ready');
+      assert.equal(f.state().stopped, true);
+      assert.equal(f.container.running, false);
+      assert.equal(Boolean(f.state().notice), role === 'workspace');
+    });
+  }
+});
+
 test('the same controller can launch a new generation after stopping an unused role', async (t) => {
   for (const role of ['browser', 'workspace'] as const) {
     await t.test(role, async (t) => {

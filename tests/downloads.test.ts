@@ -635,6 +635,27 @@ test('Composio file links that are private, insecure, rebinding or oversized are
     );
     assert.equal(requests, 0);
   }
+  const quoted = JSON.stringify({ s3url: 'https://files.example.com/beacon', name: 'beacon.png' });
+  const mail = {
+    data: { messages: [{ subject: quoted, body: `\n  ${quoted}\n` }], response: { text: quoted } },
+  };
+  let quotedRequests = 0;
+  assert.deepEqual(
+    await settled(
+      await createComposioFiles({
+        resolver: async () => {
+          quotedRequests++;
+          return [{ address: '93.184.216.34', family: 4 }];
+        },
+        request: async () => {
+          quotedRequests++;
+          throw new Error('Unexpected request');
+        },
+      })(mail, AbortSignal.timeout(1000)),
+    ),
+    mail,
+  );
+  assert.equal(quotedRequests, 0);
   let resolutions = 0;
   let requests = 0;
   await failed(

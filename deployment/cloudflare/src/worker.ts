@@ -34,7 +34,6 @@ import {
   deploymentPath,
 } from '../../../src/server/deployment-auth.ts';
 import { createGatewayDeployment } from './deployment-gateway.ts';
-import type { DeploymentState } from './deployment-barrier.ts';
 import {
   deploymentProof,
   runtimeDeploymentAcknowledgement,
@@ -314,24 +313,6 @@ export class GatewayContainer extends Container<Bindings> {
 
   deploymentClosed() {
     return this.deploymentControl().closed();
-  }
-
-  async deploymentRetirementIdentity(raw: DeploymentInput) {
-    const input = deploymentInputSchema.parse(raw);
-    if (!(await this.deploymentClosed())) throw new RuntimeControlError(409);
-    const state = await this.ctx.storage.get<DeploymentState>('deployment-barrier');
-    const configured = environmentValues(JSON.parse(this.env.GATEWAY_ENV));
-    if (
-      state?.phase !== 'draining' ||
-      state.nonce !== input.nonce ||
-      state.targetRelease !== input.targetRelease ||
-      state.deadline !== input.deadline ||
-      state.previousRelease !== configured.OTTO_RELEASE ||
-      input.deadline <= Date.now() ||
-      input.deadline > Date.now() + deploymentMaximumDuration
-    )
-      throw new RuntimeControlError(409);
-    return { previousRelease: state.previousRelease };
   }
 
   override async onActivityExpired() {}
@@ -654,47 +635,6 @@ export class TenantContainer extends Container<Bindings> {
     )
       throw new RuntimeControlError(409);
     return identity;
-  }
-
-  async deploymentUnusedComputerIdentity(owner: string, version: string, raw: DeploymentInput) {
-    const ownerId = ownerIdentity(owner);
-    const expected = generation(version);
-    const input = deploymentInputSchema.parse(raw);
-    const witness = this.deploymentWitness;
-    const barrier = () =>
-      this.env.GATEWAY.getByName(gatewayName(this.env)).deploymentRetirementIdentity(input);
-    if (!witness || !deploymentProof(witness.proof, input, expected))
-      throw new RuntimeControlError(409);
-    const operation = await barrier();
-    const identity = await this.deploymentComputerIdentity(ownerId, expected, input);
-    const [attempt, proof, resumed] = await Promise.all([
-      this.ctx.storage.get<RuntimeDeploymentProof>('deployment-attempt'),
-      this.ctx.storage.get<RuntimeDeploymentProof>('deployment-proof'),
-      this.ctx.storage.get<RuntimeDeploymentProof>('deployment-resume'),
-    ]);
-    if (
-      !deploymentProof(attempt, input, expected) ||
-      !deploymentProof(proof, input, expected) ||
-      deploymentProof(resumed, input, expected)
-    )
-      throw new RuntimeControlError(409);
-    const currentOperation = await barrier();
-    const latest = await this.ctx.storage.get<TenantIdentity>('identity');
-    if (
-      !latest ||
-      latest.ownerId !== ownerId ||
-      latest.environment !== identity.environment ||
-      latest.generation !== expected ||
-      latest.configurationHash !== identity.configurationHash ||
-      latest.stopped ||
-      latest.revoking ||
-      latest.leaseExpiresAt <= Date.now() ||
-      currentOperation.previousRelease !== operation.previousRelease ||
-      this.deploymentWitness !== witness ||
-      input.deadline <= Date.now()
-    )
-      throw new RuntimeControlError(409);
-    return latest;
   }
 
   async prepareDeploymentDrain(owner: string, version: string, raw: DeploymentInput) {

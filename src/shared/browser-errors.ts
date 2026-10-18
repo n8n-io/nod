@@ -13,7 +13,7 @@ const browserErrors = {
   browser_card_paused:
     'A private entry document is still open. Reload it before Pi reads or controls it. Check the result before another attempt.',
   browser_script_paused:
-    'A field Otto filled privately still holds its value, so page scripts are paused. Use snapshot or screenshot, or continue once the page moves on.',
+    'Otto filled a private value on this page, so page scripts are paused here. Use snapshot or screenshot, or reload or move on before running a script.',
   browser_card_reload:
     'A script ran on this document, so Otto will not enter a saved value on it. Reload the page and take a fresh snapshot before a new private operation.',
   browser_card_field:

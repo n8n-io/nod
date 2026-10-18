@@ -60,7 +60,7 @@ If a download isn't available, you can import the matching `Otto-Runtime-darwin-
 
 ## Access and keys
 
-The server listens on a loopback port that needs a token, created again at every launch. Only the app's own windows receive it, so a website in your normal browser can't reach Otto.
+The server listens on a loopback port that needs a token, created again at every launch. Only the app's own windows receive it, so a website in your normal browser can't reach Otto. The app sends the token only after the server it started reports that port, so another program that takes the port first never gets it.
 
 Electron `safeStorage` encrypts the Vault key. It uses the macOS key store on a Mac and DPAPI on Windows. Model connections and saved logins are encrypted with the Vault key. None of them enter the containers.
 
@@ -113,7 +113,7 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
 
-Otto downloads the new app or installer and, when it changed, the new runtime pack before it offers the restart. On Windows, the restart runs the installer in the background and opens Otto again.
+Otto downloads the new app or installer and, when it changed, the new runtime pack before it offers the restart. On a Mac, an update must be signed by n8n, and Otto refuses one with a lower version number, so an update feed can't roll Otto back to an older build. On Windows, the restart runs the installer in the background and opens Otto again.
 
 Otto keeps its profile, credentials and container volumes. A runtime update replaces tools and images without resetting the database.
 

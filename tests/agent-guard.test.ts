@@ -106,7 +106,7 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
 }
 
 test('verification email codes stay out of app tool results and workspace files', async () => {
-  const privateCodes = ['318742', '640193', '729461', '803527', '516294'];
+  const privateCodes = ['318742', '640193', '729461', '803527', '516294', '927364'];
   const encodedBody = Buffer.from(
     `<p>Your sign-in code is <b>${privateCodes[2]}</b>.</p>`,
   ).toString('base64url');
@@ -117,6 +117,12 @@ test('verification email codes stay out of app tool results and workspace files'
     subject: 'Order 452619 has shipped',
     preview: 'Your tracking reference is 852741.',
     body: 'Your product code is 762150. Discount code: 246810. Please review the code in this example.',
+  };
+  const ordinaryNested = {
+    id: 'nested-receipt',
+    subject: 'Order 452619 has shipped',
+    from: { emailAddress: { name: 'Shop', address: 'receipts@shop.example' } },
+    body: { contentType: 'text', content: 'Your tracking reference is 852741.' },
   };
   const mails = [
     {
@@ -185,6 +191,17 @@ test('verification email codes stay out of app tool results and workspace files'
       sender: 'login@example.test',
       subject,
     })),
+    {
+      id: 'nested-code',
+      subject: 'Your account',
+      from: { emailAddress: { name: 'Example', address: 'login@example.test' } },
+      toRecipients: [{ emailAddress: { address: 'owner@example.test' } }],
+      body: {
+        contentType: 'html',
+        content: `<p>Your verification code is ${privateCodes[5]}.</p>`,
+      },
+    },
+    ordinaryNested,
     ordinary,
   ];
   const results = [
@@ -211,7 +228,7 @@ test('verification email codes stay out of app tool results and workspace files'
   for (const record of [...returned, ...saved])
     for (const code of [...privateCodes, encodedBody])
       assert.ok(!JSON.stringify(record).includes(code));
-  assert.deepEqual(JSON.parse(saved[0]).data.messages.at(-1), ordinary);
+  assert.deepEqual(JSON.parse(saved[0]).data.messages.slice(-2), [ordinaryNested, ordinary]);
 });
 
 test('skill reads cannot escape the trusted library or load workspace instructions', async () => {

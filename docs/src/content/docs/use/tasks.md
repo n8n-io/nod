@@ -40,7 +40,7 @@ The same compact task preview appears in chat and on the Tasks page. It shows th
 
 ## Reply or stop one task
 
-Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. Otto can send that message to one or more tasks when your intent is clear. If the target is unclear, Otto asks.
+Reply to a task message to continue that task. You can reply to its first message, a question or a result. Telegram and WhatsApp use their reply controls. A message without a reply target goes to the main chat. Otto can send that message to one or more open tasks when your intent is clear. If the target is unclear, Otto asks. To pick up a finished or stopped task, reply to one of its messages.
 
 An owner update has a revision. **Owner update queued** means the task has not received it at an execution boundary. An outside action that has already started can still finish. Other tasks continue while one task waits for your answer.
 

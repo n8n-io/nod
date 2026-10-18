@@ -48,6 +48,12 @@ function fixture(role: 'browser' | 'workspace' = 'browser') {
       state = { ...input, phase: 'ready', checkpoint: { ...checkpoint, id: randomUUID() } };
       return state;
     },
+    async recover(input) {
+      if (input.phase !== 'uncertain' && input.phase !== 'restoring') return input;
+      events.push('recover');
+      state = { ...input, phase: 'ready', stopped: true };
+      return state;
+    },
     async stop() {
       events.push('stop');
       running = false;
@@ -142,10 +148,24 @@ test('deployment drain refuses uncertain, unobserved, foreign and newer computer
   }
 });
 
+test('a computer whose container is gone recovers to its last checkpoint and drains', async () => {
+  for (const phase of ['uncertain', 'restoring'] as const)
+    for (const generation of ['1', '2']) {
+      const f = fixture();
+      f.options.state = { ...f.options.state!, phase, generation };
+      f.setRunning(false);
+      assert.equal((await f.run()).status, 'drained');
+      assert.deepEqual(f.events, ['recover']);
+      assert.equal(f.state().phase, 'ready');
+      assert.equal(f.state().stopped, true);
+    }
+});
+
 test('only clean stopped state permits idempotent drain or an unused newer generation', async () => {
   for (const generation of ['1', '2']) {
     const f = fixture();
     f.options.state = { ...f.options.state!, phase: 'ready', stopped: true, generation };
+    f.options.fenced = generation === '2';
     f.setRunning(false);
     assert.equal((await f.run()).status, 'drained');
     assert.deepEqual(f.events, []);
@@ -215,7 +235,6 @@ test('read-only stopped inspection accepts only absent or clean exact-owner curr
     generation: '2',
     state,
     active: 0,
-    fenced: false,
     running: false,
   };
   assert.equal(cleanStoppedComputer(input), true);
@@ -225,7 +244,6 @@ test('read-only stopped inspection accepts only absent or clean exact-owner curr
     { generation: null },
     { generation: '1' },
     { active: 1 },
-    { fenced: true },
     { running: true },
     { state: { ...state, stopped: false } },
     { state: { ...state, phase: 'dirty' as const } },

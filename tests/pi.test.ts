@@ -409,6 +409,48 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
         ).content,
       ).replaceAll(name, 'file.mp4');
     assert.equal(await hostFile('host.mp4'), await hostFile('missing.mp4'));
+    for (const tool of extension.tools.values()) {
+      const properties = (tool.definition.parameters as { properties?: object }).properties ?? {};
+      assert.equal('proxy' in properties || 'workflow' in properties, false);
+    }
+    assert.ok('query' in (webSearch.definition.parameters as { properties: object }).properties);
+    const dns = (await import('node:dns')).default;
+    const { syncBuiltinESMExports } = await import('node:module');
+    const { createServer } = await import('node:http');
+    const reached: string[] = [];
+    const server = createServer((request, response) => {
+      reached.push(`${request.method} ${request.url}`);
+      response.end('<html><body><p>Loopback service</p></body></html>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const validate = dns.promises.lookup;
+    const connect = dns.lookup;
+    dns.promises.lookup = (async () => [{ address: '93.184.216.34', family: 4 }]) as never;
+    dns.lookup = ((_host: string, options: unknown, callback: (...args: unknown[]) => void) =>
+      typeof options === 'object' && (options as { all?: boolean }).all
+        ? callback(null, [{ address: '127.0.0.1', family: 4 }])
+        : callback(null, '127.0.0.1', 4)) as never;
+    syncBuiltinESMExports();
+    try {
+      for (const args of [
+        { url: `http://rebind.test:${port}/direct` },
+        { url: `http://rebind.test:${port}/proxied`, proxy: `http://127.0.0.1:${port}` },
+      ])
+        await fetchContent.definition.execute(
+          'call',
+          args,
+          undefined,
+          undefined,
+          undefined as never,
+        );
+    } finally {
+      dns.promises.lookup = validate;
+      dns.lookup = connect;
+      syncBuiltinESMExports();
+      server.close();
+    }
+    assert.deepEqual(reached, []);
     await session.dispose();
   } finally {
     await agent.dispose();

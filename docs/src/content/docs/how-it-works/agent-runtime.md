@@ -75,7 +75,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/otto
 | `web_search`, `fetch_content`, `get_search_content`, `source_check` | Web research from the pinned `pi-web-access` extension. It never reads local files.                                                          |
 | `codemode`                                                          | Runs a model-written script that calls workspace and web tools.                                                                              |
 
-The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
+The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, and Otto drops any proxy the model names. Its settings live in `OTTO_DATA_ROOT/pi/web-search.json`.
 
 ## The turn guard
 

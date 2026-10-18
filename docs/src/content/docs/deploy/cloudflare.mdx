@@ -139,6 +139,8 @@ When a conversation turn ends waiting for the user, the tenant holds its running
 If a workspace container is lost before its next checkpoint, recent changes are lost. The model is told on its next command.
 :::
 
+If a command is interrupted, Otto can't tell what it changed, so it destroys that computer and refuses it for the rest of the tenant's generation. The next generation restores the last checkpoint and tells the model what was lost.
+
 A workspace too large to save keeps running on its previous checkpoint, and the model's next bash output says what to delete. Unsaved changes are dropped when it sleeps, stops or drains. This never blocks a deploy.
 
 ## CI and rollout
@@ -158,7 +160,7 @@ A workspace too large to save keeps running on its previous checkpoint, and the 
 
 1. Push all three images and resolve their digests.
 2. Close a durable admission barrier, authorized by an HMAC derived from `OTTO_MASTER_KEY`.
-3. Drain each tenant, then require clean browser and workspace checkpoints and a confirmed stop of each exact generation. Active holds, uncertain state or an expired deadline block the deploy. Nothing is force-cancelled.
+3. Drain each tenant, then require clean browser and workspace checkpoints and a confirmed stop of each exact generation. Active holds, a computer still running after an interrupted command or an expired deadline block the deploy. A computer whose container is already gone goes back to its last checkpoint instead. Nothing is force-cancelled.
 4. Publish Worker code, image references and `GATEWAY_ENV` together with `wrangler deploy --secrets-file`.
 5. Verify every container application's image and rollout, the R2 binding and a public smoke test, then reopen admission.
 
@@ -193,6 +195,8 @@ node deployment/cloudflare/scripts/recover.mjs production complete
 
 Use `abort` only before activation and `complete` only after it. A failed or expired deployment never reopens on its own. Don't delete the barrier, substitute a nonce or clear a fence to get past a failure.
 
+If `status` shows a deployment that failed while draining, for example because a tenant's computer was left uncertain, run `abort`. It stops each tenant the drain couldn't account for, confirms its runtime and computers are stopped cleanly, and reopens admission. If a tenant still can't be confirmed, admission stays closed and `abort` can be retried. Then start a new deployment.
+
 Before a rollback, confirm the previous code supports the current SQL schema, Durable Object classes, checkpoint format and keys, and stop the current generations. A Worker rollback doesn't revert PostgreSQL, R2 or completed external actions, so prefer a forward fix.
 
 ## Reset the database
@@ -220,7 +224,7 @@ If a provider or database call fails partway, keep admission closed and verify a
 
 ## Optional: E2B computers
 
-E2B runs one sandbox per user, with the browser, workspace and connected CLIs as separate Linux users behind an nftables guard. Cloudflare remains the selected hosted provider.
+E2B runs one sandbox per user, with the browser, workspace and connected CLIs as separate Linux users behind an nftables guard. Only root reaches E2B's control port, and the browser keeps its temporary files, including its display cookie, in a private folder. Cloudflare remains the selected hosted provider.
 
 ```sh title="Terminal"
 node --import tsx deployment/e2b/build.ts computer --check

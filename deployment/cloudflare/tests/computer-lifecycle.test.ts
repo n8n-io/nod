@@ -249,7 +249,8 @@ test('lost isolate or VM cannot replay an uncheckpointed action', async () => {
     else f.loseVm();
     await assert.rejects(f.launch(id));
     assert.equal(f.events.filter((event) => event === 'launch').length, 1);
-    assert.equal(f.state()?.phase, 'uncertain');
+    assert.equal(f.state()?.phase, 'ready');
+    assert.equal(f.state()?.stopped, true);
     assert.equal(f.running(), false);
     await assert.rejects(f.launch());
   }
@@ -353,12 +354,10 @@ test('deployment drain leaves held browsers running and checkpoints only after n
   await assert.rejects(f.launch());
 });
 
-test('a newer tenant stop cannot accept live, dirty, uncertain, newer or foreign prior computer state', async () => {
+test('a newer tenant stop cannot accept live, dirty, newer or foreign prior computer state', async () => {
   const changes: Array<Partial<ComputerState>> = [
     { stopped: false },
     { phase: 'dirty' },
-    { phase: 'restoring' },
-    { phase: 'uncertain' },
     { generation: '3' },
     { ownerId: randomUUID() },
     { environment: 'production' },
@@ -394,6 +393,27 @@ test('a newer tenant stop cannot accept live, dirty, uncertain, newer or foreign
   assert.deepEqual(active.state(), saved);
 });
 
+test('a newer tenant stop recovers an older computer that never finished stopping or restoring', async () => {
+  for (const phase of ['uncertain', 'restoring'] as const)
+    for (const stopped of [true, false]) {
+      const f = fixture();
+      f.seed({
+        ownerId: f.ownerId,
+        environment: 'development',
+        generation: '1',
+        role: 'workspace',
+        phase,
+        stopped,
+      });
+      await f.lifecycle.stop(f.ownerId, '2');
+      assert.equal(f.state()?.generation, '1');
+      assert.equal(f.state()?.phase, 'ready');
+      assert.equal(f.state()?.stopped, true);
+      assert.equal(f.running(), false);
+      await f.launch(randomUUID(), '3');
+    }
+});
+
 test('failed checkpoint preserves its predecessor and quarantines the whole role', async () => {
   const f = fixture();
   const first = randomUUID();
@@ -408,7 +428,8 @@ test('failed checkpoint preserves its predecessor and quarantines the whole role
   });
   await f.completed(second);
   await f.settled();
-  assert.equal(f.state()?.phase, 'uncertain');
+  assert.equal(f.state()?.phase, 'ready');
+  assert.equal(f.state()?.stopped, true);
   assert.deepEqual(f.state()?.checkpoint, checkpoint);
   assert.deepEqual(f.removed, []);
   assert.equal(f.running(), false);
@@ -486,22 +507,42 @@ test('unsaved workspace changes lost with their computer, stop or deployment are
   }
 });
 
-test('failed native launch and nonzero bridge exit remain durably uncertain', async () => {
+test('failed native launch and nonzero bridge exit end the generation and the next one restores the last save', async () => {
   for (const failLaunch of [true, false]) {
     const f = fixture();
+    const saved = randomUUID();
+    await f.launch(saved);
+    await f.completed(saved);
+    await f.settled();
+    const checkpoint = f.state()?.checkpoint;
     const id = randomUUID();
     if (failLaunch) {
       f.beforeLaunch(async () => {
         throw new Error('Synthetic private launch failure');
       });
       await assert.rejects(f.launch(id));
+      f.beforeLaunch(async () => {});
     } else {
       await f.launch(id);
-      await assert.rejects(f.completed(id, '1', 1));
+      await assert.rejects(f.completed(id, '1', 137));
     }
-    assert.equal(f.state()?.phase, 'uncertain');
+    assert.equal(f.state()?.phase, 'ready');
+    assert.equal(f.state()?.stopped, true);
     assert.equal(f.running(), false);
     await assert.rejects(f.launch());
+    await f.lifecycle.stop(f.ownerId, '1');
+    f.restart();
+    const { message } = await session(f, '2');
+    assert.ok(message);
+    assert.deepEqual(f.restored.at(-1)?.checkpoint, checkpoint);
+    await f.lifecycle.stop(f.ownerId, '2');
+    const drained = await f.lifecycle.drain(
+      f.ownerId,
+      '2',
+      { nonce: randomUUID(), targetRelease: 'a'.repeat(40), deadline: Date.now() + 60_000 },
+      { authorize: async () => {}, active: () => 0 },
+    );
+    assert.equal(drained.status, 'drained');
   }
 });
 
@@ -525,11 +566,12 @@ test('late native launch and delayed destruction finish before stopped state or 
   release.resolve();
   await launching;
   await stopping;
-  assert.equal(f.state()?.phase, 'uncertain');
+  assert.equal(f.state()?.phase, 'ready');
   assert.equal(f.state()?.stopped, true);
   assert.equal(f.running(), false);
   f.restart();
-  await assert.rejects(f.launch(randomUUID(), '2'));
+  await assert.rejects(f.launch(randomUUID(), '1'));
+  await f.launch(randomUUID(), '2');
 });
 
 test('restoration authorization expiry blocks dispatch and destroys the partial computer', async () => {
@@ -611,7 +653,8 @@ test('browser uncertainty fences every concurrent action and never checkpoints p
   await f.lifecycle.uncertain(f.ownerId, '1');
   await assert.rejects(f.completed(first));
   await assert.rejects(f.completed(second));
-  assert.equal(f.state()?.phase, 'uncertain');
+  assert.equal(f.state()?.phase, 'ready');
+  assert.equal(f.state()?.stopped, true);
   assert.equal(f.lifecycle.active, 0);
   assert.equal(f.running(), false);
   assert.equal(f.events.includes('checkpoint'), false);
@@ -712,8 +755,12 @@ test('idle recovery after controller eviction preserves clean checkpoints and qu
         false,
       );
       if (phase === 'dirty' || phase === 'uncertain') {
-        assert.equal(f.state()?.phase, 'uncertain');
+        assert.equal(f.state()?.phase, 'ready');
+        assert.equal(f.state()?.stopped, true);
         await assert.rejects(f.launch(), { status: 503 });
+        f.restart();
+        await f.launch(randomUUID(), '2');
+        assert.deepEqual(f.restored.at(-1)?.checkpoint, state.checkpoint);
       } else {
         assert.equal(f.state()?.phase, phase);
         await f.launch();

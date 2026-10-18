@@ -898,9 +898,9 @@ test('a card goes only into the approved fields on the approved sites and stays 
     model.failMasks = false;
     assert.doesNotMatch(seen, /4242|: 737/);
     assert.match(seen, /"Expiry"[^\n]*: 08\/30/);
-    assert.match(
-      (await computer.act('shop', { action: 'evaluate', script: 'document.title' })).text,
-      /Script result/,
+    await assert.rejects(
+      computer.act('shop', { action: 'evaluate', script: 'document.title' }),
+      /scripts are paused/,
     );
     await computer.act('shop', { action: 'press', key: 'Control+c' });
     await computer.act('shop', { action: 'fill', selector: '#notes', text: 'x' });
@@ -3215,7 +3215,7 @@ test(
           action: 'evaluate',
           script: 'document.querySelector("#password").value.split("").reverse().join("")',
         }),
-        /still holds its value/,
+        /scripts are paused/,
       );
       await computer.act('private', { action: 'reload' });
       assert.equal(
@@ -3257,7 +3257,7 @@ test(
           action: 'evaluate',
           script: '[...document.querySelectorAll("input")].map(node=>node.value)',
         }),
-        /still holds its value/,
+        /scripts are paused/,
       );
       await computer.act('private', { action: 'open', url: `${origin}/shadow` });
       const shadowPage = (await computer.act('private', { action: 'snapshot' })).text;
@@ -3294,30 +3294,14 @@ test(
       const image = await computer.screenshot('private');
       assert.ok(image);
       shadowImage = Buffer.from(image);
-      for (const field of [shadowFields.number, shadowFields.expiryYear, shadowFields.securityCode])
-        await computer.act('private', { action: 'fill', selector: field, text: '' });
-      await computer.act('private', {
-        action: 'evaluate',
-        script: 'globalThis.privateStyles[0].style.setProperty("outline-width", "1px")',
-      });
-      assert.match(
-        (
-          await computer.act('private', {
-            action: 'evaluate',
-            script: 'globalThis.maskMutations > 0',
-          })
-        ).text,
-        /true/,
+      await assert.rejects(
+        computer.act('private', {
+          action: 'evaluate',
+          script: 'globalThis.maskMutations',
+        }),
+        /scripts are paused/,
       );
-      const restoredStyle = await computer.act('private', {
-        action: 'evaluate',
-        script:
-          'globalThis.privateStyles.map(node => [getComputedStyle(node).opacity,getComputedStyle(node).transitionProperty,node.style.getPropertyValue("transition-property"),node.style.getPropertyValue("opacity")])',
-      });
-      assert.deepEqual(
-        JSON.parse(restoredStyle.text.slice(restoredStyle.text.indexOf('\n') + 1)),
-        Array.from({ length: 3 }, () => ['1', 'opacity', '', '']),
-      );
+      await computer.act('private', { action: 'open', url: origin });
       const pixels = await computer.act('private', {
         action: 'evaluate',
         script: `(async () => { const image = new Image(); image.src = '/image'; await image.decode(); const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height; const context = canvas.getContext('2d'); context.drawImage(image, 0, 0); const pixels = context.getImageData(0, 0, image.width, image.height).data; let red = 0, blue = 0; for (let index = 0; index < pixels.length; index += 4) { if (pixels[index] === 255 && pixels[index + 1] === 0 && pixels[index + 2] === 0) red++; if (pixels[index] === 0 && pixels[index + 1] === 0 && pixels[index + 2] === 255) blue++; } return { red, blue }; })()`,
@@ -3330,6 +3314,101 @@ test(
       assert.ok(colors.blue > 0);
     } finally {
       await worker.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'a read-only evaluate never runs page work after its side-effect check',
+  { timeout: 60_000 },
+  async () => {
+    const hits: string[] = [];
+    const server = createHttpServer((request, response) => {
+      if (request.method === 'POST') {
+        hits.push(request.url ?? '');
+        response.end();
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end('<title>Sink</title><p>ready</p>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const directory = await mkdtemp(join(tmpdir(), 'otto-readonly-'));
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    try {
+      await computer.act('read', { action: 'open', url: origin });
+      await computer.act('read', {
+        action: 'evaluate',
+        readOnly: true,
+        script: '({ then(resolve) { fetch("/leak", { method: "POST" }); resolve("done") } })',
+      });
+      await delay(500);
+      assert.deepEqual(hits, []);
+      assert.match(
+        (
+          await computer.act('read', {
+            action: 'evaluate',
+            readOnly: true,
+            script: 'document.title',
+          })
+        ).text,
+        /Sink/,
+      );
+      assert.deepEqual(hits, []);
+    } finally {
+      await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'reloading a page reached by a form POST does not resubmit it',
+  { timeout: 60_000 },
+  async () => {
+    let posts = 0;
+    const server = createHttpServer((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      if (request.method === 'POST') {
+        posts += 1;
+        response.end(`<title>Done</title><p>count ${posts}</p>`);
+        return;
+      }
+      response.end('<form method="post" action="/submit"><button id="go">Go</button></form>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const directory = await mkdtemp(join(tmpdir(), 'otto-reload-'));
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    try {
+      await computer.act('post', { action: 'open', url: origin });
+      await computer.act('post', { action: 'click', selector: '#go' });
+      await computer.act('post', { action: 'wait', text: 'count 1' });
+      assert.equal(posts, 1);
+      await computer.act('post', { action: 'reload' });
+      await computer.act('post', { action: 'wait', load: 'load' });
+      assert.equal(posts, 1);
+      await computer.act('post', { action: 'open', url: origin });
+      await computer.act('post', { action: 'reload' });
+      assert.equal(posts, 1);
+    } finally {
+      await computer.dispose();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(directory, { recursive: true, force: true });
@@ -3565,7 +3644,7 @@ test(
           action: 'evaluate',
           script: 'Promise.resolve(document.querySelector("#password").value.length)',
         }),
-        /still holds its value/,
+        /scripts are paused/,
       );
       await computer.act('state', { action: 'open', url: `${origin}/card` });
       const fields = {
@@ -3601,7 +3680,7 @@ test(
           action: 'evaluate',
           script: 'document.querySelector("#number").value',
         }),
-        /still holds its value/,
+        /scripts are paused/,
       );
       await computer.act('fence', { action: 'open', url: `${origin}/card` });
       await computer.act('fence', {

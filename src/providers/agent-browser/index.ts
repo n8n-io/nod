@@ -53,6 +53,7 @@ interface BrowserState {
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
   privateDocument?: string;
+  sealedDocument?: string;
   uploads: Set<string>;
   proxy?: ReturnType<typeof createBrowserProxy>;
   started: boolean;
@@ -120,6 +121,7 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
   for (const secret of secrets) {
     if (!secret) continue;
     variants.add(secret);
+    variants.add(JSON.stringify(secret).slice(1, -1));
     try {
       variants.add(encodeURIComponent(secret));
       variants.add(encodeURI(secret));
@@ -856,6 +858,7 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       if (input.action === 'open') {
+        delete state.sealedDocument;
         const url = browserUrl(input.url ?? '');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -1046,21 +1049,29 @@ export function createAgentBrowserComputer(options: {
             );
         }
         if (['back', 'forward', 'reload'].includes(input.action)) {
-          const devtools =
-            state.saved.scripted || input.action !== 'reload'
-              ? await inspector(state, signal).catch(() => undefined)
-              : undefined;
+          const devtools = await inspector(state, signal).catch(() => undefined);
           try {
             const before = await devtools?.document().catch(() => undefined);
-            const failure = await command(state, { action: input.action }, { signal }).then(
+            const resubmit =
+              input.action === 'reload' &&
+              (await devtools?.navigationType().catch(() => undefined)) === 'form_submit';
+            const target = resubmit
+              ? await currentUrl(state, signal).catch(() => undefined)
+              : undefined;
+            const failure = await command(
+              state,
+              resubmit && target ? { action: 'navigate', url: target } : { action: input.action },
+              { signal },
+            ).then(
               () => undefined,
               (error: unknown) => error,
             );
             const after = await devtools?.document().catch(() => undefined);
             const moved = Boolean(before && after && before !== after);
             if (failure && !(failure instanceof DaemonCommandError && moved)) throw failure;
-            if (state.saved.scripted && moved) {
+            if (moved && (state.saved.scripted || state.sealedDocument)) {
               delete state.saved.scripted;
+              delete state.sealedDocument;
               await saveState(state);
             }
           } finally {
@@ -1074,6 +1085,12 @@ export function createAgentBrowserComputer(options: {
           const devtools = await inspector(state);
           let read;
           try {
+            if (state.sealedDocument) {
+              const current = await devtools.document().catch(() => undefined);
+              if (!current || current === state.sealedDocument)
+                throw new BrowserActionError('browser_script_paused');
+              delete state.sealedDocument;
+            }
             if (state.secrets.size && (await devtools.holding()))
               throw new BrowserActionError('browser_script_paused');
             read = await devtools.readOnly(script);
@@ -1298,6 +1315,7 @@ export function createAgentBrowserComputer(options: {
             }
           }
           state.privateDocument = undefined;
+          if (state.secrets.size) state.sealedDocument = document;
           return result;
         } finally {
           devtools.close();
@@ -1876,6 +1894,7 @@ export function createAgentBrowserComputer(options: {
       await state.proxy?.dispose();
       await saveState(state);
       state.secrets.clear();
+      delete state.sealedDocument;
       for (const directory of state.uploads) await rm(directory, { recursive: true, force: true });
       state.uploads.clear();
       await rm(cachePath(state), { recursive: true, force: true });

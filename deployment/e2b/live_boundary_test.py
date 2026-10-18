@@ -71,7 +71,7 @@ class RoleFixture:
                 pass
 
             def connect(self, target):
-                if uid in (1000, 1002) and (uid, target[1]) != allowed:
+                if (uid in (1000, 1002) or (uid, target[1]) == (1001, 49983)) and (uid, target[1]) != allowed:
                     raise PermissionError(errno.EACCES, "synthetic")
 
             def recv(self, _size):
@@ -195,7 +195,7 @@ class BoundaryTests(unittest.TestCase):
                 self.assertIn(boundary.tcp_source(target, port, denied=True), python)
                 expected_tcp.extend([(1001, boundary.tcp_source(target, port, marker=True)), (uid, boundary.tcp_source(target, port, denied=True)), (1001, boundary.tcp_source(target, port, marker=True))])
             envd = (socket.AF_INET, "127.0.0.1", 0)
-            expected_tcp.extend([(0, boundary.tcp_source(envd, 49983)), (1001, boundary.tcp_source(envd, 49983)), (uid, boundary.tcp_source(envd, 49983, denied=True)), (0, boundary.tcp_source(envd, 49983)), (1001, boundary.tcp_source(envd, 49983)), (uid, boundary.tcp_source(envd, 19003, denied=True))])
+            expected_tcp.extend([(0, boundary.tcp_source(envd, 49983)), (1001, boundary.tcp_source(envd, 49983, denied=True)), (uid, boundary.tcp_source(envd, 49983, denied=True)), (0, boundary.tcp_source(envd, 49983)), (1001, boundary.tcp_source(envd, 49983, denied=True)), (uid, boundary.tcp_source(envd, 19003, denied=True))])
             for port in [49983, 19003]:
                 self.assertIn(boundary.tcp_source((socket.AF_INET, "127.0.0.1", 0), port, denied=True), python)
             for operation in fixture.denials:
@@ -220,6 +220,12 @@ class BoundaryTests(unittest.TestCase):
                 fixture.probe(processes)
             self.assertTrue(any(call[0] == 1000 and call[1][0] == "/usr/bin/curl" for call in fixture.calls))
             self.assertFalse(any(call[0] == 1002 and call[1][0] == "/usr/bin/curl" for call in fixture.calls))
+
+    def test_browser_envd_escape_fails(self):
+        fixture = RoleFixture((1001, 49983))
+        processes = boundary.Processes()
+        with patch.object(processes, "run", side_effect=fixture.run), patch.object(processes, "running", return_value=True), self.assertRaisesRegex(boundary.BoundaryFailure, "^envd-browser$"):
+            fixture.probe(processes)
 
     def test_each_role_executes_private_privilege_file_and_dns_checks(self):
         for role, uid in boundary.RESTRICTED_ROLES:

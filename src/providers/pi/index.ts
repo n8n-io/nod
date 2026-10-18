@@ -1,11 +1,12 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { Type, type TObject } from '@sinclair/typebox';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { Agent as Connections } from 'undici';
 import {
   createAgentSession,
   createCodemodeExtension,
@@ -33,6 +34,7 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
 import { createSandbox, workspaceOutputs } from './sandbox.ts';
+import { publicLookup } from '../agent-browser/network.ts';
 
 function isFinalAnswer(signature: string | undefined) {
   if (!signature?.startsWith('{')) return false;
@@ -62,6 +64,40 @@ function resources(
     extendResources: () => {},
     reload: async () => {},
   };
+}
+
+const webExtension = fileURLToPath(import.meta.resolve('pi-web-access/dist/index.js'));
+const hiddenWebParameters = new Set(['workflow', 'proxy']);
+const webRequests = new AsyncLocalStorage<Connections>();
+let webConnections: Connections | undefined;
+
+function publicWebRequests() {
+  if (webConnections) return webConnections;
+  webConnections = new Connections({ connect: { lookup: publicLookup() } });
+  const send = globalThis.fetch;
+  globalThis.fetch = ((input, init) => {
+    const dispatcher = webRequests.getStore();
+    return send(input, dispatcher ? ({ ...init, dispatcher } as RequestInit) : init);
+  }) as typeof fetch;
+  return webConnections;
+}
+
+function visibleWebParameters(record: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !hiddenWebParameters.has(key)),
+  );
+}
+
+function webParameters<T>(schema: T): T {
+  const value = schema as { properties?: Record<string, unknown>; required?: string[] };
+  if (!value.properties) return schema;
+  return {
+    ...value,
+    properties: visibleWebParameters(value.properties),
+    ...(value.required
+      ? { required: value.required.filter((key) => !hiddenWebParameters.has(key)) }
+      : {}),
+  } as T;
 }
 
 const compactAt = 256_000;
@@ -257,9 +293,7 @@ export function createPiAgent(options: {
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
-        additionalExtensionPaths: [
-          fileURLToPath(import.meta.resolve('pi-web-access/dist/index.js')),
-        ],
+        additionalExtensionPaths: [webExtension],
         extensionFactories: [createCodemodeExtension(), recentImages],
         noExtensions: true,
         noSkills: true,
@@ -270,33 +304,41 @@ export function createPiAgent(options: {
       await extensionLoader.reload();
       const extensions = extensionLoader.getExtensions();
       if (extensions.errors.length) throw new Error('The Pi extensions could not be loaded.');
-      for (const extension of extensions.extensions)
+      const connections = publicWebRequests();
+      for (const extension of extensions.extensions) {
+        const web = extension.path === webExtension;
         for (const [name, registered] of extension.tools) {
           const search = name === 'web_search';
           extension.tools.set(name, {
             ...registered,
             definition: {
               ...registered.definition,
+              ...(web ? { parameters: webParameters(registered.definition.parameters) } : {}),
               ...(search
                 ? {
                     description:
                       'Search the public web through the configured Pi provider. Use queries with 2-4 varied angles for broad research. Return source-linked results without a curator or a separate summary. Use includeContent only when full source text is needed.',
-                    parameters: Type.Omit(registered.definition.parameters as TObject, [
-                      'workflow',
-                    ]),
                   }
                 : {}),
               execute: async (id, params, signal, onUpdate, context) => {
                 await checkpoint();
-                const args = search
-                  ? { ...(params as Record<string, unknown>), workflow: 'none' }
+                const args = web
+                  ? {
+                      ...visibleWebParameters(params as Record<string, unknown>),
+                      ...(search ? { workflow: 'none' } : {}),
+                    }
                   : params;
                 const result = await input.runTool(
                   name,
                   args,
                   () =>
                     workspaceOutputs(
-                      () => registered.definition.execute(id, args, signal, onUpdate, context),
+                      () =>
+                        web
+                          ? webRequests.run(connections, () =>
+                              registered.definition.execute(id, args, signal, onUpdate, context),
+                            )
+                          : registered.definition.execute(id, args, signal, onUpdate, context),
                       input.workspace,
                       signal,
                     ),
@@ -325,6 +367,7 @@ export function createPiAgent(options: {
             },
           });
         }
+      }
       const guidelines = [
         ...new Set(
           [

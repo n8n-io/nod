@@ -107,6 +107,29 @@ export function createComputerLifecycle(options: {
         .join(' '),
     };
   }
+  function destroyed(state: ComputerState): ComputerState {
+    return {
+      ...(state.phase === 'ready' || state.phase === 'restoring' ? state : discarded(state)),
+      phase: 'ready',
+      stopped: true,
+    };
+  }
+  function recoverable(state: ComputerState | undefined, expected: ComputerIdentity) {
+    return (
+      !!state &&
+      (state.phase === 'uncertain' || state.phase === 'restoring') &&
+      state.ownerId === expected.ownerId &&
+      state.environment === expected.environment &&
+      state.role === expected.role &&
+      BigInt(state.generation) <= BigInt(expected.generation) &&
+      !active.size
+    );
+  }
+  async function recover(state: ComputerState) {
+    await destroy();
+    await write(destroyed(state));
+    return loaded!;
+  }
   function settle() {
     clearTimeout(settling);
     settling = setTimeout(() => {
@@ -144,6 +167,7 @@ export function createComputerLifecycle(options: {
     } finally {
       await destroy();
     }
+    if (state) await write(destroyed(state));
   }
   async function checkpoint(
     state: ComputerState,
@@ -202,7 +226,9 @@ export function createComputerLifecycle(options: {
   async function prepare(expected: ComputerIdentity) {
     await options.authorize(expected, false);
     if (fenced) throw unavailable();
-    const previous = await options.read();
+    let previous = await options.read();
+    if (previous?.generation !== expected.generation && recoverable(previous, expected))
+      previous = await recover(previous!);
     if (
       previous &&
       (previous.ownerId !== expected.ownerId ||
@@ -392,6 +418,8 @@ export function createComputerLifecycle(options: {
           },
           quiesce: (current) => options.quiesce(current, false),
           checkpoint: (current) => saveOrDiscard(current, false, controls.authorize),
+          recover: (current) =>
+            recoverable(current, expected) ? recover(current) : Promise.resolve(current),
           stop: destroy,
           write,
           quarantine: async (current) => {
@@ -425,7 +453,6 @@ export function createComputerLifecycle(options: {
           environment,
           role: options.role,
           active: active.size + controls.active(),
-          fenced,
           running: options.running(),
         });
       });
@@ -434,8 +461,9 @@ export function createComputerLifecycle(options: {
       return exclusive(async () => {
         const expected = identity(owner, version);
         await options.authorize(expected, true);
-        const state = await options.read();
+        let state = await options.read();
         if (state && !matches(state, expected)) {
+          if (recoverable(state, expected)) state = await recover(state);
           if (
             state.ownerId === expected.ownerId &&
             state.environment === expected.environment &&
@@ -473,7 +501,7 @@ export function createComputerLifecycle(options: {
             await uncertain();
           }
         }
-        await write({ ...loaded!, stopped: true });
+        await write(destroyed(loaded!));
       });
     },
     get active() {

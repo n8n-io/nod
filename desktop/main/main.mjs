@@ -78,6 +78,7 @@ let stopUpdateChecks;
 let closingEngine = false;
 let tray;
 let engineOrigin = '';
+let engineBound = false;
 let authToken = '';
 let replayingOnboarding = process.argv.includes('--onboarding');
 let replayingProductOnboarding = replayingOnboarding;
@@ -680,6 +681,7 @@ async function profileOwner() {
 }
 
 async function engineRequest(path, options = {}) {
+  if (!engineBound) throw new Error('Otto is not ready.');
   return fetch(`${engineOrigin}${path}`, {
     ...options,
     headers: { ...options.headers, 'x-otto-desktop-token': authToken },
@@ -950,6 +952,7 @@ async function startEngine({ runtime, signal }) {
   if (quitting) throw new Error('Otto is closing.');
   const port = await availablePort();
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
+  engineBound = false;
   authToken = randomBytes(32).toString('base64url');
   knownSecrets.add(authToken);
   engineOrigin = `http://127.0.0.1:${port}`;
@@ -997,6 +1000,10 @@ async function startEngine({ runtime, signal }) {
     serviceName: 'Otto engine',
   });
   engine = child;
+  child.on('message', (message) => {
+    if (engine === child && message?.type === 'otto-ready' && message.port === port)
+      engineBound = true;
+  });
   child.stdout?.resume();
   let diagnostics = '';
   child.stderr?.on('data', (chunk) => {
@@ -1019,6 +1026,7 @@ async function startEngine({ runtime, signal }) {
     engine = undefined;
     enginePreferencesReady = false;
     engineOrigin = '';
+    engineBound = false;
     authToken = '';
     for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
     engineWindows.clear();
@@ -1206,6 +1214,7 @@ else {
           details.frame?.processId === main.processId &&
           trustedAppURL(main.url);
         if (
+          engineBound &&
           engineOrigin &&
           new URL(details.url).origin === engineOrigin &&
           window &&

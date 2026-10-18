@@ -7,7 +7,6 @@ import { createComputerCommands } from './computer-commands.ts';
 import { launchComputerExec, runComputerExec } from './computer-exec.ts';
 import { assertContainerStartupSettled, startContainer } from './container-startup.ts';
 import { cleanStoppedComputer } from './computer-deployment.ts';
-import { retireUnusedComputer } from './computer-retirement.ts';
 import {
   createComputerLifecycle,
   type ComputerIdentity,
@@ -159,7 +158,6 @@ abstract class ComputerContainer extends Container<Bindings> {
   }
 
   private async select(owner: string, version: string) {
-    if (this.retiring) throw unavailable();
     assertContainerStartupSettled(this);
     const ownerId = this.validate(owner, version);
     const expected: ComputerIdentity = {
@@ -171,7 +169,6 @@ abstract class ComputerContainer extends Container<Bindings> {
     if (this.current?.generation === version && this.current.ownerId === ownerId)
       return this.current;
     const prior = await this.ctx.storage.get<ComputerState>('computer');
-    if (this.retiring) throw unavailable();
     assertContainerStartupSettled(this);
     if (this.current?.generation === version && this.current.ownerId === ownerId)
       return this.current;
@@ -208,7 +205,9 @@ abstract class ComputerContainer extends Container<Bindings> {
               latest.role !== state.role ||
               latest.environment !== state.environment ||
               BigInt(latest.generation) > BigInt(state.generation) ||
-              (latest.phase === 'uncertain' && state.phase !== 'uncertain'))
+              (latest.phase === 'uncertain' &&
+                state.phase !== 'uncertain' &&
+                (state.phase !== 'ready' || !state.stopped || this.ctx.container?.running)))
           )
             throw unavailable();
           await storage.put('computer', state);
@@ -403,34 +402,6 @@ abstract class ComputerContainer extends Container<Bindings> {
   }
 
   private selection: object | undefined;
-  private retiring = false;
-
-  private async unusedComputerStopped() {
-    assertContainerStartupSettled(this);
-    const container = this.ctx.container;
-    if (!container || container.running !== false || typeof container.inspect !== 'function')
-      return false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const [state, native] = await Promise.race([
-        Promise.all([this.getState(), container.inspect()]),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(unavailable()), 2000);
-        }),
-      ]);
-      assertContainerStartupSettled(this);
-      return (
-        container === this.ctx.container &&
-        container.running === false &&
-        ['stopped', 'stopped_with_code'].includes(state.status) &&
-        native === null
-      );
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
 
   async request(ownerId: string, version: string, request: Request) {
     try {
@@ -477,32 +448,6 @@ abstract class ComputerContainer extends Container<Bindings> {
       ).deploymentComputerIdentity(ownerId, version, input);
     };
     await authorize();
-    if (this.retiring) throw unavailable();
-    if (!this.current && !this.selection) {
-      this.retiring = true;
-      try {
-        await retireUnusedComputer({
-          identity: {
-            ownerId,
-            generation: version,
-            environment: this.env.OTTO_ENVIRONMENT,
-            role: this.role,
-          },
-          deployment: input,
-          read: (key) => this.ctx.storage.get(key),
-          transaction: (operation) => this.ctx.storage.transaction(operation),
-          authorize: async () => {
-            await this.env.TENANTS.getByName(
-              `tenant:${this.env.OTTO_ENVIRONMENT}:${ownerId}`,
-            ).deploymentUnusedComputerIdentity(ownerId, version, input);
-          },
-          inactive: () => this.retiring && !this.current && !this.selection,
-          physicallyStopped: () => this.unusedComputerStopped(),
-        });
-      } finally {
-        this.retiring = false;
-      }
-    }
     const current = await this.select(ownerId, version);
     return current.lifecycle.drain(ownerId, version, input, {
       authorize,
@@ -547,7 +492,6 @@ abstract class ComputerContainer extends Container<Bindings> {
       environment: this.env.OTTO_ENVIRONMENT,
       role: this.role,
       active: 0,
-      fenced: false,
       running: this.ctx.container?.running === true,
     });
   }

@@ -48,14 +48,27 @@ export function createTrust(options: { pool: Pool; ownerId: string; review: Mode
     const latest = users[0];
     if (!latest) return undefined;
     const before = (
-      await pool.query<{ text: string }>(
-        `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
-         AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
-         AND (($5::uuid IS NULL AND turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=messages.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL))
-           OR ($5::uuid IS NOT NULL AND (id=(SELECT reply_to_message_id FROM messages WHERE id=$4 AND owner_id=$1) OR turn_id IN (SELECT u.id FROM turns u WHERE u.owner_id=$1 AND to_jsonb(u)->>'task_id'=$5::text))))
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [ownerId, threadId, latest.created_at, latest.id, taskId],
-      )
+      taskId
+        ? await pool.query<{ text: string }>(
+            `WITH latest AS (SELECT m.id,m.created_at,m.reply_to_message_id,u.channel FROM messages m
+               JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id WHERE m.id=$3 AND m.owner_id=$1),
+             answered AS (SELECT a.id,a.text,a.turn_id FROM messages a, latest
+               WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant' AND a.text<>''
+                 AND a.created_at>now()-interval '24 hours' AND (a.created_at,a.id)<(latest.created_at,latest.id)
+                 AND (a.id=latest.reply_to_message_id OR (latest.reply_to_message_id IS NULL
+                   AND EXISTS (SELECT 1 FROM turns c WHERE c.id=a.turn_id AND c.owner_id=$1 AND c.channel=latest.channel)))
+               ORDER BY a.created_at DESC,a.id DESC LIMIT 1)
+             SELECT text FROM answered WHERE EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=answered.turn_id AND to_jsonb(u)->>'task_id'=$4::text)
+               OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=$4::uuid AND t.owner_id=$1 AND t.message_id=answered.id)`,
+            [ownerId, threadId, latest.id, taskId],
+          )
+        : await pool.query<{ text: string }>(
+            `SELECT text FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='assistant' AND text<>''
+             AND created_at>now()-interval '24 hours' AND (created_at,id)<($3,$4)
+             AND turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=messages.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL)
+             ORDER BY created_at DESC,id DESC LIMIT 1`,
+            [ownerId, threadId, latest.created_at, latest.id],
+          )
     ).rows[0];
     return {
       userMessages: users

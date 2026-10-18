@@ -15,7 +15,7 @@ RUN chmod 555 src/providers/container-browser/chromium.sh && install -m 555 src/
 COPY deployment/e2b/browser-ready.ts ./deployment/e2b/browser-ready.ts
 COPY workspace-command.py /opt/otto/workspace-command.py
 COPY deployment/e2b/computer-guard.py /opt/otto/computer-guard.py
-RUN mkdir -p /data /workspace /home/node/.local/bin /run/otto && chown otto-browser:otto-browser /data /home/otto-browser && chmod 700 /data /home/otto-browser /run/otto && chown -R node:node /workspace /home/node && chown -R root:root /app /opt/otto && chmod -R go-w /app /opt/otto && chmod 555 /opt/otto && chmod 444 /opt/otto/*.py && find / -xdev -type f -perm /6000 -exec chmod a-s {} + && getcap -r /usr /opt /app 2>/dev/null | cut -d ' ' -f 1 | xargs -r setcap -r
+RUN mkdir -p /data /workspace /home/node/.local/bin /home/otto-browser/tmp /run/otto && chown otto-browser:otto-browser /data /home/otto-browser /home/otto-browser/tmp && chmod 700 /data /home/otto-browser /home/otto-browser/tmp /run/otto && chown -R node:node /workspace /home/node && chown -R root:root /app /opt/otto && chmod -R go-w /app /opt/otto && chmod 555 /opt/otto && chmod 444 /opt/otto/*.py && find / -xdev -type f -perm /6000 -exec chmod a-s {} + && getcap -r /usr /opt /app 2>/dev/null | cut -d ' ' -f 1 | xargs -r setcap -r
 ENV LANG=C.UTF-8
 ENV RTK_TELEMETRY_DISABLED=1
 ENV NPM_CONFIG_PREFIX=/home/node/.local

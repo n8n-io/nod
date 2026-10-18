@@ -210,6 +210,7 @@ const paths = await packager({
   icon,
   extendInfo: {
     LSMinimumSystemVersion: minimumSystemVersion,
+    ElectronSquirrelPreventDowngrades: true,
     NSMicrophoneUsageDescription: 'Otto uses your microphone when you record a voice message.',
   },
 });

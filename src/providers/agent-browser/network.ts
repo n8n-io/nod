@@ -1,6 +1,7 @@
+import * as dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createServer, request, type OutgoingHttpHeaders } from 'node:http';
-import { connect, isIP, type Socket } from 'node:net';
+import { connect, isIP, type LookupFunction, type Socket } from 'node:net';
 
 export type AddressResolver = (host: string) => Promise<Array<{ address: string; family: number }>>;
 
@@ -37,6 +38,30 @@ async function publicAddress(hostname: string, resolver: AddressResolver) {
   if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address)))
     throw new Error('Private network destinations are blocked.');
   return addresses[0].address;
+}
+
+const connectResolver: AddressResolver = (host) =>
+  new Promise((resolve, reject) =>
+    dns.lookup(host, { all: true, verbatim: true }, (error, addresses) =>
+      error ? reject(error) : resolve(addresses),
+    ),
+  );
+
+export function publicLookup(resolver: AddressResolver = connectResolver): LookupFunction {
+  return (hostname, options, callback) => {
+    resolver(hostname).then(
+      (answers) => {
+        const addresses = answers.filter(
+          (item) => !options.family || item.family === options.family,
+        );
+        if (!addresses.length || answers.some((item) => !isPublicAddress(item.address)))
+          return callback(new Error('Private network destinations are blocked.'), '');
+        if (options.all) callback(null, addresses);
+        else callback(null, addresses[0].address, addresses[0].family);
+      },
+      (error) => callback(error, ''),
+    );
+  };
 }
 
 export async function publicUrl(

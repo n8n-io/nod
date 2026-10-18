@@ -508,7 +508,23 @@ export function createTenantRuntimeHost(options: {
           if (!(await options.transport.deploymentClosed!())) throw new DeploymentControlError();
           assertRecovery();
         }
-        if (current.unknown.size) throw new DeploymentControlError();
+        for (const owner of current.unknown) {
+          const entry = entries.get(owner);
+          if (entry) await stop(entry);
+          else {
+            const status = await options.transport.status(owner);
+            if (status.generation) await options.transport.stop(owner, status.generation);
+          }
+          const stopped = await options.transport.status(owner);
+          if (
+            !stopped.stopped ||
+            !options.transport.deploymentStopped ||
+            !(await options.transport.deploymentStopped(owner, stopped.generation))
+          )
+            throw new DeploymentControlError();
+          current.unknown.delete(owner);
+          current.paused.delete(owner);
+        }
         for (const owner of current.paused) {
           const entry = entries.get(owner);
           if (!entry?.healthy) throw new DeploymentControlError();

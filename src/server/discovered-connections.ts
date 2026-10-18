@@ -412,7 +412,10 @@ export async function createDiscoveredConnections(
     };
   }
   async function signIn(service: string, turn?: TurnRef, connectionId?: string) {
-    const { id, name } = await create(official(service, connectionId), turn);
+    return propose(official(service, connectionId), turn);
+  }
+  async function authorize(service: string, connectionId?: string) {
+    const { id, name } = await create(official(service, connectionId));
     return { name, ...(await beginOAuth(id, {})) };
   }
   async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
@@ -1086,6 +1089,7 @@ export async function createDiscoveredConnections(
     setupServices,
     propose,
     signIn,
+    authorize,
     completeOAuth,
     reconnect,
     search,

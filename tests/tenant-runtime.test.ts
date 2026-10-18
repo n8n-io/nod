@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import test, { describe, type TestContext } from 'node:test';
 import { setImmediate, setTimeout as delay } from 'node:timers/promises';
 import { createTenantRuntimeHost } from '../src/server/runtime-host.ts';
+import { createChannelAccountRegistry } from '../src/server/channel-account-registry.ts';
 import {
   createRuntimeVerifier,
   runtimeBodyHash,
@@ -278,23 +279,33 @@ describe('runtime host', () => {
     );
   });
 
-  test('unknown computer preparation cannot be resumed or replaced by a different deployment', async (t) => {
+  test('unknown computer preparation resumes only once its owner is stopped and inspected clean', async (t) => {
     const f = fixture(t);
-    await f.request(randomUUID());
+    const owner = randomUUID();
+    const other = randomUUID();
+    await f.request(owner);
+    await f.request(other);
     f.hooks.fetch = async (_owner, request) => deploymentResponse(request);
-    f.hooks.prepare = async () => {
-      throw new Error('Synthetic lost acknowledgement');
+    f.hooks.prepare = async (ownerId) => {
+      if (ownerId === owner) throw new Error('Synthetic lost acknowledgement');
+      return 'stopped';
     };
     const input = deploymentInput();
     await assert.rejects(f.host.prepareDeployment!(input), {
       status: 503,
       message: 'The deployment operation could not be completed.',
     });
+    let clean = false;
+    f.hooks.stopped = async () => clean;
     await assert.rejects(f.host.resumeDeployment!(input));
     await assert.rejects(f.host.prepareDeployment!(deploymentInput()));
     await assert.rejects(f.request(randomUUID()));
-    assert.equal(f.stops.length, 0);
-    assert.equal(f.releases.length, 0);
+    assert.deepEqual(f.stops, [{ ownerId: owner, generation: '1' }]);
+    clean = true;
+    await f.host.resumeDeployment!(input);
+    await f.request(owner);
+    await f.request(other);
+    assert.equal(f.starts.filter((value) => value.ownerId === owner).at(-1)!.generation, '2');
   });
 
   test('preexisting pending starts join the deployment drain and do not admit their delayed user request', async (t) => {
@@ -1132,6 +1143,51 @@ describe('tenant store', () => {
           assert.equal(await store.releaseLease(second), false);
           assert.equal(await store.releaseLease(third), true);
           assert.equal(await store.currentLease(ownerA), undefined);
+        },
+      );
+
+      await t.test(
+        'a tenant login cannot hold the registry locks that gateway boot and provisioning wait on',
+        async () => {
+          const registry = createChannelAccountRegistry({
+            admin: admin!,
+            environment: options.environment,
+          });
+          await registry.initialize();
+          const tenant = await poolA.connect();
+          try {
+            for (const key of [
+              'otto-tenant-registry:otto_control',
+              'otto:channel-account-registry:otto_control',
+            ])
+              await tenant.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key]);
+            for (const table of ['otto_control.tenants', 'otto_control.channel_accounts']) {
+              await tenant.query('BEGIN');
+              await assert.rejects(
+                tenant.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`),
+                { code: '42501' },
+              );
+              await tenant.query('ROLLBACK');
+            }
+            const settled = await Promise.race([
+              Promise.all([
+                store.initialize(),
+                store.provision(ownerB),
+                registry.initialize(),
+                registry.claim({
+                  ownerId: ownerB,
+                  provider: 'telegram',
+                  accountId: `fixture-${fixtureId}`,
+                  revision: '1',
+                }),
+              ]).then(() => true),
+              delay(3_000).then(() => false),
+            ]);
+            assert.equal(settled, true);
+          } finally {
+            await tenant.query('SELECT pg_advisory_unlock_all()').catch(() => {});
+            tenant.release();
+          }
         },
       );
 

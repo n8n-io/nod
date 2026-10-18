@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { type ClientRequest, request } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import test, { describe } from 'node:test';
 import Fastify, { type FastifyRequest } from 'fastify';
 import type { AuthenticatedSession, AuthenticationProvider } from '../src/ports/authentication.ts';
@@ -196,12 +199,64 @@ describe('gateway', () => {
           payload: big,
         });
       assert.equal((await post('/api/uploads', { host })).statusCode, 401);
+      assert.equal((await post('/api/messages', { host })).statusCode, 401);
       assert.equal(f.calls.length, 0);
       assert.equal((await post('/api/messages', f.headers())).statusCode, 413);
       assert.equal(f.calls.length, 0);
       assert.equal((await post('/api/uploads', f.headers())).statusCode, 200);
       assert.equal(f.calls.at(-1)!.body.length, big.length);
     } finally {
+      await f.app.close();
+    }
+  });
+
+  test("one user's unfinished upload does not hold another user's upload", async () => {
+    const f = await fixture();
+    const requests: ClientRequest[] = [];
+    try {
+      await f.app.listen({ host: '127.0.0.1', port: 0 });
+      const port = (f.app.server.address() as AddressInfo).port;
+      const upload = (index: number, length: number) => {
+        const sent = request({
+          host: '127.0.0.1',
+          port,
+          method: 'POST',
+          path: '/api/uploads',
+          headers: {
+            ...f.headers(index),
+            origin,
+            'content-type': 'application/octet-stream',
+            'content-length': length,
+          },
+        });
+        requests.push(sent);
+        return sent;
+      };
+      const stalled = upload(0, 2048);
+      const first = new Promise<number>((resolve, reject) =>
+        stalled.on('response', (response) => resolve(response.statusCode!)).on('error', reject),
+      );
+      stalled.write(Buffer.alloc(1024, 1));
+      await delay(100);
+      const second = upload(1, 1024);
+      second.end(Buffer.alloc(1024, 2));
+      const status = await Promise.race([
+        new Promise<number>((resolve, reject) =>
+          second
+            .on('response', (response) => {
+              response.resume();
+              resolve(response.statusCode!);
+            })
+            .on('error', reject),
+        ),
+        delay(5_000).then(() => 0),
+      ]);
+      assert.equal(status, 200);
+      assert.equal(f.calls.at(-1)!.owner, f.users[1]);
+      stalled.end(Buffer.alloc(1024, 1));
+      assert.equal(await first, 200);
+    } finally {
+      for (const sent of requests) sent.destroy();
       await f.app.close();
     }
   });

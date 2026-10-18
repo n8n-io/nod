@@ -36,6 +36,7 @@ def identities():
         trusted(path)
     trusted("/data", 1001, True)
     trusted("/home/otto-browser", 1001, True)
+    trusted("/home/otto-browser/tmp", 1001, True)
     trusted("/home/otto-connected", 1002, True)
     trusted("/run/otto", 0, True)
     if pathlib.Path("/usr/bin/sudo").exists() or pathlib.Path("/bin/sudo").exists():
@@ -56,12 +57,11 @@ def network_rules():
             resolvers[address.version].add(str(address))
     if not any(resolvers.values()):
         raise ValueError()
-    lines = ["table inet otto {", "chain workspace_output {", "type filter hook output priority -150; policy accept;", "meta skgid != { 1000, 1002 } return"]
+    lines = ["table inet otto {", "chain workspace_output {", "type filter hook output priority -150; policy accept;", "meta skuid != 0 tcp dport 49983 reject", "meta skgid != { 1000, 1002 } return"]
     for family, version in [("ip", 4), ("ip6", 6)]:
         if resolvers[version]:
             destinations = ", ".join(sorted(resolvers[version]))
             lines.extend(f"{family} daddr {{ {destinations} }} {protocol} dport 53 accept" for protocol in ["udp", "tcp"])
-    lines.append("tcp dport 49983 reject")
     blocked = {
         4: {"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"},
         6: {"::/128", "::1/128", "::ffff:0:0/96", "fc00::/7", "fe80::/10", "ff00::/8"},
@@ -105,7 +105,7 @@ def install():
 
 
 def browser_environment():
-    return {"HOME": "/home/otto-browser", "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+    return {"HOME": "/home/otto-browser", "TMPDIR": "/home/otto-browser/tmp", "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
 
 
 def browser_identity():

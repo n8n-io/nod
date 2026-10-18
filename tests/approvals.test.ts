@@ -1138,6 +1138,129 @@ test(
       );
 
       await t.test(
+        'a relayed owner message shows a task only its own question, and only the main chat steers or stops tasks',
+        async (t) => {
+          const start = async (request: string, title: string) => {
+            const parent = await begin(request);
+            const task = (await tasks.execute(
+              parent,
+              {
+                action: 'start',
+                title,
+                message: `Working on ${title}.`,
+                doneWhen: 'Done',
+                now: 'Working',
+              },
+              (await row(parent.turnId)).message_id,
+            )) as { id: string };
+            t.after(async () => {
+              await db.pool.query(
+                "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+                [task.id],
+              );
+              await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+            });
+            await finish(parent.turnId, 'succeeded');
+            return task;
+          };
+          const relay = async (text: string, taskId: string) => {
+            const owner = await begin(text);
+            await tasks.execute(
+              owner,
+              { action: 'reply', ids: [taskId] },
+              (await row(owner.turnId)).message_id,
+            );
+            await finish(owner.turnId, 'succeeded');
+            const relayed = await running(
+              (
+                await db.pool.query('SELECT id FROM turns WHERE task_id=$1 AND parent_turn_id=$2', [
+                  taskId,
+                  owner.turnId,
+                ])
+              ).rows[0].id,
+            );
+            await tasks.inherit(relayed);
+            await trust.check(relayed, 'OTTO_browser', { website: 'https://dentist.example.test' });
+            await finish(relayed.turnId, 'succeeded');
+            return reviews.at(-1)!;
+          };
+          const dentist = await start('Find a fixture dentist slot.', 'Fixture dentist');
+          const worker = await running(
+            (
+              await db.pool.query("SELECT id FROM turns WHERE task_id=$1 AND source='task'", [
+                dentist.id,
+              ])
+            ).rows[0].id,
+          );
+          const question = 'Fixture dentist has Tuesday 10:00. Shall I book it?';
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant',$5)",
+            [randomUUID(), ownerId, worker.threadId, worker.turnId, question],
+          );
+          await db.pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
+            [worker.turnId],
+          );
+          assert.equal(
+            (await relay('Yes.', dentist.id)).assistantMessageBeforeLatestUserMessage,
+            question,
+          );
+          const chat = await begin('Anything else pending?');
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Shall I send the fixture summary to Ana now?')",
+            [randomUUID(), ownerId, chat.threadId, chat.turnId],
+          );
+          await finish(chat.turnId, 'succeeded');
+          assert.equal(
+            'assistantMessageBeforeLatestUserMessage' in (await relay('Yes.', dentist.id)),
+            false,
+          );
+          const parcel = await start('Watch the fixture parcel.', 'Fixture parcel');
+          for (const source of ['event', 'schedule'] as const) {
+            const background = await begin('Synthetic background work.', { source });
+            t.after(() => finish(background.turnId, 'cancelled'));
+            await assert.rejects(
+              tasks.execute(background, { action: 'stop', id: parcel.id }, null),
+            );
+          }
+          const stopper = await begin('Stop the fixture dentist task.');
+          t.after(() => finish(stopper.turnId, 'cancelled'));
+          await tasks.execute(
+            stopper,
+            { action: 'stop', id: dentist.id },
+            (await row(stopper.turnId)).message_id,
+          );
+          const reopen = await begin('Yes.');
+          t.after(() => finish(reopen.turnId, 'cancelled'));
+          await assert.rejects(
+            tasks.execute(
+              reopen,
+              { action: 'reply', ids: [dentist.id] },
+              (await row(reopen.turnId)).message_id,
+            ),
+          );
+          const states = (
+            await db.pool.query('SELECT id,state FROM tasks WHERE id=ANY($1::uuid[])', [
+              [dentist.id, parcel.id],
+            ])
+          ).rows;
+          assert.deepEqual(Object.fromEntries(states.map((task) => [task.id, task.state])), {
+            [dentist.id]: 'cancelled',
+            [parcel.id]: 'open',
+          });
+          assert.equal(
+            (
+              await db.pool.query('SELECT id FROM turns WHERE task_id=$1 AND parent_turn_id=$2', [
+                dentist.id,
+                reopen.turnId,
+              ])
+            ).rowCount,
+            0,
+          );
+        },
+      );
+
+      await t.test(
         'a task started from an answer keeps the request the answer belongs to',
         async (t) => {
           const request = 'Find a fixture table and book it only when I say go.';

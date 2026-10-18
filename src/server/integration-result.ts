@@ -89,7 +89,9 @@ export function privateEmailResult(value: unknown): unknown {
     Object.entries(record).some(
       ([key, entry]) =>
         ['sender', 'from', 'to', 'recipient', 'recipients'].includes(fieldName(key)) &&
-        /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(String(entry)),
+        /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(
+          typeof entry === 'string' ? entry : (JSON.stringify(entry) ?? ''),
+        ),
     ) ||
     headers.some(
       (entry) =>

@@ -104,7 +104,7 @@ def main():
             time.sleep(0.1)
         addresses = json.loads(subprocess.check_output(["ip", "-json", "address", "show"]))
         own = next(item["local"] for interface in addresses if interface["ifname"] != "lo" for item in interface["addr_info"] if item["family"] == "inet")
-        targets = [("127.0.0.1", 19222), ("::1", 19333), (own, 19333), ("169.254.169.254", 19333), ("fd00:ec2::254", 19333), ("127.0.0.1", 49983)]
+        targets = [("127.0.0.1", 19222), ("::1", 19333), (own, 19333), ("169.254.169.254", 19333), ("fd00:ec2::254", 19333)]
         for index, (host, port) in enumerate(targets):
             probe = f"import socket; s=socket.create_connection(({host!r},{port}),2); assert s.recv(100)"
             if port == 19222:
@@ -113,6 +113,10 @@ def main():
             require(as_user(1000, ["python3", "-c", probe]).returncode != 0, f"workspace-network-{index}")
             require(as_user(1002, ["python3", "-c", probe]).returncode != 0, f"connected-network-{index}")
             require(as_user(cli_user, ["python3", "-c", probe], gid=1002).returncode != 0, f"connected-cli-network-{index}")
+        envd = "import socket; s=socket.create_connection(('127.0.0.1',49983),2); assert s.recv(100)"
+        require(subprocess.run(["python3", "-c", envd], capture_output=True, timeout=15).returncode == 0, "envd-root")
+        for uid, gid in [(1001, None), (1000, None), (1002, None), (cli_user, 1002)]:
+            require(as_user(uid, ["python3", "-c", envd], gid=gid).returncode != 0, "envd-denied")
         checks = [
             "from pathlib import Path; Path('/data/boundary-private').read_bytes()",
             "from pathlib import Path; Path('/data/boundary-profile').iterdir().__next__()",
@@ -137,7 +141,7 @@ def main():
         require(subprocess.run(["python3", "/opt/otto/computer-guard.py", "check"], capture_output=True, timeout=20).returncode == 0, "unchanged-firewall-readiness")
         subprocess.run(["nft", "delete", "table", "inet", "otto"], check=True, capture_output=True)
         require(subprocess.run(["python3", "/opt/otto/computer-guard.py", "check"], capture_output=True, timeout=20).returncode != 0, "changed-firewall-readiness")
-        print(json.dumps({"browserCdpAndX11": True, "workspaceNetworkDenied": len(targets), "connectedNetworkDenied": len(targets), "workspaceFileAndProcessDenied": len(checks), "connectedFileAndProcessDenied": len(checks), "connectedCliSealed": True, "workspacePrivilegeDenied": True, "workspaceInternetDnsFiles": True, "changedFirewallRejected": True}))
+        print(json.dumps({"browserCdpAndX11": True, "workspaceNetworkDenied": len(targets), "connectedNetworkDenied": len(targets), "envdDenied": 4, "workspaceFileAndProcessDenied": len(checks), "connectedFileAndProcessDenied": len(checks), "connectedCliSealed": True, "workspacePrivilegeDenied": True, "workspaceInternetDnsFiles": True, "changedFirewallRejected": True}))
     finally:
         for child in children:
             child.terminate()

@@ -4239,6 +4239,35 @@ test(
         );
         assert.deepEqual(resumed, turn ? [turn.turnId] : []);
         resumed.length = 0;
+
+        discoveredState = '';
+        const official = (await integrations.manageConnections(
+          'connect',
+          'notion',
+          turn,
+          undefined,
+          true,
+        )) as { url: string };
+        assert.equal(discoveredState, '');
+        const officialId = new URL(official.url, 'http://localhost').searchParams.get('connect');
+        const officialBegin = await app.inject({
+          method: 'POST',
+          url: `/api/apps/discovery/${officialId}/authorize`,
+          headers,
+          payload: {},
+        });
+        assert.equal(officialBegin.statusCode, 200, officialBegin.body);
+        assert.notEqual(discoveredState, '');
+        const officialComplete = await app.inject({
+          url: `/api/apps/callback?state=${discoveredState}&code=fixture-code`,
+          headers: { host: headers.host },
+        });
+        assert.equal(
+          new URL(officialComplete.headers.location!).searchParams.get('connection'),
+          expectedOutcome,
+        );
+        assert.deepEqual(resumed, turn ? [turn.turnId] : []);
+        resumed.length = 0;
       }
       assert.equal(
         (await app.inject({ url: '/api/apps', headers: { host: headers.host } })).statusCode,

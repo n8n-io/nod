@@ -233,9 +233,13 @@ export function createTenantStore(options: TenantStoreOptions) {
 
   async function initialize() {
     await transaction(async (client) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-        `otto-tenant-registry:${controlSchema}`,
-      ]);
+      await client.query("SET LOCAL lock_timeout='5s'");
+      if ((await client.query('SELECT to_regclass($1) AS found', [table])).rows[0].found)
+        await client.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`);
+      else
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `otto-tenant-registry:${controlSchema}`,
+        ]);
       const database = (await client.query<{ name: string }>('SELECT current_database() AS name'))
         .rows[0].name;
       if (decodeURIComponent(template.pathname.slice(1)) !== database)
@@ -284,9 +288,8 @@ export function createTenantStore(options: TenantStoreOptions) {
   async function provision(owner: string): Promise<TenantRecord> {
     const ownerId = identity(owner);
     return transaction(async (client) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-        `otto-tenant-registry:${controlSchema}`,
-      ]);
+      await client.query("SET LOCAL lock_timeout='5s'");
+      await client.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`);
       const existing = await client.query<TenantRow>(
         `SELECT ${fields} FROM ${table} WHERE environment=$1 AND owner_id=$2`,
         [environment, ownerId],

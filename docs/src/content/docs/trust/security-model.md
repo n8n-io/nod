@@ -54,8 +54,8 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A login is entered only into a field whose real frame origin matches the login's exact origin. Card fields must match the approved destinations.
 - Entry and submission happen in one step that the model can't observe or act during. Scripts on the destination page can read the entered values, as with any form.
 - A page changed by the model's own JavaScript must reload before entry. After a failed entry, the model's view stays locked until the filled page changes.
-- While a field Otto filled still holds its value, the model's page scripts are paused, so a script can't read the value back.
-- The browser reaches only public addresses, never the host, the local network or other containers.
+- After Otto fills a private value on a page, the model's page scripts stay paused on that page until it reloads or moves on, so a script can't read the value back even once the field is gone.
+- The browser and the web tools reach only public addresses, never the host, the local network or other containers. The address is checked when each connection opens, so a name can't switch to a private address after the check. Otto drops any proxy the model names for a web tool.
 
 ### One use
 
@@ -80,6 +80,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The server and browser provider can read secret values. There's no isolated key service or hardware-backed key release.
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
 - The model can type any value it knows into a page, including a secret you typed into chat.
+- Otto hides verification emails it recognizes in app results: a message with a sender or recipient address whose text gives a verification or sign-in code in English or Portuguese. A code in other wording or another language, or an email downloaded as a file, reaches the model.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click. The trust check judges a browser step from what it does (a click, a key press or a script), the website and page, the control's label when there is one, the method and address of a form it sends, any dialog text or file name, and what Otto typed. It never sees the page's text. A deceptive site can still mislabel a control that acts through page scripts, or send a form to an address that doesn't say what it does.
 - The checker can be wrong, and the model isn't immune to prompt injection.
 - Otto writes [learned skills](/how-it-works/memory/#learned-skills) from what it did and read, so a page or an email can shape one, and a skill can steer later tasks. A skill never grants permission, and the trust check never sees it.

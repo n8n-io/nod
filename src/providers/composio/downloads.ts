@@ -56,14 +56,21 @@ export function createComposioFiles(
     }
     throw new Error('Too many file redirects.');
   }
+  const envelope = (result: unknown): unknown => {
+    const data = (result as { data?: unknown } | null)?.data;
+    const response = (data as { response?: unknown } | null)?.response;
+    if (typeof response !== 'string' || !response.includes('"s3url"')) return result;
+    try {
+      return {
+        ...(result as object),
+        data: { ...(data as object), response: JSON.parse(response) },
+      };
+    } catch {
+      return result;
+    }
+  };
   return async (result: unknown, signal: AbortSignal): Promise<unknown> => {
     const visit = async (value: unknown): Promise<unknown> => {
-      if (typeof value === 'string' && value.includes('"s3url"'))
-        try {
-          return await visit(JSON.parse(value));
-        } catch {
-          return value;
-        }
       if (Array.isArray(value)) return Promise.all(value.map(visit));
       if (!value || Object.getPrototypeOf(value) !== Object.prototype) return value;
       const record = value as Record<string, unknown>;
@@ -90,6 +97,6 @@ export function createComposioFiles(
         }
       });
     };
-    return visit(result);
+    return visit(envelope(result));
   };
 }

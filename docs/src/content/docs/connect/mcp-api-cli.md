@@ -11,6 +11,8 @@ Besides [Composio apps](/connect/apps/), Otto connects to Notion and Linear thro
 
 Notion and Linear connect through their own hosted MCP servers, the same way as any [other MCP server](#connect-another-service). You sign in with OAuth, and you don't need a Composio key. Open **Apps** and select **Connect**.
 
+If you ask Otto in chat, it sends a link to a private setup page in Otto, and you start the sign-in there. The service's sign-in link never appears in the chat, so the model and chat apps never see it.
+
 Otto can use every tool these servers offer, so it can read and change pages, issues and projects. Each change goes through the same [trust check](/trust/approvals/) as any app action. If Otto can't refresh a sign-in because it expired or was revoked, **Apps** shows **Sign-in required** with **Reconnect** from then on.
 
 ## Connect another service
@@ -52,7 +54,7 @@ Nothing comes from the workspace user's files or settings. A program that the mo
 
 ## Send and receive files
 
-To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them. Files in one action can total 90 MB. If the action waits for your approval, the attachment can't change in the meantime.
+To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them to Composio when it prepares the action, before the trust check asks you about it. If you decline, the uploaded copy stays with Composio. Files in one action can total 90 MB. If the action waits for your approval, the attachment can't change in the meantime.
 
 Files that apps send back, up to 90 MB each, are saved privately in the workspace one at a time. Otto sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until Otto shares it.
 

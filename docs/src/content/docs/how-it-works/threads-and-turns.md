@@ -93,7 +93,7 @@ When a background turn starts, it loads its own messages and recent conversation
 
 The main chat uses `task start` for work with an independent goal. One transaction saves the task, posts its first message and queues its first turn. Short requests stay in the main chat. A successful turn alone does not close the task; the task checks its completion condition and calls `task finish`.
 
-Explicit replies select a task before the coordinator runs. The coordinator uses `task reply` to forward the exact owner message when an ordinary follow-up selects an existing task. Owner updates keep their source message and revision. Questions, approvals and secure forms use the same wait and resume path as other sessions.
+Explicit replies select a task before the coordinator runs. The coordinator uses `task reply` to forward the exact owner message when an ordinary follow-up selects an existing open task. Only a turn started by an owner message in the main chat can forward a message or stop a task. Owner updates keep their source message and revision. Questions, approvals and secure forms use the same wait and resume path as other sessions.
 
 See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context, channel reply links and task controls.
 

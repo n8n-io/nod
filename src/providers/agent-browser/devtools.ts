@@ -470,12 +470,20 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           expression,
           throwOnSideEffect: true,
           returnByValue: true,
-          awaitPromise: true,
+          awaitPromise: false,
           timeout: 5000,
         },
         page,
-      )) as { result?: { value?: unknown }; exceptionDetails?: unknown };
-      return exceptionDetails ? undefined : { value: result?.value };
+      )) as { result?: { subtype?: string; value?: unknown }; exceptionDetails?: unknown };
+      if (exceptionDetails || result?.subtype === 'promise') return undefined;
+      return { value: result?.value };
+    },
+    async navigationType() {
+      const { currentIndex, entries } = (await send('Page.getNavigationHistory', {}, page)) as {
+        currentIndex: number;
+        entries: Array<{ transitionType?: string }>;
+      };
+      return entries[currentIndex]?.transitionType;
     },
     async scripted(mark = false) {
       const [main] = await tree(page);
