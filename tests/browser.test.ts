@@ -3158,7 +3158,8 @@ test(
       if (request.url === '/shadow') {
         response.setHeader('Content-Security-Policy', "style-src 'nonce-otto-fixture'");
         response.end(
-          `<card-panel></card-panel><script>
+          `<card-panel></card-panel><button id="report">Report</button><script>
+          document.querySelector('#report').onclick = () => { const mutated = globalThis.maskMutations > 0; globalThis.privateStyles[0].style.setProperty('outline-width', '1px'); setTimeout(() => fetch('/record?value=' + encodeURIComponent('report:' + JSON.stringify({ mutated, styles: globalThis.privateStyles.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).transitionProperty, node.style.getPropertyValue('transition-property'), node.style.getPropertyValue('opacity')]) }))), 0); };
           customElements.define('card-panel', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = '<card-fields></card-fields>'; } });
           customElements.define('card-fields', class extends HTMLElement { constructor() { super(); const root = this.attachShadow({ mode: 'closed' });
           root.innerHTML = '<style nonce="otto-fixture">input[aria-label="Card number"],input[aria-label="Security code"],h2{background:rgb(255,0,0);transition:opacity 60s !important}button{background:rgb(0,0,255)}</style><form><input aria-label="Card number"><select aria-label="Month"><option value="1">January</option><option value="8">August</option></select><input aria-label="Year"><input aria-label="Security code"><h2></h2><button>Complete</button></form>';
@@ -3301,6 +3302,26 @@ test(
         }),
         /scripts are paused/,
       );
+      for (const field of [shadowFields.number, shadowFields.expiryYear, shadowFields.securityCode])
+        await computer.act('private', { action: 'fill', selector: field, text: '' });
+      await assert.rejects(computer.act('private', { action: 'open', url: 'file:///etc/hosts' }));
+      await assert.rejects(
+        computer.act('private', { action: 'evaluate', script: 'document.title' }),
+        /scripts are paused/,
+      );
+      await computer.act('private', { action: 'click', selector: '#report' });
+      const recorded = hits as string[];
+      const reported = Date.now() + 5_000;
+      while (!recorded.some((hit) => hit.startsWith('report:')) && Date.now() < reported)
+        await delay(50);
+      const report = JSON.parse(
+        recorded.find((hit) => hit.startsWith('report:'))?.slice('report:'.length) ?? 'null',
+      ) as { mutated: boolean; styles: string[][] } | null;
+      assert.equal(report?.mutated, true);
+      assert.deepEqual(
+        report?.styles,
+        Array.from({ length: 3 }, () => ['1', 'opacity', '', '']),
+      );
       await computer.act('private', { action: 'open', url: origin });
       const pixels = await computer.act('private', {
         action: 'evaluate',
@@ -3427,7 +3448,7 @@ test('navigation stays available when a saved script fence cannot reach the insp
       const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
       if (offline && command[0] === 'get' && command[1] === 'cdp-url')
         return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
-      if (['back', 'forward', 'reload'].includes(command[0])) navigated.push(command[0]);
+      if (['back', 'forward', 'reload', 'open'].includes(command[0])) navigated.push(command[0]);
       const result = await fixture.run(...args);
       if (command[0] === 'eval') offline = true;
       return result;
@@ -3441,7 +3462,7 @@ test('navigation stays available when a saved script fence cannot reach the insp
     });
     for (const action of ['back', 'forward', 'reload'] as const)
       await computer.act('recovery', { action });
-    assert.deepEqual(navigated, ['back', 'forward', 'reload']);
+    assert.deepEqual(navigated, ['open', 'back', 'forward', 'open']);
     offline = false;
     await assert.rejects(
       computer.injectCredentials({

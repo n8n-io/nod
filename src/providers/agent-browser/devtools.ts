@@ -478,12 +478,12 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       if (exceptionDetails || result?.subtype === 'promise') return undefined;
       return { value: result?.value };
     },
-    async navigationType() {
+    async navigation() {
       const { currentIndex, entries } = (await send('Page.getNavigationHistory', {}, page)) as {
         currentIndex: number;
-        entries: Array<{ transitionType?: string }>;
+        entries: Array<{ transitionType?: string; url?: string }>;
       };
-      return entries[currentIndex]?.transitionType;
+      return { type: entries[currentIndex]?.transitionType, url: entries[currentIndex]?.url };
     },
     async scripted(mark = false) {
       const [main] = await tree(page);

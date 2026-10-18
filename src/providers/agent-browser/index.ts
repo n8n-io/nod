@@ -858,7 +858,6 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       if (input.action === 'open') {
-        delete state.sealedDocument;
         const url = browserUrl(input.url ?? '');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -1052,15 +1051,18 @@ export function createAgentBrowserComputer(options: {
           const devtools = await inspector(state, signal).catch(() => undefined);
           try {
             const before = await devtools?.document().catch(() => undefined);
-            const resubmit =
-              input.action === 'reload' &&
-              (await devtools?.navigationType().catch(() => undefined)) === 'form_submit';
-            const target = resubmit
-              ? await currentUrl(state, signal).catch(() => undefined)
-              : undefined;
+            const entry =
+              input.action === 'reload'
+                ? await devtools?.navigation().catch(() => undefined)
+                : undefined;
+            const native =
+              input.action !== 'reload' || (!!entry?.type && entry.type !== 'form_submit');
+            const target = native
+              ? undefined
+              : browserUrl(entry?.url ?? (await currentUrl(state, signal))).href;
             const failure = await command(
               state,
-              resubmit && target ? { action: 'navigate', url: target } : { action: input.action },
+              target ? { action: 'navigate', url: target } : { action: input.action },
               { signal },
             ).then(
               () => undefined,

@@ -334,6 +334,11 @@ export async function fakeDevtools(model: DevtoolsModel) {
               .map((frame) => ({ frame: { id: frame.id, securityOrigin: frame.origin } })),
           },
         });
+      if (message.method === 'Page.getNavigationHistory')
+        return reply({
+          currentIndex: 0,
+          entries: [{ url: `${frames[0]?.origin}/`, transitionType: 'typed' }],
+        });
       if (message.method === 'Page.createIsolatedWorld')
         return reply({
           executionContextId: model.frames.findIndex(
