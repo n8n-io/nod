@@ -19,7 +19,11 @@ import type {
 import { createSkillLibrary } from '../src/providers/pi/skills.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { inlineAppResult, type MailCheck } from '../src/server/integration-result.ts';
+import {
+  inlineAppResult,
+  mailCheckText,
+  type MailCheck,
+} from '../src/server/integration-result.ts';
 import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import type { Computer } from '../src/ports/computer.ts';
@@ -241,6 +245,11 @@ test('mail that grants account access stays out of app tool results and workspac
   for (const email of checked)
     assert.equal(new Set(JSON.stringify(email).match(/\[r\d\]/g)).size, 1);
   assert.ok(checked.some((email) => email.text.includes(secrets[0])));
+  assert.ok(
+    mailCheckText(
+      `${'Fixture newsletter text. '.repeat(1000)}Your recovery code is 553912.`,
+    ).includes('553912'),
+  );
 });
 
 test('skill reads cannot escape the trusted library or load workspace instructions', async () => {

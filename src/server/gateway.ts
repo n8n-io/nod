@@ -480,7 +480,7 @@ export async function createGateway(options: {
           release();
         });
         await previous;
-        if (closed) return;
+        if (closed) return reply.code(400).send({ error: 'The upload was cancelled.' });
         let granted = uploading < 2;
         if (granted) uploading += 1;
         else
@@ -494,7 +494,7 @@ export async function createGateway(options: {
               resolve(false);
             });
           });
-        if (!granted) return;
+        if (!granted) return reply.code(400).send({ error: 'The upload was cancelled.' });
         const free = () => {
           const next = uploadSlots.shift();
           if (next) next();

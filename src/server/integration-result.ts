@@ -56,15 +56,17 @@ export type MailCheck = (
   signal?: AbortSignal,
 ) => Promise<boolean>;
 
-export const mailCheckChars = 2000;
+export const mailCheckChars = 8000;
 
 export function mailCheckText(text: string) {
-  return text
+  const clean = text
     .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, mailCheckChars);
+    .trim();
+  if (clean.length <= mailCheckChars) return clean;
+  const tail = mailCheckChars / 4;
+  return `${clean.slice(0, mailCheckChars - tail)} … ${clean.slice(-tail)}`;
 }
 
 export const noMailCheck: MailCheck = async () => {
