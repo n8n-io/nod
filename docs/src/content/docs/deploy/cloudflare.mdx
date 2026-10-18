@@ -139,7 +139,7 @@ When a conversation turn ends waiting for the user, the tenant holds its running
 If a workspace container is lost before its next checkpoint, recent changes are lost. The model is told on its next command.
 :::
 
-If a command is interrupted, Otto can't tell what it changed, so it destroys that computer and refuses it for the rest of the tenant's generation. The next generation restores the last checkpoint and tells the model what was lost.
+If Otto can't confirm that a command stopped safely, it can't tell what the command changed, so it destroys that computer and refuses it for the rest of the tenant's generation. The next generation restores the last checkpoint; for a workspace, it also tells the model what was lost.
 
 A workspace too large to save keeps running on its previous checkpoint, and the model's next bash output says what to delete. Unsaved changes are dropped when it sleeps, stops or drains. This never blocks a deploy.
 
@@ -160,7 +160,7 @@ A workspace too large to save keeps running on its previous checkpoint, and the 
 
 1. Push all three images and resolve their digests.
 2. Close a durable admission barrier, authorized by an HMAC derived from `OTTO_MASTER_KEY`.
-3. Drain each tenant, then require clean browser and workspace checkpoints and a confirmed stop of each exact generation. Active holds, a computer still running after an interrupted command or an expired deadline block the deploy. A computer whose container is already gone goes back to its last checkpoint instead. Nothing is force-cancelled.
+3. Drain each tenant, then require clean browser and workspace checkpoints and a confirmed stop of each exact generation. Active holds, a computer still running after an interrupted command, a computer with unsaved changes from a command or an expired deadline block the deploy. A computer left uncertain or restoring whose container is already gone goes back to its last checkpoint instead. Nothing is force-cancelled.
 4. Publish Worker code, image references and `GATEWAY_ENV` together with `wrangler deploy --secrets-file`.
 5. Verify every container application's image and rollout, the R2 binding and a public smoke test, then reopen admission.
 

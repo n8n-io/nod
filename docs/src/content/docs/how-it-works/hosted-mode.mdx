@@ -110,7 +110,7 @@ A workspace too large to save keeps running on its previous checkpoint, and ever
 If the workspace container is lost between checkpoints, changes since the last checkpoint are lost. The model is told on its next command. The computer isn't fenced.
 :::
 
-If a command is interrupted, Otto can't tell what it changed. It destroys that computer and stops using it until your account's runtime next restarts, which restores the last checkpoint and tells the model what was lost.
+If Otto can't confirm that a command stopped safely, it can't tell what the command changed. It destroys that computer and stops using it until your account's runtime next restarts, which restores the last checkpoint and, for the workspace, tells the model what was lost.
 
 ## Workspace users and connected CLIs
 
