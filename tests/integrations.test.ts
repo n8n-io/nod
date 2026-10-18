@@ -5207,12 +5207,30 @@ test(
         { workspaceFile: 'data.csv', mimeType: 'text/csv', name: 'totals.csv' },
       ],
     };
-    const prepared = await f.service.prepare('local-development', 'GMAIL_SEND_EMAIL', args, turn);
-    assert.equal(delivered.length, 0);
+    const pinned = await f.service.prepare(
+      'local-development',
+      'GMAIL_SEND_EMAIL',
+      args,
+      turn,
+      undefined,
+      true,
+    );
     assert.equal(reads, 2);
+    assert.equal(stored.size, 0);
+    assert.deepEqual(
+      await f.service.prepare('local-development', 'GMAIL_SEND_EMAIL', pinned),
+      pinned,
+    );
+    const original = files.get('report.pdf')!;
     files.set('report.pdf', Buffer.from('Changed after confirmation was requested.'));
+    await assert.rejects(
+      f.service.prepare('local-development', 'GMAIL_SEND_EMAIL', pinned, turn),
+      /changed after this action was confirmed/,
+    );
+    assert.equal(stored.size, 0);
+    files.set('report.pdf', original);
+    const prepared = await f.service.prepare('local-development', 'GMAIL_SEND_EMAIL', pinned, turn);
     await f.service.executeApproved('local-development', 'GMAIL_SEND_EMAIL', prepared, turn);
-    assert.equal(reads, 2);
     assert.deepEqual(
       delivered[0].map((file) => ({
         name: file.name,

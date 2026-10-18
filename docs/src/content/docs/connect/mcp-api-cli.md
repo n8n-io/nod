@@ -54,7 +54,7 @@ Nothing comes from the workspace user's files or settings. A program that the mo
 
 ## Send and receive files
 
-To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files, then uploads them to Composio when it prepares the action, before the trust check asks you about it. If you decline, the uploaded copy stays with Composio. Files in one action can total 90 MB. If the action waits for your approval, the attachment can't change in the meantime.
+To attach a workspace file to a Composio action, Otto passes `{workspaceFile, mimeType, name?}`. The server reads and checks the files and uploads them to Composio only when the action runs. If the trust check asks you first, nothing is uploaded until you say yes, and declining sends nothing. Files in one action can total 90 MB. Your yes covers the exact files Otto showed you: if one is changed or deleted before the action runs, nothing is sent and Otto has to ask again.
 
 Files that apps send back, up to 90 MB each, are saved privately in the workspace one at a time. Otto sees each file's name, type and size, and up to four images of 5 MB or less. Nothing reaches your chat until Otto shares it.
 

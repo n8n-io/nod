@@ -42,7 +42,10 @@ import {
   type AnalyticsConnection,
 } from './analytics-connections.ts';
 import {
+  fileDigest,
   hasWorkspaceFiles,
+  pinnedWorkspaceFiles,
+  pinWorkspaceFiles,
   uploadWorkspaceFiles,
   workspaceFileSchemas,
 } from './integration-files.ts';
@@ -1693,6 +1696,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     args: Record<string, unknown>,
     turn?: TurnRef,
     signal?: AbortSignal,
+    pin = false,
   ) {
     assertOwner(ownerId);
     signal?.throwIfAborted();
@@ -1709,31 +1713,43 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const row = await selectConnection(ownerId, slug, connectionId);
       if (hasWorkspaceFiles(args)) {
         const read = options.readWorkspaceFile;
+        if (!turn && !pin && pinnedWorkspaceFiles(args)) return { ...args, connectionId: row.id };
         if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
         let remaining = fileBytes;
+        const load = async (input: { workspaceFile: string; size?: number; sha256?: string }) => {
+          signal?.throwIfAborted();
+          if (!remaining)
+            throw new IntegrationError(
+              `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+            );
+          const bytes = await read(turn, input.workspaceFile, remaining);
+          if (!bytes.byteLength || bytes.byteLength > remaining)
+            throw new IntegrationError(
+              `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
+            );
+          if (
+            input.sha256 !== undefined &&
+            (bytes.byteLength !== input.size || fileDigest(bytes) !== input.sha256)
+          )
+            throw new IntegrationError(
+              `${input.workspaceFile} changed after this action was confirmed, so nothing was sent.`,
+              409,
+            );
+          remaining -= bytes.byteLength;
+          signal?.throwIfAborted();
+          return bytes;
+        };
+        if (pin)
+          return { ...((await pinWorkspaceFiles(args, load)) as object), connectionId: row.id };
         args = (await withAccountSession(ownerId, [row], signal, async (session) => {
           if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
           return uploadWorkspaceFiles(
             args,
-            async (input) => {
-              signal?.throwIfAborted();
-              if (!remaining)
-                throw new IntegrationError(
-                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
-                );
-              const bytes = await read(turn, input.workspaceFile, remaining);
-              if (!bytes.byteLength || bytes.byteLength > remaining)
-                throw new IntegrationError(
-                  `The app files must total between 1 byte and ${fileBytes / 1024 / 1024} MB.`,
-                );
-              remaining -= bytes.byteLength;
-              signal?.throwIfAborted();
-              return {
-                name: input.name ?? basename(input.workspaceFile),
-                mimeType: input.mimeType,
-                bytes,
-              };
-            },
+            async (input) => ({
+              name: input.name ?? basename(input.workspaceFile),
+              mimeType: input.mimeType,
+              bytes: await load(input),
+            }),
             async (file) => {
               signal?.throwIfAborted();
               const result = await session.upload!(action, file, signal, row.account_id!);

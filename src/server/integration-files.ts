@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentImage } from '../ports/agent.ts';
 import { IntegrationDownload, type IntegrationFile } from '../ports/integrations.ts';
@@ -17,6 +18,49 @@ export const workspaceFileInput = z
     size: z.number().int().nonnegative().optional(),
   })
   .strict();
+
+const workspaceFileReference = workspaceFileInput.extend({
+  sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+});
+
+type WorkspaceFileReference = z.infer<typeof workspaceFileReference>;
+
+export function fileDigest(bytes: Uint8Array) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function pinnedWorkspaceFiles(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return true;
+  if ('workspaceFile' in value) {
+    const input = workspaceFileReference.safeParse(value);
+    return input.success && input.data.sha256 !== undefined && input.data.size !== undefined;
+  }
+  return Object.values(value).every(pinnedWorkspaceFiles);
+}
+
+export async function pinWorkspaceFiles(
+  value: unknown,
+  read: (input: WorkspaceFileReference) => Promise<Uint8Array>,
+): Promise<unknown> {
+  if (!value || typeof value !== 'object') return value;
+  if ('workspaceFile' in value) {
+    const input = workspaceFileReference.parse(value);
+    const bytes = await read(input);
+    return { ...input, size: bytes.byteLength, sha256: fileDigest(bytes) };
+  }
+  if (Array.isArray(value)) {
+    const result = [];
+    for (const item of value) result.push(await pinWorkspaceFiles(item, read));
+    return result;
+  }
+  const entries = [];
+  for (const [key, item] of Object.entries(value))
+    entries.push([key, await pinWorkspaceFiles(item, read)]);
+  return Object.fromEntries(entries);
+}
 
 export function hasWorkspaceFiles(value: unknown): boolean {
   return Boolean(
@@ -38,14 +82,14 @@ export function workspaceFileSchemas(value: unknown): unknown {
 
 export async function uploadWorkspaceFiles(
   value: unknown,
-  read: (input: z.infer<typeof workspaceFileInput>) => Promise<IntegrationFile>,
+  read: (input: WorkspaceFileReference) => Promise<IntegrationFile>,
   upload: (file: IntegrationFile) => Promise<Record<string, unknown>>,
 ): Promise<unknown> {
   const files = new Map<object, IntegrationFile>();
   async function readFiles(value: unknown): Promise<void> {
     if (!value || typeof value !== 'object') return;
     if ('workspaceFile' in value) {
-      files.set(value, await read(workspaceFileInput.parse(value)));
+      files.set(value, await read(workspaceFileReference.parse(value)));
       return;
     }
     for (const item of Object.values(value)) await readFiles(item);

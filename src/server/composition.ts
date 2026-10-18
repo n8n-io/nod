@@ -825,10 +825,23 @@ async function initializeApplication(
                   : action.startsWith('OTTO_')
                     ? personal.manage(action.slice('OTTO_'.length), args, provenance)
                     : (async () => {
-                        const result = await integrations.executeApproved(ownerId, action, args, {
-                          threadId: provenance.threadId,
-                          turnId: provenance.turnId,
-                        });
+                        const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                        const ready = hasWorkspaceFiles(args)
+                          ? await integrations
+                              .prepare(ownerId, action, args, turn)
+                              .catch((error: unknown) => {
+                                throw Object.assign(
+                                  error instanceof Error ? error : new Error(String(error)),
+                                  { notRun: true },
+                                );
+                              })
+                          : args;
+                        const result = await integrations.executeApproved(
+                          ownerId,
+                          action,
+                          ready,
+                          turn,
+                        );
                         await ledger.action(provenance.turnId, action);
                         return (
                           await saveIntegrationFiles(result, async (file) => {
@@ -1304,7 +1317,7 @@ async function initializeApplication(
         await options.admit?.(verdict.confirm);
         if (hasWorkspaceFiles(args))
           args = await withTurnLock(turn.turnId, () =>
-            integrations.prepare(ownerId, action, args, turn, options.signal),
+            integrations.prepare(ownerId, action, args, turn, options.signal, verdict.confirm),
           );
         if (verdict.confirm) {
           const prepared = await integrations.prepare(ownerId, action, args);

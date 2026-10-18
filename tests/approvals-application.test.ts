@@ -15,7 +15,7 @@ import { BrowserActionError } from '../src/ports/computer.ts';
 
 test(
   'personal approvals revalidate targets before execution',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 60_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_personal_review_${suffix}`;
@@ -73,6 +73,8 @@ test(
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
     const executedApps: string[] = [];
+    const uploads: string[] = [];
+    const workspaceFiles = new Map<string, Uint8Array>();
     const browserActs: Array<Record<string, unknown>> = [];
     let browserUrl = 'https://bank.example.test/transfer';
     let dialogOpen = false;
@@ -194,11 +196,21 @@ test(
             };
           },
         }),
-        workspace: fakeWorkspace(),
+        workspace: fakeWorkspace({
+          readArtifact: async (_threadId, path) => {
+            const bytes = workspaceFiles.get(path);
+            if (!bytes) throw new Error('The workspace file is unavailable.');
+            return bytes;
+          },
+        }),
         integrations: {
           ...integrationFixture.provider,
           createSession: async (...args) => {
             const session = await integrationFixture.provider.createSession(...args);
+            session.upload = async (_action, file) => {
+              uploads.push(Buffer.from(file.bytes).toString());
+              return { name: file.name, mimetype: file.mimeType, s3key: randomUUID() };
+            };
             const execute = session.execute.bind(session);
             session.execute = async (...input) => {
               executedApps.push(input[0]);
@@ -1299,6 +1311,48 @@ test(
             await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
             await pool.query('DELETE FROM model_usage WHERE id=$1', [usageId]);
           }
+        },
+      );
+
+      await t.test(
+        'a file attached to an action that asks is uploaded only after the owner approves it',
+        async () => {
+          const sends = () =>
+            integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length;
+          const before = sends();
+          const send = {
+            recipient_email: 'collector@example.test',
+            subject: 'Synthetic report',
+            body: 'Synthetic attachment.',
+            attachment: { workspaceFile: 'report.pdf', mimeType: 'application/pdf' },
+          };
+          workspaceFiles.set('report.pdf', Buffer.from('%PDF-1.7 synthetic report'));
+          const held = await propose('GMAIL_SEND_EMAIL', send, 'apps');
+          const [card] = await approvalsFor(held);
+          assert.equal(card.status, 'pending');
+          assert.equal(card.args.attachment.workspaceFile, 'report.pdf');
+          assert.deepEqual(uploads, []);
+          const approved = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: card.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          await waitFor(approved.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(held))[0].status, 'completed');
+          assert.deepEqual(uploads, ['%PDF-1.7 synthetic report']);
+          assert.equal(sends(), before + 1);
+          const changed = await propose('GMAIL_SEND_EMAIL', send, 'apps');
+          const [stale] = await approvalsFor(changed);
+          workspaceFiles.set('report.pdf', Buffer.from('%PDF-1.7 changed report'));
+          const late = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: stale.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          await waitFor(late.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(changed))[0].status, 'expired');
+          assert.equal(uploads.length, 1);
+          assert.equal(sends(), before + 1);
         },
       );
     } finally {
