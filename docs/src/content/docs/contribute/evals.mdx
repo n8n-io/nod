@@ -203,15 +203,15 @@ The `longmemeval` command runs [LongMemEval-S](https://github.com/xiaowu0162/Lon
 Each question boots its own isolated Otto with a real model:
 
 1. The history is written into the conversation with its original dates.
-2. Otto's hourly memory job runs once for every hour of the history that passed, as it would have live.
+2. Otto's hourly memory job runs at each hourly tick of the history that has new owner messages, which is when the live job finds work.
 3. The question is sent in the benchmark's format, `Current Date: …` followed by `Question: …`, with no hint about its type.
 
 It runs two setups:
 
-| Setup    | What Otto has                                                                                                                                             |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory` | A new session: its notes, the last 30 messages and `history_search` over the rest, like a task or a chat after compaction                                 |
-| `chat`   | The history as its own conversation transcript, rendered the way Otto writes turns, with the measured token count so Pi compacts exactly as it would live |
+| Setup    | What Otto has                                                                                                                                       |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory` | A new session: its notes, the last 30 messages and `history_search` over the rest, like a task or a chat after compaction                           |
+| `chat`   | Everything the memory setup has, plus the history as its own conversation transcript, with the measured token count so Pi compacts as it would live |
 
 Download `longmemeval_s_cleaned.json` from the [dataset page](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) into its own folder, then run:
 
@@ -221,7 +221,7 @@ pnpm run eval:capability longmemeval --data ~/longmemeval/longmemeval_s_cleaned.
 
 Add `--setups memory` for one setup, `--sample 30` for a sample spread across question types, or `--questions a,b` for chosen questions. The `chat` setup needs an OpenAI agent model, because it measures the history with OpenAI's token counter. A full run of both setups costs about $350 with GPT-6.1 Sol and takes about four hours at concurrency 8.
 
-Results go to `.local/capability-evals/longmemeval/<label>/`: one JSON file per question with the reply, the judge's verdict, tools, notes and cost, and `summary.md` with accuracy overall, per question type and for abstention. Report accuracy over all 500 questions. The command never retries a question, and when you change Otto because of what a question showed, report the score on the questions you never looked at as well.
+Results go to `.local/capability-evals/longmemeval/<label>/`: one JSON file per question with the reply, the judge's verdict, tools, notes and cost, and `summary.md` with accuracy overall, per question type and for abstention. Report accuracy over all 500 questions. The command doesn't rerun completed questions; `--resume` reruns only incomplete ones and refuses a run whose model, judge, dataset or setups changed, so report how many were rerun. When you change Otto because of what a question showed, report the score on the questions you never looked at as well.
 
 ## Run evals in CI
 

@@ -109,6 +109,7 @@ async function attempt(
       questionId: item.question_id,
       type: item.question_type,
       abstention: item.question_id.endsWith('_abs'),
+      setups,
       runs: [],
       seconds: 0,
       error: `The attempt process ended without a result. ${captured.slice(-400)}`,
@@ -133,8 +134,8 @@ export function summarizeLongMemEval(results: QuestionRun[], setups: SetupName[]
         const run = result.runs.find((item) => item.setup === setup);
         return scored(run) ? [{ result, run }] : [];
       });
-      const attempted = results.filter(
-        (result) => result.runs.some((item) => item.setup === setup) || result.error,
+      const attempted = results.filter((result) =>
+        (result.setups ?? setups).includes(setup),
       ).length;
       const accuracy = (items: typeof runs) => ({
         n: items.length,
@@ -240,7 +241,11 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
   const judgeModel = parseModel(options.judge, environment);
   if (judgeModel.provider !== 'openai')
     throw new Error('The LongMemEval judge must be an OpenAI model, as in the official script.');
-  parseModel(options.model, environment);
+  const agent = parseModel(options.model, environment);
+  if (options.setups.includes('chat') && agent.provider !== 'openai')
+    throw new Error(
+      'The chat setup needs an OpenAI agent model to measure the history with its token counter.',
+    );
   const directory = join(options.root, 'longmemeval', options.label);
   await mkdir(join(directory, 'raw'), { recursive: true });
   await mkdir(join(directory, 'logs'), { recursive: true });
@@ -267,7 +272,14 @@ export async function runLongMemEval(options: LongMemEvalOptions) {
   const saved = await readFile(manifestPath, 'utf8').catch(() => undefined);
   if (saved && !options.resume)
     throw new Error(`Label ${options.label} already exists. Pick another label or pass --resume.`);
-  if (!saved) await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  if (saved) {
+    const previous = JSON.parse(saved) as typeof manifest;
+    for (const key of ['model', 'judge', 'dataset', 'commit'] as const)
+      if (previous[key] !== manifest[key])
+        throw new Error(`Label ${options.label} was run with another ${key}. Pick a new label.`);
+    if (previous.setups.join() !== manifest.setups.join())
+      throw new Error(`Label ${options.label} was run with other setups. Pick a new label.`);
+  } else await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   const results = new Map<string, QuestionRun>();
   for (const item of picked) {
     const done = await readFile(join(directory, 'questions', `${item.question_id}.json`), 'utf8')

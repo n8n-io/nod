@@ -204,6 +204,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
     questionId: item.question_id,
     type: item.question_type,
     abstention: item.question_id.endsWith('_abs'),
+    setups: spec.setups,
   };
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;

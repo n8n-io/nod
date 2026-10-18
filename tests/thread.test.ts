@@ -3012,7 +3012,7 @@ const memoryFixture = async (tables: string[] = []) => {
   url.searchParams.set('options', `-c search_path=${schema}`);
   const pool = new pg.Pool({ connectionString: url.href });
   await pool.query(
-    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
+    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
@@ -3376,6 +3376,10 @@ test(
     t.mock.method(console, 'error', () => {});
     const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
     try {
+      await pool.query(
+        "INSERT INTO preferences(owner_id,time_zone) VALUES($1,'America/New_York')",
+        [ownerId],
+      );
       const { calls, state, curator } = scriptedCurator();
       const learning = createMemoryLearning({ pool, ownerId, memory, curator });
       assert.equal(await learning.reflect(), 0);
@@ -3493,8 +3497,8 @@ test(
       assert.equal(calls.length, 1);
       assert.equal(calls[0].task, 'reflect');
       assert.deepEqual(calls[0].input.messages, [
-        { m: 1, at: '2026-01-01T10:00', text: bullets },
-        { m: 2, at: '2026-01-01T10:05', text: sister },
+        { m: 1, at: '2026-01-01T05:00:00-05:00', text: bullets },
+        { m: 2, at: '2026-01-01T05:05:00-05:00', text: sister },
       ]);
       assert.equal(calls[0].input.memory, '{}');
       const learned = await memory.load();
@@ -3529,7 +3533,9 @@ test(
         ],
       });
       assert.equal(await learning.reflect(), 1);
-      assert.deepEqual(calls[1].input.messages, [{ m: 1, at: '2026-01-01T11:00', text: again }]);
+      assert.deepEqual(calls[1].input.messages, [
+        { m: 1, at: '2026-01-01T06:00:00-05:00', text: again },
+      ]);
       assert.match(
         calls[1].input.memory ?? '',
         /meeting-notes: Wants meeting notes as bullet points\. \(tentative\)/,

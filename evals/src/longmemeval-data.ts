@@ -50,6 +50,7 @@ export interface QuestionRun {
   questionId: string;
   type: string;
   abstention: boolean;
+  setups?: SetupName[];
   runs: SetupRun[];
   learning?: {
     ticks: number;

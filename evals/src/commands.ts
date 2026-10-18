@@ -248,7 +248,9 @@ export async function main(args: Args) {
         sample: text(args, 'sample') === undefined ? undefined : whole(args, 'sample', 1),
         chatSample:
           text(args, 'chat-sample') === undefined ? undefined : whole(args, 'chat-sample', 1),
-        questions: text(args, 'questions')?.split(','),
+        questions: text(args, 'questions')
+          ? [...new Set(text(args, 'questions')!.split(','))]
+          : undefined,
         concurrency: whole(args, 'concurrency', 6),
         budget: number(args, 'budget', 0),
         resume: has(args, 'resume'),

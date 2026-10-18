@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import { repair } from './memory-lint.ts';
 import { applyReflect } from './memory-ops.ts';
+import { localTimestamp } from '../shared/date-locale.ts';
 import { indexLayout, unsafe } from './memory-tree.ts';
 import type { MemoryService } from './memory.ts';
 import type { WorkConsumers } from './work-admission.ts';
@@ -50,7 +51,7 @@ export function createMemoryLearning(options: {
     }
     const [from, after] = tree.reflected.split('/');
     const { rows } = await options.pool.query(
-      `SELECT m.id,m.text,${utc('m.created_at')} AS at FROM messages m
+      `SELECT m.id,m.text,${utc('m.created_at')} AS at,(SELECT time_zone FROM preferences p WHERE p.owner_id=m.owner_id) AS zone FROM messages m
        WHERE m.owner_id=$1 AND m.role='user' AND m.attachments='[]'::jsonb AND length(m.text)<=4000
          AND m.created_at<=now()-interval '10 minutes' AND (m.created_at,m.id)>($2::timestamptz,$3::uuid)
          AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='OTTO_memory_save')
@@ -62,9 +63,8 @@ export function createMemoryLearning(options: {
     );
     if (!rows.length) return;
     const mark = `${rows.at(-1).at}/${rows.at(-1).id}`;
-    const messages: Array<{ id: string; text: string; at: string }> = rows.filter(
-      (row) => !unsafe(row.text),
-    );
+    const messages: Array<{ id: string; text: string; at: string; zone: string | null }> =
+      rows.filter((row) => !unsafe(row.text));
     let ops: unknown[] = [];
     if (messages.length) {
       const proposed = await ask(reflectInstructions(tree.sensitive), {
@@ -72,7 +72,9 @@ export function createMemoryLearning(options: {
         memory: indexLayout(tree, { tentative: true }),
         messages: messages.map((message, index) => ({
           m: index + 1,
-          at: message.at.slice(0, 16),
+          at: message.zone
+            ? localTimestamp(message.zone, new Date(message.at))
+            : `${message.at.slice(0, 19)}Z`,
           text: message.text,
         })),
       });
