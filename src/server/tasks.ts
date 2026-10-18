@@ -302,7 +302,7 @@ export function createTasks(options: {
       await client.query('SELECT * FROM turns WHERE id=$1 AND owner_id=$2', [turn.turnId, ownerId])
     ).rows[0];
     if (request.action === 'reply') {
-      if (current.task_id || !sourceMessageId)
+      if (current.task_id || current.session_id !== turn.threadId || !sourceMessageId)
         throw failure('Only the main chat can send owner updates to tasks.');
       for (const id of new Set(request.ids))
         await deliver(client, id, sourceMessageId, turn.turnId);
@@ -310,7 +310,8 @@ export function createTasks(options: {
     }
     if (request.action === 'stop') {
       if (current.task_id) throw failure('Use finish to close your own task.');
-      if (!sourceMessageId) throw failure('Only the main chat can stop tasks.');
+      if (current.session_id !== turn.threadId || !sourceMessageId)
+        throw failure('Only the main chat can stop tasks.');
       const cancelled = await stop(client, request.id, turn.threadId);
       return { task: (await read(client, { id: request.id, closed: true }))[0], cancelled };
     }

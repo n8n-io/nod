@@ -254,7 +254,7 @@ describe('gateway', () => {
       assert.equal(status, 200);
       assert.equal(f.calls.at(-1)!.owner, f.users[1]);
       stalled.end(Buffer.alloc(1024, 1));
-      assert.equal(await first, 200);
+      assert.equal(await Promise.race([first, delay(5_000).then(() => 0)]), 200);
     } finally {
       for (const sent of requests) sent.destroy();
       await f.app.close();

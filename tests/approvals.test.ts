@@ -1222,6 +1222,14 @@ test(
             await assert.rejects(
               tasks.execute(background, { action: 'stop', id: parcel.id }, null),
             );
+            const answer = (await row(chat.turnId)).message_id;
+            await db.pool.query('UPDATE turns SET message_id=$2 WHERE id=$1', [
+              background.turnId,
+              answer,
+            ]);
+            await assert.rejects(
+              tasks.execute(background, { action: 'stop', id: parcel.id }, answer),
+            );
           }
           const stopper = await begin('Stop the fixture dentist task.');
           t.after(() => finish(stopper.turnId, 'cancelled'));

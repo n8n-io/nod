@@ -799,7 +799,9 @@ test('the engine token waits for the engine Otto started to report its port', as
   );
   f.crash();
   const prepared = f.prepare();
-  while (!f.children.length) await new Promise((accept) => setTimeout(accept, 20));
+  for (let attempt = 0; !f.children.length && attempt < 250; attempt += 1)
+    await new Promise((accept) => setTimeout(accept, 20));
+  assert.equal(f.children.length, 1);
   await new Promise((accept) => setTimeout(accept, 1000));
   f.children[0].emit('exit', 1);
   assert.equal((await prepared).phase, 'error');

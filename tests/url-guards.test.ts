@@ -403,6 +403,10 @@ test('web tool connections use a DNS answer only when every address in it is pub
   assert.deepEqual(await connect([public4]), [public4]);
   assert.equal(await connect([public4, { address: '127.0.0.1', family: 4 }]), 'blocked');
   assert.equal(await connect([{ address: '::ffff:169.254.169.254', family: 6 }]), 'blocked');
+  for (const address of ['2001:0002::1', '2001:0DB8:0:0::1', '2001:0000:4136::1'])
+    assert.equal(await connect([{ address, family: 6 }]), 'blocked');
+  const public6 = { address: '2606:4700:0000::1111', family: 6 };
+  assert.deepEqual(await connect([public6]), [public6]);
 });
 
 test('the browser proxy refuses private network destinations, including names that resolve to them', async () => {

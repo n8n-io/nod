@@ -480,8 +480,21 @@ export async function createGateway(options: {
           release();
         });
         await previous;
-        if (uploading < 2) uploading += 1;
-        else await new Promise<void>((resolve) => uploadSlots.push(resolve));
+        if (closed) return;
+        let granted = uploading < 2;
+        if (granted) uploading += 1;
+        else
+          granted = await new Promise<boolean>((resolve) => {
+            const wake = () => resolve(true);
+            uploadSlots.push(wake);
+            reply.raw.once('close', () => {
+              const index = uploadSlots.indexOf(wake);
+              if (index < 0) return;
+              uploadSlots.splice(index, 1);
+              resolve(false);
+            });
+          });
+        if (!granted) return;
         const free = () => {
           const next = uploadSlots.shift();
           if (next) next();

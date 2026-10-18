@@ -21,13 +21,18 @@ export function isPublicAddress(address: string): boolean {
       (a === 203 && b === 0 && c === 113)
     );
   }
-  if (isIP(address) === 6)
-    return (
-      /^[23][0-9a-f]{0,3}:/i.test(address) &&
-      !/^2002:/i.test(address) &&
-      !/^2001:(?:0{1,4}:|db8:|2:|10:|20:)/i.test(address)
-    );
-  return false;
+  if (isIP(address) !== 6) return false;
+  let normal: string;
+  try {
+    normal = new URL(`http://[${address}]`).hostname.slice(1, -1);
+  } catch {
+    return false;
+  }
+  return (
+    /^[23][0-9a-f]{0,3}:/.test(normal) &&
+    !/^2002:/.test(normal) &&
+    !/^2001:(?::|0:|db8:|2:|10:|20:)/.test(normal)
+  );
 }
 
 const systemResolver: AddressResolver = (host) => lookup(host, { all: true, verbatim: true });
