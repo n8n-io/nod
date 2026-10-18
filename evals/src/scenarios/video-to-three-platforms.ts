@@ -63,7 +63,7 @@ const confirmedOn = (run: Run, platform: string) =>
   run.approvals.some(
     (item) =>
       item.action === 'OTTO_browser' &&
-      item.status === 'completed' &&
+      ['confirmed', 'executing', 'completed', 'uncertain'].includes(item.status) &&
       (item.args as { website?: string } | null)?.website ===
         `https://${platforms.find((entry) => entry.id === platform)?.host}`,
   );

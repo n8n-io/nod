@@ -1563,20 +1563,48 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function submissionOf(
+    state: BrowserState,
+    target: { selector?: string; point?: { x: number; y: number }; focused?: boolean },
+    enter: boolean,
+  ) {
+    const ref = referenceOf(target.selector);
+    const control = ref ? state.refs.get(ref) : undefined;
+    if (ref && !control) return undefined;
+    const devtools = await inspector(state).catch(() => undefined);
+    try {
+      const found = await devtools
+        ?.submits(control ? { control } : target, enter)
+        .catch(() => undefined);
+      return (
+        found && {
+          method: found.method.slice(0, 20),
+          to: redactBrowserUrl(found.to, state.secrets).slice(0, 2048),
+        }
+      );
+    } finally {
+      devtools?.close();
+    }
+  }
+
   async function stepControls(state: BrowserState, step: BrowserAction) {
     const point =
       step.x !== undefined && step.y !== undefined ? { x: step.x, y: step.y } : step.points?.[0];
-    const controls = await controlsOf(
-      state,
+    const target =
       step.action === 'press'
         ? { focused: true }
         : step.selector
           ? { selector: step.selector }
           : point
             ? { point }
-            : { focused: step.action === 'type' },
-    );
-    if (step.action !== 'drag') return { controls };
+            : { focused: step.action === 'type' };
+    const controls = await controlsOf(state, target);
+    const enter =
+      (step.action === 'press' && step.key === 'Enter') ||
+      (step.action === 'type' && /[\r\n]/.test(step.text ?? ''));
+    const submits =
+      step.action === 'click' || enter ? await submissionOf(state, target, enter) : undefined;
+    if (step.action !== 'drag') return { controls, ...(submits ? { submits } : {}) };
     const drop = step.targetSelector
       ? { selector: step.targetSelector }
       : step.points && step.points.length > 1

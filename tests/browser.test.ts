@@ -3726,3 +3726,76 @@ test('a checked browser step is described from its snapshot and runs only on tha
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test(
+  'a checked step reports the form it would send without sending it',
+  { timeout: 60_000 },
+  async () => {
+    const posts: string[] = [];
+    const server = createHttpServer(async (request, response) => {
+      response.setHeader('content-type', 'text/html');
+      if (request.method === 'POST') {
+        posts.push(request.url ?? '');
+        response.end('Booked');
+        return;
+      }
+      response.end(
+        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form>',
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const directory = await mkdtemp(join(tmpdir(), 'otto-submits-'));
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    try {
+      const snapshot = (await computer.act('submits', { action: 'open', url: origin })).text;
+      const ref = (name: string) =>
+        `@${new RegExp(`button "${name}" \\[ref=(e\\d+)\\]`).exec(snapshot)?.[1]}`;
+      const submits = async (step: BrowserAction) =>
+        (await computer.currentPage('submits', step)).submits;
+      assert.deepEqual(await submits({ action: 'click', selector: ref('19:30') }), {
+        method: 'POST',
+        to: `${origin}/book`,
+      });
+      assert.deepEqual(await submits({ action: 'click', selector: ref('Search') }), {
+        method: 'GET',
+        to: `${origin}/search`,
+      });
+      assert.deepEqual(await submits({ action: 'click', selector: '#other' }), {
+        method: 'GET',
+        to: `${origin}/other`,
+      });
+      assert.equal(await submits({ action: 'click', selector: '#plain' }), undefined);
+      assert.equal(await submits({ action: 'click', selector: '#toggle' }), undefined);
+      assert.equal(await submits({ action: 'click', selector: ref('Same') }), undefined);
+      assert.deepEqual(await submits({ action: 'click', selector: ref('Menu') }), {
+        method: 'POST',
+        to: `${origin}/reserve`,
+      });
+      await computer.act('submits', { action: 'fill', selector: 'input[name=q]', text: 'tables' });
+      assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
+        method: 'GET',
+        to: `${origin}/search`,
+      });
+      await computer.act('submits', {
+        action: 'evaluate',
+        script: "document.querySelector('form button').focus()",
+      });
+      assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
+        method: 'POST',
+        to: `${origin}/book`,
+      });
+      assert.deepEqual(posts, []);
+    } finally {
+      await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

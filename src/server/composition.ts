@@ -23,6 +23,7 @@ import { createConversationAnalytics } from './conversation-analytics.ts';
 import {
   BrowserActionError,
   type BrowserAction,
+  type BrowserPage,
   type Computer,
   type Workspace,
 } from '../ports/computer.ts';
@@ -740,6 +741,7 @@ async function initializeApplication(
       page: page.url,
       step: step.action,
       ...(page.controls?.length ? { control: page.controls } : {}),
+      ...(page.submits ? { submits: page.submits } : {}),
       ...(page.dropTarget?.length ? { dropTarget: page.dropTarget } : {}),
       ...(page.dialog !== undefined ? { dialog: page.dialog } : {}),
       ...(step.action === 'upload' ? { file: basename(step.path) } : {}),
@@ -766,15 +768,14 @@ async function initializeApplication(
       Object.assign(new BrowserActionError('browser_target_changed'), { notRun: true });
     if (!browserId) throw notRun();
     const current = await computer
-      .currentPage(
-        browserId,
-        command.action === 'accept_dialog' ? (command as BrowserAction) : undefined,
-      )
+      .currentPage(browserId, command.action === 'upload' ? undefined : (command as BrowserAction))
       .catch(() => undefined);
     if (
       current?.origin !== expectOrigin ||
       current.url !== args.page ||
-      current.dialog !== args.dialog
+      current.dialog !== args.dialog ||
+      current.submits?.method !== (args.submits as BrowserPage['submits'])?.method ||
+      current.submits?.to !== (args.submits as BrowserPage['submits'])?.to
     )
       throw notRun();
     try {

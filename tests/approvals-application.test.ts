@@ -76,6 +76,7 @@ test(
     const browserActs: Array<Record<string, unknown>> = [];
     let browserUrl = 'https://bank.example.test/transfer';
     let dialogOpen = false;
+    let formTarget = 'https://bank.example.test/transfer/send';
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
@@ -183,7 +184,12 @@ test(
               ...(step?.action === 'accept_dialog'
                 ? { dialog: 'Send 120 EUR to the synthetic payee?' }
                 : step
-                  ? { controls: [{ role: 'button', name: 'Authorize payment' }] }
+                  ? {
+                      controls: [{ role: 'button', name: 'Authorize payment' }],
+                      ...(step.action === 'click'
+                        ? { submits: { method: 'POST', to: formTarget } }
+                        : {}),
+                    }
                   : {}),
             };
           },
@@ -446,6 +452,25 @@ test(
           }
           assert.deepEqual(clicks().slice(before), [click, click]);
           assert.equal((await approvalsFor(moved))[0].status, 'expired');
+          const retargeted = await propose('click', { selector: '@e7' }, 'browser');
+          const [sent] = await approvalsFor(retargeted);
+          assert.deepEqual(sent.args.submits, {
+            method: 'POST',
+            to: 'https://bank.example.test/transfer/send',
+          });
+          formTarget = 'https://bank.example.test/payees/remove';
+          try {
+            const late = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: sent.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            await waitFor(late.json().turnId, 'succeeded');
+          } finally {
+            formTarget = 'https://bank.example.test/transfer/send';
+          }
+          assert.deepEqual(clicks().slice(before), [click, click]);
+          assert.equal((await approvalsFor(retargeted))[0].status, 'expired');
           const download = await propose('download', { selector: '@e7' }, 'browser');
           const [unclicked] = await approvalsFor(download);
           assert.equal(unclicked.status, 'pending');
