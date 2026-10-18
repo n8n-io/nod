@@ -208,10 +208,10 @@ Each question boots its own isolated Otto with a real model:
 
 It runs two setups:
 
-| Setup    | What Otto has                                                                                                                                       |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory` | A new session: its notes, the last 30 messages and `history_search` over the rest, like a task or a chat after compaction                           |
-| `chat`   | Everything the memory setup has, plus the history as its own conversation transcript, with the measured token count so Pi compacts as it would live |
+| Setup    | What Otto has                                                                                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory` | A new session: its notes, the last 30 messages and `history_search` over the rest, like a task or a chat after compaction                                                    |
+| `chat`   | Everything the memory setup has, plus the history as its own conversation transcript after a first short turn, with the measured token count so Pi compacts as it would live |
 
 Download `longmemeval_s_cleaned.json` from the [dataset page](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) into its own folder, then run:
 

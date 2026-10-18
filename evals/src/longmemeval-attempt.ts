@@ -287,6 +287,22 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         await stack.resetConversation();
       }
       const threadId = await threadOf(stack);
+      const warmStart = new Date();
+      await createSession({
+        stack,
+        user: { approve: false },
+        deadline,
+        stallSeconds: 1200,
+      }).say('Hi Otto.');
+      const warmCalls = (
+        await stack.pool.query(
+          'SELECT details FROM model_usage WHERE created_at>=$1 ORDER BY created_at',
+          [warmStart],
+        )
+      ).rows.map((row) => row.details as Record<string, unknown>);
+      const warmLast = warmCalls.findLast((call) => call.operation !== 'compaction');
+      if (!warmLast) throw new Error('The first chat turn recorded no model request.');
+      const opening = contextOf(warmLast) + (Number(warmLast.outputTokens) || 0);
       const ids = runs.length ? await seed(stack, ownerId, threadId, history) : firstIds;
       const [{ firstInstruction }, { currentUserTime }, { threadIdentity }] = await Promise.all([
         load<typeof import('../../src/runtime/prompt.ts')>('src/runtime/prompt.ts'),
@@ -294,8 +310,8 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         load<typeof import('../../src/ports/thread-identity.ts')>('src/ports/thread-identity.ts'),
       ]);
       const directory = resolve(stack.sessionRoot, threadIdentity(threadId));
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      const transcript = SessionManager.create(directory, directory);
+      const transcript = SessionManager.continueRecent(directory, directory);
+      const after = Date.now();
       const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
       const rendered = history.map((row, index) => ({
         role: row.role,
@@ -317,13 +333,13 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
             : row.text,
       }));
       const last = history.findLastIndex((row) => row.role === 'assistant');
-      const measured = await countTokens(model, rendered.slice(0, last + 1));
+      const measured = opening + (await countTokens(model, rendered.slice(0, last + 1)));
       rendered.forEach((message, index) => {
         if (message.role === 'user')
           transcript.appendMessage({
             role: 'user',
             content: message.content,
-            timestamp: history[index].at,
+            timestamp: after + index,
           });
         else {
           const tokens = index === last ? measured : 0;
@@ -342,7 +358,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
               cost: zero,
             },
             stopReason: 'stop',
-            timestamp: history[index].at,
+            timestamp: after + index,
           });
         }
       });
