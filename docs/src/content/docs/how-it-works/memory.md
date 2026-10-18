@@ -56,7 +56,9 @@ Notes hold what lasts. For everything else, Pi searches the conversation itself 
 - `from` and `to` keep matches between two dates in the owner's time zone; alone, they list that period's messages.
 - `around` returns one message with the five before and after it, such as the reply to a question.
 
-Pi is told to search before it answers a question about what the owner said, did or planned, to gather every mention before it counts or totals, and to let the newest statement win. Search uses PostgreSQL full-text search with an index, with no model and no embeddings. A reset conversation is no longer searched.
+Before a turn started by an owner message, the server runs the same search on that message and gives Pi the six best-matching older owner messages, shortened, as `relatedConversation`, so an answer or recommendation can use what the owner said without waiting for a search.
+
+Pi is told to search when the conversation in front of it doesn't show what the owner said, did or planned, to gather every mention and keep only what fits the question before it counts or totals, to let the newest statement win, to answer what it said earlier from the conversation before correcting it, and to say it doesn't have something rather than answer from a near match. Search uses PostgreSQL full-text search with an index, with no model and no embeddings. A reset conversation is no longer searched.
 
 ## How the model saves memory
 

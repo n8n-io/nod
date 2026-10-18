@@ -38,7 +38,7 @@ Before a skill is saved, the memory model replaces names, addresses, contact det
 
 Something Otto picks up from one message is **Mentioned once**: Otto uses it, but as less certain. It becomes **Learned** when a second message repeats it.
 
-Otto also searches your earlier messages in the current conversation when you ask about something you told it, so it can answer from the conversation itself, with the date you said it. After you reset the conversation, the old one isn't searched.
+Otto also searches your earlier messages in the current conversation when you ask about something you told it, so it can answer from the conversation itself, with the date you said it. When you send a message, it also looks up your earlier messages that match it, so a recommendation can use what you told it weeks ago. After you reset the conversation, the old one isn't searched.
 
 ```mermaid
 stateDiagram-v2
