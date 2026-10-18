@@ -188,7 +188,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
              (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND (m.created_at,m.id)<(hit.created_at,hit.id) ORDER BY m.created_at DESC,m.id DESC LIMIT 5)
              UNION ALL (SELECT m.* FROM messages m,hit WHERE m.id=hit.id)
              UNION ALL (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND (m.created_at,m.id)>(hit.created_at,hit.id) ORDER BY m.created_at,m.id LIMIT 5))
-           SELECT id,role,left(text,6000) AS text,length(text)>6000 AS shortened,turn_id,created_at FROM nearby ORDER BY created_at,id`,
+           SELECT id,role,CASE WHEN id=$2 THEN text ELSE left(text,6000) END AS text,id<>$2 AND length(text)>6000 AS shortened,turn_id,created_at FROM nearby ORDER BY created_at,id`,
           [ownerId, around],
         );
         if (!rows.length) throw new Error('This history result is unavailable.');

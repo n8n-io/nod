@@ -303,6 +303,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
       const warmLast = warmCalls.findLast((call) => call.operation !== 'compaction');
       if (!warmLast) throw new Error('The first chat turn recorded no model request.');
       const opening = contextOf(warmLast) + (Number(warmLast.outputTokens) || 0);
+      const warmCost = (await spent(stack, warmStart)).cost;
       const ids = runs.length ? await seed(stack, ownerId, threadId, history) : firstIds;
       const [{ firstInstruction }, { currentUserTime }, { threadIdentity }] = await Promise.all([
         load<typeof import('../../src/runtime/prompt.ts')>('src/runtime/prompt.ts'),
@@ -363,7 +364,7 @@ async function run(spec: LongMemEvalSpec): Promise<QuestionRun> {
         }
       });
       const chat = await ask(stack, item, 'chat', deadline);
-      runs.push({ ...chat.run, historyTokens: measured });
+      runs.push({ ...chat.run, costUsd: chat.run.costUsd + warmCost, historyTokens: measured });
     }
     return {
       ...base,

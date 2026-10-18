@@ -2626,6 +2626,16 @@ test(
             }
           ).messages.find((message) => message.id === long)!;
           assert.ok(whole.text.length > 4000);
+          const listed = (await shown({ from: '2019-04-01', to: '2019-04-01' })) as Array<{
+            id: string;
+            text: string;
+            shortened?: boolean;
+          }>;
+          assert.deepEqual(
+            listed.map(({ id, shortened }) => [id, shortened]),
+            [[long, true]],
+          );
+          assert.ok(listed[0].text.length > 0 && listed[0].text.length < 1200);
           for (const id of await hidden('Hidden hit', minute(13)))
             await assert.rejects(search({ around: id }), /unavailable/);
         },
