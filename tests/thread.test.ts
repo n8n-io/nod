@@ -2624,8 +2624,8 @@ test(
             current,
           );
           assert.deepEqual(
-            recalled.map(({ role, text }) => [role, text]),
-            [['user', 'My passport expires in June']],
+            recalled.map(({ role, text, shortened }) => [role, text, shortened]),
+            [['user', 'My passport expires in June', false]],
           );
           const filler = 'Unrelated planning notes about the garden and the weather. '.repeat(40);
           const long = await add(

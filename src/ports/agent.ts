@@ -89,7 +89,13 @@ export interface RuntimeContext {
     unseen?: boolean;
     turnId?: string | null;
   }>;
-  relatedConversation?: Array<{ role: string; text: string; createdAt?: string | Date }>;
+  relatedConversation?: Array<{
+    id?: string;
+    role: string;
+    text: string;
+    shortened?: boolean;
+    createdAt?: string | Date;
+  }>;
   memory?: string;
   learnedSkills?: Array<{ name: string; description: string }>;
   checkIn?: { budgetUsd: number; spentUsd: number };

@@ -246,7 +246,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function recall(text: string, before: Date | undefined, exclude: string | null) {
     const { rows } = await pool.query(
       `WITH terms AS (SELECT replace(plainto_tsquery('english',$2)::text,'&','|')::tsquery AS q)
-       SELECT m.role,CASE WHEN length(m.text)<=400 THEN m.text
+       SELECT m.id,m.role,length(m.text)>400 AS shortened,CASE WHEN length(m.text)<=400 THEN m.text
            ELSE ts_headline('english',m.text,terms.q,'StartSel="",StopSel="",MaxWords=50,MinWords=15,MaxFragments=2,FragmentDelimiter=" … "') END AS text,
          m.created_at AS "createdAt"
        FROM messages m CROSS JOIN terms
@@ -255,7 +255,13 @@ export function createPersonalService(dependencies: PersonalDependencies) {
        ORDER BY ts_rank_cd(to_tsvector('english',m.text),terms.q,1) DESC,m.created_at DESC LIMIT 6`,
       [ownerId, text, before ?? null, exclude],
     );
-    return rows.toReversed() as Array<{ role: string; text: string; createdAt: Date }>;
+    return rows.toReversed() as Array<{
+      id: string;
+      role: string;
+      text: string;
+      shortened: boolean;
+      createdAt: Date;
+    }>;
   }
 
   async function memoryView(): Promise<MemoryView> {
