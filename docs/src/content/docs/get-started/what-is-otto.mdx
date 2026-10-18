@@ -31,7 +31,7 @@ flowchart LR
 - **Its own computer.** Otto runs commands and keeps files in a private Linux workspace. It browses the web in its own browser, which you can take over when a site needs you.
 - **Your apps.** Connect Gmail, Calendar, Slack, Notion, Linear and others, and Otto can read and act in them.
 - **Work that runs on its own.** Otto can run tasks on a schedule. When you ask, it also notices new email and app activity that needs you.
-- **Your computer, your model.** Otto runs on your computer. Its model requests go to the provider you choose: OpenAI, Anthropic, OpenRouter or a [local model](/connect/local-models/) on your own computer.
+- **Your computer, your model.** Otto runs on your computer. Its model requests go to the provider you choose: OpenAI, Anthropic, OpenRouter, or a [local model](/connect/local-models/) server such as Ollama that you run yourself.
 
 ## What Otto can do
 
@@ -60,7 +60,7 @@ Every option needs a model connection: an API key from OpenAI, Anthropic or Open
 
 ## What Otto isn't
 
-- **It doesn't run models on your computer.** It needs an internet connection, and your model provider bills you for use.
+- **It doesn't run models itself.** It connects to a model provider, which bills you for use, or to a [local model](/connect/local-models/) server you run.
 - **It isn't always on.** The desktop app runs tasks only while it's open and your computer is awake.
 - **It isn't shared.** Each Otto belongs to one person. The desktop app and source installs don't sync between computers.
 - **It isn't a public server.** A source install has no account login, so never expose it to a network.

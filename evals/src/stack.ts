@@ -54,7 +54,9 @@ export function selectModel(
   if (!apiKey) throw new Error(`Set ${keyVariables[provider]} to run ${provider} models.`);
   if (provider === 'openrouter' && !name)
     throw new Error('Name the OpenRouter model, for example openrouter/moonshotai/kimi-k3.');
-  return { provider, name: name || agentModels[provider as 'openai' | 'anthropic'], apiKey };
+  const model = name || agentModels[provider];
+  if (!model) throw new Error(`Name the ${provider} model.`);
+  return { provider, name: model, apiKey };
 }
 
 export async function approvalOrder(pool: pg.Pool) {

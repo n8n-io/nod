@@ -90,6 +90,7 @@ async function modelListRestricted(response: Response) {
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 let endpointConnections: Agent | undefined;
+const keyless = 'otto-no-key';
 const ollamaShowSchema = z.object({
   capabilities: z.array(z.string()).catch([]),
   model_info: z.record(z.string(), z.unknown()).catch({}),
@@ -653,7 +654,7 @@ export async function createPiModelRuntime(access: ModelAccess) {
       if (credential.type === 'oauth')
         throw new Error('The selected model connection is unavailable.');
       if (credential.key) secrets.add(credential.key);
-      return { type: 'api_key', key: credential.key || 'none' };
+      return { type: 'api_key', key: credential.key || keyless };
     },
     async list() {
       return [{ providerId: provider, type: subscription ? 'oauth' : 'api_key' }];
@@ -683,14 +684,19 @@ export async function createPiModelRuntime(access: ModelAccess) {
       ...(subscription ? { transport: 'sse' as const } : {}),
       ...(access.provider === 'compatible'
         ? {
-            fetch: (input: string | URL | Request, init?: RequestInit) =>
-              fetch(input, {
+            fetch: (input: string | URL | Request, init?: RequestInit) => {
+              const headers = new Headers(init?.headers);
+              if (headers.get('authorization') === `Bearer ${keyless}`)
+                headers.delete('authorization');
+              return fetch(input, {
                 ...init,
+                headers,
                 dispatcher: (endpointConnections ??= new Agent({
                   headersTimeout: 0,
                   bodyTimeout: 0,
                 })),
-              } as RequestInit),
+              } as RequestInit);
+            },
           }
         : {}),
       onPayload: async (payload, target) => {

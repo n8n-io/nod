@@ -47,7 +47,7 @@ When the month's spending reaches your limit:
 The pause lifts at the start of next month, or as soon as you raise or remove the limit.
 
 :::caution[Some usage has no price]
-Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In the statement it shows a dash instead of a cost, labelled **Included in your plan**. Otto doesn't know the prices of an [OpenAI-compatible server](/connect/local-models/), so it counts that usage at $0, and neither the limit nor task check-ins stop it. Costs are Otto's estimates. Your provider's bill is the final word.
+Usage on a ChatGPT plan has no price, so it doesn't count toward the limit. In the statement it shows a dash instead of a cost, labelled **Included in your plan**. Otto doesn't know the prices of an [OpenAI-compatible server](/connect/local-models/), so it counts that usage at $0. It doesn't count toward the limit or task check-ins. Costs are Otto's estimates. Your provider's bill is the final word.
 :::
 
 ## Task check-ins

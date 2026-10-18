@@ -7,8 +7,10 @@
   grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
   gap: 16px;
 }
-.ob-brain-cards:has(> :nth-child(4)) {
-  grid-template-columns: repeat(auto-fit, minmax(max(176px, 40%), 1fr));
+@media (min-width: 641px) {
+  .ob-brain-cards:has(> :nth-child(4)) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .ob-brain-rise {
   --rise-from: translateY(14px) scale(0.97);

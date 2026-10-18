@@ -2748,6 +2748,19 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
   );
   assert.equal(body.reasoning_effort, 'low');
   assert.ok('max_tokens' in body && !('max_completion_tokens' in body));
+  const keyless = await createPiModelRuntime({
+    provider: 'compatible',
+    method: 'api_key',
+    definition: definitions[0],
+    effort: 'low',
+    read: async () => ({ type: 'endpoint', url: credential.url }),
+  });
+  await keyless.runtime.completeSimple(
+    keyless.model,
+    { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+    {},
+  );
+  assert.deepEqual(headers, ['Bearer fixture-endpoint-key', undefined]);
 });
 
 test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {
