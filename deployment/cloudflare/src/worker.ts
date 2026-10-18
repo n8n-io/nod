@@ -1,6 +1,7 @@
 import { Container, ContainerProxy, type OutboundHandler } from '@cloudflare/containers';
 import {
   BrowserComputerContainer,
+  PrivateNetworkRefusal,
   WorkspaceComputerContainer,
   computerName,
 } from './computer-container.ts';
@@ -23,7 +24,7 @@ import {
   RuntimeControlError,
   type TenantIdentity,
 } from './protocol.ts';
-import { storageRequest } from './storage.ts';
+import { removeOwnerStorage, storageRequest } from './storage.ts';
 import { assertContainerStartupSettled, startContainer } from './container-startup.ts';
 import { stopContainer } from './container-stop.ts';
 import type { DeploymentInput } from '../../../src/ports/deployment.ts';
@@ -32,6 +33,7 @@ import {
   deploymentInputSchema,
   deploymentMaximumDuration,
   deploymentPath,
+  deprovisionPath,
 } from '../../../src/server/deployment-auth.ts';
 import { createGatewayDeployment } from './deployment-gateway.ts';
 import {
@@ -41,7 +43,12 @@ import {
   type RuntimeDeploymentProof,
 } from './runtime-deployment.ts';
 
-export { ContainerProxy, BrowserComputerContainer, WorkspaceComputerContainer };
+export {
+  ContainerProxy,
+  BrowserComputerContainer,
+  WorkspaceComputerContainer,
+  PrivateNetworkRefusal,
+};
 
 export interface Bindings {
   GATEWAY: DurableObjectNamespace<GatewayContainer>;
@@ -174,6 +181,30 @@ const runtimeOutbound: OutboundHandler<Bindings> = async (request, env, context)
       return Response.json(await tenant.stopRuntime(ownerId, input.generation), {
         headers: { 'cache-control': 'no-store' },
       });
+    }
+    if (url.pathname === '/runtime/remove-storage' && request.method === 'POST' && !url.search) {
+      const input = (await controlBody(request)) as Record<string, unknown>;
+      if (
+        !input ||
+        typeof input !== 'object' ||
+        Object.keys(input).length !== 2 ||
+        typeof input.dryRun !== 'boolean'
+      )
+        throw new RuntimeControlError(400);
+      const ownerId = ownerIdentity(input.ownerId);
+      if (!(await env.GATEWAY.getByName(gatewayName(env)).deprovisioning(ownerId, input.dryRun)))
+        throw new RuntimeControlError(409);
+      return Response.json(
+        {
+          objects: await removeOwnerStorage(
+            env.TENANT_FILES,
+            env.OTTO_ENVIRONMENT,
+            ownerId,
+            input.dryRun,
+          ),
+        },
+        { headers: { 'cache-control': 'no-store' } },
+      );
     }
     if (url.pathname === '/runtime/status' && request.method === 'POST') {
       const input = (await controlBody(request)) as { ownerId?: unknown };
@@ -315,6 +346,10 @@ export class GatewayContainer extends Container<Bindings> {
     return this.deploymentControl().closed();
   }
 
+  deprovisioning(ownerId: string, dryRun: boolean) {
+    return this.deploymentControl().deprovisioning(ownerIdentity(ownerId), dryRun === true);
+  }
+
   override async onActivityExpired() {}
 
   async wake() {
@@ -336,6 +371,10 @@ export class GatewayContainer extends Container<Bindings> {
         throw new RuntimeControlError(403);
       if (url.pathname === deploymentPath)
         return Response.json(await this.deploymentControl().handle(request), {
+          headers: { 'cache-control': 'no-store' },
+        });
+      if (url.pathname === deprovisionPath)
+        return Response.json(await this.deploymentControl().deprovision(request), {
           headers: { 'cache-control': 'no-store' },
         });
       const anonymousSmoke =

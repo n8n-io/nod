@@ -30,6 +30,7 @@ import { inlineAppResult, noMailCheck, type MailCheck } from './integration-resu
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
 import type { ExecutionEvent } from '../shared/execution.ts';
+import { lockKey } from './locks.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -182,7 +183,7 @@ export async function activeThread(database: Pool | PoolClient = pool, owner = o
 }
 
 export async function lockThread(client: PoolClient, owner = ownerId) {
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`thread:${owner}`]);
+  await lockKey(client, `thread:${owner}`);
   return activeThread(client, owner);
 }
 

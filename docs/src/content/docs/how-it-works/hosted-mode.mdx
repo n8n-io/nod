@@ -45,7 +45,8 @@ Provider keys stay in the Node gateway and tenant processes. They never enter th
   </Card>
   <Card title="Own database login" icon="database">
     The gateway provisions a SQL role with private app and jobs schemas. A tenant can't read another
-    tenant's schema, assume its role or lock the registry the gateway provisions from.
+    tenant's schema, assume its role, or lock the registry the gateway provisions from or the locks
+    another tenant's runtime waits on, which live in that tenant's own schema.
   </Card>
   <Card title="Leased generation" icon="random">
     Each tenant start takes a numbered lease. A replacement starts only after the previous
@@ -58,7 +59,7 @@ Provider keys stay in the Node gateway and tenant processes. They never enter th
   </Card>
 </CardGrid>
 
-`OTTO_MASTER_KEY` derives each user's database password, runtime signing secret and Vault key. Admission defaults to eight users and is set with `OTTO_MAX_USERS`. The tenant code is in [`src/server/tenants.ts`](https://github.com/n8n-io/otto/blob/main/src/server/tenants.ts).
+`OTTO_MASTER_KEY` derives each user's database password, runtime signing secret and Vault key. Admission defaults to eight users and is set with `OTTO_MAX_USERS`. An operator can [remove one account](/deploy/cloudflare/#remove-one-account), which frees its slot. The tenant code is in [`src/server/tenants.ts`](https://github.com/n8n-io/otto/blob/main/src/server/tenants.ts).
 
 ## Signed requests
 

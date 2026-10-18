@@ -2,7 +2,7 @@ import { hkdfSync, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { RuntimeTransport } from '../ports/runtime-transport.ts';
-import type { TenantRuntimeHost } from '../ports/tenant-runtime.ts';
+import type { AccountRemoval, TenantRuntimeHost } from '../ports/tenant-runtime.ts';
 import type { DeploymentInput, DeploymentReceipt } from '../ports/deployment.ts';
 import type { createTenantStore, TenantLease } from './tenants.ts';
 import { deriveRuntimeSecret, runtimeHeader, signRuntimeRequest } from './runtime-auth.ts';
@@ -75,8 +75,14 @@ export function createTenantRuntimeHost(options: {
     ReturnType<typeof createTenantStore>,
     'provision' | 'runtimeConfiguration' | 'acquireLease' | 'renewLease' | 'releaseLease'
   > &
-    Partial<Pick<ReturnType<typeof createTenantStore>, 'listOwners'>>;
+    Partial<
+      Pick<
+        ReturnType<typeof createTenantStore>,
+        'listOwners' | 'get' | 'markRemoving' | 'removing' | 'remove'
+      >
+    >;
   transport: RuntimeTransport;
+  forgetAccount?(ownerId: string, dryRun: boolean): Promise<AccountRemoval>;
   masterKey: Uint8Array;
   environment: string;
   operatorEnvironment: Record<string, string | undefined>;
@@ -97,6 +103,7 @@ export function createTenantRuntimeHost(options: {
   const holderId = randomUUID();
   const entries = new Map<string, Entry>();
   const pending = new Map<string, Promise<Entry>>();
+  const removing = new Set<string>();
   let closed = false;
   let renewal: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
@@ -116,7 +123,10 @@ export function createTenantRuntimeHost(options: {
   async function signedFetch(
     entry: Entry,
     request: Request,
-    access: { developer: boolean; kind?: 'user' | 'webhook' | 'wake' | 'deployment' },
+    access: {
+      developer: boolean;
+      kind?: 'user' | 'webhook' | 'wake' | 'deployment' | 'deprovision';
+    },
   ) {
     if (deployment && access.kind !== 'deployment' && access.kind !== 'wake')
       throw new DeploymentControlError();
@@ -253,9 +263,10 @@ export function createTenantRuntimeHost(options: {
     return Boolean(entry?.healthy && Date.parse(entry.lease.expiresAt) > Date.now());
   }
 
-  async function ensure(owner: string, kind?: 'user' | 'webhook' | 'wake') {
+  async function ensure(owner: string, kind?: 'user' | 'webhook' | 'wake', internal = false) {
     if (closed || deployment) throw new Error('The account runtime is unavailable.');
     const ownerId = z.uuid().parse(owner).toLowerCase();
+    if (removing.has(ownerId) && !internal) throw new Error('The account runtime is unavailable.');
     const admitted = entries.get(ownerId);
     if (kind !== 'wake' && healthy(admitted)) return admitted;
     if (await options.transport.deploymentClosed?.()) throw new DeploymentControlError();
@@ -335,6 +346,7 @@ export function createTenantRuntimeHost(options: {
       (deployment && !sameDeployment(input))
     )
       return Promise.reject(new DeploymentControlError());
+    if (!deployment && removing.size) return Promise.reject(new DeploymentControlError(409));
     if (
       deployment?.resuming ||
       deployment?.lostJournal ||
@@ -437,7 +449,82 @@ export function createTenantRuntimeHost(options: {
   }, heartbeat);
   timer.unref();
 
+  async function deprovision(owner: string, request: { dryRun: boolean; release: boolean }) {
+    const ownerId = z.uuid().parse(owner).toLowerCase();
+    const { dryRun, release } = z
+      .object({ dryRun: z.boolean(), release: z.boolean() })
+      .strict()
+      .parse(request);
+    const tenants = options.tenants;
+    const removeStorage = options.transport.removeStorage?.bind(options.transport);
+    const forgetAccount = options.forgetAccount;
+    if (
+      closed ||
+      deployment ||
+      removing.has(ownerId) ||
+      !tenants.get ||
+      !tenants.markRemoving ||
+      !tenants.removing ||
+      !tenants.remove ||
+      !removeStorage ||
+      !forgetAccount
+    )
+      throw new DeploymentControlError(409);
+    if (await options.transport.deploymentClosed?.()) throw new DeploymentControlError(409);
+    removing.add(ownerId);
+    try {
+      await pending.get(ownerId)?.catch(() => {});
+      const registered = Boolean(await tenants.get(ownerId));
+      const status = await options.transport.status(ownerId);
+      if (dryRun)
+        return {
+          dryRun: true,
+          running: !status.stopped,
+          released: false,
+          storageObjects: await removeStorage(ownerId, true),
+          account: await forgetAccount(ownerId, true),
+          tenant: await tenants.remove(ownerId, true),
+        };
+      let released = false;
+      if (registered && release && !(await tenants.removing(ownerId))) {
+        const entry = await ensure(ownerId, undefined, true);
+        const response = await signedFetch(
+          entry,
+          new Request('http://otto.runtime/api/runtime/release', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+            signal: AbortSignal.timeout(120_000),
+          }),
+          { developer: false, kind: 'deprovision' },
+        );
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw new DeploymentControlError();
+        }
+        z.object({ ok: z.literal(true) })
+          .strict()
+          .parse(await response.json());
+        released = true;
+      }
+      if (registered) await tenants.markRemoving(ownerId);
+      const entry = entries.get(ownerId);
+      if (entry) await stop(entry);
+      const current = await options.transport.status(ownerId);
+      if (current.generation && !current.stopped)
+        await options.transport.stop(ownerId, current.generation);
+      if (!(await options.transport.status(ownerId)).stopped) throw new DeploymentControlError();
+      const storageObjects = await removeStorage(ownerId, false);
+      const account = await forgetAccount(ownerId, false);
+      const tenant = await tenants.remove(ownerId, false);
+      return { dryRun: false, running: false, released, storageObjects, account, tenant };
+    } finally {
+      removing.delete(ownerId);
+    }
+  }
+
   return {
+    deprovision,
     async fetch(ownerId, request, access) {
       const entry = await ensure(ownerId, access.kind);
       return signedFetch(entry, request, access);

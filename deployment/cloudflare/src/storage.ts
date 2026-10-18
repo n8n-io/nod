@@ -16,6 +16,26 @@ function objectKey(request: Request) {
   return key;
 }
 
+export async function removeOwnerStorage(
+  bucket: Pick<R2Bucket, 'list' | 'delete'>,
+  environment: string,
+  owner: string,
+  dryRun: boolean,
+) {
+  const prefix = `${environmentName(environment)}/${ownerIdentity(owner)}/`;
+  let objects = 0;
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+    const keys = page.objects.map((object) => object.key);
+    if (keys.some((key) => !key.startsWith(prefix))) throw new RuntimeControlError();
+    objects += keys.length;
+    if (!dryRun && keys.length) await bucket.delete(keys);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return objects;
+}
+
 export async function storageRequest(
   request: Request,
   identity: { ownerId: string; environment: string },

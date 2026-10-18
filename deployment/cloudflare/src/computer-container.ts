@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Container } from '@cloudflare/containers';
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { DeploymentInput } from '../../../src/ports/deployment.ts';
 import { deploymentInputSchema } from '../../../src/server/deployment-auth.ts';
 import { checkpointTooLarge, createComputerCheckpoints } from './computer-checkpoints.ts';
@@ -79,6 +80,22 @@ async function readBytes(stream: ReadableStream | null, limit: number, signal: A
   }
 }
 
+const privateRanges = [
+  '10.0.0.0/8',
+  '100.64.0.0/10',
+  '169.254.0.0/16',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  'fc00::/7',
+  'fe80::/10',
+];
+
+export class PrivateNetworkRefusal extends WorkerEntrypoint {
+  fetch() {
+    return new Response('Private network destinations are blocked.', { status: 403 });
+  }
+}
+
 abstract class ComputerContainer extends Container<Bindings> {
   abstract role: 'browser' | 'workspace';
   defaultPort = 4311;
@@ -111,6 +128,20 @@ abstract class ComputerContainer extends Container<Bindings> {
     return this.env.TENANTS.getByName(`tenant:${identity.environment}:${identity.ownerId}`)
       .computerIdentity(identity.ownerId, identity.generation, stopping)
       .then(() => {});
+  }
+
+  private async refusePrivateNetwork() {
+    const container = this.ctx.container;
+    if (!container) throw unavailable();
+    const refusal = (
+      this.ctx.exports as unknown as {
+        PrivateNetworkRefusal(options: { props: object }): Fetcher;
+      }
+    ).PrivateNetworkRefusal({ props: {} });
+    for (const range of privateRanges) {
+      await container.interceptOutboundHttp(range, refusal);
+      await container.interceptOutboundHttps(range, refusal);
+    }
   }
 
   private exec(args: string[], options: ContainerExecOptions = {}) {
@@ -240,6 +271,7 @@ abstract class ComputerContainer extends Container<Bindings> {
       },
       start: async () => {
         assertSelected();
+        await this.refusePrivateNetwork();
         await startContainer(this, { envVars: {}, timeoutMs: 45_000 });
       },
       destroy: async () => {

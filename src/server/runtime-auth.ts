@@ -16,7 +16,7 @@ const envelope = z
     target: z.string().min(1).startsWith('/'),
     bodyHash: z.string().regex(/^[a-f0-9]{64}$/),
     developer: z.boolean(),
-    kind: z.enum(['user', 'webhook', 'wake', 'deployment']),
+    kind: z.enum(['user', 'webhook', 'wake', 'deployment', 'deprovision']),
   })
   .strict();
 
@@ -171,13 +171,16 @@ export function registerRuntimeAccess(
     if ((webhook && verified.kind !== 'webhook') || (!webhook && verified.kind === 'webhook'))
       return reply.code(403).send({ error: 'This request is not permitted.' });
     if (
-      (path.startsWith('/api/runtime/') && !['wake', 'deployment'].includes(verified.kind)) ||
+      (path.startsWith('/api/runtime/') &&
+        !['wake', 'deployment', 'deprovision'].includes(verified.kind)) ||
       (verified.kind === 'wake' &&
         (request.method !== 'POST' ||
           !['/api/runtime/wake', '/api/runtime/lease'].includes(path))) ||
       (verified.kind === 'deployment' &&
         (request.method !== 'POST' ||
-          !['/api/runtime/drain', '/api/runtime/resume'].includes(path)))
+          !['/api/runtime/drain', '/api/runtime/resume'].includes(path))) ||
+      (verified.kind === 'deprovision' &&
+        (request.method !== 'POST' || path !== '/api/runtime/release'))
     )
       return reply.code(403).send({ error: 'This request is not permitted.' });
     if (

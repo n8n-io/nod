@@ -61,6 +61,14 @@ export function createGoogleAuthentication(options: {
       const migrations = await getMigrations(auth.options);
       await migrations.runMigrations();
     },
+    async forget(userId, dryRun) {
+      const adapter = (await auth.$context).internalAdapter;
+      const user = Boolean(await adapter.findUserById(userId));
+      const sessions = (await adapter.listSessions(userId)).length;
+      const accounts = (await adapter.findAccounts(userId)).length;
+      if (!dryRun) await adapter.deleteUser(userId);
+      return { user, sessions, accounts };
+    },
     async session(headers, refresh = false) {
       const { headers: returned, response: result } = await auth.api.getSession({
         headers,

@@ -13,6 +13,7 @@ export interface AccountStore {
     ownerId: string,
     input: AccountUpdate,
   ): Promise<StoredAccount & { onboardingCompletedNow?: boolean }>;
+  forget?(ownerId: string, dryRun: boolean): Promise<number>;
 }
 
 export function createAccountStore(database: Pool): AccountStore & {
@@ -52,6 +53,15 @@ export function createAccountStore(database: Pool): AccountStore & {
       );
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false;
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0`);
+    },
+    async forget(ownerId, dryRun) {
+      const result = await database.query(
+        dryRun
+          ? 'SELECT 1 FROM account_settings WHERE owner_id=$1'
+          : 'DELETE FROM account_settings WHERE owner_id=$1',
+        [ownerId],
+      );
+      return result.rowCount ?? 0;
     },
     async readConsent(ownerId) {
       const result = await database.query<{ enabled: boolean; revision: string }>(

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   deploymentHeader,
   deploymentPath,
+  deprovisionPath,
   signDeploymentRequest,
   deploymentRequestSchema,
 } from '../../../src/server/deployment-auth.ts';
@@ -228,6 +229,64 @@ async function emptyTenantRegistry(databaseUrl) {
   } finally {
     await client.end().catch(() => {});
   }
+}
+
+const deprovisionReportSchema = z
+  .object({
+    dryRun: z.boolean(),
+    running: z.boolean(),
+    released: z.boolean(),
+    storageObjects: countSchema,
+    account: z
+      .object({
+        user: z.boolean(),
+        sessions: countSchema,
+        accounts: countSchema,
+        settings: countSchema,
+      })
+      .strict(),
+    tenant: z
+      .object({
+        registered: z.boolean(),
+        role: z.boolean(),
+        schemas: countSchema,
+        channelAccounts: countSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export function createDeprovisionClient({
+  environment,
+  plan,
+  variables,
+  fetcher = fetch,
+  now = Date.now,
+}) {
+  const masterKey = parseCredentialKey(JSON.parse(variables.GATEWAY_ENV).OTTO_MASTER_KEY || '');
+  return async (owner, { dryRun, release }) => {
+    const ownerId = z.uuid().parse(owner).toLowerCase();
+    const body = Buffer.from(JSON.stringify({ ownerId, dryRun, release }));
+    const token = signDeploymentRequest({
+      masterKey,
+      environment,
+      body,
+      now: now(),
+      capability: 'deprovision',
+    });
+    const response = await fetcher(new URL(deprovisionPath, plan.origin), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [deploymentHeader]: token },
+      body,
+      redirect: 'error',
+      signal: AbortSignal.timeout(600_000),
+    });
+    const result = await boundedJson(response, 128 * 1024);
+    if (!response.ok || result.ok !== true) throw unavailable();
+    const report = deprovisionReportSchema.safeParse(result.report);
+    if (!report.success || report.data.dryRun !== dryRun) throw unavailable();
+    return report.data;
+  };
 }
 
 export function createDeploymentClient({

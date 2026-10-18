@@ -17,8 +17,12 @@ registerHooks({
     return next(specifier, context);
   },
 });
-const { BrowserComputerContainer, WorkspaceComputerContainer, computerName } =
-  await import('../src/computer-container.ts');
+const {
+  BrowserComputerContainer,
+  PrivateNetworkRefusal,
+  WorkspaceComputerContainer,
+  computerName,
+} = await import('../src/computer-container.ts');
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -100,8 +104,17 @@ function fixture(
     },
     transaction: async <T>(operation: (storage: unknown) => Promise<T>) => operation(storage),
   };
+  const intercepted: Array<{ protocol: string; target: string; refusal: unknown }> = [];
   const container = {
     running: phase !== undefined,
+    interceptOutboundHttp: async (target: string, refusal: unknown) => {
+      events.push(`intercept:http:${target}`);
+      intercepted.push({ protocol: 'http', target, refusal });
+    },
+    interceptOutboundHttps: async (target: string, refusal: unknown) => {
+      events.push(`intercept:https:${target}`);
+      intercepted.push({ protocol: 'https', target, refusal });
+    },
     exec: (args: string[], options: ContainerExecOptions) => {
       events.push(`exec:${args.join(' ')}`);
       return exec(args, options);
@@ -148,6 +161,7 @@ function fixture(
       container,
       id: { toString: () => computerName('development', ownerId, role) },
       waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+      exports: { PrivateNetworkRefusal: () => Object.create(PrivateNetworkRefusal.prototype) },
     },
     destroy: async () => {
       events.push('destroy');
@@ -166,6 +180,7 @@ function fixture(
     ownerId,
     events,
     container,
+    intercepted,
     generation: (value: string) => {
       authorizedGeneration = value;
     },
@@ -407,6 +422,20 @@ test('the same controller can launch a new generation after stopping an unused r
       assert.equal(current.state().stopped, false);
       assert.equal(current.container.running, true);
       assert.equal(current.events.filter((event) => event === 'start').length, 1);
+      for (const protocol of ['http', 'https']) {
+        const metadata = current.intercepted.find(
+          (entry) => entry.protocol === protocol && entry.target === '169.254.0.0/16',
+        );
+        assert.ok(metadata);
+        assert.ok(
+          current.events.indexOf(`intercept:${protocol}:169.254.0.0/16`) <
+            current.events.indexOf('start'),
+        );
+        const refused = await (
+          metadata.refusal as InstanceType<typeof PrivateNetworkRefusal>
+        ).fetch();
+        assert.equal(refused.status, 403);
+      }
       const saved = current.state();
       const events = [...current.events];
       await assert.rejects(current.computer.stopComputer(current.ownerId, '1'));

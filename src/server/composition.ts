@@ -1409,6 +1409,14 @@ async function initializeApplication(
     analytics: captureAnalytics,
     admission,
     deploymentDrain,
+    release: async () => {
+      await integrations.changeProvider(true, async () => {});
+      for (const channel of (await channelSettings?.status())?.channels ?? [])
+        if (channel.enabled) await channelSettings!.disable(channel.provider);
+      for (const connection of await discovered.list())
+        if (connection.connectionId)
+          await discovered.disconnect(connection.connectionId, connection.slug);
+    },
     artifacts,
     submitMessage: userMessages.submit,
     verification: chatVerification,
@@ -1741,6 +1749,14 @@ export async function createGatewayApplication(
       masterKey,
       environment,
       operatorEnvironment: { ...env, OTTO_PUBLIC_URL: origin },
+      forgetAccount: async (owner, dryRun) => {
+        if (!authentication.forget || !accounts.forget)
+          throw new Error('Account removal is unavailable.');
+        return {
+          ...(await authentication.forget(owner, dryRun)),
+          settings: await accounts.forget(owner, dryRun),
+        };
+      },
     });
     const app = await createGateway({
       analytics,

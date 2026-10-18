@@ -22,4 +22,8 @@ export interface AuthenticationProvider {
   signOut(headers: Headers): Promise<Response>;
   callback(request: Request): Promise<Response>;
   avatar?(session: AuthenticatedSession): Promise<AuthenticationAvatar | null>;
+  forget?(
+    userId: string,
+    dryRun: boolean,
+  ): Promise<{ user: boolean; sessions: number; accounts: number }>;
 }

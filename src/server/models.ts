@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -21,6 +21,7 @@ import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { transaction } from './transaction.ts';
+import { lockKey, locksTable } from './locks.ts';
 
 const providerSchema = z.enum(['openai', 'anthropic', 'openrouter']);
 const selectionSchema = z
@@ -126,10 +127,9 @@ export function createModelService(options: {
     run: (client: PoolClient) => Promise<T>,
     signal?: AbortSignal,
   ) {
-    const lock = createHash('sha256').update(`model:${ownerId}:${id}`).digest().readBigInt64BE();
     signal?.throwIfAborted();
     return transaction(async (client) => {
-      await client.query('SELECT pg_advisory_xact_lock($1)', [lock.toString()]);
+      await lockKey(client, `model:${ownerId}:${id}`);
       const result = await run(client);
       signal?.throwIfAborted();
       return result;
@@ -558,7 +558,8 @@ export function createModelService(options: {
     },
     async initialize() {
       vault = await createAppGrantVault(database, { ownerId, keyStore: options.keyStore });
-      await database.query(`CREATE TABLE IF NOT EXISTS model_connections (
+      await database.query(`${locksTable};
+      CREATE TABLE IF NOT EXISTS model_connections (
         id uuid PRIMARY KEY,owner_id text NOT NULL,provider text NOT NULL,method text NOT NULL,label text NOT NULL,
         status text NOT NULL DEFAULT 'connected',models jsonb NOT NULL,managed boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now()
       ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);

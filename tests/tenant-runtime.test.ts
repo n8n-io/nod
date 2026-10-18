@@ -6,6 +6,8 @@ import { createTenantRuntimeHost } from '../src/server/runtime-host.ts';
 import { createChannelAccountRegistry } from '../src/server/channel-account-registry.ts';
 import {
   createRuntimeVerifier,
+  deriveRuntimeSecret,
+  verifyRuntimeSignature,
   runtimeBodyHash,
   runtimeHeader,
   registerRuntimeAccess,
@@ -25,11 +27,17 @@ import { request as httpRequest } from 'node:http';
 import { createTenantDrain, registerTenantDrain } from '../src/server/tenant-drain.ts';
 import { createWorkAdmission, createWorkConsumers } from '../src/server/work-admission.ts';
 import pg from 'pg';
+import { createComputerAllocationStore } from '../src/server/computer-allocations.ts';
+import { lockKey } from '../src/server/locks.ts';
+import { createPostgresObjectStore } from '../src/server/object-storage.ts';
+import { transaction } from '../src/server/transaction.ts';
 import { PgBoss } from 'pg-boss';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLocalRuntimeTransport } from '../src/providers/runtime-host/local.ts';
+import { createGoogleAuthentication } from '../src/providers/better-auth/index.ts';
+import { createAccountStore } from '../src/server/account-store.ts';
 
 async function bounded<T>(promise: Promise<T>) {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -557,6 +565,149 @@ describe('runtime host', () => {
     drained.reject(new Error('Synthetic drain stop.'));
     await assert.rejects(operation);
   });
+
+  test('removing an owner releases through its runtime, refuses its starts and deletes only after a confirmed stop', async (t) => {
+    const masterKey = randomBytes(32);
+    const owner = randomUUID();
+    const calls: string[] = [];
+    const kinds: string[] = [];
+    const releasing = deferred();
+    const finishRelease = deferred();
+    let removing = false;
+    let closed = false;
+    let running: string | null = null;
+    let generation = 0;
+    const record = {
+      ownerId: owner,
+      environment: 'development',
+      role: 'role_fixture',
+      appSchema: 'app',
+      jobsSchema: 'jobs',
+      credentialVersion: 1,
+    };
+    const tenant = { registered: true, role: true, schemas: 2, channelAccounts: 0 };
+    const host = createTenantRuntimeHost({
+      masterKey,
+      environment: 'development',
+      operatorEnvironment: { OTTO_PUBLIC_URL: 'https://otto.example.test' },
+      tenants: {
+        async listOwners() {
+          return [owner];
+        },
+        async provision() {
+          if (removing) throw new TenantError('removing', 'Removing.', 409);
+          return record;
+        },
+        async runtimeConfiguration() {
+          return { ...record, databaseUrl: 'postgresql://fixture@db.example.test/t', poolMax: 4 };
+        },
+        async acquireLease(ownerId, holderId) {
+          generation += 1;
+          return {
+            ownerId,
+            holderId,
+            environment: 'development',
+            generation: String(generation),
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          };
+        },
+        async renewLease(lease) {
+          return lease;
+        },
+        async releaseLease() {
+          return true;
+        },
+        async get() {
+          return record;
+        },
+        async markRemoving() {
+          calls.push('mark');
+          removing = true;
+          return true;
+        },
+        async removing() {
+          return removing;
+        },
+        async remove(_ownerId, dryRun) {
+          calls.push(dryRun ? 'plan' : 'remove');
+          return tenant;
+        },
+      },
+      transport: {
+        async deploymentClosed() {
+          return closed;
+        },
+        async prepareDeployment() {
+          return 'stopped';
+        },
+        async status() {
+          return { generation: running, stopped: running === null };
+        },
+        async start(configuration) {
+          calls.push('start');
+          running = configuration.generation;
+        },
+        async stop(_ownerId, version) {
+          calls.push('stop');
+          if (running === version) running = null;
+        },
+        async removeStorage(_ownerId, dryRun) {
+          calls.push(dryRun ? 'count' : 'sweep');
+          return 3;
+        },
+        async fetch(ownerId, request) {
+          const url = new URL(request.url);
+          const claims = verifyRuntimeSignature(
+            {
+              secret: deriveRuntimeSecret(masterKey, 'development', ownerId),
+              ownerId,
+              environment: 'development',
+            },
+            request.headers.get(runtimeHeader),
+            request.method,
+            url.pathname,
+          );
+          kinds.push(`${claims?.kind} ${url.pathname}`);
+          if (url.pathname === '/api/runtime/release') {
+            calls.push('release');
+            releasing.resolve();
+            await finishRelease.promise;
+          }
+          return Response.json({ ok: true });
+        },
+        async close() {},
+      },
+      async forgetAccount(_ownerId, dryRun) {
+        calls.push(dryRun ? 'account' : 'forget');
+        return { user: true, sessions: 1, accounts: 1, settings: 1 };
+      },
+    });
+    t.after(() => host.close().catch(() => {}));
+    const request = () =>
+      host.fetch(owner, new Request('https://otto.example.test/api/state'), { developer: false });
+    closed = true;
+    await assert.rejects(host.deprovision!(owner, { dryRun: true, release: true }), {
+      status: 409,
+    });
+    closed = false;
+    const planned = await host.deprovision!(owner, { dryRun: true, release: true });
+    assert.equal(planned.dryRun, true);
+    assert.deepEqual(calls, ['count', 'account', 'plan']);
+    calls.length = 0;
+    const operation = host.deprovision!(owner, { dryRun: false, release: true });
+    await bounded(releasing.promise);
+    await assert.rejects(request());
+    await assert.rejects(host.prepareDeployment!(deploymentInput()), { status: 409 });
+    finishRelease.resolve();
+    const report = await operation;
+    assert.equal(report.released, true);
+    assert.deepEqual(calls, ['start', 'release', 'mark', 'stop', 'sweep', 'forget', 'remove']);
+    assert.deepEqual(kinds, ['deprovision /api/runtime/release']);
+    await assert.rejects(request());
+    calls.length = 0;
+    await host.deprovision!(owner, { dryRun: false, release: true });
+    assert.deepEqual(calls, ['mark', 'sweep', 'forget', 'remove']);
+  });
 });
 
 describe('runtime lease', () => {
@@ -715,6 +866,27 @@ describe('tenant drain', () => {
       assert.equal(effects, 2);
     } finally {
       finish.resolve();
+      await f.app.close();
+    }
+  });
+
+  test('a removal envelope reaches only the release route and no other envelope reaches it', async () => {
+    const f = fixture();
+    let released = 0;
+    f.app.post('/api/runtime/release', async () => {
+      released++;
+      return { ok: true };
+    });
+    f.app.post('/api/work', async () => ({ ok: true }));
+    try {
+      for (const kind of ['user', 'wake', 'deployment', 'webhook'] as const)
+        assert.equal((await f.request('/api/runtime/release', {}, kind)).statusCode, 403);
+      for (const path of ['/api/work', '/api/runtime/drain', '/api/runtime/lease'])
+        assert.equal((await f.request(path, {}, 'deprovision')).statusCode, 403);
+      assert.equal(released, 0);
+      assert.equal((await f.request('/api/runtime/release', {}, 'deprovision')).statusCode, 200);
+      assert.equal(released, 1);
+    } finally {
       await f.app.close();
     }
   });
@@ -909,7 +1081,7 @@ describe('tenant store', () => {
         try {
           for (const queue of queues)
             await queue.stop({ graceful: true, timeout: 1000 }).catch(() => {});
-          await Promise.all(runtimePools.map((pool) => pool.end()));
+          await Promise.all(runtimePools.map((pool) => pool.end().catch(() => {})));
           await admin?.end();
           if (created) {
             const deadline = Date.now() + 5_000;
@@ -1192,6 +1364,43 @@ describe('tenant store', () => {
       );
 
       await t.test(
+        "a tenant login cannot hold or take another tenant's runtime locks",
+        async () => {
+          const other = await poolB.connect();
+          try {
+            for (const key of [
+              `thread:${ownerA}`,
+              `otto-vault-items:${ownerA}`,
+              `otto:computer-allocations:${tenantA.appSchema}`,
+              `${databaseName}:${tenantA.appSchema}:private_objects`,
+            ])
+              await other.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key]);
+            const settled = await Promise.race([
+              Promise.all([
+                createComputerAllocationStore({ database: poolA, ownerId: ownerA }).initialize(),
+                createPostgresObjectStore({ database: poolA, ownerId: ownerA }).initialize(),
+                transaction(async (client) => {
+                  await lockKey(client, `thread:${ownerA}`);
+                  await lockKey(client, `otto-vault-items:${ownerA}`);
+                }, poolA),
+              ]).then(() => true),
+              delay(3_000).then(() => false),
+            ]);
+            assert.equal(settled, true);
+            await other.query('BEGIN');
+            await assert.rejects(
+              other.query(`SELECT 1 FROM "${tenantA.appSchema}".otto_locks FOR UPDATE`),
+              { code: '42501' },
+            );
+            await other.query('ROLLBACK');
+          } finally {
+            await other.query('SELECT pg_advisory_unlock_all()').catch(() => {});
+            other.release();
+          }
+        },
+      );
+
+      await t.test(
         'unsafe role changes fail closed without returning runtime credentials',
         async () => {
           await root.query(`ALTER ROLE "${tenantA.role}" CREATEDB`);
@@ -1202,6 +1411,141 @@ describe('tenant store', () => {
             await root.query(`ALTER ROLE "${tenantA.role}" NOCREATEDB`);
           }
           assert.equal((await store.runtimeConfiguration(ownerA)).ownerId, ownerA);
+        },
+      );
+
+      await t.test(
+        'removing one owner drops only its role, schemas, claims and sign-in rows and frees its slot',
+        async () => {
+          await queues[1].stop({ graceful: true, timeout: 1000 });
+          await poolB.end();
+          await admin!.query('CREATE SCHEMA otto_auth');
+          const authPool = new pg.Pool({
+            connectionString: url.href,
+            max: 2,
+            options: '-c search_path=otto_auth',
+          });
+          runtimePools.push(authPool);
+          const authentication = createGoogleAuthentication({
+            database: authPool,
+            origin: 'https://otto.example.test',
+            secret: randomBytes(32).toString('base64url'),
+            environment: options.environment,
+            clientId: 'fixture-client',
+            clientSecret: 'fixture-secret',
+          });
+          await authentication.initialize();
+          const accounts = createAccountStore(authPool);
+          await accounts.initialize();
+          for (const owner of [ownerA, ownerB]) {
+            await authPool.query(
+              `INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt")
+               VALUES($1,'Fixture',$2,true,now(),now())`,
+              [owner, `${owner}@example.test`],
+            );
+            await authPool.query(
+              `INSERT INTO session(id,"expiresAt",token,"createdAt","updatedAt","userId")
+               VALUES($1,now()+interval '1 day',$2,now(),now(),$3)`,
+              [randomUUID(), randomUUID(), owner],
+            );
+            await authPool.query(
+              `INSERT INTO account(id,"accountId","providerId","userId","createdAt","updatedAt")
+               VALUES($1,$2,'google',$3,now(),now())`,
+              [randomUUID(), randomUUID(), owner],
+            );
+            await accounts.update(owner, { theme: 'dark' });
+          }
+          const exists = async () =>
+            (
+              await admin!.query<{ role: boolean; schemas: number }>(
+                `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS role,
+                 (SELECT count(*)::integer FROM pg_namespace WHERE nspname=ANY($2::text[])) AS schemas`,
+                [tenantB.role, [tenantB.appSchema, tenantB.jobsSchema]],
+              )
+            ).rows[0];
+          const planned = await store.remove(ownerB, true);
+          assert.deepEqual(planned, {
+            registered: true,
+            role: true,
+            schemas: 2,
+            channelAccounts: 1,
+          });
+          assert.deepEqual(await authentication.forget!(ownerB, true), {
+            user: true,
+            sessions: 1,
+            accounts: 1,
+          });
+          assert.equal(await accounts.forget!(ownerB, true), 1);
+          assert.deepEqual(await exists(), { role: true, schemas: 2 });
+          assert.ok(await store.get(ownerB));
+          await admin!.query(
+            'UPDATE otto_control.tenants SET app_schema=$1 WHERE environment=$2 AND owner_id=$3',
+            [`sk_app_${'0'.repeat(32)}`, options.environment, ownerB],
+          );
+          await assert.rejects(store.remove(ownerB), { code: 'isolation_failed' });
+          assert.deepEqual(await exists(), { role: true, schemas: 2 });
+          await admin!.query(
+            'UPDATE otto_control.tenants SET app_schema=$1 WHERE environment=$2 AND owner_id=$3',
+            [tenantB.appSchema, options.environment, ownerB],
+          );
+          assert.equal(await store.markRemoving(ownerB), true);
+          assert.equal(await store.removing(ownerB), true);
+          await assert.rejects(store.provision(ownerB), { code: 'removing' });
+          assert.equal(await store.acquireLease(ownerB, randomUUID()), undefined);
+          await authentication.forget!(ownerB, false);
+          assert.equal(await accounts.forget!(ownerB, false), 1);
+          assert.deepEqual(await store.remove(ownerB), planned);
+          assert.deepEqual(await exists(), { role: false, schemas: 0 });
+          assert.equal(await store.get(ownerB), undefined);
+          assert.deepEqual(await store.listOwners(), [ownerA]);
+          assert.equal(
+            (
+              await admin!.query('SELECT 1 FROM otto_control.channel_accounts WHERE owner_id=$1', [
+                ownerB,
+              ])
+            ).rowCount,
+            0,
+          );
+          for (const [owner, expected] of [
+            [ownerA, 1],
+            [ownerB, 0],
+          ] as const) {
+            for (const table of ['"user"', 'session', 'account'])
+              assert.equal(
+                (
+                  await authPool.query(
+                    `SELECT 1 FROM ${table} WHERE ${table === '"user"' ? 'id' : '"userId"'}=$1`,
+                    [owner],
+                  )
+                ).rowCount,
+                expected,
+              );
+            assert.equal(
+              (await authPool.query('SELECT 1 FROM account_settings WHERE owner_id=$1', [owner]))
+                .rowCount,
+              expected,
+            );
+          }
+          assert.equal((await store.runtimeConfiguration(ownerA)).ownerId, ownerA);
+          assert.equal((await otherEnvironment.runtimeConfiguration(ownerA)).ownerId, ownerA);
+          assert.equal(
+            (await poolA.query('SELECT current_user AS role')).rows[0].role,
+            tenantA.role,
+          );
+          assert.deepEqual(await store.remove(ownerB), {
+            registered: false,
+            role: false,
+            schemas: 0,
+            channelAccounts: 0,
+          });
+          assert.deepEqual(await authentication.forget!(ownerB, false), {
+            user: false,
+            sessions: 0,
+            accounts: 0,
+          });
+          const newcomer = randomUUID();
+          tenantRoles.add(tenantIdentifiers(newcomer, options.environment).role);
+          assert.equal((await store.provision(newcomer)).ownerId, newcomer);
         },
       );
     },

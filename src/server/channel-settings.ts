@@ -613,5 +613,12 @@ export async function createChannelSettings(
       );
     });
   }
-  return { registerRoutes, environment, status, recover, pair };
+  return {
+    registerRoutes,
+    environment,
+    status,
+    recover,
+    pair,
+    disable: (provider: ChannelProvider) => change(provider),
+  };
 }

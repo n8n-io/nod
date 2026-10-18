@@ -68,6 +68,7 @@ export interface AppDependencies {
   analytics?: CaptureAnalytics;
   admission?: WorkAdmission;
   deploymentDrain?: TenantDrain;
+  release?: () => Promise<void>;
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
@@ -124,6 +125,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
     });
   else if (desktopAccess && dependencies.admission)
     registerWorkAdmission(app, dependencies.admission);
+  const release = dependencies.release;
+  if (runtimeAccess && release)
+    app.post('/api/runtime/release', async () => {
+      await release();
+      return { ok: true };
+    });
   const uploads = createMultipartReader({ verifiedBody: runtimeAccess?.takeBody });
   app.setErrorHandler((error, _request, reply) => {
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;

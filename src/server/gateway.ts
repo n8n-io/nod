@@ -6,8 +6,12 @@ import type { AccountStore, StoredAccount } from './account-store.ts';
 import { authenticationHeaders, createAccountSession, sendFetchResponse } from './account.ts';
 import { canonicalRequestPath } from './runtime-auth.ts';
 import { parsePrivacyNotice, registerPrivacyNotice } from './privacy.ts';
-import { createDeploymentControl, deploymentHeader } from './deployment-control.ts';
-import { deploymentBodyLimit, deploymentPath } from './deployment-auth.ts';
+import {
+  createDeploymentControl,
+  createDeprovisionControl,
+  deploymentHeader,
+} from './deployment-control.ts';
+import { deploymentBodyLimit, deploymentPath, deprovisionPath } from './deployment-auth.ts';
 import type { Analytics } from './analytics.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import { fileBytes } from '../shared/files.ts';
@@ -250,6 +254,9 @@ export async function createGateway(options: {
   const deployment = options.deployment
     ? createDeploymentControl({ ...options.deployment, runtimes: options.runtimes })
     : undefined;
+  const deprovision = options.deployment
+    ? createDeprovisionControl({ ...options.deployment, runtimes: options.runtimes })
+    : undefined;
   app.removeAllContentTypeParsers();
   app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
   app.addHook('onRequest', async (request, reply) => {
@@ -261,7 +268,9 @@ export async function createGateway(options: {
     const path = canonicalRequestPath(request.url);
     if (!path) return reply.code(400).send({ error: 'This request is not permitted.' });
     const serviceRequest =
-      (Boolean(deployment) && request.method === 'POST' && path === deploymentPath) ||
+      (Boolean(deployment) &&
+        request.method === 'POST' &&
+        (path === deploymentPath || path === deprovisionPath)) ||
       (Boolean(options.internal) &&
         request.method === 'POST' &&
         (/^\/api\/internal\/channels\/(claim|release)$/.test(path) ||
@@ -350,6 +359,27 @@ export async function createGateway(options: {
           ? error.status
           : 503;
       return reply.code(status).send({ error: 'The deployment operation could not be completed.' });
+    }
+  });
+  app.post(deprovisionPath, { bodyLimit: deploymentBodyLimit }, async (request, reply) => {
+    if (!deprovision) return reply.code(404).send({ error: 'Route not found.' });
+    try {
+      return await deprovision(
+        request.headers[deploymentHeader],
+        request.method,
+        request.url,
+        Buffer.isBuffer(request.body) ? request.body : new Uint8Array(),
+      );
+    } catch (error) {
+      const status =
+        error &&
+        typeof error === 'object' &&
+        'status' in error &&
+        typeof error.status === 'number' &&
+        [400, 401, 409].includes(error.status)
+          ? error.status
+          : 503;
+      return reply.code(status).send({ error: 'The account could not be removed.' });
     }
   });
   if (options.internal || options.webhook) {

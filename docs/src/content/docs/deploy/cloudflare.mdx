@@ -120,6 +120,51 @@ pnpm --dir deployment/cloudflare run provision:storage production
 
 Workspace commands run as `node`, and each connected CLI as its own user in group `otto-connected` (gid 1002) with a private home. A deployed container gives every process root's capabilities, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared. Otherwise a workspace command could read a CLI token from `/proc`. Connected CLIs live outside checkpoints and reinstall from their declared source after a restart.
 
+## Computer network
+
+Browser and workspace computers keep public internet access for browsing, package installs and Git. Before each computer starts, the computer's Durable Object routes plain HTTP and HTTPS to private, CGNAT, link-local and metadata ranges (`10.0.0.0/8`, `100.64.0.0/10`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`, `fe80::/10`) to `PrivateNetworkRefusal`, which answers 403. Cloudflare only routes ports 80 and 443 through these handlers, so other ports to those ranges are not filtered. The browser is also limited by Otto's own proxy, which allows only public addresses.
+
+Run this check on the development environment after a change to computer networking. You need two development owners, A and B. Ask Otto, as each owner, to run the commands in its workspace.
+
+1. As owner A, start a listener and print the workspace's address:
+
+   ```sh
+   (python3 -m http.server 8080 --bind 0.0.0.0 >/dev/null 2>&1 &)
+   python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('1.1.1.1', 53)); print(s.getsockname()[0])"
+   ```
+
+2. As owner B, run the probe with A's address. It sends one request to each target:
+
+   ```sh
+   A=<address from step 1>
+   python3 - "$A" <<'PY'
+   import socket, struct, sys, urllib.error, urllib.request
+   a = sys.argv[1]
+   gateway = next(socket.inet_ntoa(struct.pack('<L', int(f[2], 16))) for f in (l.split() for l in open('/proc/net/route').readlines()[1:]) if f[1] == '00000000')
+   def http(url):
+       try:
+           with urllib.request.urlopen(url, timeout=4) as r: return r.status
+       except urllib.error.HTTPError as e: return e.code
+       except Exception as e: return type(e).__name__
+   def tcp(host, port):
+       try:
+           socket.create_connection((host, port), timeout=4).close(); return 'open'
+       except Exception as e: return type(e).__name__
+   for name, result in [
+       ('public http', http('http://example.com/')),
+       ('public https', http('https://example.com/')),
+       ('metadata http', http('http://169.254.169.254/')),
+       ('gateway http', http(f'http://{gateway}/')),
+       ('sibling http 8080', http(f'http://{a}:8080/')),
+       ('sibling tcp 8080', tcp(a, 8080)),
+       ('sibling health 4311', http(f'http://{a}:4311/health')),
+       ('gateway tcp 8080', tcp(gateway, 8080)),
+   ]: print(f'{name}: {result}')
+   PY
+   ```
+
+Public HTTP and HTTPS should give 200, and metadata and gateway HTTP should give 403. Before this policy, those two fail with an error or answer. Any `open` or HTTP status for the sibling or gateway on another port means that address is reachable over raw TCP, which only an in-container firewall or `enableInternet = false` can stop. Report it before the next production deploy.
+
 ## Computer checkpoints
 
 A checkpoint is a gzip tar of the workspace (`/home/node/state`) or the user's browser data, stored in R2.
@@ -198,6 +243,32 @@ Use `abort` only before activation and `complete` only after it. A failed or exp
 If `status` shows a deployment that failed while draining, for example because a tenant's computer was left uncertain, run `abort`. It stops each tenant the drain couldn't account for, confirms its runtime and computers are stopped cleanly, and reopens admission. If a tenant still can't be confirmed, admission stays closed and `abort` can be retried. Then start a new deployment.
 
 Before a rollback, confirm the previous code supports the current SQL schema, Durable Object classes, checkpoint format and keys, and stop the current generations. A Worker rollback doesn't revert PostgreSQL, R2 or completed external actions, so prefer a forward fix.
+
+## Remove one account
+
+To delete one hosted user and their data, for example on request or to free an `OTTO_MAX_USERS` slot, load the same private environment as for recovery. Run a dry run first, then the removal:
+
+```sh title="Terminal"
+node deployment/cloudflare/scripts/recover.mjs production deprovision <owner-id> --dry-run
+node deployment/cloudflare/scripts/recover.mjs production deprovision <owner-id>
+```
+
+The dry run prints counts and changes nothing. The removal refuses while a deployment is in progress and keeps a deployment from starting until it ends. Then it:
+
+<Steps>
+
+1. Asks the user's runtime to disconnect their Composio accounts and triggers, Telegram and WhatsApp, and MCP connections.
+2. Marks the account as being removed, so no start, wake or webhook restarts it.
+3. Stops the runtime and its computers, and confirms the stop.
+4. Deletes the user's R2 objects under `<environment>/<owner>/`.
+5. Deletes the user's Better Auth user, sessions and accounts, and their account settings.
+6. Drops the user's schemas and role, after checking they match the names derived from the owner ID, and deletes the registry row and channel claims. This frees the slot.
+
+</Steps>
+
+Every step can be repeated, so if the command stops partway or times out, run it again until it reports the account removed. Step 1 starts a stopped runtime, so the user's own schedules or app events can still run briefly before step 2. If the runtime can't start to disconnect apps, add `--skip-release` and revoke those external accounts by hand, since the removal then leaves them at the providers. R2 aborts incomplete multipart uploads on its own after seven days. The tenant and computer Durable Objects keep only identity and checkpoint references, which no new account reuses.
+
+Run it once on development with a test account before you use it in production.
 
 ## Reset the database
 

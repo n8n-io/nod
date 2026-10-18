@@ -6,6 +6,7 @@ import { refresh } from './events.ts';
 import { enqueueTurn, withTurnLock, type SubmitUserMessageResult, type TurnRef } from './thread.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
+import { lockKey, locksTable } from './locks.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -154,7 +155,8 @@ export async function createApprovals(
   interpret?: (reply: string) => Promise<boolean | undefined>,
   describe?: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string>,
 ) {
-  await pool.query(`CREATE TABLE IF NOT EXISTS approvals (
+  await pool.query(`${locksTable};
+  CREATE TABLE IF NOT EXISTS approvals (
     id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id),
     turn_id uuid REFERENCES turns(id), execution_turn_id uuid REFERENCES turns(id),
     action text NOT NULL, args jsonb NOT NULL, status text NOT NULL DEFAULT 'pending',
@@ -274,10 +276,7 @@ export async function createApprovals(
         if (!author) throw new Error('This action needs a direct request from the user.');
         authorMessageId = author.id;
       }
-      if (background)
-        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-          `approvals:${ownerId}:${turn.threadId}`,
-        ]);
+      if (background) await lockKey(client, `approvals:${ownerId}:${turn.threadId}`);
       let previous = (
         background
           ? await client.query(

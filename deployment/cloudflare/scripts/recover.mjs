@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { deploymentPlan, verifyStorageBinding } from './deploy.mjs';
-import { createDeploymentClient, pinDeploymentImages } from './drain.mjs';
+import { createDeploymentClient, createDeprovisionClient, pinDeploymentImages } from './drain.mjs';
 import { verifyDeployment } from './smoke.mjs';
 
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -13,9 +13,10 @@ export async function recoverDeployment(
   action,
   variables = process.env,
   dependencies = {},
+  argumentsList = [],
 ) {
-  if (!['status', 'abort', 'complete'].includes(action))
-    throw new Error('Choose status, abort or complete for the existing deployment.');
+  if (!['status', 'abort', 'complete', 'deprovision'].includes(action))
+    throw new Error('Choose status, abort, complete or deprovision.');
   if (!variables.CLOUDFLARE_API_TOKEN)
     throw new Error('Configure the Cloudflare deployment token.');
   let configuration = dependencies.config;
@@ -35,9 +36,22 @@ export async function recoverDeployment(
     gatewayEnv: variables.GATEWAY_ENV,
     config: configuration,
   });
+  const report = dependencies.report ?? ((message) => process.stdout.write(`${message}\n`));
+  if (action === 'deprovision') {
+    const [owner, ...flags] = argumentsList;
+    if (!owner || flags.some((flag) => !['--dry-run', '--skip-release'].includes(flag)))
+      throw new Error('Use deprovision <owner> [--dry-run] [--skip-release].');
+    const remove =
+      dependencies.deprovision ?? createDeprovisionClient({ environment, plan, variables });
+    const result = await remove(owner, {
+      dryRun: flags.includes('--dry-run'),
+      release: !flags.includes('--skip-release'),
+    });
+    report(JSON.stringify(result));
+    return result;
+  }
   const lifecycle =
     dependencies.deploymentControl ?? createDeploymentClient({ environment, plan, variables });
-  const report = dependencies.report ?? ((message) => process.stdout.write(`${message}\n`));
   const state = await lifecycle.recover();
   if (action === 'status') {
     report(JSON.stringify(state));
@@ -76,10 +90,18 @@ export async function recoverDeployment(
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    await recoverDeployment(process.argv[2], process.argv[3]);
+    await recoverDeployment(
+      process.argv[2],
+      process.argv[3],
+      process.env,
+      {},
+      process.argv.slice(4),
+    );
   } catch {
     process.stderr.write(
-      'Deployment recovery did not pass safety checks; admission remains unchanged or closed.\n',
+      process.argv[3] === 'deprovision'
+        ? 'The account could not be removed; run it again with the same owner to continue.\n'
+        : 'Deployment recovery did not pass safety checks; admission remains unchanged or closed.\n',
     );
     process.exitCode = 1;
   }

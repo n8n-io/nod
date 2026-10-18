@@ -15,6 +15,7 @@ export interface RuntimeTransport {
     generation: string,
     input: DeploymentInput,
   ): Promise<'stopped' | 'busy'>;
+  removeStorage?(ownerId: string, dryRun: boolean): Promise<number>;
   fetch(ownerId: string, request: Request): Promise<Response>;
   close(): Promise<void>;
 }

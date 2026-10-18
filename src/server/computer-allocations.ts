@@ -5,6 +5,7 @@ import type {
   ComputerAllocationRole,
   ComputerAllocationStore,
 } from '../ports/computer-allocation.ts';
+import { lockSetup } from './locks.ts';
 
 export class ComputerAllocationError extends Error {
   constructor(readonly code: 'invalid_allocation' | 'unavailable') {
@@ -105,9 +106,7 @@ export function createComputerAllocationStore(options: {
     initialize: () =>
       protect(() =>
         transaction(async (client) => {
-          await client.query(
-            "SELECT pg_advisory_xact_lock(hashtextextended('otto:computer-allocations:'||current_schema(),0))",
-          );
+          await lockSetup(client, 'otto:computer-allocations');
           await client.query(`CREATE TABLE IF NOT EXISTS computer_allocations (
           owner_id text NOT NULL,
           role text NOT NULL CHECK (role IN ('browser','workspace','computer')),

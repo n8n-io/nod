@@ -81,7 +81,7 @@ Memory notes come only from your own short messages, never from Otto's replies, 
 - **Vault items.** Open the item in **Trust → Saved** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
-- **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. In hosted mode, ask your operator.
+- **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. In hosted mode, ask your operator, who can remove your account and its data with one command.
 
 :::caution
 Released builds don't have a button to clear your chat history yet. To remove it, delete Otto's data folders.

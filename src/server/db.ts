@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { databaseUrl } from './config.ts';
+import { locksTable } from './locks.ts';
 
 function poolSize(value: string | undefined, fallback: number) {
   const size = value === undefined ? fallback : Number(value);
@@ -29,6 +30,7 @@ export async function initializeDatabase() {
   if (!databaseUrl)
     throw new Error('Run pnpm run dev to configure the local database, or set DATABASE_URL.');
   await pool.query(`
+    ${locksTable};
     CREATE TABLE IF NOT EXISTS threads (
       id uuid PRIMARY KEY, owner_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),

@@ -7,6 +7,7 @@ import { channelReply, createChannels } from '../src/server/channels.ts';
 import { createAgentReactionService } from '../src/server/agent-reactions.ts';
 import { createChatVerification } from '../src/server/chat-verification.ts';
 import { createVault } from '../src/server/vault.ts';
+import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 
@@ -32,7 +33,8 @@ const fixtureEnv = {
 };
 
 async function createFixtureTables(pool: pg.Pool, owner: string) {
-  await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
+  await pool.query(`${locksTable};
+    CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL DEFAULT 'idle',created_at timestamptz NOT NULL DEFAULT now(),archived_at timestamptz);
     CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text UNIQUE,channel text NOT NULL DEFAULT 'web',channel_source_id text,status text NOT NULL DEFAULT 'queued',waiting_reason text,background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),started_at timestamptz,finished_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
     CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,role text NOT NULL,text text NOT NULL,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),attachments jsonb NOT NULL DEFAULT '[]',reply_to_message_id uuid,delivered_channel text,assistant_reaction text,assistant_reacted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
   const threadId = randomUUID();

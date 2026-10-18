@@ -9,6 +9,7 @@ import {
   objectVersion,
 } from '../ports/object-storage-validation.ts';
 import { fileBytes } from '../shared/files.ts';
+import { lockSetup } from './locks.ts';
 
 export function createPostgresObjectStore(options: {
   database: Pool;
@@ -28,9 +29,7 @@ export function createPostgresObjectStore(options: {
       safe(() =>
         transaction(async (client) => {
           await client.query("SET LOCAL lock_timeout='5s'");
-          await client.query(
-            "SELECT pg_advisory_xact_lock(hashtextextended(current_database()||':'||current_schema()||':private_objects',0))",
-          );
+          await lockSetup(client, 'otto:private-objects');
           await client.query(`CREATE TABLE IF NOT EXISTS private_objects (
         owner_id text NOT NULL, object_key text NOT NULL, version text NOT NULL,
         bytes bytea NOT NULL, PRIMARY KEY(owner_id,object_key)

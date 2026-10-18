@@ -33,6 +33,7 @@ export class TenantError extends Error {
       | 'capacity_reached'
       | 'not_found'
       | 'isolation_failed'
+      | 'removing'
       | 'unavailable',
     message: string,
     readonly statusCode = 503,
@@ -267,6 +268,9 @@ export function createTenantStore(options: TenantStoreOptions) {
         lease_holder uuid, lease_generation bigint NOT NULL DEFAULT 0, lease_expires timestamptz,
         PRIMARY KEY(environment,owner_id)
       )`);
+      await client.query(
+        `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS removing boolean NOT NULL DEFAULT false`,
+      );
       await client.query(`REVOKE ALL ON ${table} FROM PUBLIC`);
     });
   }
@@ -290,10 +294,12 @@ export function createTenantStore(options: TenantStoreOptions) {
     return transaction(async (client) => {
       await client.query("SET LOCAL lock_timeout='5s'");
       await client.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`);
-      const existing = await client.query<TenantRow>(
-        `SELECT ${fields} FROM ${table} WHERE environment=$1 AND owner_id=$2`,
+      const existing = await client.query<TenantRow & { removing: boolean }>(
+        `SELECT ${fields},removing FROM ${table} WHERE environment=$1 AND owner_id=$2`,
         [environment, ownerId],
       );
+      if (existing.rows[0]?.removing)
+        throw new TenantError('removing', 'This account is being removed.', 409);
       if (existing.rows[0]) {
         const tenant = record(existing.rows[0]);
         await assertIsolation(client, tenant);
@@ -386,7 +392,8 @@ export function createTenantStore(options: TenantStoreOptions) {
       const result = await options.admin.query(
         `UPDATE ${table} SET lease_holder=$3,lease_generation=lease_generation+1,
          lease_expires=clock_timestamp()+$4::integer*interval '1 millisecond'
-         WHERE environment=$1 AND owner_id=$2 AND (lease_expires IS NULL OR lease_expires<=clock_timestamp())
+         WHERE environment=$1 AND owner_id=$2 AND NOT removing
+           AND (lease_expires IS NULL OR lease_expires<=clock_timestamp())
          RETURNING owner_id,environment,lease_holder,lease_generation,lease_expires`,
         [environment, ownerId, holderId, duration],
       );
@@ -433,7 +440,108 @@ export function createTenantStore(options: TenantStoreOptions) {
     });
   }
 
+  async function markRemoving(owner: string) {
+    const ownerId = identity(owner);
+    return protect(async () => {
+      const result = await options.admin.query(
+        `UPDATE ${table} SET removing=true WHERE environment=$1 AND owner_id=$2`,
+        [environment, ownerId],
+      );
+      return result.rowCount === 1;
+    });
+  }
+
+  async function remove(owner: string, dryRun = false) {
+    const ownerId = identity(owner);
+    const expected = tenantIdentifiers(ownerId, environment);
+    const channels = `${control}.channel_accounts`;
+    const revisions = `${control}.channel_account_revisions`;
+    return transaction(async (client) => {
+      await client.query("SET LOCAL lock_timeout='5s'");
+      await client.query(`LOCK TABLE ${table} IN SHARE UPDATE EXCLUSIVE MODE`);
+      const row = (
+        await client.query<TenantRow>(
+          `SELECT ${fields} FROM ${table} WHERE environment=$1 AND owner_id=$2`,
+          [environment, ownerId],
+        )
+      ).rows[0];
+      if (row) validateRecord(record(row));
+      const present = (
+        await client.query<{ role: boolean; schemas: number; channels: boolean }>(
+          `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS role,
+           (SELECT count(*)::integer FROM pg_namespace WHERE nspname=ANY($2::text[])) AS schemas,
+           to_regclass($3) IS NOT NULL AND to_regclass($4) IS NOT NULL AS channels`,
+          [expected.role, [expected.appSchema, expected.jobsSchema], channels, revisions],
+        )
+      ).rows[0];
+      const claims = present.channels
+        ? (
+            await client.query<{ count: number }>(
+              `SELECT count(*)::integer AS count FROM ${channels} WHERE environment=$1 AND owner_id=$2`,
+              [environment, ownerId],
+            )
+          ).rows[0].count
+        : 0;
+      const report = {
+        registered: Boolean(row),
+        role: present.role,
+        schemas: present.schemas,
+        channelAccounts: claims,
+      };
+      if (dryRun) return report;
+      if (present.schemas && !present.role)
+        throw new TenantError(
+          'isolation_failed',
+          'The account database isolation could not be verified.',
+        );
+      if (present.role) {
+        const role = identifier(expected.role);
+        const provisioner = (await client.query<{ role: string }>('SELECT current_user AS role'))
+          .rows[0].role;
+        await client.query(`SET LOCAL ROLE ${role}`);
+        await client.query(
+          `DROP SCHEMA IF EXISTS ${identifier(expected.appSchema)},${identifier(expected.jobsSchema)} CASCADE`,
+        );
+        await client.query(`DROP OWNED BY ${role}`);
+        await client.query(`SET LOCAL ROLE ${quoted(provisioner)}`);
+        const database = (await client.query<{ name: string }>('SELECT current_database() AS name'))
+          .rows[0].name;
+        await client.query(`REVOKE ALL ON DATABASE ${quoted(database)} FROM ${role}`);
+        await client.query(`DROP ROLE ${role}`);
+      }
+      if (present.channels) {
+        await client.query(`DELETE FROM ${channels} WHERE environment=$1 AND owner_id=$2`, [
+          environment,
+          ownerId,
+        ]);
+        await client.query(`DELETE FROM ${revisions} WHERE environment=$1 AND owner_id=$2`, [
+          environment,
+          ownerId,
+        ]);
+      }
+      await client.query(`DELETE FROM ${table} WHERE environment=$1 AND owner_id=$2`, [
+        environment,
+        ownerId,
+      ]);
+      return report;
+    });
+  }
+
+  async function removing(owner: string) {
+    const ownerId = identity(owner);
+    return protect(async () => {
+      const result = await options.admin.query<{ removing: boolean }>(
+        `SELECT removing FROM ${table} WHERE environment=$1 AND owner_id=$2`,
+        [environment, ownerId],
+      );
+      return result.rows[0]?.removing === true;
+    });
+  }
+
   return {
+    markRemoving,
+    removing,
+    remove,
     currentLease: (owner: string) =>
       protect(async () => {
         const result = await options.admin.query(

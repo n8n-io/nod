@@ -251,6 +251,55 @@ test('runtime bootstrap requires the fixed trusted gateway and forwarding preser
   assert.equal(forwarded.headers.get('x-otto-runtime'), 'signed-fixture');
 });
 
+test('the gateway can sweep the files of an owner only while that removal is active', async () => {
+  const { env, ownerId, gatewayContext, tenantContext } = fixture();
+  const keys = new Set([`development/${ownerId}/artifacts/one`, `development/${randomUUID()}/x`]);
+  let active: { ownerId: string; dryRun: boolean } | undefined;
+  const removal = {
+    ...env,
+    TENANT_FILES: {
+      async list(options: { prefix: string }) {
+        return {
+          objects: [...keys]
+            .filter((key) => key.startsWith(options.prefix))
+            .map((key) => ({ key })),
+          truncated: false,
+        };
+      },
+      async delete(batch: string[]) {
+        for (const key of batch) keys.delete(key);
+      },
+    },
+    GATEWAY: {
+      ...env.GATEWAY,
+      getByName: () => ({
+        async deprovisioning(owner: string, dryRun: boolean) {
+          return active?.ownerId === owner && (dryRun || !active.dryRun);
+        },
+      }),
+    },
+  } as unknown as typeof env;
+  const outbound = GatewayContainer.outboundByHost!['otto.runtime'];
+  const sweep = (context: typeof gatewayContext, dryRun = false) =>
+    outbound(
+      new Request('http://otto.runtime/runtime/remove-storage', {
+        method: 'POST',
+        body: JSON.stringify({ ownerId, dryRun }),
+      }),
+      removal,
+      context,
+    );
+  assert.equal((await sweep(gatewayContext)).status, 409);
+  active = { ownerId, dryRun: true };
+  assert.equal((await sweep(gatewayContext)).status, 409);
+  assert.deepEqual(await (await sweep(gatewayContext, true)).json(), { objects: 1 });
+  active = { ownerId, dryRun: false };
+  assert.equal((await sweep(tenantContext)).status, 403);
+  assert.equal(keys.size, 2);
+  assert.deepEqual(await (await sweep(gatewayContext)).json(), { objects: 1 });
+  assert.equal(keys.size, 1);
+});
+
 test('tenant control permits only signed channel and analytics requests for the trusted owner', async () => {
   const { env, calls, ownerId, tenantContext } = fixture();
   const control = TenantContainer.outboundByHost!['otto.control'];

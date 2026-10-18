@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { storageRequest } from '../src/storage.ts';
+import { removeOwnerStorage, storageRequest } from '../src/storage.ts';
 import { fileBytes } from '../../../src/shared/files.ts';
 
 function put(url: string, body: string, headers: Record<string, string> = {}) {
@@ -132,4 +132,37 @@ test('private storage keeps tenants out of computer checkpoints and bounds objec
     { status: 413 },
   );
   assert.equal(objects.size, 0);
+});
+
+test('account removal deletes only the owner prefix across pages and a dry run deletes nothing', async () => {
+  const owner = randomUUID();
+  const other = randomUUID();
+  const kept = [`development/${other}/artifacts/one`, `production/${owner}/artifacts/one`];
+  const keys = new Set([
+    ...Array.from({ length: 2501 }, (_, index) => `development/${owner}/artifacts/${index}`),
+    `development/${owner}/computers/workspace/${randomUUID()}.tar.gz`,
+    ...kept,
+  ]);
+  const bucket = {
+    async list(options: { prefix: string; limit: number; cursor?: string }) {
+      const matching = [...keys].filter((key) => key.startsWith(options.prefix)).sort();
+      const page = matching
+        .filter((key) => !options.cursor || key > options.cursor)
+        .slice(0, options.limit);
+      const last = page.at(-1);
+      return {
+        objects: page.map((key) => ({ key })),
+        truncated: Boolean(last && matching.some((key) => key > last)),
+        cursor: last,
+      };
+    },
+    async delete(batch: string[]) {
+      for (const key of batch) keys.delete(key);
+    },
+  } as unknown as Pick<R2Bucket, 'list' | 'delete'>;
+  assert.equal(await removeOwnerStorage(bucket, 'development', owner, true), 2502);
+  assert.equal(keys.size, 2504);
+  assert.equal(await removeOwnerStorage(bucket, 'development', owner, false), 2502);
+  assert.deepEqual([...keys].sort(), kept.sort());
+  await assert.rejects(removeOwnerStorage(bucket, 'development', 'not-an-owner', false));
 });

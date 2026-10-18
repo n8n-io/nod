@@ -21,6 +21,7 @@ function fixture() {
     put: async (key: string, value: unknown) => {
       values.set(key, structuredClone(value));
     },
+    delete: async (key: string) => values.delete(key),
     transaction: async <T>(operation: (value: unknown) => Promise<T>) => operation(storage),
   } as unknown as DurableObjectStorage;
   let reply = async (_request: Request) => Response.json({ ok: true, receipts: [] });
@@ -53,6 +54,7 @@ function fixture() {
     });
   };
   return {
+    master,
     values,
     requests,
     create,
@@ -92,4 +94,53 @@ test('gateway refuses malformed successful acknowledgements and keeps admission 
     assert.equal(await f.create().closed(), true);
     assert.equal((f.values.get('deployment-barrier') as { phase: string }).phase, 'failed');
   }
+});
+
+test('account removal waits for no deployment, blocks a deployment while it runs and leaves no marker', async () => {
+  const f = fixture();
+  const ownerId = randomUUID();
+  const removal = (dryRun = false) => {
+    const body = Buffer.from(JSON.stringify({ ownerId, dryRun, release: true }));
+    return new Request('https://otto.example.test/api/deprovision', {
+      method: 'POST',
+      headers: {
+        'x-otto-deployment': signDeploymentRequest({
+          masterKey: f.master,
+          environment: 'development',
+          body,
+          capability: 'deprovision',
+        }),
+      },
+      body,
+    });
+  };
+  const gate = f.create();
+  let during: unknown[] = [];
+  f.reply(async () => {
+    during = [
+      await gate.deprovisioning(ownerId, false),
+      await gate.deprovisioning(randomUUID(), false),
+      await gate.handle(f.request()).then(
+        () => 'accepted',
+        (error: { status?: number }) => error.status,
+      ),
+    ];
+    return Response.json({ ok: true, report: { dryRun: false } });
+  });
+  assert.deepEqual(await gate.deprovision(removal()), { ok: true, report: { dryRun: false } });
+  assert.deepEqual(during, [true, false, 409]);
+  assert.equal(f.values.has('deprovisioning'), false);
+  assert.equal(await gate.closed(), false);
+  f.reply(async () => {
+    during = [await gate.deprovisioning(ownerId, true), await gate.deprovisioning(ownerId, false)];
+    return Response.json({ ok: true, report: { dryRun: true } });
+  });
+  await gate.deprovision(removal(true));
+  assert.deepEqual(during, [true, false]);
+  f.reply(async () => Response.json({ ok: true, receipts: [] }));
+  await gate.handle(f.request());
+  assert.equal(await gate.closed(), true);
+  const forwarded = f.requests.length;
+  await assert.rejects(gate.deprovision(removal()), { status: 409 });
+  assert.equal(f.requests.length, forwarded);
 });

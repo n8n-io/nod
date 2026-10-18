@@ -34,6 +34,7 @@ import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 import { analyticsDomain } from './analytics-connections.ts';
+import { lockKey, lockSetup, locksTable } from './locks.ts';
 const passwordInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -239,9 +240,7 @@ const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
 
 async function verifyKey(pool: Pool, key: Buffer) {
   await transaction(async (client) => {
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-      `otto-vault-key:${owner}`,
-    ]);
+    await lockSetup(client, `otto-vault-key:${owner}`);
     await client.query(
       'CREATE TABLE IF NOT EXISTS vault_key_check (owner_id text PRIMARY KEY, ciphertext text NOT NULL)',
     );
@@ -487,6 +486,7 @@ function cardVersion(entry: CardRow) {
 
 export async function createVault(pool: Pool, options: VaultOptions) {
   await pool.query(`
+    ${locksTable};
     CREATE TABLE IF NOT EXISTS vault_entries (
       id text PRIMARY KEY, owner_id text NOT NULL, label text NOT NULL, origin text NOT NULL,
       username_hint text NOT NULL, ciphertext text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
@@ -653,9 +653,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     raw: unknown,
     database: PoolClient,
   ): Promise<{ entry: VaultLoginEntry; operation?: 'create' | 'update' }> {
-    await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-      `otto-vault-items:${ownerId}`,
-    ]);
+    await lockKey(database, `otto-vault-items:${ownerId}`);
     const input = passwordInput.extend({ password: z.string() }).parse(raw);
     const origin = savedCredentialOrigin(input.origin);
     const credentialKey = await key();
@@ -723,9 +721,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const result = { imported: 0, existing: 0, skipped: 0 };
     const origins: string[] = [];
     await transaction(async (client) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-        `otto-vault-items:${owner}`,
-      ]);
+      await lockKey(client, `otto-vault-items:${owner}`);
       const { rows } = await client.query<EntryRow>(
         'SELECT * FROM vault_entries WHERE owner_id=$1 FOR UPDATE',
         [owner],
@@ -1089,9 +1085,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     itemId: string | null,
     since?: number,
   ) {
-    await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-      `otto-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`,
-    ]);
+    await lockKey(database, `otto-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`);
     const { rowCount } = await database.query(
       `SELECT 1 FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=$3 AND kind=$4
        AND (item_id IS NULL OR item_id=$5) AND ($6::timestamptz IS NULL OR created_at>=$6) LIMIT 1`,
@@ -1214,9 +1208,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const hash = createHash('sha256').update(token).digest('hex');
     await forgetExpiredHolds();
     await transaction(async (client) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-        `thread:${ownerId}`,
-      ]);
+      await lockKey(client, `thread:${ownerId}`);
       if (!(await currentTurn(client, turn, ownerId, ' FOR NO KEY UPDATE OF u')))
         throw new VaultError('This task can no longer request credentials.', 409);
       const root = await rootTurn(client, turn, ownerId);
@@ -1254,7 +1246,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function lockRequest(client: PoolClient, hash: string, condition = "r.status='pending'") {
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`thread:${owner}`]);
+    await lockKey(client, `thread:${owner}`);
     const { rows } = await client.query<RequestRow>(
       `SELECT r.* FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
        WHERE r.token_hash=$1 AND r.owner_id=$2 AND ${condition} AND ${waitingTurnSql('u', 'credentials')}
@@ -1547,10 +1539,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         return true;
       },
       complete: async (client) => {
-        if (request)
-          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-            `thread:${owner}`,
-          ]);
+        if (request) await lockKey(client, `thread:${owner}`);
         if (input.kind !== 'otp') {
           if (
             (source.kind === 'form' && (input.kind === 'password' || !heldPassword)) ||

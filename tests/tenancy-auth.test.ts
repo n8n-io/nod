@@ -12,7 +12,9 @@ import {
   deploymentHeader,
   signDeploymentRequest,
   createDeploymentVerifier,
+  createDeprovisionVerifier,
   deploymentPath,
+  deprovisionPath,
   deriveDeploymentKey,
 } from '../src/server/deployment-auth.ts';
 import {
@@ -837,6 +839,35 @@ describe('deployment authentication', () => {
     await assert.rejects(createDeploymentVerifier(f)(future, 'POST', deploymentPath, f.body));
     f.advance(30_000);
     await assert.rejects(createDeploymentVerifier(f)(f.token, 'POST', deploymentPath, f.body));
+  });
+
+  test('account removal is a separate capability bound to its exact owner, flags and path', async () => {
+    const f = fixture();
+    const input = { ownerId: randomUUID(), dryRun: false, release: true };
+    const body = Buffer.from(JSON.stringify(input));
+    const token = signDeploymentRequest({ ...f, body, now: f.now(), capability: 'deprovision' });
+    assert.deepEqual(
+      await createDeprovisionVerifier(f)(token, 'POST', deprovisionPath, body),
+      input,
+    );
+    for (const [verify, signed, path, payload] of [
+      [createDeploymentVerifier(f), token, deploymentPath, body],
+      [createDeprovisionVerifier(f), f.token, deprovisionPath, f.body],
+      [createDeprovisionVerifier(f), token, deploymentPath, body],
+      [
+        createDeprovisionVerifier(f),
+        token,
+        deprovisionPath,
+        Buffer.from(JSON.stringify({ ...input, ownerId: randomUUID() })),
+      ],
+      [
+        createDeprovisionVerifier(f),
+        token,
+        deprovisionPath,
+        Buffer.from(JSON.stringify({ ...input, dryRun: true })),
+      ],
+    ] as const)
+      await assert.rejects(verify(signed, 'POST', path, payload), { status: 401 });
   });
 
   test('deployment verification rejects replay and uses the durable nonce callback after verification', async () => {

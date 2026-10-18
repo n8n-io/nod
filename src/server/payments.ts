@@ -14,6 +14,7 @@ import { type createVaultUses, VaultUseError } from './vault-use.ts';
 import type { TurnRef } from './thread.ts';
 import { browserOf, supersededSql } from './turn-chain.ts';
 import { credentialOrigin } from './vault.ts';
+import { lockKey, locksTable } from './locks.ts';
 
 export class PaymentError extends Error {}
 
@@ -132,6 +133,7 @@ export async function createPayments(
 ) {
   const { ownerId, uses } = options;
   await pool.query(`
+    ${locksTable};
     CREATE TABLE IF NOT EXISTS vault_payments (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
       origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, card_id text NOT NULL,
@@ -214,9 +216,7 @@ export async function createPayments(
       },
       {
         prepare: async (client) => {
-          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-            `thread:${ownerId}`,
-          ]);
+          await lockKey(client, `thread:${ownerId}`);
           const active = await client.query(
             `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id
              WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3 AND th.archived_at IS NULL
