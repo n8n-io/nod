@@ -222,9 +222,17 @@ export function createPersonalService(dependencies: PersonalDependencies) {
         values,
       );
       const messages = await pool.query(
-        `${terms}, hits AS (
-           SELECT m.id,row_number() OVER (ORDER BY ${order('m', 'm.text')}) AS place FROM messages m CROSS JOIN terms
-           WHERE ${where('m', 'm.text')} ORDER BY place LIMIT 20),
+        `${terms}, docs AS (
+           SELECT m.id,m.created_at,to_tsvector('english',m.text) AS v FROM messages m CROSS JOIN terms
+           WHERE ${where('m', 'm.text')}),
+         weights AS (
+           SELECT w,ln(1+((SELECT count(*) FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')})-count(*)+0.5)/(count(*)+0.5)) AS idf
+           FROM (SELECT DISTINCT lexeme AS w FROM unnest(tsvector_to_array(to_tsvector('english',coalesce($2,'')))) lexeme) words
+           JOIN docs ON docs.v @@ quote_literal(w)::tsquery GROUP BY w),
+         hits AS (
+           SELECT d.id,row_number() OVER (ORDER BY coalesce(sum(weights.idf),0) DESC,d.created_at DESC,d.id DESC) AS place
+           FROM docs d LEFT JOIN weights ON d.v @@ quote_literal(weights.w)::tsquery
+           GROUP BY d.id,d.created_at ORDER BY place LIMIT 20),
          thread AS (
            SELECT m.id,m.role,m.text,m.turn_id,m.created_at,row_number() OVER (ORDER BY m.created_at,m.id) AS n
            FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')}),
@@ -245,17 +253,25 @@ export function createPersonalService(dependencies: PersonalDependencies) {
 
   async function recall(text: string, before: Date | undefined, exclude: string | null) {
     const { rows } = await pool.query(
-      `WITH terms AS (SELECT replace(plainto_tsquery('english',$2)::text,'&','|')::tsquery AS q)
-       SELECT m.id,m.role,length(m.text)>400 AS shortened,CASE WHEN length(m.text)<=400 THEN m.text
-           ELSE ts_headline('english',m.text,terms.q,'StartSel="",StopSel="",MaxWords=50,MinWords=15,MaxFragments=2,FragmentDelimiter=" … "') END AS text,
-         m.created_at AS "createdAt"
-       FROM messages m CROSS JOIN terms
-       WHERE m.owner_id=$1 AND m.role='user' AND ${activeThreadSql('m')} AND m.id IS DISTINCT FROM $4::uuid
-         AND ($3::timestamptz IS NULL OR m.created_at<$3) AND to_tsvector('english',m.text) @@ terms.q
-       ORDER BY ts_rank_cd(to_tsvector('english',m.text),terms.q,1) DESC,m.created_at DESC LIMIT 6`,
+      `WITH terms AS (SELECT replace(plainto_tsquery('english',$2)::text,'&','|')::tsquery AS q),
+       docs AS (
+         SELECT m.id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v FROM messages m CROSS JOIN terms
+         WHERE m.owner_id=$1 AND m.role='user' AND ${activeThreadSql('m')} AND m.id IS DISTINCT FROM $4::uuid
+           AND ($3::timestamptz IS NULL OR m.created_at<$3) AND to_tsvector('english',m.text) @@ terms.q),
+       weights AS (
+         SELECT w,ln(1+((SELECT count(*) FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')})-count(*)+0.5)/(count(*)+0.5)) AS idf
+         FROM (SELECT DISTINCT lexeme AS w FROM unnest(tsvector_to_array(to_tsvector('english',$2))) lexeme) words
+         JOIN docs ON docs.v @@ quote_literal(w)::tsquery GROUP BY w),
+       best AS (
+         SELECT d.id,d.role,d.text,d.created_at FROM docs d LEFT JOIN weights ON d.v @@ quote_literal(weights.w)::tsquery
+         GROUP BY d.id,d.role,d.text,d.created_at ORDER BY coalesce(sum(weights.idf),0) DESC,d.created_at DESC LIMIT 6)
+       SELECT best.id,best.role,length(best.text)>400 AS shortened,CASE WHEN length(best.text)<=400 THEN best.text
+           ELSE ts_headline('english',best.text,terms.q,'StartSel="",StopSel="",MaxWords=50,MinWords=15,MaxFragments=2,FragmentDelimiter=" … "') END AS text,
+         best.created_at AS "createdAt"
+       FROM best CROSS JOIN terms ORDER BY best.created_at`,
       [ownerId, text, before ?? null, exclude],
     );
-    return rows.toReversed() as Array<{
+    return rows as Array<{
       id: string;
       role: string;
       text: string;

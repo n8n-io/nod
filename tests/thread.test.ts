@@ -2627,6 +2627,15 @@ test(
             recalled.map(({ role, text, shortened }) => [role, text, shortened]),
             [['user', 'My passport expires in June', false]],
           );
+          for (const [index, text] of [
+            'Coffee with the team on Monday',
+            'More coffee before the review',
+            'Coffee machine is broken again',
+            'Bought coffee beans for the office',
+          ].entries())
+            await add(text, `2019-06-0${index + 1}T10:00:00Z`);
+          const rare = await add('The plumber replaced the faucet', '2019-06-01T09:00:00Z');
+          assert.equal((await search({ query: 'coffee faucet' }))[0], rare);
           const filler = 'Unrelated planning notes about the garden and the weather. '.repeat(40);
           const long = await add(
             `${filler}The spare key is with Marisol next door. ${filler}`,
