@@ -2605,6 +2605,27 @@ test(
             await hidden(`Hidden chat line ${i}`, minute(2 * i + 1));
           }
           assert.deepEqual(await search({ around: chat[6] }), chat.slice(1, 12));
+          const filler = 'Unrelated planning notes about the garden and the weather. '.repeat(40);
+          const long = await add(
+            `${filler}The spare key is with Marisol next door. ${filler}`,
+            '2019-04-01T10:00:00Z',
+          );
+          const excerpt = (
+            (await shown({ query: 'spare key Marisol' })) as Array<{
+              id: string;
+              text: string;
+              shortened?: boolean;
+            }>
+          ).find((message) => message.id === long)!;
+          assert.equal(excerpt.shortened, true);
+          assert.match(excerpt.text, /spare key is with Marisol/);
+          assert.ok(excerpt.text.length < 1200);
+          const whole = (
+            (await personal.manage('history_search', { around: long })) as {
+              messages: Array<{ id: string; text: string }>;
+            }
+          ).messages.find((message) => message.id === long)!;
+          assert.ok(whole.text.length > 4000);
           for (const id of await hidden('Hidden hit', minute(13)))
             await assert.rejects(search({ around: id }), /unavailable/);
         },

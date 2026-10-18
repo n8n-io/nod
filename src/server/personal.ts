@@ -188,7 +188,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
              (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND (m.created_at,m.id)<(hit.created_at,hit.id) ORDER BY m.created_at DESC,m.id DESC LIMIT 5)
              UNION ALL (SELECT m.* FROM messages m,hit WHERE m.id=hit.id)
              UNION ALL (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND (m.created_at,m.id)>(hit.created_at,hit.id) ORDER BY m.created_at,m.id LIMIT 5))
-           SELECT id,role,text,turn_id,created_at FROM nearby ORDER BY created_at,id`,
+           SELECT id,role,left(text,6000) AS text,length(text)>6000 AS shortened,turn_id,created_at FROM nearby ORDER BY created_at,id`,
           [ownerId, around],
         );
         if (!rows.length) throw new Error('This history result is unavailable.');
@@ -232,9 +232,10 @@ export function createPersonalService(dependencies: PersonalDependencies) {
          shown AS (
            SELECT t.*,bool_or(p.id=t.id) AS match,min(p.place) AS place FROM thread t
            JOIN picked p ON t.n BETWEEN p.n-${query ? 1 : 0} AND p.n+${query ? 1 : 0} GROUP BY t.id,t.role,t.text,t.turn_id,t.created_at,t.n)
-         SELECT s.id,s.role,CASE WHEN s.match THEN s.text ELSE left(s.text,2000) END AS text,s.turn_id,s.created_at,
-           split_part(COALESCE(u.channel,'web'),':',1) AS channel,s.match
-         FROM shown s LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1 ORDER BY s.place,s.n`,
+         SELECT s.id,s.role,CASE WHEN length(s.text)<=1200 THEN s.text
+             ELSE ts_headline('english',s.text,terms.q,'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" … "') END AS text,
+           length(s.text)>1200 AS shortened,s.turn_id,s.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel,s.match
+         FROM shown s CROSS JOIN terms LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1 ORDER BY s.place,s.n`,
         values,
       );
       return { turns: turns.rows, messages: messages.rows };
