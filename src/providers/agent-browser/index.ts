@@ -1569,13 +1569,20 @@ export function createAgentBrowserComputer(options: {
     enter: boolean,
   ) {
     const ref = referenceOf(target.selector);
-    const control = ref ? state.refs.get(ref) : undefined;
-    if (ref && !control) return undefined;
+    if (ref && !state.refs.has(ref)) return undefined;
     const devtools = await inspector(state).catch(() => undefined);
     try {
+      const pixel = async (ref: string) => {
+        await command(state, { action: 'scrollintoview', selector: `@${ref}` });
+        const box = z
+          .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
+          .passthrough()
+          .parse(await command(state, { action: 'boundingbox', selector: `@${ref}` }));
+        return { pixel: { x: box.x + box.width / 2, y: box.y + box.height / 2 } };
+      };
       const found = devtools
-        ? await devtools
-            .submits(control ? { control } : target, enter)
+        ? await (ref ? pixel(ref) : Promise.resolve(target))
+            .then((query) => devtools.submits(query, enter))
             .catch(() => 'unknown' as const)
         : ('unknown' as const);
       if (found === 'unknown' || !found) return found ?? undefined;

@@ -105,9 +105,22 @@ export async function turnOrigin(turnId: string) {
     if (!chain || !origin) return undefined;
     const run =
       origin.source === 'schedule' ? await scheduleAuthority(client, origin.id) : undefined;
+    const task = current.task_id
+      ? (
+          await client.query<{ source_message_id: string | null }>(
+            'SELECT source_message_id FROM tasks WHERE id=$1 AND owner_id=$2',
+            [current.task_id, ownerId],
+          )
+        ).rows[0]
+      : undefined;
     const said =
       origin.source === 'user'
-        ? chain.flatMap((turn) => (turn.message_id ? [turn.message_id] : []))
+        ? [
+            ...new Set([
+              ...chain.flatMap((turn) => (turn.message_id ? [turn.message_id] : [])),
+              ...(task?.source_message_id ? [task.source_message_id] : []),
+            ]),
+          ]
         : [];
     return {
       taskId: current.task_id,

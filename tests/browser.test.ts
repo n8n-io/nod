@@ -3741,7 +3741,7 @@ test(
         return;
       }
       response.end(
-        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form><form method="post" action="/label"><input type="submit" id="labelled" value="Send"><label for="labelled" id="label">Send it</label></form>',
+        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form><form method="post" action="/label"><input type="submit" id="labelled" value="Send"><label for="labelled" id="label">Send it</label></form><form method="post" action="/shadowed"><input type="hidden" name="action" value="other"><input type="radio" name="method" aria-label="Card"><button>Shadowed</button></form>',
       );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -3782,7 +3782,14 @@ test(
       });
       assert.equal(await submits({ action: 'click', selector: '#plain' }), undefined);
       assert.equal(await submits({ action: 'click', selector: '#toggle' }), undefined);
-      assert.equal(await submits({ action: 'click', selector: ref('Same') }), 'unknown');
+      assert.deepEqual(await submits({ action: 'click', selector: ref('Same') }), {
+        method: 'POST',
+        to: `${origin}/a`,
+      });
+      assert.deepEqual(await submits({ action: 'click', selector: ref('Shadowed') }), {
+        method: 'POST',
+        to: `${origin}/shadowed`,
+      });
       assert.deepEqual(await submits({ action: 'click', selector: ref('Menu') }), {
         method: 'POST',
         to: `${origin}/reserve`,

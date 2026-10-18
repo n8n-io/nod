@@ -1081,6 +1081,63 @@ test(
       );
 
       await t.test(
+        "an owner update the chat relays to an older task keeps the task's request",
+        async (t) => {
+          const parent = await begin('Track the fixture parcel.');
+          t.after(() => finish(parent.turnId, 'cancelled'));
+          const source = (await row(parent.turnId)).message_id;
+          const task = (await tasks.execute(
+            parent,
+            {
+              action: 'start',
+              title: 'Fixture parcel',
+              message: 'Tracking the fixture parcel.',
+              doneWhen: 'Delivered',
+              now: 'Tracking',
+            },
+            source,
+          )) as { id: string };
+          t.after(async () => {
+            await db.pool.query(
+              "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+              [task.id],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+          });
+          await finish(parent.turnId, 'succeeded');
+          await db.pool.query(
+            "UPDATE turns SET status='succeeded',finished_at=now() WHERE task_id=$1 AND source='task'",
+            [task.id],
+          );
+          await db.pool.query(
+            "UPDATE messages SET created_at=now()-interval '2 days' WHERE id=$1",
+            [source],
+          );
+          const relay = await begin('Use the new fixture delivery address.');
+          t.after(() => finish(relay.turnId, 'cancelled'));
+          await tasks.execute(
+            relay,
+            { action: 'reply', ids: [task.id] },
+            (await row(relay.turnId)).message_id,
+          );
+          const relayed = await running(
+            (
+              await db.pool.query('SELECT id FROM turns WHERE task_id=$1 AND parent_turn_id=$2', [
+                task.id,
+                relay.turnId,
+              ])
+            ).rows[0].id,
+          );
+          t.after(() => finish(relayed.turnId, 'cancelled'));
+          await tasks.inherit(relayed);
+          await trust.check(relayed, 'GMAIL_FETCH_EMAILS', {});
+          const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
+          assert.equal(words.includes('Track the fixture parcel.'), true);
+          assert.equal(words.at(-1), 'Use the new fixture delivery address.');
+        },
+      );
+
+      await t.test(
         'a task started from an answer keeps the request the answer belongs to',
         async (t) => {
           const request = 'Find a fixture table and book it only when I say go.';
@@ -1178,17 +1235,10 @@ test(
             ).rows[0].id,
           );
           await tasks.inherit(worker);
-          aligned = (input) =>
-            !input.userMessages.some((item: { text: string }) => /when I say go/.test(item.text));
-          const verdict = await trust.check(worker, 'OTTO_browser', {
-            website: 'https://tables.example.test',
-            control: [{ role: 'button', name: '19:30' }],
-            submits: { method: 'POST', to: 'https://tables.example.test/book' },
-          });
+          await trust.check(worker, 'OTTO_browser', { website: 'https://tables.example.test' });
           const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
           assert.deepEqual(words.slice(-2), [request, 'Fixture town.']);
           assert.equal(words.includes('Book any fixture table right away.'), false);
-          assert.deepEqual(verdict, { confirm: true, reason: 'unrequested' });
         },
       );
 

@@ -12,15 +12,16 @@ type DomNode = {
   contentDocument?: DomNode;
 };
 export type FocusedField = { origin: string; session: string; context: number };
-type ControlQuery = {
+export type ControlQuery = {
   selector?: string;
   point?: { x: number; y: number };
+  pixel?: { x: number; y: number };
   focused?: boolean;
 };
 
 const active = `(() => { if (!document.hasFocus()) return null; let node = document.activeElement; for (;;) { const root = node && (node.shadowRoot ?? (globalThis.__ottoRoots ?? []).find(root => root.host === node)); if (!root?.activeElement) break; node = root.activeElement; } return node && !['IFRAME', 'FRAME', 'BODY', 'HTML'].includes(node.tagName) ? node : null; })()`;
 const focusScript = `(() => { const node = ${active}; globalThis.__ottoFocused = node; return node ? node.tagName : ''; })()`;
-const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : (node?.closest('button, input') ?? node?.closest('label')?.control); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const submitter = button ? control : [...form.elements].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : form.method) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : form.action }; }`;
+const submitsScript = `function (enter) { const node = this.nodeType === 1 ? this : this.parentElement; const control = enter ? node : (node?.closest('button, input') ?? node?.closest('label')?.control); const form = control?.form; const button = ['submit', 'image'].includes(control?.type); if (!form || !(button || (enter && control.tagName === 'INPUT'))) return null; const own = (name) => Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, name).get.call(form); const submitter = button ? control : [...own('elements')].find((element) => ['submit', 'image'].includes(element.type)); const method = (submitter?.hasAttribute('formmethod') ? submitter.formMethod : own('method')) || 'get'; if (method === 'dialog') return null; return { method: method.toUpperCase(), to: submitter?.hasAttribute('formaction') ? submitter.formAction : own('action') }; }`;
 const blurScript = `(() => { const node = document.activeElement; if (node && node !== document.body && typeof node.blur === 'function') node.blur(); return ''; })()`;
 const armScript = (privateValue: boolean) =>
   `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
@@ -334,14 +335,14 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     const describe = async (params: Record<string, unknown>) =>
       ((await send('DOM.describeNode', params, session)) as { node: { backendNodeId: number } })
         .node.backendNodeId;
-    if (query.point) {
+    if (query.point || query.pixel) {
       const { cssVisualViewport: view } = (await send('Page.getLayoutMetrics', {}, page)) as {
         cssVisualViewport: { clientWidth: number; clientHeight: number };
       };
-      const at = (fraction: number, size: number) =>
-        Math.max(0, Math.min(Math.ceil(size) - 1, Math.round(fraction * size)));
-      const x = at(query.point.x, view.clientWidth);
-      const y = at(query.point.y, view.clientHeight);
+      const at = (value: number, size: number) =>
+        Math.max(0, Math.min(Math.ceil(size) - 1, Math.round(value)));
+      const x = at(query.pixel?.x ?? query.point!.x * view.clientWidth, view.clientWidth);
+      const y = at(query.pixel?.y ?? query.point!.y * view.clientHeight, view.clientHeight);
       ({ backendNodeId } = (await send(
         'DOM.getNodeForLocation',
         { x, y, ignorePointerEventsNone: true },
@@ -423,24 +424,6 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       }
     }
     return backendNodeId ? { backendNodeId, session } : undefined;
-  };
-
-  const matching = async (control: { role: string; name: string }) => {
-    const { root } = (await send('DOM.getDocument', { depth: 0 }, page)) as {
-      root: { nodeId: number };
-    };
-    const { nodes } = (await send(
-      'Accessibility.queryAXTree',
-      { nodeId: root.nodeId, accessibleName: control.name, role: control.role },
-      page,
-    )) as { nodes: Array<{ ignored?: boolean; backendDOMNodeId?: number }> };
-    return [
-      ...new Set(
-        nodes.flatMap((node) =>
-          !node.ignored && node.backendDOMNodeId ? [node.backendDOMNodeId] : [],
-        ),
-      ),
-    ].map((backendNodeId) => ({ backendNodeId, session: page }));
   };
 
   const formOf = async (found: { backendNodeId: number; session: string }, enter: boolean) => {
@@ -590,24 +573,11 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       }
       return controls;
     },
-    async submits(
-      query: ControlQuery | { control: { role: string; name: string } },
-      enter: boolean,
-    ) {
-      const targets =
-        'control' in query
-          ? await matching(query.control)
-          : [await locate(query)].flatMap((item) => (item ? [item] : []));
-      if (!targets.length) {
-        if ('focused' in query && query.focused) return null;
-        throw new Error('The control could not be found.');
-      }
-      const forms = [];
-      for (const target of targets) forms.push(await formOf(target, enter));
-      const [first] = forms;
-      if (forms.some((form) => form?.method !== first?.method || form?.to !== first?.to))
-        throw new Error('Controls with this label send different forms.');
-      return first ?? null;
+    async submits(query: ControlQuery, enter: boolean) {
+      const target = await locate(query);
+      if (target) return formOf(target, enter);
+      if (query.focused) return null;
+      throw new Error('The control could not be found.');
     },
     async document() {
       const [main] = await tree(page);

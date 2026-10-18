@@ -182,7 +182,15 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
                                                       ? [String(command.action)]
                                                       : command.action === 'close'
                                                         ? ['close']
-                                                        : null;
+                                                        : [
+                                                              'scrollintoview',
+                                                              'boundingbox',
+                                                            ].includes(String(command.action))
+                                                          ? [
+                                                              String(command.action),
+                                                              String(command.selector),
+                                                            ]
+                                                          : null;
       if (!args) throw new Error('Unsupported synthetic browser action.');
       const result = await run(session.executable, [...session.args, ...args], {
         ...session.options,

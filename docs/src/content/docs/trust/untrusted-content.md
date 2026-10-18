@@ -38,7 +38,7 @@ Automatic memory learning reads only your own short messages without attachments
 | Protected                                                                        | Not protected                                                                        |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | A page or email can't approve an action or grant permission                      | The model can still be persuaded. It isn't immune to injection                       |
-| Every app action and every browser step with side effects passes the trust check | A website can mislabel a button that acts through page scripts                       |
+| Every app action and every browser step with side effects passes the trust check | A site can mislabel a script-driven button or use an address that hides its effect   |
 | Vault never gives the model a saved password, code or card                       | The data notice is a label for the model, not isolation                              |
 | Payments always need your approval                                               | A website receives whatever Otto submits to it                                       |
 | An email can't change a standing instruction                                     | An email that matches a standing instruction triggers it, even from a spoofed sender |
