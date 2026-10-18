@@ -112,7 +112,7 @@ export async function turnOrigin(turnId: string) {
     return {
       taskId: current.task_id,
       source: origin.source,
-      messageIds: said.length > 5 ? [...said.slice(0, 4), said.at(-1)!] : said,
+      messageIds: said,
       channel: current.channel,
       scheduleInstruction: run?.authority_instruction ?? undefined,
       ...(run

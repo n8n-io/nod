@@ -1579,12 +1579,7 @@ export function createAgentBrowserComputer(options: {
             .catch(() => 'unknown' as const)
         : ('unknown' as const);
       if (found === 'unknown' || !found) return found ?? undefined;
-      const to = redactBrowserUrl(found.to, state.secrets);
-      const rest = `… (${to.length} characters, sha256 ${createHash('sha256').update(to).digest('hex').slice(0, 16)})`;
-      return {
-        method: found.method.slice(0, 20),
-        to: to.length > 2048 ? `${to.slice(0, 2048 - rest.length)}${rest}` : to,
-      };
+      return { method: found.method, to: redactBrowserUrl(found.to, state.secrets) };
     } finally {
       devtools?.close();
     }

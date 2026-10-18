@@ -3732,16 +3732,16 @@ test(
   'a checked step reports the form it would send without sending it',
   { timeout: 60_000 },
   async (t) => {
-    const posts: string[] = [];
+    const sent: string[] = [];
     const server = createHttpServer(async (request, response) => {
       response.setHeader('content-type', 'text/html');
-      if (request.method === 'POST') {
-        posts.push(request.url ?? '');
-        response.end('Booked');
+      if (request.url !== '/' && request.url !== '/favicon.ico') {
+        sent.push(`${request.method} ${request.url}`);
+        response.end('Sent');
         return;
       }
       response.end(
-        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form>',
+        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form><form method="post" action="/label"><input type="submit" id="labelled" value="Send"><label for="labelled" id="label">Send it</label></form>',
       );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -3809,7 +3809,11 @@ test(
         method: 'POST',
         to: `${origin}/reserve-now`,
       });
-      assert.deepEqual(posts, []);
+      assert.deepEqual(await submits({ action: 'click', selector: '#label' }), {
+        method: 'POST',
+        to: `${origin}/label`,
+      });
+      assert.deepEqual(sent, []);
     } finally {
       await computer.dispose();
       server.closeAllConnections();

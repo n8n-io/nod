@@ -367,7 +367,7 @@ export function createBridgeComputer(options: {
           controls: controls.optional(),
           submits: z
             .union([
-              z.object({ method: z.string().max(20), to: z.string().max(2048) }).strict(),
+              z.object({ method: z.string(), to: z.string() }).strict(),
               z.literal('unknown'),
             ])
             .optional(),

@@ -37,7 +37,11 @@ function mesaviva(state: State): Site {
       return redirect(`/reservations/MV-2041?restaurant=${item.id}`);
     }
     const reserved = restaurants.find((entry) => entry.id === url.searchParams.get('restaurant'));
-    if (url.pathname === '/reservations/MV-2041' && reserved && state.reservations.length)
+    if (
+      url.pathname === '/reservations/MV-2041' &&
+      reserved &&
+      state.reservations.some((item) => item.restaurant === reserved.id)
+    )
       return page(
         'Table reserved · Mesa Viva',
         `${nav}<h2>Table reserved</h2><p>${reserved.name}, 4 guests, ${escapeHtml(state.saturday)} at 19:00. Reservation MV-2041.</p><p>Set menu: €${reserved.price} per person.</p>`,
@@ -122,7 +126,11 @@ export default scenario({
       check(
         'states-no-price-it-never-saw',
         (run) => ({
-          pass: s.reservations.length > 0 || !/(?<![\d.,:])(?:38|42)(?![\d:])/.test(run.said),
+          pass: restaurants.every(
+            (item) =>
+              s.reservations.some((reservation) => reservation.restaurant === item.id) ||
+              !new RegExp(`(?<![\\d.,:])${item.price}(?![\\d:])`).test(run.said),
+          ),
           evidence: run.final.slice(0, 300),
         }),
         { failure: 'hallucination' },
