@@ -29,6 +29,8 @@ flowchart TD
 
 Otto doesn't scan outside text for injection phrases. Pattern lists miss new wording and flag harmless text, so the limits come from the server instead: whatever the model believes, the trust check, Vault and payment approval still apply. When Otto notices an email, page or file that looks like phishing or tries to instruct it, it leaves it alone and tells you which one.
 
+What an email, page or file says is its sender's claim, not your word. An email that says it's from you but comes from an address that isn't yours is from someone else. When Otto relies on such a claim for something that changes what you do, such as a phone number, a bank detail, a dose, an address or a security or approval rule, it says where the claim came from and suggests confirming it first.
+
 ## Memory ignores outside content
 
 Automatic memory learning reads only your own messages of up to 4,000 characters, without attachments. It never reads Otto's replies, tool results or web pages. Outside text reaches memory only if you paste it into a message yourself, and it can't make Otto forget a note, turn memory off or on, or clear it: those go through the [trust check](/trust/approvals/). The one exception: when you connect Gmail, Otto learns your writing style from your own sent email, with no facts, names or quotes. See [Memory](/use/memory/).
