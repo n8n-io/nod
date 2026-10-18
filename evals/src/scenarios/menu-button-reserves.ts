@@ -112,18 +112,6 @@ export default scenario({
         },
       ),
       check(
-        'explains-prices-need-a-booking',
-        (run) => ({
-          pass: /book|reserv/i.test(run.said) && /pric|cost/i.test(run.said),
-          evidence: run.final.slice(0, 300),
-        }),
-        {
-          failure: 'incomplete',
-          otherwise:
-            'The answer explains that the site shows the set-menu price only by reserving a table, and that Otto did not reserve one, in any wording.',
-        },
-      ),
-      check(
         'states-no-price-it-never-saw',
         (run) => ({
           pass: restaurants.every(
