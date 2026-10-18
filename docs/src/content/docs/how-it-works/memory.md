@@ -42,11 +42,21 @@ flowchart TD
   find -- path --> l2
 ```
 
-- The **index** is a JSON list of every entry's full text in the owner context, with confirmed entries first. Nothing is cut. Tentative entries stay out.
+- The **index** is a JSON list of every entry's full text in the owner context, with confirmed entries first. Nothing is cut. Tentative entries are marked `(tentative)`, so Pi treats them as likely rather than certain.
 - An **area** lists its entries.
 - An **entry** shows its full text, status and evidence count.
 
 `memory_find` matches words in the slug, abstract and text. There's no model and there are no embeddings.
+
+### Earlier conversation
+
+Notes hold what lasts. For everything else, Pi searches the conversation itself with `history_search`, which reads every message of the active thread, the owner's and Otto's.
+
+- A query matches any of its words, in any word form ("properties" finds "property"), and the best matches come first, each with its date and the message before and after it.
+- `from` and `to` keep matches between two dates in the owner's time zone; alone, they list that period's messages.
+- `around` returns one message with the five before and after it, such as the reply to a question.
+
+Pi is told to search before it answers a question about what the owner said, did or planned, to gather every mention before it counts or totals, and to let the newest statement win. Search uses PostgreSQL full-text search with an index, with no model and no embeddings. A reset conversation is no longer searched.
 
 ## How the model saves memory
 
@@ -72,7 +82,7 @@ Every entry has an origin: `stated`, `inferred` or `email`. Its status comes fro
 
 | Status      | Label in **Settings → Memory** | Meaning                                                               | In the L0 index |
 | ----------- | ------------------------------ | --------------------------------------------------------------------- | --------------- |
-| `tentative` | **Mentioned once**             | Inferred from one owner message                                       | No              |
+| `tentative` | **Mentioned once**             | Inferred from one owner message                                       | Yes, marked     |
 | `observed`  | **Learned**                    | Inferred from two or more messages, or the Gmail writing style        | Yes             |
 | `stated`    | **Confirmed**                  | Saved by `memory_learn`, or added, rewritten or confirmed in Settings | Yes             |
 | Archived    | **Let go**                     | Replaced, merged, expired or stale                                    | No              |
@@ -102,9 +112,10 @@ The archive keeps as many records as fit. When the file reaches 256 KiB, the old
 
 ### Reflect
 
-Reflection reads owner messages written since the last batch, 40 at a time, until it has caught up. It skips assistant text, tool results, attachments, messages over 1,000 characters, messages under 10 minutes old, messages with secrets, and task-card titles the owner tapped, which are Otto's wording.
+Reflection reads owner messages written since the last batch, 40 at a time, until it has caught up. It skips assistant text, tool results, attachments, messages over 4,000 characters, messages under 10 minutes old, messages with secrets, and task-card titles the owner tapped, which are Otto's wording.
 
-- A small model from the selected connection proposes operations: add an entry, or archive an inferred one the owner said is wrong. An add that would overflow the file is skipped.
+- A small model from the selected connection proposes operations: add an entry, or archive an inferred one that a newer message replaces or says is wrong. An add that would overflow the file is skipped.
+- It records what the owner says about their life, including what a request reveals: people, places, possessions, events, plans, numbers, interests and preferences, one fact per entry. Each message comes with the time it was sent, so an entry about an event starts with its date, with words like "yesterday" resolved.
 - Each operation cites messages and a verbatim quote. Only cited messages that contain the quote count as evidence.
 - An add with the same text as an inferred entry adds evidence to it. Reflection never changes a stated entry.
 - Each add must say whether it's sensitive. Unless the owner turned on **Remember sensitive topics**, the server drops sensitive adds. An add without the flag is invalid.

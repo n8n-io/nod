@@ -24,7 +24,7 @@ You can see everything Otto remembers, where it learned it, and change or forget
 Notes come only from your own messages. Otto never takes a note from its own replies, web pages, emails or tool results. Text from the web gets in only if you paste it into a short message yourself.
 
 - **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Otto saves your message as you wrote it, with line breaks turned into spaces. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
-- **In the background.** About once an hour, Otto looks through your recent short messages for lasting facts. It skips messages with attachments.
+- **In the background.** About once an hour, Otto looks through your recent messages for what you said about your life: people, places, plans, things you bought, events with their dates and what you like. It skips messages with attachments and messages over 4,000 characters.
 
 Otto saves silently. It doesn't post a notice in chat.
 
@@ -36,7 +36,9 @@ Before a skill is saved, the memory model replaces names, addresses, contact det
 
 ## How a memory grows
 
-Something Otto picks up from one message is only a guess. It becomes **Learned** when a second message repeats it.
+Something Otto picks up from one message is **Mentioned once**: Otto uses it, but as less certain. It becomes **Learned** when a second message repeats it.
+
+Otto also searches your earlier messages when you ask about something you told it, so it can answer from the conversation itself, with the date you said it.
 
 ```mermaid
 stateDiagram-v2

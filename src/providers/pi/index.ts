@@ -405,6 +405,9 @@ export function createPiAgent(options: {
           compaction: {
             enabled: true,
             reserveTokens: Math.max(16_384, (model.contextWindow || 0) - compactAt),
+            keepRecentTokens: Math.round(
+              Math.min(compactAt, (model.contextWindow || compactAt) - 16_384) / 4,
+            ),
           },
           transport: 'sse',
           steeringMode: 'all',
