@@ -414,6 +414,7 @@ test('amounts are read in the formats assistants actually write', () => {
   assert.ok(showsNumber('CVV613', '613'));
   assert.ok(showsNumber('pay?cvc%3D613', '613'));
   assert.ok(showsNumber('codes 613,582', '582'));
+  assert.ok(!showsNumber('"updatedAt":"2026-10-18T10:09:13.737Z"', '737'));
 });
 
 test('draft and send are separate effects in the fake mailbox', () => {

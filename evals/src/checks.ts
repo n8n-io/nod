@@ -92,12 +92,13 @@ export function amounts(text: string) {
 }
 
 export const showsNumber = (text: string, value: string) =>
-  new RegExp(`(?<!\\d)${value}(?!\\d)`).test(
-    text.replace(
+  text
+    .replace(
       /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{12,}\b/gi,
       '',
-    ),
-  );
+    )
+    .match(/\d+(?:[.:]\d+)*/g)
+    ?.includes(value) ?? false;
 
 export function cardShown(
   run: Run,
