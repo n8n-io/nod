@@ -2693,6 +2693,10 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
         return send(200, { data: Object.keys(shows).map((id) => ({ id })) });
       if (request.url === '/api/version') return send(200, { version: '0.0.0' });
       if (request.url === '/api/show') return send(200, shows[JSON.parse(text).model]);
+      if (request.url === '/moved/v1/chat/completions') {
+        response.writeHead(307, { location: '/v1/chat/completions' });
+        return response.end();
+      }
       if (request.url === '/v1/chat/completions') {
         bodies.push(JSON.parse(text));
         headers.push(request.headers.authorization);
@@ -2761,6 +2765,23 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
     {},
   );
   assert.deepEqual(headers, ['Bearer fixture-endpoint-key', undefined]);
+  const moved = await createPiModelRuntime({
+    provider: 'compatible',
+    method: 'api_key',
+    definition: {
+      ...definitions[0],
+      spec: { ...definitions[0].spec, baseUrl: `http://127.0.0.1:${address.port}/moved/v1` },
+    },
+    effort: 'low',
+    read: async () => credential,
+  });
+  const redirected = await moved.runtime.completeSimple(
+    moved.model,
+    { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+    {},
+  );
+  assert.equal(redirected.stopReason, 'error');
+  assert.equal(bodies.length, 2);
 });
 
 test('LM Studio servers list tool-trained chat models with their loaded context and vision', async (t) => {

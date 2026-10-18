@@ -743,6 +743,7 @@ export async function createPiModelRuntime(access: ModelAccess) {
               return fetch(input, {
                 ...init,
                 headers,
+                redirect: 'error',
                 dispatcher: (endpointConnections ??= new Agent({
                   headersTimeout: 0,
                   bodyTimeout: 0,
