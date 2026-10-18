@@ -407,7 +407,7 @@ export function createPiAgent(options: {
             reserveTokens: Math.max(16_384, (model.contextWindow || 0) - compactAt),
             keepRecentTokens: Math.max(
               0,
-              Math.round(Math.min(compactAt, (model.contextWindow || compactAt) - 16_384) / 4),
+              Math.round(Math.min(compactAt, (model.contextWindow || compactAt) - 16_384) / 3),
             ),
           },
           transport: 'sse',
