@@ -196,6 +196,33 @@ The estimated cost of all four paths, including warm-ups, was $0.30. The saved l
 
 The [experiment evidence](https://github.com/n8n-io/otto/tree/main/docs/research/decision-checks-2026-10-16) contains both manifests, summary counts, and every request measurement. The CSV identifies warm-ups and keeps the native category answers. The manifests contain the full synthetic inputs and expected answers.
 
+## Benchmark memory with LongMemEval
+
+The `longmemeval` command runs [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval), the public long-term memory benchmark: 500 questions, each with about 115,000 tokens of earlier chats between a user and an assistant. It grades each answer with the benchmark's own GPT-4o judge prompts, unchanged.
+
+Each question boots its own isolated Otto with a real model:
+
+1. The history is written into the conversation with its original dates.
+2. Otto's hourly memory job runs once for every hour of the history that passed, as it would have live.
+3. The question is sent in the benchmark's format, `Current Date: …` followed by `Question: …`, with no hint about its type.
+
+It runs two setups:
+
+| Setup    | What Otto has                                                                                                                                             |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory` | A new session: its notes, the last 30 messages and `history_search` over the rest, like a task or a chat after compaction                                 |
+| `chat`   | The history as its own conversation transcript, rendered the way Otto writes turns, with the measured token count so Pi compacts exactly as it would live |
+
+Download `longmemeval_s_cleaned.json` from the [dataset page](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) into its own folder, then run:
+
+```sh title="Terminal"
+pnpm run eval:capability longmemeval --data ~/longmemeval/longmemeval_s_cleaned.json --concurrency 8 --budget 500
+```
+
+Add `--setups memory` for one setup, `--sample 30` for a sample spread across question types, or `--questions a,b` for chosen questions. The `chat` setup needs an OpenAI agent model, because it measures the history with OpenAI's token counter. A full run of both setups costs about $350 with GPT-6.1 Sol and takes about four hours at concurrency 8.
+
+Results go to `.local/capability-evals/longmemeval/<label>/`: one JSON file per question with the reply, the judge's verdict, tools, notes and cost, and `summary.md` with accuracy overall, per question type and for abstention. Report accuracy over all 500 questions. The command never retries a question, and when you change Otto because of what a question showed, report the score on the questions you never looked at as well.
+
 ## Run evals in CI
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases. It never runs the release suite: the workflow offers only the **pr** and **full** tiers, and release cases never join the gate.

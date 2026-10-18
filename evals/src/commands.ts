@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { runAnalyticsEval } from './analytics.ts';
 import { runDecisionEval } from './decisions.ts';
+import { parseSetups, runLongMemEval } from './longmemeval.ts';
 import { cards, comparisonChart } from './chart.ts';
 import { storyCard, type StoryNotes } from './story.ts';
 import { renderImages } from './images.ts';
@@ -16,7 +17,7 @@ import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
 import { promote, runGate } from './gate.ts';
 import { fallbackLlm } from './judge.ts';
-import { defaultJudge, runSuite, slug, type RunOptions } from './run.ts';
+import { defaultJudge, defaultModel, runSuite, slug, type RunOptions } from './run.ts';
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel } from './stack.ts';
 import { listRuns, loadRun, resultsRoot, saveRun } from './store.ts';
@@ -31,6 +32,9 @@ export const help = `Otto capability evals
                                (--repeat 3, --scenario a,b, --label name, --out directory)
     decisions --model <provider/name>  compare trust checks with main using live models and synthetic inputs
                                (--baseline main, --repeat 3, --label name, --out directory)
+    longmemeval --data <file>  run the LongMemEval-S memory benchmark on the real Otto, graded by the official judge
+                               (--setups memory,chat, --sample 30, --chat-sample 10, --questions a,b,
+                                --concurrency 6, --budget 50, --label name, --resume)
 
   Compare
     models <a> <b> [...]       run the same suite on several models, compare them and draw a chart
@@ -227,6 +231,28 @@ export async function main(args: Args) {
       console.log(JSON.stringify(result.summary, null, 2));
       console.log(`Saved ${join(result.directory, 'results.json')}`);
       if (!result.summary.scored) process.exitCode = 1;
+      return;
+    }
+    case 'longmemeval': {
+      const data = text(args, 'data');
+      if (!data) throw new Error('LongMemEval requires --data <longmemeval_s_cleaned.json>.');
+      const environment = await loadEnvironment();
+      await runLongMemEval({
+        data,
+        root,
+        label:
+          text(args, 'label') ?? `longmemeval-${new Date().toISOString().replace(/[:.]/g, '-')}`,
+        model: text(args, 'model') ?? defaultModel(environment),
+        judge: text(args, 'judge') ?? 'openai/gpt-4o-2024-08-06',
+        setups: parseSetups(text(args, 'setups')),
+        sample: text(args, 'sample') === undefined ? undefined : whole(args, 'sample', 1),
+        chatSample:
+          text(args, 'chat-sample') === undefined ? undefined : whole(args, 'chat-sample', 1),
+        questions: text(args, 'questions')?.split(','),
+        concurrency: whole(args, 'concurrency', 6),
+        budget: number(args, 'budget', 0),
+        resume: has(args, 'resume'),
+      });
       return;
     }
     case 'gate': {
