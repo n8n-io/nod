@@ -1254,12 +1254,16 @@ test(
           );
           assert.equal(fallbackChecks.length, checks + 2);
           const rows = (
-            await pool.query('SELECT cost_usd FROM model_usage WHERE turn_id=$1', [turnId])
+            await pool.query(
+              "SELECT cost_usd,details->>'operation' AS operation FROM model_usage WHERE turn_id=$1",
+              [turnId],
+            )
           ).rows;
           assert.deepEqual(
-            rows.map((row) => row.cost_usd),
+            rows.filter((row) => row.operation !== 'access').map((row) => row.cost_usd),
             [0.6, 0.6],
           );
+          assert.equal(rows.filter((row) => row.operation === 'access').length, 2);
         } finally {
           checkCost = undefined;
           await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);

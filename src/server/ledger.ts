@@ -187,7 +187,11 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
             const usage: ProviderUsageEvent = {
               provider: value.provider ?? 'model',
               category:
-                request.task === 'review' ? 'review' : request.task === 'plan' ? 'tasks' : 'memory',
+                request.task === 'review' || request.task === 'access'
+                  ? 'review'
+                  : request.task === 'plan'
+                    ? 'tasks'
+                    : 'memory',
               operation: request.task,
               status: 'succeeded',
               durationMs: 0,

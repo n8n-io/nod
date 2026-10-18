@@ -8,7 +8,7 @@ import type { SuggestedTask } from '../shared/onboarding.ts';
 import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
-import { verificationMail } from './integration-result.ts';
+import { mailCheckText, type MailCheck } from './integration-result.ts';
 import { lockThread, type TurnRef } from './thread.ts';
 import { ownText } from './writing-style.ts';
 import { unsafe } from './memory-tree.ts';
@@ -91,13 +91,28 @@ function decoded(text: string) {
   });
 }
 
-function readableInbox(items: InboxSnippet[]) {
-  return items.flatMap((item) => {
-    const subject = decoded(item.subject);
-    const snippet = decoded(item.snippet);
-    if (verificationMail(`${subject}\n${snippet}`) || unsafe(subject, snippet)) return [];
-    return [{ subject: plain(subject), snippet: plain(snippet) }];
-  });
+function grantsAccess(
+  check: MailCheck,
+  email: { from: string; subject: string; text: string },
+  signal: AbortSignal,
+) {
+  return check({ ...email, text: mailCheckText(email.text) }, signal).catch(() => true);
+}
+
+async function readableInbox(items: InboxSnippet[], check: MailCheck, signal: AbortSignal) {
+  const kept = await Promise.all(
+    items.map(async (item) => {
+      const subject = decoded(item.subject);
+      const snippet = decoded(item.snippet);
+      if (
+        unsafe(subject, snippet) ||
+        (await grantsAccess(check, { from: '', subject, text: snippet }, signal))
+      )
+        return [];
+      return [{ subject: plain(subject), snippet: plain(snippet) }];
+    }),
+  );
+  return kept.flat();
 }
 
 function masked(text: string) {
@@ -108,12 +123,20 @@ function masked(text: string) {
     .replace(/\b(?:\d[ -]?){13,18}\d\b|\b\d{6,}\b/g, '[number]');
 }
 
-function readableThreads(items: InboxThread[]) {
+async function readableThreads(items: InboxThread[], check: MailCheck, signal: AbortSignal) {
+  const candidates = items.slice(0, 40).map((item) => ({
+    item,
+    subject: decoded(item.subject),
+    text: ownText(decoded(item.text)),
+  }));
+  const hidden = await Promise.all(
+    candidates.map(({ item, subject, text }) =>
+      grantsAccess(check, { from: item.from, subject, text }, signal),
+    ),
+  );
   let total = 0;
-  return items.slice(0, 40).flatMap((item) => {
-    const subject = decoded(item.subject);
-    const text = ownText(decoded(item.text));
-    if (verificationMail(`${item.from}\n${subject}\n${text}`)) return [];
+  return candidates.flatMap(({ item, subject, text }, index) => {
+    if (hidden[index]) return [];
     const body = fit(masked(text), 1500, '…');
     if (total + body.length > briefLimit) return [];
     total += body.length;
@@ -135,10 +158,8 @@ function readableThreads(items: InboxThread[]) {
 function checkedBrief(raw: unknown): Brief | undefined {
   const parsed = briefReply.safeParse(raw);
   if (!parsed.success) return;
-  const keep = (text: string, max: number) => {
-    const value = fit(text, max, '…').replace(/\b\d{6,}\b/g, '[number]');
-    return verificationMail(text) ? '' : value;
-  };
+  const keep = (text: string, max: number) =>
+    fit(text, max, '…').replace(/\b\d{6,}\b/g, '[number]');
   const lines = (items: string[]) =>
     items
       .map((item) => keep(item, 200))
@@ -281,6 +302,7 @@ export function createOnboardingSuggestions(options: {
   telegram(): Promise<boolean>;
   apps(): Promise<string[]>;
   present(threadId: string, input: { kind: string; [key: string]: unknown }): Promise<string>;
+  mailCheck: MailCheck;
 }) {
   const owner = options.ownerId;
   let preparing: Promise<PreparedSuggestions> | undefined;
@@ -301,7 +323,7 @@ export function createOnboardingSuggestions(options: {
       if (!open.rows[0]?.open) return;
       await pool.query('UPDATE onboarding_suggestions SET brief=NULL WHERE owner_id=$1', [owner]);
       const signal = AbortSignal.any([AbortSignal.timeout(120_000), ...(stop ? [stop] : [])]);
-      const threads = readableThreads(await read(signal));
+      const threads = await readableThreads(await read(signal), options.mailCheck, signal);
       if (!threads.length) return;
       const brief = checkedBrief(
         await options.curator.curate(
@@ -356,10 +378,12 @@ export function createOnboardingSuggestions(options: {
       const signal = AbortSignal.timeout(45_000);
       const inbox =
         gmail && !brief
-          ? readableInbox(
+          ? await readableInbox(
               await options
                 .inbox(AbortSignal.any([signal, AbortSignal.timeout(15_000)]))
                 .catch(() => []),
+              options.mailCheck,
+              signal,
             )
           : [];
       const input = {

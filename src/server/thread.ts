@@ -26,7 +26,7 @@ import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
-import { inlineAppResult } from './integration-result.ts';
+import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached } from './ledger.ts';
 import type { ExecutionEvent } from '../shared/execution.ts';
@@ -93,6 +93,7 @@ export interface ThreadDependencies {
     signal?: AbortSignal,
   ) => Promise<void>;
   readArtifact?: (threadId: string, path: string, maxBytes: number) => Promise<Uint8Array>;
+  mailCheck?: MailCheck;
   executeConfirmation?: (
     turnId: string,
     signal: AbortSignal,
@@ -1100,15 +1101,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const inline = async (action: string, result: unknown, operation = signal) => {
       operation.throwIfAborted();
-      const value = await inlineAppResult(result, async (text) =>
-        workspaceReference(
-          await stage(
-            randomUUID(),
-            `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
-            Buffer.from(text),
-            operation,
+      const value = await inlineAppResult(
+        result,
+        async (text) =>
+          workspaceReference(
+            await stage(
+              randomUUID(),
+              `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
+              Buffer.from(text),
+              operation,
+            ),
           ),
-        ),
+        dependencies.mailCheck ?? noMailCheck,
+        operation,
       );
       operation.throwIfAborted();
       return value;

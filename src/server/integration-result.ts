@@ -51,27 +51,51 @@ function emailText(value: unknown, field = ''): string {
     .join('\n');
 }
 
-export function verificationMail(text: string) {
-  return (
-    /\b\d{4,8}\b/.test(text) &&
-    (/\b(?:(?:verification|security|authentication|login|sign[ -]?in|one[ -]?time)\s+(?:code|passcode|password)|(?:verify|confirm)\s+(?:(?:your|the)\s+)?(?:email|account|identity)|otp|c[oó]digo\s+de\s+(?:verifica[çc][aã]o|seguran[çc]a|autentica[çc][aã]o))\b/i.test(
-      text,
-    ) ||
-      /(?:\b(?:your|the)\s+(?:code|passcode)|\b(?:o\s+)?seu\s+c[oó]digo|(?:^|[\n.!?])\s*(?:code|passcode|c[oó]digo))\s*(?:(?:is|[eé])\s*)?[:=]?\s*\d{4,8}\b|\b\d{4,8}\s+(?:is\s+(?:your|the)\s+(?:code|passcode)|[eé]\s+(?:o\s+)?seu\s+c[oó]digo)\b/i.test(
-        text,
-      ))
-  );
+export type MailCheck = (
+  email: { from: string; subject: string; text: string },
+  signal?: AbortSignal,
+) => Promise<boolean>;
+
+export const mailCheckChars = 2000;
+
+export function mailCheckText(text: string) {
+  return text
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, mailCheckChars);
 }
 
-export function privateEmailResult(value: unknown): unknown {
+export const noMailCheck: MailCheck = async () => {
+  throw new Error('Mail checks are unavailable.');
+};
+
+function headerValue(headers: Array<{ name: string; value: string }>, name: string) {
+  return headers.find((entry) => entry.name.toLowerCase() === name)?.value ?? '';
+}
+
+function fieldValue(record: Record<string, unknown>, names: string[]) {
+  const entry = Object.entries(record).find(([key]) => names.includes(fieldName(key)))?.[1];
+  return typeof entry === 'string' ? entry : entry === undefined ? '' : JSON.stringify(entry);
+}
+
+export async function privateEmailResult(
+  value: unknown,
+  check: MailCheck,
+  signal?: AbortSignal,
+): Promise<unknown> {
   if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
+    let parsed: unknown;
     try {
-      return JSON.stringify(privateEmailResult(JSON.parse(value)));
+      parsed = JSON.parse(value);
     } catch {
       return value;
     }
+    return JSON.stringify(await privateEmailResult(parsed, check, signal));
   }
-  if (Array.isArray(value)) return value.map(privateEmailResult);
+  if (Array.isArray(value))
+    return Promise.all(value.map((entry) => privateEmailResult(entry, check, signal)));
   if (!value || typeof value !== 'object') return value;
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return value;
@@ -98,8 +122,26 @@ export function privateEmailResult(value: unknown): unknown {
         ['from', 'to'].includes(entry.name.toLowerCase()) &&
         /[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/.test(entry.value),
     );
-  const text = isMail ? emailText(record).replace(/<[^>]*>/g, ' ') : '';
-  if (verificationMail(text)) {
+  const hidden =
+    isMail &&
+    (await check(
+      {
+        from: (fieldValue(record, ['sender', 'from']) || headerValue(headers, 'from')).slice(
+          0,
+          300,
+        ),
+        subject: (fieldValue(record, ['subject']) || headerValue(headers, 'subject')).slice(0, 300),
+        text: mailCheckText(emailText(record)),
+      },
+      signal,
+    ).then(
+      (verification) =>
+        verification
+          ? 'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.'
+          : undefined,
+      () => 'Otto could not check whether this email is for signing in, so its content is private.',
+    ));
+  if (hidden) {
     const safe = Object.fromEntries(
       Object.entries(record).filter(
         ([key, entry]) =>
@@ -115,17 +157,26 @@ export function privateEmailResult(value: unknown): unknown {
     return {
       ...safe,
       ...(metadata.length && { headers: metadata }),
-      message:
-        'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.',
+      message: hidden,
     };
   }
   return Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [key, privateEmailResult(entry)]),
+    await Promise.all(
+      Object.entries(record).map(async ([key, entry]) => [
+        key,
+        await privateEmailResult(entry, check, signal),
+      ]),
+    ),
   );
 }
 
-export async function inlineAppResult(result: unknown, save: (text: string) => Promise<string>) {
-  result = privateEmailResult(result);
+export async function inlineAppResult(
+  result: unknown,
+  save: (text: string) => Promise<string>,
+  check: MailCheck,
+  signal?: AbortSignal,
+) {
+  result = await privateEmailResult(result, check, signal);
   const text = JSON.stringify(result ?? null);
   if (text.length <= appResultInlineChars) return result;
   const bytes = Buffer.byteLength(text);

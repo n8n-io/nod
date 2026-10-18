@@ -19,7 +19,7 @@ import type {
 import { createSkillLibrary } from '../src/providers/pi/skills.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { inlineAppResult } from '../src/server/integration-result.ts';
+import { inlineAppResult, type MailCheck } from '../src/server/integration-result.ts';
 import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import type { Computer } from '../src/ports/computer.ts';
@@ -105,102 +105,101 @@ async function call(tools: Map<string, AgentTool>, name: string, args: Record<st
   return tools.get(name)!.execute(args);
 }
 
-test('verification email codes stay out of app tool results and workspace files', async () => {
-  const privateCodes = ['318742', '640193', '729461', '803527', '516294', '927364'];
+test('mail that grants account access stays out of app tool results and workspace files', async () => {
+  const secrets = [
+    '318742',
+    'https://example.test/magic?token=fixture-magic',
+    'Temp-Fixture-4821',
+    'https://example.test/reset?token=fixture-reset',
+    'fixture-authentication-640193',
+    '729461',
+    'https://example.test/recover?token=fixture-unchecked',
+  ];
   const encodedBody = Buffer.from(
-    `<p>Your sign-in code is <b>${privateCodes[2]}</b>.</p>`,
+    `<style>${'.fixture{color:#123456}'.repeat(120)}</style><p>Tu código de verificación es <b>${secrets[0]}</b>.</p>`,
   ).toString('base64url');
+  const granting = [
+    'cuenta@ejemplo.test',
+    'magic@example.test',
+    'it@example.test',
+    'reset@example.test',
+    'nested@example.test',
+  ];
+  const checked: Array<{ from: string; subject: string; text: string }> = [];
+  const check: MailCheck = async (email) => {
+    checked.push(email);
+    if (email.from.includes('broken@example.test')) throw new Error('Fixture check failed.');
+    return granting.some((sender) => email.from.includes(sender));
+  };
+  const alert = {
+    messageId: 'alert',
+    sender: 'alerts@example.test',
+    to: 'owner@example.test',
+    subject: '[r7] New sign-in detected',
+    preview:
+      'We noticed a new sign-in to your account from Lisbon. If this was you, no action is needed.',
+  };
   const ordinary = {
     messageId: 'receipt',
     sender: 'receipts@shop.example',
     to: 'owner@example.test',
-    subject: 'Order 452619 has shipped',
+    subject: '[r8] Order 452619 has shipped',
     preview: 'Your tracking reference is 852741.',
-    body: 'Your product code is 762150. Discount code: 246810. Please review the code in this example.',
+    body: 'Your product code is 762150. Discount code: 246810.',
   };
   const ordinaryNested = {
     id: 'nested-receipt',
-    subject: 'Order 452619 has shipped',
+    subject: '[r9] Order 452620 has shipped',
     from: { emailAddress: { name: 'Shop', address: 'receipts@shop.example' } },
-    body: { contentType: 'text', content: 'Your tracking reference is 852741.' },
+    body: { contentType: 'text', content: 'Your tracking reference is 852742.' },
   };
   const mails = [
     {
-      messageId: 'subject-code',
-      sender: 'login@example.test',
-      to: 'owner+trial@example.test',
-      subject: `${privateCodes[0]} is your verification code`,
-      preview: 'Use this code to finish signing in.',
-      messageText: `Enter ${privateCodes[0]}.`,
-      payload: {
-        headers: [{ name: 'Authentication-Results', value: `private=${privateCodes[0]}` }],
-      },
-    },
-    {
-      messageId: 'split-fields',
-      sender: 'login@example.test',
-      to: 'owner@example.test',
-      subject: privateCodes[1],
-      preview: 'Confirm your email with this verification code.',
-      html: `<p>${privateCodes[1]}</p>`,
-    },
-    {
-      id: 'mime-code',
-      threadId: 'mime-thread',
+      messageId: 'spanish-code',
       payload: {
         mimeType: 'multipart/alternative',
         headers: [
-          { name: 'From', value: 'security@example.test' },
+          { name: 'From', value: 'cuenta@ejemplo.test' },
           { name: 'To', value: 'owner@example.test' },
-          { name: 'Subject', value: 'Your sign-in code' },
+          { name: 'Subject', value: '[r1] Código de acceso' },
         ],
-        parts: [
-          {
-            mimeType: 'text/html',
-            body: { data: encodedBody },
-          },
-        ],
+        parts: [{ mimeType: 'text/html', body: { data: encodedBody } }],
       },
+    },
+    {
+      messageId: 'magic-link',
+      sender: 'magic@example.test',
+      to: 'owner@example.test',
+      subject: '[r2] Sign in to Fixture',
+      preview: `Open ${secrets[1]} to sign in.`,
     },
     JSON.stringify({
-      messageId: 'encoded-record',
-      from: 'login@example.test',
-      subject: 'Your one-time code',
-      body: privateCodes[3],
+      messageId: 'temporary-password',
+      from: 'it@example.test',
+      subject: '[r3] Your new account',
+      body: `Your temporary password is ${secrets[2]}. Change it after you sign in.`,
     }),
     {
-      messageId: 'preview-code',
-      sender: 'login@example.test',
-      subject: 'Sign in to Example',
-      preview: `Your authentication code is ${privateCodes[4]}.`,
+      messageId: 'reset-link',
+      sender: 'reset@example.test',
+      subject: '[r4] Reset your password',
+      messageText: `Choose a new password here: ${secrets[3]}`,
+      payload: { headers: [{ name: 'Authentication-Results', value: secrets[4] }] },
     },
-    {
-      messageId: 'verify-email',
-      sender: 'signup@example.test',
-      subject: `${privateCodes[0]} · Verify your email address`,
-    },
-    ...[
-      `Your code is ${privateCodes[0]}`,
-      `Here is your code: ${privateCodes[1]}.`,
-      `Code: ${privateCodes[2]}`,
-      `${privateCodes[3]} is your code.`,
-      `O seu código é ${privateCodes[4]}.`,
-      `Código: ${privateCodes[0]}`,
-    ].map((subject, index) => ({
-      messageId: `generic-code-${index}`,
-      sender: 'login@example.test',
-      subject,
-    })),
     {
       id: 'nested-code',
-      subject: 'Your account',
-      from: { emailAddress: { name: 'Example', address: 'login@example.test' } },
+      subject: '[r5] Your account',
+      from: { emailAddress: { name: 'Example', address: 'nested@example.test' } },
       toRecipients: [{ emailAddress: { address: 'owner@example.test' } }],
-      body: {
-        contentType: 'html',
-        content: `<p>Your verification code is ${privateCodes[5]}.</p>`,
-      },
+      body: { contentType: 'html', content: `<p>Your verification code is ${secrets[5]}.</p>` },
     },
+    {
+      messageId: 'unchecked',
+      sender: 'broken@example.test',
+      subject: '[r6] Recover your account',
+      preview: `Recover it here: ${secrets[6]}`,
+    },
+    alert,
     ordinaryNested,
     ordinary,
   ];
@@ -217,18 +216,31 @@ test('verification email codes stay out of app tool results and workspace files'
     },
     {
       integration: async () =>
-        inlineAppResult(results.shift(), async (text) => {
-          saved.push(text);
-          return 'private-result.json';
-        }),
+        inlineAppResult(
+          results.shift(),
+          async (text) => {
+            saved.push(text);
+            return 'private-result.json';
+          },
+          check,
+        ),
     },
   );
   assert.equal(saved.length, 1);
   assert.equal(returned.length, 2);
   for (const record of [...returned, ...saved])
-    for (const code of [...privateCodes, encodedBody])
-      assert.ok(!JSON.stringify(record).includes(code));
-  assert.deepEqual(JSON.parse(saved[0]).data.messages.slice(-2), [ordinaryNested, ordinary]);
+    for (const secret of [...secrets, encodedBody])
+      assert.ok(!JSON.stringify(record).includes(secret));
+  const messages = JSON.parse(saved[0]).data.messages;
+  assert.deepEqual(messages.slice(-3), [alert, ordinaryNested, ordinary]);
+  assert.equal(
+    'preview' in messages.find((mail: { messageId?: string }) => mail.messageId === 'unchecked'),
+    false,
+  );
+  assert.equal(checked.length, mails.length * 2);
+  for (const email of checked)
+    assert.equal(new Set(JSON.stringify(email).match(/\[r\d\]/g)).size, 1);
+  assert.ok(checked.some((email) => email.text.includes(secrets[0])));
 });
 
 test('skill reads cannot escape the trusted library or load workspace instructions', async () => {

@@ -165,6 +165,7 @@ test(
         apps: async () => currentApps.map((app) => app.name),
         present: async (_thread, input) =>
           `A few other things: ${(input.tips as string[]).join(' ')}`,
+        mailCheck: async (email) => /verification code/i.test(`${email.subject}\n${email.text}`),
       });
     const onboarding = onboardingFor(ownerId);
     await onboarding.initialize();

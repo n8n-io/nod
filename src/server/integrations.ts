@@ -31,7 +31,7 @@ import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
-import { privateEmailResult } from './integration-result.ts';
+import { noMailCheck, privateEmailResult, type MailCheck } from './integration-result.ts';
 import { withoutSecretKeys } from './redaction.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import {
@@ -150,6 +150,7 @@ type IntegrationOptions = {
   browserAccounts?: () => Promise<VaultLoginEntry[]>;
   browserConnections?: () => Promise<Connection[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
+  mailCheck?: MailCheck;
 };
 
 function browserService(origin: string) {
@@ -188,7 +189,13 @@ function messageIdentity(data: Record<string, unknown>, field: 'message' | 'thre
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,200}$/.test(value) ? value : undefined;
 }
 
-export function eventOverview(toolkit: string, trigger: string, data: Record<string, unknown>) {
+export async function eventOverview(
+  toolkit: string,
+  trigger: string,
+  data: Record<string, unknown>,
+  check: MailCheck,
+  signal?: AbortSignal,
+) {
   const fields =
     toolkit === 'gmail'
       ? {
@@ -197,10 +204,11 @@ export function eventOverview(toolkit: string, trigger: string, data: Record<str
           ...data,
         }
       : data;
-  return `Connected-app event from ${toolkit}; trigger ${trigger}. Assess whether there is useful background work to do.\n${untrustedBlock(`${toolkit} event`, JSON.stringify(privateEmailResult(withoutSecretKeys(fields))))}`;
+  return `Connected-app event from ${toolkit}; trigger ${trigger}. Assess whether there is useful background work to do.\n${untrustedBlock(`${toolkit} event`, JSON.stringify(await privateEmailResult(withoutSecretKeys(fields), check, signal)))}`;
 }
 
 export async function createIntegrations(pool: Pool, options: IntegrationOptions) {
+  const mailCheck = options.mailCheck ?? noMailCheck;
   const configuredOwner = z.string().min(1).max(200).parse(options.ownerId);
   const provider = options.provider;
   function connectionAnalytics(app: string): AnalyticsConnection {
@@ -1908,6 +1916,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               AbortSignal.any([stop.signal, AbortSignal.timeout(30_000)]),
             );
             stop.signal.throwIfAborted();
+            const overviews = await Promise.all(
+              result.messages.map((message) =>
+                eventOverview(
+                  'gmail',
+                  'inbox',
+                  {
+                    message_id: message.id,
+                    thread_id: message.threadId,
+                    subject: message.subject,
+                    sender: message.sender,
+                    timestamp: message.receivedAt,
+                  },
+                  mailCheck,
+                  stop.signal,
+                ),
+              ),
+            );
+            stop.signal.throwIfAborted();
             client = await pool.connect();
             await client.query('BEGIN');
             const saved = await client.query(
@@ -1929,18 +1955,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               ],
             );
             if (saved.rowCount) {
-              for (const message of result.messages) {
-                const summary = `Source connectionId: ${row.id}.\n${eventOverview(
-                  'gmail',
-                  'inbox',
-                  {
-                    message_id: message.id,
-                    thread_id: message.threadId,
-                    subject: message.subject,
-                    sender: message.sender,
-                    timestamp: message.receivedAt,
-                  },
-                )}`;
+              for (const [index, message] of result.messages.entries()) {
+                const summary = `Source connectionId: ${row.id}.\n${overviews[index]}`;
                 await client.query(
                   `INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
                  VALUES ($1,$2,$3,'gmail',$4,$5,$6) ON CONFLICT(id) DO UPDATE SET poll_connection_id=EXCLUDED.poll_connection_id,
@@ -2422,7 +2438,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         if (!event.id || event.id.length > 200)
           return reply.code(400).send({ error: 'The webhook event has no valid identity.' });
         const messageId = slug.data === 'gmail' && messageIdentity(event.data, 'message');
-        const summary = `Source connectionId: ${row.id}.\n${eventOverview(slug.data, event.trigger, event.data)}`;
+        const summary = `Source connectionId: ${row.id}.\n${await eventOverview(slug.data, event.trigger, event.data, mailCheck)}`;
         await pool.query(
           'INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING',
           [

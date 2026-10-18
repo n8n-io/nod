@@ -118,7 +118,7 @@ export function createDecisionModel(options: {
           provider: connection.provider,
           model: service.model,
           category: 'review',
-          operation: { answer: 'approval_reply' }[question.name],
+          operation: { answer: 'approval_reply', access: 'access' }[question.name],
           status,
           durationMs: Math.round(performance.now() - started),
           inputTokens: usage?.input_tokens,
