@@ -1105,6 +1105,7 @@ async function initializeApplication(
       accountProfile,
       connectedApps: integrations.connectedApps,
       memoryContext: memory.context,
+      recall: personal.recall,
       learnedSkills: learnedSkills.index,
       taskContext: tasks.context,
       taskLedger: tasks.read,

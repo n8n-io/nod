@@ -2605,6 +2605,28 @@ test(
             await hidden(`Hidden chat line ${i}`, minute(2 * i + 1));
           }
           assert.deepEqual(await search({ around: chat[6] }), chat.slice(1, 12));
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,created_at) VALUES($1,$2,'assistant',$3,$4,$5)",
+            [
+              randomUUID(),
+              ownerId,
+              'Your passport renewal form is ready',
+              freshThread,
+              '2019-05-01T10:00:00Z',
+            ],
+          );
+          await add('My passport expires in June', '2019-05-02T10:00:00Z');
+          await hidden('My passport expires next week', '2019-05-03T10:00:00Z');
+          const current = await add('Passport photos are booked', '2019-05-05T10:00:00Z');
+          const recalled = await personal.recall(
+            'when does my passport expire',
+            new Date('2019-05-04T00:00:00Z'),
+            current,
+          );
+          assert.deepEqual(
+            recalled.map(({ role, text }) => [role, text]),
+            [['user', 'My passport expires in June']],
+          );
           const filler = 'Unrelated planning notes about the garden and the weather. '.repeat(40);
           const long = await add(
             `${filler}The spare key is with Marisol next door. ${filler}`,

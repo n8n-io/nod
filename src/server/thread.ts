@@ -105,6 +105,11 @@ export interface ThreadDependencies {
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
+  recall?: (
+    text: string,
+    before: Date | undefined,
+    exclude: string | null,
+  ) => Promise<NonNullable<RuntimeContext['relatedConversation']>>;
   learnedSkills?: () => Promise<RuntimeContext['learnedSkills']>;
   task?: (turn: TurnRef, input: unknown, sourceMessageId: string | null) => Promise<unknown>;
   taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
@@ -998,6 +1003,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       turn.background ? dependencies.connectedApps?.() : undefined,
     ]);
   const preference = preferences.rows[0];
+  const related =
+    !turn.background && sourceMessageId && dependencies.recall
+      ? await dependencies
+          .recall(String(turn.prompt ?? ''), history.rows[0]?.createdAt, sourceMessageId)
+          .catch(() => [])
+      : [];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
@@ -1017,6 +1028,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       }),
       ...(account ? { account } : {}),
       memory: memory ?? '',
+      ...(related.length ? { relatedConversation: related } : {}),
       ...(learnedSkills?.length ? { learnedSkills } : {}),
       ...(connectedApps ? { connectedApps } : {}),
     },

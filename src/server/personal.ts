@@ -243,6 +243,21 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     throw new Error('This personal-data action is not available.');
   }
 
+  async function recall(text: string, before: Date | undefined, exclude: string | null) {
+    const { rows } = await pool.query(
+      `WITH terms AS (SELECT replace(plainto_tsquery('english',$2)::text,'&','|')::tsquery AS q)
+       SELECT m.role,CASE WHEN length(m.text)<=400 THEN m.text
+           ELSE ts_headline('english',m.text,terms.q,'StartSel="",StopSel="",MaxWords=50,MinWords=15,MaxFragments=2,FragmentDelimiter=" … "') END AS text,
+         m.created_at AS "createdAt"
+       FROM messages m CROSS JOIN terms
+       WHERE m.owner_id=$1 AND m.role='user' AND ${activeThreadSql('m')} AND m.id IS DISTINCT FROM $4::uuid
+         AND ($3::timestamptz IS NULL OR m.created_at<$3) AND to_tsvector('english',m.text) @@ terms.q
+       ORDER BY ts_rank_cd(to_tsvector('english',m.text),terms.q,1) DESC,m.created_at DESC LIMIT 6`,
+      [ownerId, text, before ?? null, exclude],
+    );
+    return rows.toReversed() as Array<{ role: string; text: string; createdAt: Date }>;
+  }
+
   async function memoryView(): Promise<MemoryView> {
     if (!memory) throw Object.assign(new Error('Memory is unavailable.'), { statusCode: 404 });
     return memory.view();
@@ -295,6 +310,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     listSchedules: schedules.list,
     getSchedule: schedules.get,
     manage,
+    recall,
     validateReview,
     reviewMemory,
     memoryView,
