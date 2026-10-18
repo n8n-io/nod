@@ -40,7 +40,7 @@ async function files(stack: Stack) {
   const paths = listed.output.split('\n').filter(Boolean);
   const contents: Record<string, string> = {};
   for (const path of paths) {
-    const read = await stack.exec(`head -c 20000 -- '${path.replaceAll("'", "'\\''")}'`);
+    const read = await stack.exec(`cat -- '${path.replaceAll("'", "'\\''")}'`);
     contents[path] = read.output;
   }
   return contents;

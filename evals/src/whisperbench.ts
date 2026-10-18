@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,7 +59,7 @@ async function ask(model: Model, system: string, evidence: object) {
         choices: Array<{ message: { content: string } }>;
         usage: { prompt_tokens: number; completion_tokens: number };
       };
-      const price = prices[model.name] ?? { input: 0, output: 0 };
+      const price = prices[model.name];
       return {
         answer: JSON.parse(body.choices[0].message.content) as Record<string, unknown>,
         costUsd:
@@ -164,7 +164,7 @@ async function attempt(directory: string, item: WhisperCase, mode: WhisperMode, 
 const rate = (part: number, whole: number) =>
   whole ? `${part}/${whole} (${Math.round((1000 * part) / whole) / 10}%)` : '–';
 
-export function summarizeWhisper(runs: WhisperRun[]) {
+export function summarizeWhisper(runs: WhisperRun[], planned = runs.length) {
   const scored = runs.filter((run) => run.verdicts && !run.error);
   const by = (items: WhisperRun[]) => {
     const injected = items.filter((run) => run.verdicts!.injection.yes);
@@ -183,7 +183,7 @@ export function summarizeWhisper(runs: WhisperRun[]) {
   };
   const groups = [...new Set(scored.map((run) => `${run.mode}`))];
   return {
-    incomplete: runs.length - scored.length,
+    incomplete: planned - scored.length,
     costUsd: runs.reduce((sum, run) => sum + run.costUsd + (run.verdicts?.costUsd ?? 0), 0),
     modes: Object.fromEntries(
       groups.map((mode) => {
@@ -231,6 +231,8 @@ export async function runWhisperBench(options: WhisperOptions) {
   const judgeModel = parseModel(options.judge, environment);
   if (judgeModel.provider !== 'openai')
     throw new Error('The WhisperBench judge must be an OpenAI model, as in the paper.');
+  if (!prices[judgeModel.name])
+    throw new Error(`Add a price for the judge model ${judgeModel.name} before using it.`);
   parseModel(options.model, environment);
   const directory = join(options.root, 'whisperbench', options.label);
   for (const folder of ['raw', 'logs', 'runs'])
@@ -244,6 +246,7 @@ export async function runWhisperBench(options: WhisperOptions) {
       .toString()
       .trim(),
     source: appSource,
+    dataset: createHash('sha256').update(JSON.stringify(cases)).digest('hex'),
     cases: cases.map((item) => item.id),
     started: new Date().toISOString(),
   };
@@ -251,7 +254,19 @@ export async function runWhisperBench(options: WhisperOptions) {
   const saved = await readFile(manifestPath, 'utf8').catch(() => undefined);
   if (saved && !options.resume)
     throw new Error(`Label ${options.label} already exists. Pick another label or pass --resume.`);
-  if (!saved) await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  if (saved) {
+    const previous = JSON.parse(saved) as typeof manifest;
+    for (const key of ['model', 'judge', 'commit', 'dataset'] as const)
+      if (previous[key] !== manifest[key])
+        throw new Error(`Label ${options.label} was run with another ${key}. Pick a new label.`);
+    if (
+      previous.modes.join() !== manifest.modes.join() ||
+      previous.cases.join() !== manifest.cases.join()
+    )
+      throw new Error(
+        `Label ${options.label} was run with other modes or cases. Pick a new label.`,
+      );
+  } else await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   const jobs = cases.flatMap((item) => options.modes.map((mode) => ({ item, mode })));
   const results: WhisperRun[] = [];
   const queue: typeof jobs = [];
@@ -293,7 +308,7 @@ export async function runWhisperBench(options: WhisperOptions) {
       }
     }),
   );
-  const summary = summarizeWhisper(results);
+  const summary = summarizeWhisper(results, jobs.length);
   await writeFile(join(directory, 'summary.json'), JSON.stringify({ manifest, summary }, null, 2));
   const report = markdown(summary, manifest);
   await writeFile(join(directory, 'summary.md'), report);
@@ -302,7 +317,9 @@ export async function runWhisperBench(options: WhisperOptions) {
 }
 
 export const parseModes = (value: string | undefined) => {
-  const chosen = (value ?? whisperModes.join(',')).split(',').map((item) => item.trim());
+  const chosen = [
+    ...new Set((value ?? whisperModes.join(',')).split(',').map((item) => item.trim())),
+  ];
   for (const item of chosen)
     if (!whisperModes.includes(item as WhisperMode))
       throw new Error(`--modes takes ${whisperModes.join(', ')}.`);

@@ -158,7 +158,7 @@ function open(path: string) {
   }
 }
 
-function questionIds(value: string | undefined) {
+function idList(value: string | undefined, flag: string) {
   if (value === undefined) return undefined;
   const ids = [
     ...new Set(
@@ -168,7 +168,7 @@ function questionIds(value: string | undefined) {
         .filter(Boolean),
     ),
   ];
-  if (!ids.length) throw new Error('--questions needs at least one question ID.');
+  if (!ids.length) throw new Error(`--${flag} needs at least one ID.`);
   return ids;
 }
 
@@ -266,7 +266,7 @@ export async function main(args: Args) {
         sample: text(args, 'sample') === undefined ? undefined : whole(args, 'sample', 1),
         chatSample:
           text(args, 'chat-sample') === undefined ? undefined : whole(args, 'chat-sample', 1),
-        questions: questionIds(text(args, 'questions')),
+        questions: idList(text(args, 'questions'), 'questions'),
         concurrency: whole(args, 'concurrency', 6),
         budget: number(args, 'budget', 0),
         resume: has(args, 'resume'),
@@ -285,7 +285,7 @@ export async function main(args: Args) {
         model: text(args, 'model') ?? defaultModel(environment),
         judge: text(args, 'judge') ?? 'openai/gpt-5.4-nano',
         modes: parseModes(text(args, 'modes')),
-        cases: text(args, 'cases')?.split(','),
+        cases: idList(text(args, 'cases'), 'cases'),
         concurrency: whole(args, 'concurrency', 6),
         budget: number(args, 'budget', 0),
         resume: has(args, 'resume'),
