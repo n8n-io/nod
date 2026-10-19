@@ -1595,6 +1595,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             ],
           );
         });
+        captureSecureEntry(options.analytics, row, 'closed');
+        captureSecureEntry(
+          options.analytics,
+          { kind: fresh.input.kind, origin: row.origin },
+          'requested',
+        );
         return {
           ok: false,
           retryUrl: `/vault/${token}`,

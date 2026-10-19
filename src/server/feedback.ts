@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { FeedbackDelivery, FeedbackEnvelope, FeedbackFile } from '../ports/feedback.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 import {
   feedbackAttachmentMimeTypes,
   feedbackLimits,
@@ -87,6 +88,7 @@ export async function registerFeedback(
     context: Omit<FeedbackContext, 'enabled' | 'recipient'>;
     delivery: FeedbackDelivery;
     buildReport(): Promise<string>;
+    analytics?: CaptureAnalytics;
   },
 ) {
   await options.pool.query(`CREATE TABLE IF NOT EXISTS feedback_submissions (
@@ -225,6 +227,14 @@ export async function registerFeedback(
         throw fail('This submission already has different content.', 409);
       return receipt(winner.rows[0]);
     }
+    options.analytics?.({
+      event: 'otto_feedback_sent',
+      properties: {
+        category: input.category,
+        has_attachments: input.attachments.length > 0,
+        has_report: input.reportId !== null,
+      },
+    });
     pending.add(input.submissionId);
     if (repairs.size >= 5) repairs.delete(repairs.keys().next().value!);
     repairs.set(input.submissionId, { envelope, expiresAt: Date.now() + 3_600_000 });

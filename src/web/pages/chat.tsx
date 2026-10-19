@@ -496,7 +496,10 @@ export function Chat({
     pendingSends.current++;
     outstandingSends.current++;
     let failed = false;
-    if (reply) setReplyTo(null);
+    if (reply) {
+      taskReply.current = null;
+      setReplyTo(null);
+    }
     const message: Message = {
       id,
       role: 'user',
@@ -969,6 +972,7 @@ export function Chat({
                     onReply={
                       message.turnId || persistedIds.has(message.id)
                         ? () => {
+                            taskReply.current = null;
                             setReplyTo(message);
                             composer.current?.focus();
                           }
@@ -1058,7 +1062,10 @@ export function Chat({
             text={text}
             setText={setText}
             replyTo={replyTo}
-            clearReply={() => setReplyTo(null)}
+            clearReply={() => {
+              taskReply.current = null;
+              setReplyTo(null);
+            }}
             onSend={send}
             onStop={
               working ||

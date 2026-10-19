@@ -4246,40 +4246,53 @@ test(
 );
 
 test(
-  'conversation analytics classifies background task turns without a cited owner message',
+  'conversation analytics links a background task turn to the task its chat turn started',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await conversationAnalyticsFixture(t);
     f.analytics.setUsageData(f.ownerId, true);
+    const parent = await f.turn({ prompt: 'Synthetic background task request' });
     const task = await f.turn({
       session: randomUUID(),
       source: 'task',
       prompt: 'Synthetic background task request',
+      at: Date.parse('2026-10-14T12:01:00.000Z'),
     });
-    let input: { source?: string; task_request?: string } | undefined;
+    let input:
+      { source?: string; task_request?: string; tasks?: Array<{ id: string }> } | undefined;
     const processor = await f.processor(async (request) => {
       input = request.input as typeof input;
+      const known = input?.tasks?.[0]?.id;
       return {
         tasks: [
           {
-            task_id: null,
-            request_message_id: null,
+            task_id: known ?? null,
+            request_message_id: known ? null : parent.messageId,
             task_type: 'research',
             task_action: 'find',
             task_subject: 'web',
             task_activities: ['find:web'],
-            outcome: 'completed',
+            outcome: known ? 'completed' : 'active',
           },
         ],
         frustration: null,
       };
     });
+    processor.start(parent.id)();
     processor.start(task.id)();
     await processor.drain();
     assert.equal(input?.source, 'task');
     assert.equal(input?.task_request, 'Synthetic background task request');
-    const started = f.events.find((event) => event.event === 'otto_task_started');
-    assert.equal(started?.properties.source, 'task');
+    assert.equal(input?.tasks?.length, 1);
+    assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
+    assert.ok(
+      f.events.some(
+        (event) =>
+          event.event === 'otto_task_updated' &&
+          event.properties.outcome === 'completed' &&
+          event.properties.task_id === input?.tasks?.[0]?.id,
+      ),
+    );
     assert.ok(
       f.events.some(
         (event) =>

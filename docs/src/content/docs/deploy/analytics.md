@@ -52,7 +52,7 @@ Otto counts installations, not people. Two installations count as two, and a sha
 - Names, email addresses, account names, phone numbers and IDs of your threads, turns or messages.
 - Full page addresses, paths, queries, subdomains, private hostnames and IP addresses. For websites Otto visits, signs in to or buys from, only the registrable domain leaves, such as `example.co.uk` for `shop.example.co.uk/cart?id=42`.
 - Raw error text, console output, request headers and bodies.
-- Vault values, card details, codes, keys, order details and shop accounts. A purchase sends only its amount and currency.
+- Vault values, card details, codes, keys, order details and shop accounts. A payment sends only its amount, currency, status and the shop's registrable domain.
 - Model names from an OpenAI-compatible server you run yourself. They're sent as `custom`.
 
 ## Events
@@ -70,7 +70,7 @@ Every event is checked against an explicit schema before it's sent. Unknown even
 
 | Event                           | When                                               | Properties                                                                                                                                                                                          |
 | ------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `$pageview`                     | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/trust`, `/browser`, `/credentials`, `/payments`, `/privacy` or `/not-found`                                                          |
+| `$pageview`                     | A page becomes visible                             | `route`: `/`, `/onboarding`, `/apps`, `/channels`, `/tasks`, `/trust`, `/browser`, `/credentials`, `/payments` or `/not-found`                                                                      |
 | `$snapshot`                     | Masked full or incremental recording               | PostHog replay metadata and masked snapshot data                                                                                                                                                    |
 | `otto_onboarding_step_viewed`   | An onboarding step appears                         | `step`: `welcome`, `brain`, `about`, `email`, `telegram`, `open_source`; `direction`: `forward`, `back`                                                                                             |
 | `otto_onboarding_step_skipped`  | You skip an onboarding step                        | `step`: `welcome` (the intro animation), `email`, `telegram`                                                                                                                                        |

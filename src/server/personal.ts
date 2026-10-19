@@ -308,7 +308,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       operation?: MemoryChange['operation'],
     ): Promise<MemoryUpdate> => {
       const result = await change;
-      if (change && operation) remembered(operation, 'owner');
+      if (change && operation && result !== false) remembered(operation, 'owner');
       refresh();
       return { ...(await memoryView()), ...(typeof result === 'string' ? { path: result } : {}) };
     };

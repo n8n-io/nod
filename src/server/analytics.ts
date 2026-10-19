@@ -333,25 +333,6 @@ export const analyticsRoutes = new Map<
   ['POST /api/conversation/reset', { event: 'otto_conversation_reset' }],
   ['POST /api/thread/stop', { event: 'otto_chat_stopped' }],
   ['POST /api/tasks/:id/stop', { event: 'otto_task_stopped' }],
-  [
-    'POST /api/feedback',
-    (request) => {
-      const body = request.body as {
-        category?: unknown;
-        attachments?: unknown;
-        reportId?: unknown;
-      };
-      const category = z.enum(['bug', 'feature', 'other']).safeParse(body?.category).data;
-      return {
-        event: 'otto_feedback_sent',
-        properties: {
-          ...(category ? { category } : {}),
-          has_attachments: Array.isArray(body?.attachments) && body.attachments.length > 0,
-          has_report: typeof body?.reportId === 'string',
-        },
-      };
-    },
-  ],
   ['PATCH /api/preferences', settings('preferences', 'update')],
   [
     'PUT /api/channel-settings/:provider',

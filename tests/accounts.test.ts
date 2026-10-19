@@ -279,9 +279,9 @@ describe('analytics privacy', () => {
             status: 'submitted',
             domain: 'example.co.uk',
             currency: 'EUR',
-            amount: 1234.57,
+            amount: 1234.568,
           },
-          { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.57 },
+          { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.568 },
           { kind: 'code', status: 'requested' },
         ].map((properties) =>
           JSON.stringify({ event: 'otto_secure_entry_changed', ...properties }),

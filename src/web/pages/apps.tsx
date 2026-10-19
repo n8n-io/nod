@@ -318,8 +318,9 @@ export function Apps({
     setView(next);
   };
   useEffect(() => {
-    if (loadError) captureAnalytics('otto_ui_error', { area: 'apps', action: 'load' });
-  }, [loadError]);
+    if (loadError || catalogError)
+      captureAnalytics('otto_ui_error', { area: 'apps', action: 'load' });
+  }, [loadError, catalogError]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categoryQuery, setCategoryQuery] = useState('');

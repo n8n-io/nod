@@ -556,9 +556,6 @@ export function App() {
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
-  useEffect(() => {
-    if (/^\/privacy\/?$/.test(path)) capturePageview('/privacy');
-  }, [path]);
   useEffect(
     () =>
       onFeedbackRequested(() => {

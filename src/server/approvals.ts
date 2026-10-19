@@ -13,6 +13,7 @@ import {
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { lockKey, locksTable } from './locks.ts';
+import { afterCommit } from './transaction.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 
 export interface ApprovalExecutionContext {
@@ -333,7 +334,7 @@ export async function createApprovals(
           previous.id,
           ownerId,
         ]);
-        changed('expired', action, current.source);
+        afterCommit(client, () => changed('expired', action, current.source));
         previous = undefined;
       }
       if (previous) {
@@ -499,7 +500,7 @@ export async function createApprovals(
         approval.id,
         ownerId,
       ]);
-      changed('declined', approval.action, approval.turn_source);
+      afterCommit(client, () => changed('expired', approval.action, approval.turn_source));
       if (active && approval.turn_background && input.replyToMessageId)
         return {
           waiting: {
@@ -549,7 +550,9 @@ export async function createApprovals(
       approved ? 'confirmed' : 'declined',
       turnId,
     ]);
-    changed(approved ? 'approved' : 'declined', approval.action, approval.turn_source);
+    afterCommit(client, () =>
+      changed(approved ? 'approved' : 'declined', approval.action, approval.turn_source),
+    );
     return { threadId: input.threadId, turnId, messageId };
   }
 

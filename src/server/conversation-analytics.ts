@@ -230,9 +230,10 @@ export function createConversationAnalytics(options: {
         `SELECT a.*,m.text AS request_text,u.prompt AS request_prompt,u.source AS request_source,u.channel AS request_channel FROM analytics_tasks a
          JOIN turns u ON u.id=a.request_turn_id AND u.owner_id=a.owner_id
          LEFT JOIN messages m ON m.id=a.request_message_id AND m.owner_id=a.owner_id
-         WHERE a.owner_id=$1 AND a.epoch=$2 AND a.session_id=$3 AND a.thread_id=$4
+         WHERE a.owner_id=$1 AND a.epoch=$2 AND a.thread_id=$4
+         AND (a.session_id=$3 OR ($5 AND a.session_id=a.thread_id))
          ORDER BY (a.outcome IN ('active','waiting')) DESC,a.updated_at DESC LIMIT 8`,
-        [ownerId, processingEpoch, turn.session_id, turn.thread_id],
+        [ownerId, processingEpoch, turn.session_id, turn.thread_id, turn.source === 'task'],
       ),
     ]);
     const context = messages.rows

@@ -104,7 +104,6 @@ function SetupAction({
         data-setup={setup}
         onClick={(event) => {
           captureAnalytics('otto_setup_link_clicked', { setup });
-          captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
           onConnect(href, event.currentTarget);
         }}
       >
@@ -173,11 +172,13 @@ export function SetupActions({
     if (signIn?.url && completed.has(signIn.url)) close();
   }, [completed, signIn?.url]);
   async function connect(href: string) {
-    if (appLink.test(href)) {
+    const navigate = appLink.test(href);
+    if (!navigate && request.current) return;
+    captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
+    if (navigate) {
       window.location.assign(href);
       return;
     }
-    if (request.current) return;
     const controller = new AbortController();
     request.current = controller;
     const current = () => request.current === controller && !controller.signal.aborted;

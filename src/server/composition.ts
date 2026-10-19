@@ -394,16 +394,19 @@ async function initializeApplication(
     appVersion:
       process.env.OTTO_APP_VERSION || process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE,
   });
-  let observeConnections: (() => Promise<void>) | undefined;
+  let observeConnections: ((only?: 'apps' | 'models') => Promise<void>) | undefined;
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
     analytics.capture(ownerId, event, delivery);
     if (
-      (event.event === 'otto_connection_changed' &&
-        ['connected', 'disconnected'].includes(event.properties.status)) ||
+      event.event === 'otto_connection_changed' &&
+      ['connected', 'disconnected'].includes(event.properties.status)
+    )
+      void observeConnections?.('apps');
+    if (
       (event.event === 'otto_model_connection_changed' && event.properties.status !== 'failed') ||
       (event.event === 'otto_settings_updated' && event.properties.section === 'models')
     )
-      void observeConnections?.();
+      void observeConnections?.('models');
   };
   const analyticsConsent = () => analytics.consent(ownerId);
   const websiteVisited = createWebsiteVisits(analytics, ownerId);
@@ -503,6 +506,7 @@ async function initializeApplication(
     fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
     coreSkills,
   );
+  const fetches = new Map<string, string[]>();
   const runtime = createAgentRuntime({
     agent: ledger.agent(adapters.agent),
     skills: skillLibrary,
@@ -511,7 +515,14 @@ async function initializeApplication(
     redactError: createErrorRedactor(secrets),
     pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
     observe: (turnId, event) => {
-      if (event.type === 'tool_end') captureAnalytics(toolUsed(event));
+      if (event.type === 'tool_end') {
+        captureAnalytics(toolUsed(event));
+        const fetched = fetches.get(event.id);
+        fetches.delete(event.id);
+        if (fetched && event.status === 'succeeded')
+          for (const address of fetched)
+            websiteVisited(address, 'fetch', Boolean(event.execution?.parentRunId));
+      }
       if (
         event.type === 'tool_start' &&
         ['fetch_content', 'get_search_content'].includes(event.name) &&
@@ -519,9 +530,12 @@ async function initializeApplication(
         typeof event.input === 'object'
       ) {
         const { url, urls } = event.input as { url?: unknown; urls?: unknown };
-        for (const address of [url, ...(Array.isArray(urls) ? urls.slice(0, 20) : [])])
-          if (typeof address === 'string')
-            websiteVisited(address, 'fetch', Boolean(event.execution?.parentRunId));
+        fetches.set(
+          event.id,
+          [url, ...(Array.isArray(urls) ? urls.slice(0, 20) : [])].filter(
+            (address): address is string => typeof address === 'string',
+          ),
+        );
       }
       adapters.observe?.(turnId, event);
     },
@@ -855,21 +869,23 @@ async function initializeApplication(
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
   let pendingInventory = Promise.resolve();
-  observeConnections = () =>
+  observeConnections = (only) =>
     (pendingInventory = pendingInventory
       .then(() =>
         captureConnectionInventory(
           analytics,
           ownerId,
           async () =>
-            (
-              await Promise.all([
-                integrations.analyticsConnections(),
-                discovered.analyticsConnections(),
-                browserConnections.analyticsConnections(),
-              ])
-            ).flat(),
-          () => adapters.models?.analyticsConnections() ?? [],
+            only === 'models'
+              ? []
+              : (
+                  await Promise.all([
+                    integrations.analyticsConnections(),
+                    discovered.analyticsConnections(),
+                    browserConnections.analyticsConnections(),
+                  ])
+                ).flat(),
+          () => (only === 'apps' ? [] : (adapters.models?.analyticsConnections() ?? [])),
         ),
       )
       .catch(() => {}));
@@ -1306,6 +1322,7 @@ async function initializeApplication(
       status: async (submissionId) => ({ submissionId, status: 'rejected' }),
     },
     buildReport: () => buildFeedbackReport(feedbackReportOptions),
+    analytics: captureAnalytics,
   });
   registerPrivacyNotice(app, privacyNotice);
   createAccountSession({

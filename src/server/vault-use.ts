@@ -25,7 +25,7 @@ export function captureSecureEntry(
         ? 'code'
         : 'sign_in';
   const domain = kind !== 'code' && use.origin ? analyticsDomain(use.origin) : undefined;
-  const amount = use.payment && Math.round(use.payment.amount * 100) / 100;
+  const amount = use.payment && Math.round(use.payment.amount * 1000) / 1000;
   analytics?.({
     event: 'otto_secure_entry_changed',
     properties: {

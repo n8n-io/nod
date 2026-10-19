@@ -12,7 +12,7 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 ## The rules every event follows
 
 - **Opt-in only.** Never call PostHog directly. Server events go through `capture` in [`src/server/analytics.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics.ts), UI events through `captureAnalytics` in [`src/web/lib/analytics.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics.ts). Both drop the event unless the deployment and the owner allow it.
-- **No content.** Never send text the owner or Otto wrote, tool arguments or results, names, email addresses, account names, private IDs, URLs, paths or raw error text.
+- **No content.** Never send text the owner or Otto wrote, tool arguments or results, names, email addresses, account names, Otto's own owner, thread, turn or message IDs, URLs, paths or raw error text. The random `task_id` and `run_id` made only for analytics are allowed.
 - **Bounded values only.** Use enums, booleans, non-negative integers, durations in milliseconds and normalized public domains from `analyticsDomain`. A free string is a leak waiting to happen.
 - **Describe kinds, not instances.** Send `tool: 'browser'`, not the page Otto opened. Send `provider: 'compatible'` and `model: 'custom'`, not the name of a server the owner runs.
 - **Count actual changes.** Fire after the change commits or the server answers 2xx, not when a button is clicked "to save".
@@ -20,9 +20,9 @@ What Otto sends and when is listed in [Analytics and recordings](/deploy/analyti
 
 ## Add a server event
 
-1. Add the event to the `analyticsEvent` union in [`src/server/analytics-events.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics-events.ts). Use `.strict()` objects and bounded types, like the events around it. The schema drops anything it doesn't allow.
+1. Add the event to the `analyticsEvent` union in [`src/server/analytics-events.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics-events.ts). Use `.strict()` objects and bounded types, like the events around it. The server drops the whole event if it has an unknown property or a value the schema doesn't allow.
 2. Capture it where the change commits, with the owner's `CaptureAnalytics` (`analytics.forOwner(ownerId)`), passed in through [`src/server/composition.ts`](https://github.com/n8n-io/otto/blob/main/src/server/composition.ts).
-3. For an event that only marks a successful API call, add the route to `analyticsRoutes` in `src/server/analytics.ts` instead. A test checks that every route in that map is registered, so a renamed route fails the build.
+3. For an event that only marks a successful API call, add the route to `analyticsRoutes` in `src/server/analytics.ts` instead. A test checks that every route in that map is registered, so a renamed route fails the tests.
 4. Events captured inside a turn get the turn's `run_id` automatically, and a web turn's events get its recording `$session_id`. Don't pass Otto's own turn, session or message IDs.
 
 ## Add a UI event

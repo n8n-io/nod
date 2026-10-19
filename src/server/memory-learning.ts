@@ -95,26 +95,16 @@ export function createMemoryLearning(options: {
     }
     const result = await options.memory.edit((fresh) => {
       if (fresh.reflected !== tree.reflected) return;
-      const archived = fresh.archive.length;
-      const applied = applyReflect(fresh, ops, messages, new Date().toISOString());
+      const operations = applyReflect(fresh, ops, messages, new Date().toISOString());
       fresh.reflected = mark;
       fresh.retries = 0;
-      return {
-        applied,
-        archived: fresh.archive.length - archived,
-        more: rows.length === batchSize,
-      };
+      return { operations, applied: operations.length, more: rows.length === batchSize };
     });
-    if (result)
-      for (let index = 0; index < result.applied; index++)
-        options.analytics?.({
-          event: 'otto_memory_changed',
-          properties: {
-            kind: 'note',
-            operation: index < result.archived ? 'archive' : 'save',
-            actor: 'background',
-          },
-        });
+    for (const operation of result?.operations ?? [])
+      options.analytics?.({
+        event: 'otto_memory_changed',
+        properties: { kind: 'note', operation, actor: 'background' },
+      });
     return result;
   }
 
