@@ -4,6 +4,7 @@ import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from 'lucide-reac
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
 import { ApiError, apiStream, errorMessage, post } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
+import { captureAnalytics } from '../lib/analytics';
 import { BrandMark } from './brand';
 import { Button, Loading } from './ui';
 
@@ -175,6 +176,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   }
 
   async function navigate(action: 'back' | 'reload') {
+    captureAnalytics('otto_browser_handoff_action', { action });
     setLoading(action);
     try {
       await flush();
@@ -189,6 +191,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   async function done() {
     if (paused) return;
+    captureAnalytics('otto_browser_handoff_action', { action: 'done' });
     setReturning(true);
     try {
       await flush();
@@ -202,6 +205,8 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   }
 
   function resize(value: boolean) {
+    if (value !== expanded)
+      captureAnalytics('otto_browser_handoff_action', { action: value ? 'expand' : 'collapse' });
     setLive(false);
     setShown(false);
     setExpanded(value);

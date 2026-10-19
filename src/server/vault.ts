@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
-import { createVaultUses, VaultUseError } from './vault-use.ts';
+import { captureSecureEntry, createVaultUses, VaultUseError } from './vault-use.ts';
 import type {
   CredentialRequest,
   VaultEntry,
@@ -499,7 +499,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     DROP INDEX IF EXISTS credential_requests_root_turn;
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
   `);
-  const uses = await createVaultUses(pool, owner);
+  const uses = await createVaultUses(pool, owner, options.analytics);
   await pool.query(
     `
     INSERT INTO vault_uses(id,owner_id,root_turn_id,origin,kind,status)
@@ -1133,14 +1133,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const token = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(token).digest('hex');
     await forgetExpiredHolds();
-    await transaction(async (client) => {
+    const closed = await transaction(async (client) => {
       await lockKey(client, `thread:${ownerId}`);
       if (!(await currentTurn(client, turn, ownerId, ' FOR NO KEY UPDATE OF u')))
         throw new VaultError('This task can no longer request credentials.', 409);
       const root = await rootTurn(client, turn, ownerId);
       if (!root) throw new VaultError('This task can no longer request credentials.', 409);
-      await client.query(
-        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending' AND COALESCE(browser_id,thread_id::text)=$3",
+      const superseded = await client.query<{ kind: string; origin: string }>(
+        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending' AND COALESCE(browser_id,thread_id::text)=$3 RETURNING kind,origin",
         [turn.threadId, ownerId, browserOf(turn)],
       );
       await client.query(
@@ -1161,7 +1161,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           browserOf(turn),
         ],
       );
+      return superseded.rows;
     }, pool);
+    for (const row of closed) captureSecureEntry(options.analytics, row, 'closed');
+    captureSecureEntry(options.analytics, input, 'requested');
     return { url: `/vault/${token}` };
   }
 
@@ -1602,6 +1605,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         .query("UPDATE credential_requests SET failed_at=now() WHERE id=$1 AND status='pending'", [
           row.id,
         ])
+        .then((failed) => {
+          if (failed.rowCount) captureSecureEntry(options.analytics, row, 'failed');
+        })
         .catch((failure: unknown) => logFailure('vault_failure_state', failure));
       throw error;
     } finally {

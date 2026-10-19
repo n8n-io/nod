@@ -11,6 +11,11 @@ import { Button, Checkbox, Loading, Notice } from './ui';
 import { BrandMark } from './brand';
 import { errorMessage, post } from '../lib/api';
 import {
+  analyticsForCurrentSession,
+  captureAnalytics,
+  type AnalyticsProperties,
+} from '../lib/analytics';
+import {
   messageLinkText,
   messageSetupLinks,
   safeMessageLink,
@@ -25,6 +30,16 @@ import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
+const analyticsReactions: Record<string, ReactionAnalytics['reaction']> = {
+  '👍': 'thumbs_up',
+  '❤️': 'heart',
+  '😂': 'joy',
+  '🎉': 'party',
+  '😮': 'wow',
+  '🙏': 'pray',
+  '👎': 'thumbs_down',
+};
+type ReactionAnalytics = AnalyticsProperties<'otto_message_reaction_changed'>;
 const messageSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
@@ -261,18 +276,25 @@ export function MessageBubble({
     setPickingReaction(false);
     pickerTrigger.current?.focus();
   }
-  async function leave(value: string) {
+  async function leave(value: string, method: ReactionAnalytics['method']) {
     if (reacting || leaving) return;
     setLeaving(true);
     await react(
       value,
+      method,
       reactionName(value),
       window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
     );
     setLeaving(false);
   }
-  async function react(value: string, name = reactionName(value), delay = 0) {
+  async function react(
+    value: string,
+    method: ReactionAnalytics['method'],
+    name = reactionName(value),
+    delay = 0,
+  ) {
     if (reacting) return;
+    const capture = analyticsForCurrentSession();
     const next = nextReaction(reaction, value);
     setReacting(true);
     setMenu(null);
@@ -283,6 +305,12 @@ export function MessageBubble({
       await post(`/api/messages/${message.id}/reaction`, { reaction: next });
       setReaction(next);
       setSelectedName(next ? name : '');
+      capture('otto_message_reaction_changed', {
+        operation: !next ? 'remove' : reaction ? 'change' : 'add',
+        reaction: analyticsReactions[reactionEmoji(next ?? value)] ?? 'other',
+        method,
+        role: message.role,
+      });
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -313,7 +341,8 @@ export function MessageBubble({
     setPickerExpanded(expanded);
     setPickingReaction(true);
   }
-  async function copy() {
+  async function copy(method: 'button' | 'context_menu') {
+    captureAnalytics('otto_message_action', { action: 'copy', role: message.role, method });
     setMenu(null);
     try {
       await navigator.clipboard.writeText(message.text);
@@ -324,7 +353,8 @@ export function MessageBubble({
       setError('The message could not be copied.');
     }
   }
-  function reply() {
+  function reply(method: 'button' | 'context_menu') {
+    captureAnalytics('otto_message_action', { action: 'reply', role: message.role, method });
     setMenu(null);
     onReply?.();
   }
@@ -373,8 +403,8 @@ export function MessageBubble({
                     if ((event.target as HTMLElement).closest('a,button,audio,video,input')) return;
                     window.getSelection()?.removeAllRanges();
                     void (reaction && reactionEmoji(reaction) === '👍'
-                      ? leave(reaction)
-                      : react('👍'));
+                      ? leave(reaction, 'double_click')
+                      : react('👍', 'double_click'));
                   }
                 : undefined
             }
@@ -408,7 +438,7 @@ export function MessageBubble({
                   type="button"
                   className={reactionClass}
                   disabled={reacting}
-                  onClick={() => void leave(reaction)}
+                  onClick={() => void leave(reaction, 'pin')}
                   aria-label={`Remove your ${selectedName || reactionName(reaction)} reaction`}
                   title={`Your reaction: ${selectedName || reactionName(reaction)}. Click to remove`}
                 >
@@ -441,7 +471,7 @@ export function MessageBubble({
                     variant="ghost"
                     aria-label="Reply to message"
                     title="Reply"
-                    onClick={reply}
+                    onClick={() => reply('button')}
                   >
                     <CornerUpLeft size={16} />
                   </Button>
@@ -451,7 +481,7 @@ export function MessageBubble({
                   variant="ghost"
                   aria-label={copied ? 'Message copied' : 'Copy message'}
                   title="Copy"
-                  onClick={() => void copy()}
+                  onClick={() => void copy('button')}
                 >
                   {copied ? <Check size={16} /> : <Copy size={16} />}
                 </Button>
@@ -494,7 +524,7 @@ export function MessageBubble({
                     aria-checked={Boolean(reaction && reactionEmoji(reaction) === value)}
                     aria-label={reactionName(value)}
                     disabled={reacting}
-                    onClick={() => void react(value)}
+                    onClick={() => void react(value, 'menu')}
                   >
                     <ReactionGlyph value={value} />
                   </button>
@@ -511,12 +541,12 @@ export function MessageBubble({
               </button>
             )}
             {onReply && (
-              <button role="menuitem" onClick={reply}>
+              <button role="menuitem" onClick={() => reply('context_menu')}>
                 <CornerUpLeft size={16} />
                 Reply
               </button>
             )}
-            <button role="menuitem" onClick={() => void copy()}>
+            <button role="menuitem" onClick={() => void copy('context_menu')}>
               <Copy size={16} />
               Copy
             </button>
@@ -560,7 +590,9 @@ export function MessageBubble({
                 expanded={pickerExpanded}
                 selected={reaction}
                 onExpand={() => openPicker(pickerTrigger.current ?? document.body, true)}
-                onSelect={(emoji, name) => void react(emoji, name)}
+                onSelect={(emoji, name) =>
+                  void react(emoji, pickerExpanded ? 'picker' : 'quick', name)
+                }
               />
             </Suspense>
           </div>,

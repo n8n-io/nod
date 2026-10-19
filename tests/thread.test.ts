@@ -90,7 +90,6 @@ test(
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
       provider: { capture: (event) => analyticsEvents.push(event), shutdown: async () => {} },
-      deployment: 'local',
       environment: 'development',
       dataRoot: root,
     });
@@ -265,6 +264,11 @@ test(
     const dependencies: ThreadDependencies = {
       browserStep: async () => 'run',
       analytics: captureAnalytics,
+      currentModel: () => ({
+        provider: 'compatible',
+        name: 'synthetic-private-endpoint-model',
+        configured: true,
+      }),
       present: (...input) => presentInterruption(...input),
       observeTurn: (_turnId, operation) => analytics.withRun(ownerId, operation),
       executeConfirmation: async () => undefined,
@@ -3058,7 +3062,18 @@ test(
       });
       await t.test('turn analytics exclude prompts, raw failures and private identifiers', () => {
         assert.ok(analyticsEvents.some((event) => event.event === 'otto_turn_completed'));
-        for (const privateValue of ['runtime-failure', 'first message', firstThreadId, root])
+        for (const event of analyticsEvents.filter((event) => event.event.startsWith('otto_turn_')))
+          assert.deepEqual(
+            [event.properties.model_provider, event.properties.model],
+            ['compatible', 'custom'],
+          );
+        for (const privateValue of [
+          'runtime-failure',
+          'first message',
+          'synthetic-private-endpoint-model',
+          firstThreadId,
+          root,
+        ])
           assert.ok(!JSON.stringify(analyticsEvents).includes(privateValue), privateValue);
       });
     } finally {
@@ -3920,9 +3935,9 @@ async function conversationAnalyticsFixture(t: TestContext) {
   const events: Parameters<ProductAnalytics['capture']>[0][] = [];
   let allowed = true;
   const analytics = await createAnalytics({
-    deployment: 'hosted',
     environment: 'development',
     dataRoot: '/unused',
+    installationId: randomUUID(),
     provider: {
       permitted: async () => allowed,
       capture: (event, signal) => {
@@ -4059,6 +4074,73 @@ test(
 );
 
 test(
+  'web turns carry the recording session id on turn and classifier events; other turns carry none',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const recording = '01890a5d-ac96-774b-bcce-b302099a8057';
+    const web = await f.turn();
+    const telegram = await f.turn({ channel: 'telegram:fixture', session: randomUUID() });
+    const malformed = await f.turn({ session: randomUUID() });
+    f.analytics.linkReplay(web.id, recording);
+    f.analytics.linkReplay(malformed.id, 'not-a-session"}');
+    const processor = await f.processor(async ({ input }) => {
+      const current = (
+        input as { messages: Array<{ id: string; current: boolean }> }
+      ).messages.find((message) => message.current)!.id;
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: current,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            outcome: 'completed',
+          },
+        ],
+        frustration: {
+          signal: 'explicit_complaint',
+          reason: 'output_quality',
+          task_type: 'research',
+          message_ids: [current],
+        },
+      };
+    });
+    for (const turn of [web, telegram, malformed]) {
+      const before = f.events.length;
+      await processor.observe(turn.id, async () => {
+        f.analytics.capture(f.ownerId, {
+          event: 'otto_turn_started',
+          properties: { source: 'user', channel: 'web', background: false },
+        });
+      });
+      await processor.drain();
+      const events = f.events.slice(before);
+      assert.deepEqual(
+        new Set(events.map((event) => event.event)),
+        new Set([
+          'otto_turn_started',
+          'otto_task_linked',
+          'otto_task_started',
+          'otto_task_updated',
+          'otto_frustration_signal',
+          'otto_task_analysis',
+        ]),
+      );
+      for (const event of events)
+        assert.equal(
+          event.properties.$session_id,
+          turn === web ? recording : undefined,
+          `${event.event}`,
+        );
+    }
+  },
+);
+
+test(
   'conversation analytics fences owners, sessions, archived threads and non-user background work',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
@@ -4159,6 +4241,52 @@ test(
         ])
       ).rows[0].n,
       0,
+    );
+  },
+);
+
+test(
+  'conversation analytics classifies background task turns without a cited owner message',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await conversationAnalyticsFixture(t);
+    f.analytics.setUsageData(f.ownerId, true);
+    const task = await f.turn({
+      session: randomUUID(),
+      source: 'task',
+      prompt: 'Synthetic background task request',
+    });
+    let input: { source?: string; task_request?: string } | undefined;
+    const processor = await f.processor(async (request) => {
+      input = request.input as typeof input;
+      return {
+        tasks: [
+          {
+            task_id: null,
+            request_message_id: null,
+            task_type: 'research',
+            task_action: 'find',
+            task_subject: 'web',
+            task_activities: ['find:web'],
+            outcome: 'completed',
+          },
+        ],
+        frustration: null,
+      };
+    });
+    processor.start(task.id)();
+    await processor.drain();
+    assert.equal(input?.source, 'task');
+    assert.equal(input?.task_request, 'Synthetic background task request');
+    const started = f.events.find((event) => event.event === 'otto_task_started');
+    assert.equal(started?.properties.source, 'task');
+    assert.ok(
+      f.events.some(
+        (event) =>
+          event.event === 'otto_task_analysis' &&
+          event.properties.outcome === 'analyzed' &&
+          event.properties.source === 'task',
+      ),
     );
   },
 );

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 import type { StepProps } from '..';
+import { captureAnalytics } from '../../../lib/analytics';
 import { Rise } from '../../../components/motion';
 import { TelegramSetup } from '../../../components/telegram-setup';
 import { Button } from '../../../components/ui';
@@ -115,7 +116,14 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={state.paired ? undefined : onNext}
+        onSkip={
+          state.paired
+            ? undefined
+            : () => {
+                captureAnalytics('otto_onboarding_step_skipped', { step: 'telegram' });
+                onNext();
+              }
+        }
         onNext={onNext}
         nextDisabled={!state.paired}
       />

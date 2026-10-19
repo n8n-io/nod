@@ -12,7 +12,7 @@ import { AppAccessRecovery } from '../../../components/app-connection-dialog';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
-import { analyticsForCurrentSession } from '../../../lib/analytics';
+import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analytics';
 import { connectionUrl } from '../../../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../../../lib/desktop';
 import type { StepProps } from '..';
@@ -235,6 +235,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   async function connect() {
     if (request.current || !canConnect) return;
     const capture = analyticsForCurrentSession();
+    capture('otto_app_connect_clicked', { entry: 'onboarding', result: 'opened' });
     const external = desktopLinksAvailable();
     const popup = external
       ? null
@@ -487,7 +488,14 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       <Footer
         show={revealed >= 4}
         onBack={onBack}
-        onSkip={connected && showGmail ? undefined : onNext}
+        onSkip={
+          connected && showGmail
+            ? undefined
+            : () => {
+                captureAnalytics('otto_onboarding_step_skipped', { step: 'email' });
+                onNext();
+              }
+        }
         onNext={onNext}
         nextDisabled={!connected || !showGmail}
       />

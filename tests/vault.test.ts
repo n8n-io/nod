@@ -3702,6 +3702,33 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
   }
 });
 
+test('analytics routes collapse private paths to known pages', async () => {
+  const { analyticsRoute, sanitizedAnalyticsUrl } =
+    await import('../src/web/lib/analytics-privacy.ts');
+  for (const [path, route] of [
+    ['/', '/'],
+    ['/you', '/'],
+    ['/tasks/', '/tasks'],
+    ['/trust?tab=saved#private', '/trust'],
+    ['https://private.invalid/apps?connect=synthetic-private', '/apps'],
+    ['/browser-connect/synthetic-private-token', '/apps'],
+    ['/vault/synthetic-private-id', '/credentials'],
+    ['/credentials/synthetic-private-id?token=synthetic-private', '/credentials'],
+    ['/payments/synthetic-private-id', '/payments'],
+    ['/payments/synthetic-private-id/extra', '/not-found'],
+    ['/privacy', '/privacy'],
+    ['/memory', '/not-found'],
+    ['/login', '/not-found'],
+    ['/desktop/setup', '/not-found'],
+    ['/synthetic-private-path', '/not-found'],
+  ])
+    assert.equal(analyticsRoute(path), route, path);
+  assert.equal(
+    sanitizedAnalyticsUrl('/payments/synthetic-private-id?code=1'),
+    'https://otto.invalid/payments',
+  );
+});
+
 test('session replay masks private DOM without exposing content', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -3721,8 +3748,9 @@ window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
 window.fetch = globalThis.fetch = async (url, init={}) => {
   const path = new URL(url,window.location.href).pathname;
-  if (path==='/api/configuration') return Response.json({localOnly:true,integrationsReady:true});
+  if (path==='/api/configuration') return Response.json({integrationsReady:true});
   if (path==='/api/apps') return Response.json([{slug:'gmail',status:'disconnected'}]);
+  if (path==='/api/models') return Response.json({connections:[{id:'synthetic-compatible',provider:'compatible',method:'api_key',label:'synthetic-private-lan-host',status:'connected',managed:false,models:[]}],selection:null,local:true});
   if (path==='/api/integrations/key') {
     assert.equal(init.method ?? 'GET', 'GET');
     return Response.json(integrationStatus);
@@ -3742,6 +3770,12 @@ document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement
   manual: false, fields: {}, busy: false, error: '',
   onField() {}, onVerify() {}, onConfirm() {}, onNewLink() {}, onManual() {}, onSaveId() {},
 })));
+const { MessageBubble } = await import('./src/web/components/message.tsx');
+const { TaskCard } = await import('./src/web/pages/tasks.tsx');
+const now = new Date().toISOString();
+document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(MessageBubble, {message:{id:'synthetic-message',role:'user',text:'synthetic-private-message',turnId:null,createdAt:now,attachments:[{id:'22222222-2222-4222-8222-222222222222',name:'synthetic-private-file.pdf',mimeType:'application/pdf',size:12,url:'/api/artifacts/22222222-2222-4222-8222-222222222222'}],replyTo:{id:'synthetic-quoted',role:'assistant',text:'synthetic-private-quote'}}, onReply() {}})));
+document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(TaskCard, {task:{id:'synthetic-task',title:'synthetic-private-task',doneWhen:'synthetic-private-done',now:'synthetic-private-now',result:'',status:'working',question:null,waitingFor:[],nextCheck:null,createdAt:now,updatedAt:now,closedAt:null,steps:['synthetic-private-step'],stepIndex:0}})));
+document.body.insertAdjacentHTML('beforeend', '<div class="chat-turn-preview">synthetic-private-turn</div><div class="message-link-previews">synthetic-private-preview</div><div class="pending-attachments">synthetic-private-pending</div><div class="reply-context composer-reply">synthetic-private-draft-reply</div><p class="statement-summary trust-sentence">synthetic-private-rule</p><span class="vault-use-text">synthetic-private-site</span><span class="vault-item-text">synthetic-private-login</span><span class="compact-account-details">synthetic-private-account</span>');
 const pairingPaths = [...document.querySelectorAll('.telegram-setup-qr path')].map(path => path.getAttribute('d'));
 assert.ok(pairingPaths.length > 0);
 const stylesheet = document.createElement('style');
@@ -3772,13 +3806,18 @@ const badgeTextIds = new Set(badges.map(node => node.childNodes[0].id));
 const badgeUpdates = events.filter(event => event.type === 3).flatMap(event => event.data.texts ?? []).filter(text => badgeTextIds.has(text.id));
 assert.equal(badgeUpdates.length, badges.length);
 assert.deepEqual(badgeUpdates.map(text => text.value), Array(badges.length).fill('**'));
+for (const name of ['message-reply-quote','message-attachments','task-preview-title','task-preview-line','task-preview-steps','chat-turn-preview','message-link-previews','pending-attachments','reply-context','trust-sentence','vault-use-text','vault-item-text','compact-account-details']) {
+  const blocked = recordedNodes.filter(node => node.attributes?.class?.split(' ').includes(name));
+  assert.ok(blocked.length > 0, name);
+  for (const node of blocked) assert.deepEqual(node.childNodes, [], name);
+}
 const content = JSON.stringify(events.filter(e => e.type === 2 || e.type === 3));
 for (const path of pairingPaths) assert.equal(content.includes(path), false);
 assert.doesNotMatch(content, /synthetic-private/);
 
 const analytics = await import('./src/web/lib/analytics-client.ts');
 const { posthog: sdk } = await import('posthog-js/no-external');
-analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
+analytics.configureAnalytics({enabled:true, distinctId:'local:11111111-1111-4111-8111-111111111111',deployment:'local',environment:'production'},'web');
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
 const { createRoot } = await import('react-dom/client');
@@ -3793,6 +3832,12 @@ const changeConnection = emailContainer.querySelector('.ob-email-summary button'
 assert.ok(changeConnection);
 await act(async () => changeConnection.click());
 assert.ok(emailContainer.textContent.includes('K7Q9'));
+const { Brain } = await import('./src/web/pages/onboarding/steps/brain.tsx');
+const brainContainer = document.createElement('div');
+document.body.append(brainContainer);
+const brainRoot = createRoot(brainContainer);
+await act(async () => {brainRoot.render(createElement(Brain,{arrived:'back',onNext() {},onBack() {}})); await new Promise(resolve => setTimeout(resolve,50));});
+assert.ok(brainContainer.textContent.includes('Connected to synthetic-private-lan-host'));
 document.querySelector('#mutable').textContent = 'synthetic-private-recorded-mutation';
 document.querySelector('input').value = 'synthetic-private-recorded-input';
 document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));
@@ -3809,8 +3854,10 @@ const snapshots = recordings.flatMap(event => event.properties.$snapshot_data).m
 assert.ok(snapshots.some(event => event.type === 2));
 assert.ok(snapshots.some(event => event.type === 3));
 assert.doesNotMatch(JSON.stringify(snapshots), /K7Q9/);
+assert.match(JSON.stringify(snapshots), /Connected to/);
 assert.doesNotMatch(JSON.stringify(snapshots), /synthetic-private/);
 await act(async () => emailRoot.unmount());
+await act(async () => brainRoot.unmount());
 dom.window.close();
 process.exit(0);
 

@@ -82,6 +82,7 @@ export function Onboarding({
     writeStep({ owner: user.id, step, version: onboardingVersion });
     captureAnalytics('otto_onboarding_step_viewed', {
       step: step === 'open' ? 'open_source' : step,
+      direction: arrived,
     });
     if (main.current) main.current.scrollTop = 0;
   }, [step, user.id]);

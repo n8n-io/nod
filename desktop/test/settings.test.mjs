@@ -21,11 +21,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { createSettingsStore } from '../main/settings.mjs';
-import {
-  completeDesktopSetup,
-  createDesktopAnalytics,
-  trackDesktopAnalytics,
-} from '../main/analytics.mjs';
+import { createDesktopAnalytics } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { saveArtifactDownload } from '../main/downloads.mjs';
@@ -393,8 +389,6 @@ async function runningDesktop(
     fetch: request,
     createSettingsStore: () => storage.store,
     createDesktopAnalytics,
-    completeDesktopSetup,
-    trackDesktopAnalytics,
     createAppPreferencesStore: () => ({ sync: async () => {} }),
     createChatReadCursorStore: () => ({}),
     saveArtifactDownload,
@@ -706,20 +700,17 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const get = (target = event) => invoke('otto:settings:get', target);
   const save = (value, target = event) => invoke('otto:settings:save', target, value);
   assert.equal(f.handlers.has('otto:settings:reveal'), false);
-  const analytics = (target = event) => invoke('otto:analytics:configuration', target);
   for (const rejected of [
     { sender: { mainFrame: frame }, senderFrame: frame },
     { sender: window.webContents, senderFrame: { url: frame.url } },
   ]) {
     await assert.rejects(get(rejected));
     await assert.rejects(save({ composioApiKey: 'synthetic-injected-key' }, rejected));
-    await assert.rejects(analytics(rejected));
   }
   for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
     frame.url = url;
     await assert.rejects(get());
     await assert.rejects(save({ theme: 'dark' }));
-    await assert.rejects(analytics());
   }
   frame.url = 'http://127.0.0.1:4310/onboarding';
   const previous = await readFile(f.storage.path, 'utf8');
@@ -736,11 +727,9 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const vaultCiphertext = JSON.parse(previous).secrets.vaultKey;
   assert.ok(vaultCiphertext);
   assert.notEqual(vaultCiphertext, vaultKey);
-  for (const returned of [await get(), await analytics()]) {
-    const serialized = JSON.stringify(returned);
-    assert.equal(serialized.includes(vaultKey), false);
-    assert.equal(serialized.includes(vaultCiphertext), false);
-  }
+  const serialized = JSON.stringify(await get());
+  assert.equal(serialized.includes(vaultKey), false);
+  assert.equal(serialized.includes(vaultCiphertext), false);
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
   window.destroy();

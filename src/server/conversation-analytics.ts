@@ -61,7 +61,7 @@ Labels describe the kind of work, never its private topic or content. Exclude na
 Reuse relevant labels already supplied with known tasks. Preserve a continuing task's labels unless the user changes the goal. Choose the final requested operation: drafting then sending an email is send/email; draft-only is draft/email. A send request remains send while drafting or waiting for approval. Summarizing email stays summarize/email when the answer appears in chat. Distinguish schedule setup from the work its later runs perform. Never guess the goal from the connected app alone.
 One task is one user goal, even with several requested activities. Return up to eight unique action:subject pairs, using the same labeling rules and including the primary pair. Include only requested components, not assumed steps or tool calls. Finding documents, totaling them and emailing the total as one result is one task with find:document, analyze:document and send:email. Independent requested results get separate tasks. Preserve prior activities on continuation and include newly requested corrections, such as edit:document, even when the primary goal stays unchanged. Activities describe requested work, never proof of execution. Infer completed only when all requested components are answered or claimed complete.
 States: ${taskOutcome.options.join(', ')}. Greetings, thanks, and ordinary conversation are not tasks.
-Reuse a supplied task_id when this turn continues, corrects, confirms, or retries that task. For every existing task_id, set request_message_id to null; Otto preserves the original request. Never invent IDs. Use null for a new goal, even when its labels match a completed task. A new user task must cite a current user message as request_message_id. Scheduled work may use null. Several independent requests in one message may be separate tasks. Return only tasks affected by this turn, not every known task.
+Reuse a supplied task_id when this turn continues, corrects, confirms, or retries that task. For every existing task_id, set request_message_id to null; Otto preserves the original request. Never invent IDs. Use null for a new goal, even when its labels match a completed task. A new user task must cite a current user message as request_message_id. Scheduled work and background task work may use null. Several independent requests in one message may be separate tasks. Return only tasks affected by this turn, not every known task.
 Distinguish setting up a schedule from carrying out its future runs. For a scheduled turn classify this run. A runtime success only means the turn ended; infer completed only when the conversation provides an actual answer or a claim of the requested result. A promise to do something is active. Questions, approvals and credentials needed are waiting. A correction that the result is wrong reopens the existing task. Do not assume silence means completed or cancelled. All completion judgments are inferred, not independent verification.
 Optionally frustration is {"signal":"explicit_complaint|repeated_correction|repeated_request","reason":"output_quality|ignored_instruction|too_slow|connection_problem|execution_failure|unclear","task_type":"category","message_ids":["evidence user message IDs"]}.
 Require explicit dissatisfaction or at least two user messages demonstrating the same unresolved request/correction, including a current user message. Use ignored_instruction when a reply answers a different request or violates an explicit constraint; use output_quality when it addresses the request but the content is wrong. Routine edits, neutral follow-ups, urgency, or negative text quoted for a task are not frustration. Do not infer personality, mood, mental health or sentiment about third parties. Return at most one frustration signal per turn. Never return excerpts, names, URLs, summaries, explanations or additional keys.`;
@@ -172,6 +172,7 @@ export function createConversationAnalytics(options: {
         analytics.capture(ownerId, event, {
           ...delivery,
           runId,
+          replaySessionId: analytics.replaySession(turnId),
           consentRevision: consent.revision,
         });
     };
@@ -187,7 +188,7 @@ export function createConversationAnalytics(options: {
     const turn = turns[0];
     if (
       !turn ||
-      !['user', 'schedule', 'resume'].includes(turn.source) ||
+      !['user', 'schedule', 'resume', 'task'].includes(turn.source) ||
       String(turn.source_id ?? '').startsWith('onboarding:')
     )
       return;
@@ -264,6 +265,7 @@ export function createConversationAnalytics(options: {
             runtime_status: turn.status,
             messages: context,
             ...(turn.source === 'schedule' ? { scheduled_request: text(turn.prompt) } : {}),
+            ...(turn.source === 'task' ? { task_request: text(turn.prompt) } : {}),
             tasks: knownTasks.map((task) => ({
               id: task.id,
               task_type: task.task_type,
@@ -301,7 +303,9 @@ export function createConversationAnalytics(options: {
           ? !existing.has(task.task_id) || task.request_message_id !== null
           : turn.source === 'schedule'
             ? task.request_message_id !== null
-            : !task.request_message_id || !currentUsers.has(task.request_message_id),
+            : turn.source === 'task'
+              ? task.request_message_id !== null && !currentUsers.has(task.request_message_id)
+              : !task.request_message_id || !currentUsers.has(task.request_message_id),
       )
     ) {
       health('invalid');
@@ -485,14 +489,18 @@ export function createConversationAnalytics(options: {
     initialize,
     start,
     observe(turnId: string, operation: () => Promise<void>) {
-      return analytics.withRun(ownerId, async () => {
-        const finish = start(turnId);
-        try {
-          await operation();
-        } finally {
-          finish();
-        }
-      });
+      return analytics.withRun(
+        ownerId,
+        async () => {
+          const finish = start(turnId);
+          try {
+            await operation();
+          } finally {
+            finish();
+          }
+        },
+        turnId,
+      );
     },
     async drain() {
       await serial;

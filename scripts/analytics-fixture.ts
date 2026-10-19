@@ -25,7 +25,6 @@ const configuration = {
   model: 'Fixture model',
   llmReady: true,
   integrationsReady: false,
-  localOnly: false,
   conversationResetEnabled: false,
 };
 const messages: unknown[] = [];

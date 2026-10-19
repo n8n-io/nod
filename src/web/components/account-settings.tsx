@@ -29,7 +29,7 @@ import {
 } from './ui';
 import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
-import { captureAnalytics } from '../lib/analytics';
+import { captureAnalytics, type AnalyticsProperties } from '../lib/analytics';
 import { SearchPicker, TimeZonePicker } from './time-zone-picker';
 import {
   dateFormatFrom,
@@ -373,7 +373,9 @@ export function AccountSettings({
     if (recordedTab.current === key) return;
     recordedTab.current = key;
     captureAnalytics('otto_settings_viewed', {
-      tab: value.toLowerCase() as Lowercase<AccountTab>,
+      tab: value
+        .toLowerCase()
+        .replace(' ', '_') as AnalyticsProperties<'otto_settings_viewed'>['tab'],
     });
   }
   const id = useId();

@@ -673,7 +673,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'create', ...scheduleAnalytics(row) },
+      properties: {
+        operation: 'create',
+        ...scheduleAnalytics(row),
+        actor: provenance ? 'agent' : 'user',
+      },
     });
     return value(row);
   }
@@ -737,7 +741,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'update', ...scheduleAnalytics(row) },
+      properties: {
+        operation: 'update',
+        ...scheduleAnalytics(row),
+        actor: provenance ? 'agent' : 'user',
+      },
     });
     return value(row);
   }
@@ -759,7 +767,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     refresh();
     dependencies.analytics?.({
       event: 'otto_schedule_changed',
-      properties: { operation: 'delete', ...scheduleAnalytics(row) },
+      properties: { operation: 'delete', ...scheduleAnalytics(row), actor: 'user' },
     });
     return { ok: true };
   }

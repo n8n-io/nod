@@ -27,7 +27,6 @@ ipcRenderer.on('otto:feedback:open', () => {
 });
 
 contextBridge.exposeInMainWorld('ottoDesktop', {
-  getAnalyticsConfiguration: () => ipcRenderer.invoke('otto:analytics:configuration'),
   openSettings: (section = 'general') => ipcRenderer.invoke('otto:settings:open', section),
   openExternal: (url) => ipcRenderer.invoke('otto:external', url),
   getSettings: () => ipcRenderer.invoke('otto:settings:get'),

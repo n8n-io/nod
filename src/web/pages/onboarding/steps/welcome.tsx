@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { OttoGlyph, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import type { StepProps } from '..';
+import { captureAnalytics } from '../../../lib/analytics';
 import { Bubble, Messages, useReveal, type RevealStep } from '../motion';
 
 const sequence: RevealStep[] = [
@@ -24,10 +25,14 @@ export function Welcome({ arrived, onNext }: StepProps) {
     played,
     done,
     replay,
-    skip,
+    skip: skipReveal,
   } = useReveal(sequence, {
     enabled: arrived === 'forward',
   });
+  const skip = () => {
+    captureAnalytics('otto_onboarding_step_skipped', { step: 'welcome' });
+    skipReveal();
+  };
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.target !== document.body || event.repeat) return;

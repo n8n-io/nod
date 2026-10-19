@@ -53,6 +53,7 @@ function messageView(
 
 export interface AppDependencies {
   analytics?: CaptureAnalytics;
+  linkReplay?: (turnId: string, sessionId: string) => void;
   admission?: WorkAdmission;
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
@@ -279,7 +280,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       throw Object.assign(new Error('An attachment is unavailable.'), { statusCode: 400 });
     const prompt =
       input.text || 'Review the attached files and briefly describe what they contain.';
-    return (dependencies.submitMessage ?? submitUserMessage)(
+    const submitted = await (dependencies.submitMessage ?? submitUserMessage)(
       prompt,
       input.attachmentIds.map((id) =>
         artifactView(result.rows.find((artifact) => artifact.id === id)!),
@@ -292,6 +293,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
         clientMessageId,
       },
     );
+    const replaySession = z.uuid().safeParse(request.headers['x-otto-replay-session']).data;
+    if (replaySession) dependencies.linkReplay?.(submitted.turnId, replaySession);
+    return submitted;
   });
   app.post('/api/thread/stop', async () => {
     const { browsers } = await stopThread();

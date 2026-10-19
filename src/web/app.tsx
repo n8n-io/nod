@@ -475,6 +475,7 @@ function AccountApp({
   useEffect(() => {
     if (sessionState.loading || !session?.user) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
+    if (path === '/memory' && session.settings?.onboardingCompleted) return;
     capturePageview(
       !session.settings?.onboardingCompleted && !secure
         ? '/onboarding'
@@ -555,6 +556,9 @@ export function App() {
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
+  useEffect(() => {
+    if (/^\/privacy\/?$/.test(path)) capturePageview('/privacy');
+  }, [path]);
   useEffect(
     () =>
       onFeedbackRequested(() => {

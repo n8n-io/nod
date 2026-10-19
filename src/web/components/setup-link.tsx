@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
 import type { AppSetupStatus } from '../../shared/contracts';
 import { api } from '../lib/api';
+import { captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
@@ -101,7 +102,11 @@ function SetupAction({
       <button
         type="button"
         data-setup={setup}
-        onClick={(event) => onConnect(href, event.currentTarget)}
+        onClick={(event) => {
+          captureAnalytics('otto_setup_link_clicked', { setup });
+          captureAnalytics('otto_app_connect_clicked', { entry: 'chat', result: 'opened' });
+          onConnect(href, event.currentTarget);
+        }}
       >
         {app ? (
           <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={18} />
@@ -122,6 +127,7 @@ function SetupAction({
           : 'noopener noreferrer'
       }
       referrerPolicy="no-referrer"
+      onClick={() => captureAnalytics('otto_setup_link_clicked', { setup })}
       title={href.startsWith('https://') ? new URL(href).host : undefined}
     >
       <Icon size={16} aria-hidden="true" />

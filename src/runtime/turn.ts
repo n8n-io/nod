@@ -11,4 +11,5 @@ export interface Turn {
   confirm(result: unknown): Promise<unknown>;
   delegate?(title: string, instruction: string): Promise<string>;
   followUp?(text: string): string;
+  pageVisited?(url: string, subagent: boolean): void;
 }

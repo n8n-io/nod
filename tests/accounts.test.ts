@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
+import { createLedger } from '../src/server/ledger.ts';
 
 describe('account routes', () => {
   const origin = 'http://localhost:4399';
@@ -84,7 +85,6 @@ describe('account routes', () => {
         provider: available
           ? { capture: (event) => captured.push(event), shutdown: async () => {} }
           : undefined,
-        deployment: 'local',
         environment: 'production',
         dataRoot: '.',
         installationId,
@@ -194,7 +194,6 @@ describe('analytics privacy', () => {
     const installationId = randomUUID();
     const analytics = await createAnalytics({
       provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
-      deployment: 'local',
       environment: 'production',
       dataRoot: '.',
       installationId,
@@ -221,6 +220,169 @@ describe('analytics privacy', () => {
     });
     assert.equal(captured.length, 1);
     assert.equal(captured[0].distinctId, `local:${installationId}`);
+  });
+
+  test('visited websites and secure entries send only the registrable domain of an address', async () => {
+    const { createWebsiteVisits } = await import('../src/server/analytics-connections.ts');
+    const { captureSecureEntry } = await import('../src/server/vault-use.ts');
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('owner-fixture', true);
+    const capture = analytics.forOwner('owner-fixture');
+    const addresses = [
+      'https://checkout.shop.example.co.uk/orders/private-person?email=person%40example.com#card',
+      'https://www.example.co.uk/other',
+      'http://192.168.1.20/admin',
+      'http://localhost:4310/vault',
+      'https://printer.local/status',
+    ];
+    analytics.withRun('owner-fixture', () => {
+      const visited = createWebsiteVisits(analytics, 'owner-fixture');
+      for (const address of addresses) {
+        visited(address, 'browser', false);
+        visited(address, 'fetch', true);
+      }
+    });
+    for (const origin of addresses) {
+      captureSecureEntry(capture, { kind: 'password', origin }, 'requested');
+      captureSecureEntry(
+        capture,
+        { kind: 'card', origin, payment: { amount: 1234.5678, currency: 'EUR' } },
+        'submitted',
+      );
+      captureSecureEntry(capture, { kind: 'otp', origin }, 'requested');
+    }
+    const sent = captured.map(({ event, properties }) => {
+      const { analytics_schema, deployment, environment, capture_source, run_id, ...rest } =
+        properties;
+      return { event, ...rest };
+    });
+    assert.deepEqual(
+      sent.filter(({ event }) => event === 'otto_website_visited'),
+      [{ event: 'otto_website_visited', domain: 'example.co.uk', via: 'browser', subagent: false }],
+    );
+    const entries = sent.filter(({ event }) => event === 'otto_secure_entry_changed');
+    assert.equal(entries.length, 15);
+    assert.deepEqual(
+      new Set(entries.map((entry) => JSON.stringify(entry))),
+      new Set(
+        [
+          { kind: 'sign_in', status: 'requested', domain: 'example.co.uk' },
+          { kind: 'sign_in', status: 'requested' },
+          {
+            kind: 'payment',
+            status: 'submitted',
+            domain: 'example.co.uk',
+            currency: 'EUR',
+            amount: 1234.57,
+          },
+          { kind: 'payment', status: 'submitted', currency: 'EUR', amount: 1234.57 },
+          { kind: 'code', status: 'requested' },
+        ].map((properties) =>
+          JSON.stringify({ event: 'otto_secure_entry_changed', ...properties }),
+        ),
+      ),
+    );
+    for (const value of [
+      'checkout',
+      'shop.',
+      'private-person',
+      'person%40',
+      '192.168',
+      'localhost',
+    ])
+      assert.ok(!JSON.stringify(captured).includes(value), value);
+  });
+
+  test('model usage analytics never send custom endpoint or unbounded model names', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('owner-fixture', true);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: 'owner-fixture',
+      analytics: analytics.forOwner('owner-fixture'),
+    });
+    const usage = { category: 'review', operation: 'review', status: 'succeeded' } as const;
+    await ledger
+      .decisions({
+        check: async (_request, _signal, report) => {
+          report?.({
+            ...usage,
+            id: randomUUID(),
+            provider: 'compatible',
+            model: 'private-finance-model',
+            durationMs: 12.4,
+            inputTokens: 10,
+            outputTokens: 5,
+            costUsd: 0.0000123456,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
+            provider: 'openrouter',
+            model: 'acme/Private Person',
+            durationMs: 0,
+          });
+          report?.({
+            ...usage,
+            id: randomUUID(),
+            provider: 'openai-codex',
+            model: 'gpt-5.1-codex',
+            durationMs: 0,
+            costUsd: null,
+            estimateUsd: 0.5,
+          });
+          return {};
+        },
+      })
+      .check({ instructions: '', input: {}, question: { name: 'answer', choices: [] } });
+    const shared = { purpose: 'review', outcome: 'succeeded' };
+    assert.deepEqual(
+      captured.map(({ properties }) => {
+        const { analytics_schema, deployment, environment, capture_source, ...rest } = properties;
+        return rest;
+      }),
+      [
+        {
+          ...shared,
+          provider: 'compatible',
+          model: 'custom',
+          input_tokens: 10,
+          output_tokens: 5,
+          cost_usd: 0.000012,
+          pricing: 'api',
+          duration_ms: 12,
+        },
+        {
+          ...shared,
+          provider: 'openrouter',
+          model: 'custom',
+          input_tokens: 0,
+          output_tokens: 0,
+          pricing: 'unavailable',
+        },
+        {
+          ...shared,
+          provider: 'openai',
+          model: 'gpt-5.1-codex',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0.5,
+          pricing: 'plan_estimate',
+        },
+      ],
+    );
   });
 });
 
@@ -608,11 +770,49 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
     const address = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
     const owner = await f.create('fixture-owner', createPiModelBackend());
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      environment: 'production',
+      dataRoot: '.',
+      installationId: randomUUID(),
+    });
+    analytics.setUsageData('fixture-owner', true);
+    owner.register(Fastify(), analytics.forOwner('fixture-owner'));
     const id = await owner.addEndpoint(
       `${address.slice('http://'.length)}/`,
       'fixture-endpoint-key',
     );
     await owner.select({ connectionId: id, modelId: 'fixture-local', effort: 'off' });
+    const { captureConnectionInventory } = await import('../src/server/analytics-connections.ts');
+    await captureConnectionInventory(
+      analytics,
+      'fixture-owner',
+      async () => [],
+      () => owner.analyticsConnections(),
+    );
+    assert.deepEqual(
+      captured.map(({ event, properties }) => {
+        const { analytics_schema, deployment, environment, capture_source, ...rest } = properties;
+        return { event, ...rest };
+      }),
+      [
+        {
+          event: 'otto_model_connection_changed',
+          provider: 'compatible',
+          method: 'api_key',
+          status: 'connected',
+        },
+        {
+          event: 'otto_model_connection_observed',
+          provider: 'compatible',
+          method: 'api_key',
+          selected: true,
+          model: 'custom',
+          effort: 'off',
+        },
+      ],
+    );
     const access = await owner.resolve();
     assert.equal(access.definition.spec.baseUrl, `${address}/v1`);
     assert.deepEqual(await access.read(), {

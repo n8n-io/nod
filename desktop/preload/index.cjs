@@ -7,7 +7,6 @@ function subscribe(channel, listener) {
 }
 
 contextBridge.exposeInMainWorld('ottoDesktop', {
-  getAnalyticsConfiguration: () => ipcRenderer.invoke('otto:analytics:configuration'),
   status: () => ipcRenderer.invoke('otto:status'),
   getSettings: () => ipcRenderer.invoke('otto:settings:get'),
   saveSettings: (input) => ipcRenderer.invoke('otto:settings:save', input),

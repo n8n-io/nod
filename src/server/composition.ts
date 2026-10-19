@@ -16,9 +16,10 @@ import {
   analyticsEnabled,
   analyticsEnvironment,
   createAnalytics,
+  toolUsed,
   type CaptureAnalytics,
 } from './analytics.ts';
-import { captureConnectionInventory } from './analytics-connections.ts';
+import { captureConnectionInventory, createWebsiteVisits } from './analytics-connections.ts';
 import { createConversationAnalytics } from './conversation-analytics.ts';
 import {
   BrowserActionError,
@@ -387,7 +388,6 @@ async function initializeApplication(
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
-    deployment: 'local',
     environment: analyticsEnvironment(process.env),
     dataRoot,
     installationId: process.env.OTTO_ANALYTICS_ID,
@@ -398,12 +398,15 @@ async function initializeApplication(
   const captureAnalytics: CaptureAnalytics = (event, delivery) => {
     analytics.capture(ownerId, event, delivery);
     if (
-      event.event === 'otto_connection_changed' &&
-      ['connected', 'disconnected'].includes(event.properties.status)
+      (event.event === 'otto_connection_changed' &&
+        ['connected', 'disconnected'].includes(event.properties.status)) ||
+      (event.event === 'otto_model_connection_changed' && event.properties.status !== 'failed') ||
+      (event.event === 'otto_settings_updated' && event.properties.section === 'models')
     )
       void observeConnections?.();
   };
   const analyticsConsent = () => analytics.consent(ownerId);
+  const websiteVisited = createWebsiteVisits(analytics, ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
@@ -432,7 +435,7 @@ async function initializeApplication(
   adapters.integrationKey?.onSecrets((values) => secrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
-  const ledger = createLedger({ pool, ownerId });
+  const ledger = createLedger({ pool, ownerId, analytics: captureAnalytics });
   await ledger.initialize();
   const { computer, workspace } = adapters;
   const curator = ledger.curator(memoryCurator);
@@ -506,7 +509,22 @@ async function initializeApplication(
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),
-    observe: adapters.observe,
+    pageVisited: (url, subagent) => websiteVisited(url, 'browser', subagent),
+    observe: (turnId, event) => {
+      if (event.type === 'tool_end') captureAnalytics(toolUsed(event));
+      if (
+        event.type === 'tool_start' &&
+        ['fetch_content', 'get_search_content'].includes(event.name) &&
+        event.input &&
+        typeof event.input === 'object'
+      ) {
+        const { url, urls } = event.input as { url?: unknown; urls?: unknown };
+        for (const address of [url, ...(Array.isArray(urls) ? urls.slice(0, 20) : [])])
+          if (typeof address === 'string')
+            websiteVisited(address, 'fetch', Boolean(event.execution?.parentRunId));
+      }
+      adapters.observe?.(turnId, event);
+    },
   });
   const speech = createSpeech(adapters.speech);
   let memoryStore = adapters.objectStore;
@@ -531,12 +549,19 @@ async function initializeApplication(
         )
         .map((entry) => entry.text),
   });
-  const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+  const learning = createMemoryLearning({
+    pool,
+    ownerId,
+    memory,
+    curator,
+    analytics: captureAnalytics,
+  });
   const learnedSkills = createLearnedSkills({
     memory,
     curator,
     builtIn: [...skillLibrary.catalog.map((skill) => skill.name), ...coreSkills],
     redact: createErrorRedactor(secrets),
+    analytics: captureAnalytics,
   });
   const personal = createPersonalService({
     analytics: captureAnalytics,
@@ -790,6 +815,7 @@ async function initializeApplication(
     },
     (reply) => trust.answer(reply),
     communication.describe,
+    captureAnalytics,
   );
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   const reactions = createAgentReactionService({
@@ -832,14 +858,18 @@ async function initializeApplication(
   observeConnections = () =>
     (pendingInventory = pendingInventory
       .then(() =>
-        captureConnectionInventory(analytics, ownerId, async () =>
-          (
-            await Promise.all([
-              integrations.analyticsConnections(),
-              discovered.analyticsConnections(),
-              browserConnections.analyticsConnections(),
-            ])
-          ).flat(),
+        captureConnectionInventory(
+          analytics,
+          ownerId,
+          async () =>
+            (
+              await Promise.all([
+                integrations.analyticsConnections(),
+                discovered.analyticsConnections(),
+                browserConnections.analyticsConnections(),
+              ])
+            ).flat(),
+          () => adapters.models?.analyticsConnections() ?? [],
         ),
       )
       .catch(() => {}));
@@ -893,6 +923,7 @@ async function initializeApplication(
   });
   payments = await createPayments(pool, {
     ownerId,
+    analytics: captureAnalytics,
     present: (turn, input) => communication.present(turn.threadId, input),
     uses: vault.uses,
     inOtto: trust.inOtto,
@@ -915,6 +946,7 @@ async function initializeApplication(
     await startThreadWorkers({
       present: communication.present,
       analytics: captureAnalytics,
+      currentModel: () => adapters.model,
       observeTurn: conversationAnalytics.observe,
       consumers,
       artifacts,
@@ -1222,6 +1254,7 @@ async function initializeApplication(
   };
   const app = await createApp({
     analytics: captureAnalytics,
+    linkReplay: analytics.linkReplay,
     admission,
     artifacts,
     submitMessage: userMessages.submit,
@@ -1239,7 +1272,7 @@ async function initializeApplication(
         integrationsReady: adapters.integrations.configured,
       }),
   });
-  adapters.models?.register(app);
+  adapters.models?.register(app, captureAnalytics);
   adapters.integrationKey?.register(app, integrations);
   adapters.integrationAccess?.register(app);
   app.addHook('preClose', async () => {
