@@ -784,14 +784,14 @@ async function checkForUpdates(manual = true) {
       const candidate = await updates.check();
       updateFailed = false;
       if (quitting) return;
-      if (checkingUpdates === checking) checkingUpdates = undefined;
-      refreshUpdateMenu();
       if (!candidate) {
         if (manual)
           await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
         return;
       }
       if (!manual && (await notifyUpdate(candidate))) return;
+      if (checkingUpdates === checking) checkingUpdates = undefined;
+      refreshUpdateMenu();
       const { response } = await dialog.showMessageBox({
         message: `Otto ${candidate.version} is ready.`,
         buttons: ['Restart', 'Later'],
