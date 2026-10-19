@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { Check, Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
 import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
+import { subscribeAppEvents } from '../lib/app-events';
 import type { SetupKind } from '../lib/message-links';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
@@ -86,7 +87,7 @@ function useRequestStatus(href: string) {
   const token = vaultLink.exec(href)?.[1];
   const [status, setStatus] = useState<CredentialRequest['status']>('pending');
   useEffect(() => {
-    if (!token || status !== 'pending') return;
+    if (!token || (status !== 'pending' && status !== 'preparing')) return;
     const controller = new AbortController();
     const check = () => {
       if (document.visibilityState !== 'visible') return;
@@ -98,10 +99,21 @@ function useRequestStatus(href: string) {
         .catch(() => {});
     };
     check();
+    const unsubscribe =
+      status === 'preparing'
+        ? subscribeAppEvents(undefined, {
+            open: check,
+            error() {},
+            message: (event) => {
+              if (JSON.parse(event.data).type === 'refresh') check();
+            },
+          })
+        : undefined;
     window.addEventListener('focus', check);
     document.addEventListener('visibilitychange', check);
     return () => {
       controller.abort();
+      unsubscribe?.();
       window.removeEventListener('focus', check);
       document.removeEventListener('visibilitychange', check);
     };
@@ -124,7 +136,7 @@ function SetupAction({
 }) {
   const status = useRequestStatus(href);
   const Icon = icons[setup];
-  if (status !== 'pending')
+  if (status !== 'pending' && status !== 'preparing')
     return (
       <button type="button" data-setup={setup} data-status={status} disabled>
         {status === 'filled' ? (

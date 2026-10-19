@@ -118,7 +118,7 @@ function CredentialForm({ id }: { id: string }) {
   const [enterNew, setEnterNew] = useState(false);
   const [loginName, setLoginName] = useState<string>();
   useEffect(() => {
-    if (request?.status !== 'entering') return;
+    if (request?.status !== 'entering' && request?.status !== 'preparing') return;
     const controller = new AbortController();
     let latest = 0;
     const refresh = () => {
@@ -290,7 +290,7 @@ function CredentialForm({ id }: { id: string }) {
       </a>
       <div
         className="credential-card"
-        aria-busy={saving || (!request && !error)}
+        aria-busy={saving || (!request && !error) || request?.status === 'preparing'}
         data-analytics-private
       >
         {saving ? (
@@ -299,7 +299,7 @@ function CredentialForm({ id }: { id: string }) {
             {request && <p>{originLabel(request.origin)}</p>}
             <Loading label="Waiting for the website…" />
           </div>
-        ) : !request && !error ? (
+        ) : (!request && !error) || request?.status === 'preparing' ? (
           <div className="credential-complete" role="status">
             <h1>Secure sign-in</h1>
             <Loading label="Opening your form…" />

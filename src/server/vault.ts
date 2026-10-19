@@ -215,14 +215,13 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
   return false;
 }
 
-export function waitingTurnSql(
-  alias: string,
-  reason?: 'credentials' | 'question',
-  running = false,
-) {
-  const waiting = `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}`;
-  return `${running ? `(${alias}.status='running' OR (${waiting}))` : waiting}
-    AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
+export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
+  return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
+    AND ${openTurnSql(alias)}`;
+}
+
+function openTurnSql(alias: string) {
+  return `EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
     AND NOT ${supersededSql(alias, `newer.started_at>=${alias}.started_at`)}`;
 }
 
@@ -1194,9 +1193,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
 
   async function describe(token: string): Promise<CredentialRequest> {
     await forgetExpiredHolds();
-    const { rows } = await pool.query<RequestRow & { current_step: boolean }>(
+    const { rows } = await pool.query<RequestRow & { current_step: boolean; preparing: boolean }>(
       `SELECT r.*,(SELECT v.status FROM vault_uses v WHERE v.id=r.id AND r.status='consumed') AS operation_status,EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
-        AND ${waitingTurnSql('u', 'credentials', true)}) AS current_step FROM credential_requests r WHERE token_hash=$1 AND owner_id=$2`,
+        AND ${waitingTurnSql('u', 'credentials')}) AS current_step,EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
+        AND u.status='running' AND ${openTurnSql('u')}) AS preparing FROM credential_requests r WHERE token_hash=$1 AND owner_id=$2`,
       [tokenHash(token), owner],
     );
     const row = rows[0];
@@ -1251,7 +1251,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               ? 'entering'
               : pending
                 ? 'pending'
-                : 'expired',
+                : row.status === 'pending' && row.preparing
+                  ? 'preparing'
+                  : 'expired',
       ...(savedEntries ? { savedEntries } : {}),
       ...(selectedEntryId ? { selectedEntryId } : {}),
     };

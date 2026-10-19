@@ -166,7 +166,7 @@ export interface CredentialRequest {
   label: string;
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
-  status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
+  status: 'preparing' | 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
   savedEntries?: VaultLoginEntry[];
   selectedEntryId?: string;
 }
