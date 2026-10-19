@@ -9,7 +9,7 @@ import pg from 'pg';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
-import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
+import { memoryObjectStore } from './fixtures/object-store.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -26,12 +26,13 @@ test('analytics drops revoked owner queues while preserving another owner and re
     received.push(...JSON.parse(raw).batch);
     return Response.json({ status: 1 });
   });
-  const consented = new Set(['hosted:alex', 'hosted:sam']);
+  const installationId = randomUUID();
+  const local = `local:${installationId}`;
   const analytics = await createAnalytics({
-    provider: createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) }),
-    deployment: 'hosted',
+    provider: createPostHogAnalytics(),
     environment: 'production',
     dataRoot: '.',
+    installationId,
   });
   t.after(() => analytics.shutdown());
   for (const owner of ['alex', 'sam', 'never']) {
@@ -42,36 +43,21 @@ test('analytics drops revoked owner queues while preserving another owner and re
   await analytics.shutdown();
   assert.deepEqual(
     received.map((event) => event.distinct_id),
-    ['hosted:sam'],
+    [local],
   );
 
   received.length = 0;
-  const remote = await createAnalytics({
-    provider: createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) }),
-    deployment: 'hosted',
-    environment: 'production',
-    dataRoot: '.',
-  });
-  remote.setUsageData('alex', true);
-  remote.capture('alex', { event: 'otto_chat_stopped' });
-  consented.delete('hosted:alex');
-  await remote.shutdown();
-  assert.equal(received.length, 0);
-
-  const ownerBound = createPostHogAnalytics({ permitted: async (owner) => consented.has(owner) });
+  const ownerBound = createPostHogAnalytics();
   const signal = new AbortController().signal;
+  ownerBound.capture({ distinctId: local, event: 'otto_chat_stopped', properties: {} }, signal);
   ownerBound.capture(
-    { distinctId: 'hosted:sam', event: 'otto_chat_stopped', properties: {} },
-    signal,
-  );
-  ownerBound.capture(
-    { distinctId: 'hosted:alex', event: 'otto_chat_stopped', properties: {} },
+    { distinctId: `local:${randomUUID()}`, event: 'otto_chat_stopped', properties: {} },
     signal,
   );
   await ownerBound.shutdown();
   assert.deepEqual(
     received.map((event) => event.distinct_id),
-    ['hosted:sam'],
+    [local],
   );
 });
 
@@ -147,7 +133,6 @@ test(
         dispose: () => {},
       },
       computer: fakeComputer(),
-      objectStore: createFilesystemObjectStore(objects),
       workspace: fakeWorkspace({
         open: () => {
           throw new Error('No workspace in fixture');

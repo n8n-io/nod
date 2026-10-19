@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
@@ -17,13 +17,9 @@ import { createAssistantMessageEventStream, type AssistantMessage } from '@earen
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import type { RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
-import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
-import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import {
   closeInterruptedCalls,
-  createPiCheckpoint,
   openLocalSession,
-  readPiSessionEntries,
   rebaseAt,
   removedCredential,
 } from '../src/providers/pi/checkpoint.ts';
@@ -549,26 +545,27 @@ test('codemode scripts reach only workspace and web tools, each call through the
   }
 });
 
-// Durable Pi checkpoints: rebase, stale writers, dangling tool calls, restore.
+// Local Pi sessions: rebase, legacy credential scrubbing, dangling tool calls, restore.
 
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-durable-pi-'));
-  const store = createFilesystemObjectStore(join(directory, 'objects'));
+  const directory = await mkdtemp(join(tmpdir(), 'otto-local-pi-'));
   return {
     directory,
-    store,
     threadId: randomUUID(),
     close: () => rm(directory, { recursive: true, force: true }),
   };
 }
 
-async function savedText(f: Awaited<ReturnType<typeof fixture>>) {
-  const entries = await readPiSessionEntries({
-    threadId: f.threadId,
-    sessionRoot: f.directory,
-    objectStore: f.store,
-  });
-  return entries.map((entry) => JSON.stringify(entry)).join('\n');
+async function localDirectory(f: Awaited<ReturnType<typeof fixture>>) {
+  const local = join(f.directory, 'local');
+  await mkdir(local);
+  return local;
+}
+
+async function localText(directory: string) {
+  return (
+    await Promise.all((await filesUnder(directory)).map((file) => readFile(file, 'utf8')))
+  ).join('\n');
 }
 
 function visibleContext(manager: SessionManager) {
@@ -598,28 +595,17 @@ function compactedHistory(manager: SessionManager, filler = '') {
     });
 }
 
-test('a durable saved session above the rebase size is rebased on load with the same model context', async () => {
+test('a local saved session above the rebase size is rebased on open with the same model context', async () => {
   const f = await fixture();
   try {
-    const original = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'old'),
-    });
-    compactedHistory(original.manager, 'x'.repeat(Math.ceil(rebaseAt / 5)));
-    await original.checkpoint();
-    const saved = Buffer.byteLength(await savedText(f));
-    assert.ok(saved > rebaseAt);
-    const restored = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'new'),
-    });
-    assert.deepEqual(visibleContext(restored.manager), visibleContext(original.manager));
-    assert.ok(restored.manager.getEntries().length < original.manager.getEntries().length);
-    const rewritten = Buffer.byteLength(await savedText(f));
-    assert.ok(rewritten < saved);
-    assert.ok(rewritten < rebaseAt);
+    const local = await localDirectory(f);
+    const original = SessionManager.create(local, local);
+    compactedHistory(original, 'x'.repeat(Math.ceil(rebaseAt / 5)));
+    assert.ok((await stat(original.getSessionFile()!)).size > rebaseAt);
+    const restored = openLocalSession(local);
+    assert.deepEqual(visibleContext(restored), visibleContext(original));
+    assert.ok(restored.getEntries().length < original.getEntries().length);
+    assert.ok((await stat(restored.getSessionFile()!)).size < rebaseAt);
   } finally {
     await f.close();
   }
@@ -683,35 +669,15 @@ async function filesUnder(directory: string): Promise<string[]> {
   return found;
 }
 
-test('a saved session loses old plaintext logins from model context and storage when it loads', async () => {
+test('a local session loses old plaintext logins from model context and storage when it opens', async () => {
   const f = await fixture();
   try {
-    const original = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'old'),
-    });
-    legacyLogin(original.manager);
-    await original.checkpoint();
-    const restored = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'new'),
-    });
-    const context = JSON.stringify(restored.manager.buildSessionContext().messages);
-    assert.equal(context.includes('synthetic-legacy-password'), false);
-    assert.ok(context.includes(removedCredential));
-    for (const file of await filesUnder(join(f.directory, 'objects')))
-      assert.equal((await readFile(file, 'utf8')).includes('synthetic-legacy-password'), false);
-
-    const local = join(f.directory, 'local');
-    await mkdir(local);
+    const local = await localDirectory(f);
     legacyLogin(SessionManager.create(local, local));
     const opened = openLocalSession(local);
-    assert.equal(
-      JSON.stringify(opened.buildSessionContext().messages).includes('synthetic-legacy-password'),
-      false,
-    );
+    const context = JSON.stringify(opened.buildSessionContext().messages);
+    assert.equal(context.includes('synthetic-legacy-password'), false);
+    assert.ok(context.includes(removedCredential));
     const files = (await readdir(local)).filter((name) => name.endsWith('.jsonl'));
     assert.equal(files.length, 1);
     assert.equal(
@@ -726,7 +692,8 @@ test('a saved session loses old plaintext logins from model context and storage 
 test('short legacy passwords are removed after compaction without changing message types', async () => {
   const f = await fixture();
   try {
-    const manager = SessionManager.inMemory(f.directory);
+    const local = await localDirectory(f);
+    const manager = SessionManager.create(local, local);
     legacyLogin(manager, 'q');
     const kept = manager.getLeafId()!;
     manager.appendCompaction('The saved password was q.', kept, 50, { value: 'q' });
@@ -757,27 +724,13 @@ test('short legacy passwords are removed after compaction without changing messa
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
     });
-    await f.store.write(
-      `sessions/${f.threadId}.jsonl`,
-      Buffer.from(
-        [manager.getHeader(), ...manager.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
-      ),
-      { expectedVersion: null },
-    );
-    const restored = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'new'),
-    });
+    const restored = openLocalSession(local);
     assert.doesNotMatch(
-      JSON.stringify(restored.manager.buildSessionContext().messages),
+      JSON.stringify(restored.buildSessionContext().messages),
       /password (?:was )?q/,
     );
-    assert.ok(
-      restored.manager.buildSessionContext().messages.some((message) => message.role === 'user'),
-    );
-    await restored.checkpoint();
-    assert.doesNotMatch(await savedText(f), /get_credential|"value":"q"|password (?:was )?q/);
+    assert.ok(restored.buildSessionContext().messages.some((message) => message.role === 'user'));
+    assert.doesNotMatch(await localText(local), /get_credential|"value":"q"|password (?:was )?q/);
   } finally {
     await f.close();
   }
@@ -786,23 +739,13 @@ test('short legacy passwords are removed after compaction without changing messa
 test('legacy passwords are removed from embedded JSON strings', async () => {
   const f = await fixture();
   try {
+    const local = await localDirectory(f);
     const password = 'synthetic"quoted\\password';
-    const manager = SessionManager.inMemory(f.directory);
+    const manager = SessionManager.create(local, local);
     legacyLogin(manager, password);
     manager.appendMessage({ role: 'user', content: JSON.stringify({ password }), timestamp: 6 });
-    await f.store.write(
-      `sessions/${f.threadId}.jsonl`,
-      Buffer.from(
-        [manager.getHeader(), ...manager.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
-      ),
-      { expectedVersion: null },
-    );
-    const restored = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'new'),
-    });
-    const texts = restored.manager
+    const restored = openLocalSession(local);
+    const texts = restored
       .buildSessionContext()
       .messages.flatMap((message) =>
         'content' in message
@@ -815,8 +758,7 @@ test('legacy passwords are removed from embedded JSON strings', async () => {
       assert.equal(text.includes(password), false);
       assert.equal(text.includes(JSON.stringify(password).slice(1, -1)), false);
     }
-    await restored.checkpoint();
-    assert.doesNotMatch(await savedText(f), /synthetic.*quoted/);
+    assert.doesNotMatch(await localText(local), /synthetic.*quoted/);
   } finally {
     await f.close();
   }
@@ -850,38 +792,6 @@ test('a local summary is scrubbed with credentials from its retained earlier fil
       await readFile(files[0]!, 'utf8'),
       /fixture-user|synthetic-legacy-password/,
     );
-  } finally {
-    await f.close();
-  }
-});
-
-test('failed checkpoint cleanup blocks startup and preserves the published session', async () => {
-  const f = await fixture();
-  try {
-    const original = await createPiCheckpoint({ ...f, directory: f.directory });
-    legacyLogin(original.manager);
-    await original.checkpoint();
-    const store = {
-      ...f.store,
-      remove: async () => {
-        throw new Error('Synthetic removal failure');
-      },
-    };
-    await assert.rejects(
-      createPiCheckpoint({ ...f, store, directory: join(f.directory, 'blocked') }),
-      /could not be saved/,
-    );
-    const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'restored') });
-    assert.doesNotMatch(
-      JSON.stringify(restored.manager.buildSessionContext().messages),
-      /fixture-user|synthetic-legacy-password/,
-    );
-    assert.match(
-      JSON.stringify(restored.manager.buildSessionContext().messages),
-      /removed from context/,
-    );
-    for (const file of await filesUnder(join(f.directory, 'objects')))
-      assert.doesNotMatch(await readFile(file, 'utf8'), /fixture-user|synthetic-legacy-password/);
   } finally {
     await f.close();
   }
@@ -946,335 +856,16 @@ test('closeInterruptedCalls answers each dangling tool call with an unknown-outc
   assert.equal(toolResults(manager).length, 2);
 });
 
-test('a session saved as one file before part uploads restores and keeps saving', async () => {
-  const f = await fixture();
-  try {
-    const legacy = SessionManager.inMemory(f.directory);
-    compactedHistory(legacy);
-    await f.store.write(
-      `sessions/${f.threadId}.jsonl`,
-      Buffer.from(
-        [legacy.getHeader(), ...legacy.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
-      ),
-      { expectedVersion: null },
-    );
-    const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'new') });
-    assert.deepEqual(visibleContext(restored.manager), visibleContext(legacy));
-    restored.manager.appendMessage({ role: 'user', content: 'after upgrade', timestamp: 3000 });
-    await restored.checkpoint();
-    const again = await createPiCheckpoint({ ...f, directory: join(f.directory, 'again') });
-    assert.match(JSON.stringify(visibleContext(again.manager)), /after upgrade/);
-    assert.match(JSON.stringify(visibleContext(again.manager)), /Later fixture message 2/);
-  } finally {
-    await f.close();
-  }
-});
-
-test('a session entry larger than one stored object is saved and restored', async () => {
-  const f = await fixture();
-  try {
-    const saved = await createPiCheckpoint({ ...f, directory: join(f.directory, 'old') });
-    saved.manager.appendMessage({
-      role: 'user',
-      content: 'y'.repeat(20 * 1024 * 1024),
-      timestamp: 1,
-    });
-    await saved.checkpoint();
-    const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'new') });
-    assert.deepEqual(visibleContext(restored.manager), visibleContext(saved.manager));
-  } finally {
-    await f.close();
-  }
-});
-
-for (const failure of [
-  'part-before',
-  'part-after',
-  'manifest-before',
-  'manifest-after',
-  'manifest-unreadable',
-])
-  test(`failed checkpoint ${failure} removes only unpublished parts`, async () => {
-    const f = await fixture();
-    let armed = false;
-    let failed = false;
-    const written: string[] = [];
-    const manifestKey = `sessions/${f.threadId}.jsonl`;
-    const store: PrivateObjectStore = {
-      ...f.store,
-      read: async (...args) => {
-        if (failed && failure === 'manifest-unreadable' && args[0] === manifestKey)
-          throw new Error('Synthetic read failure');
-        return f.store.read(...args);
-      },
-      write: async (...args) => {
-        if (!armed) return f.store.write(...args);
-        if (args[0] !== manifestKey) written.push(args[0]);
-        const fail =
-          args[0] === manifestKey
-            ? failure.startsWith('manifest-')
-            : failure.startsWith('part-') && written.length === 2;
-        if (fail && failure.endsWith('-before')) {
-          failed = true;
-          throw new Error('Synthetic write failure');
-        }
-        const version = await f.store.write(...args);
-        if (fail) {
-          failed = true;
-          throw new Error('Synthetic lost write acknowledgement');
-        }
-        return version;
-      },
-    };
-    try {
-      const checkpoint = await createPiCheckpoint({ ...f, store, directory: f.directory });
-      checkpoint.manager.appendMessage({
-        role: 'user',
-        content: 'synthetic-data '.repeat(700_000),
-        timestamp: 1,
-      });
-      armed = true;
-      await assert.rejects(checkpoint.checkpoint(), /could not be saved/);
-      assert.equal(written.length, 2);
-      const published = JSON.parse(
-        Buffer.from((await f.store.read(manifestKey, 1024 * 1024))!.bytes).toString(),
-      );
-      for (const key of written) {
-        const referenced = published.parts.some((id: string) => key.endsWith(`/${id}.jsonl`));
-        assert.equal(Boolean(await f.store.read(key, 15 * 1024 * 1024)), referenced);
-      }
-      const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'restored') });
-      assert.equal(
-        restored.manager.buildSessionContext().messages.some((message) => message.role === 'user'),
-        failure === 'manifest-after' || failure === 'manifest-unreadable',
-      );
-    } finally {
-      await f.close();
-    }
-  });
-
-test('a stale Pi writer cannot overwrite a newer session checkpoint', async () => {
-  const f = await fixture();
-  try {
-    const first = await createPiCheckpoint({ ...f, directory: f.directory });
-    const next = await createPiCheckpoint({ ...f, directory: f.directory });
-    await assert.rejects(first.checkpoint(), /could not be saved/);
-    next.manager.appendMessage({ role: 'user', content: 'new version', timestamp: Date.now() });
-    await next.checkpoint();
-    first.manager.appendMessage({ role: 'user', content: 'stale version', timestamp: Date.now() });
-    await assert.rejects(first.checkpoint(), /could not be saved/);
-    const restored = await createPiCheckpoint({ ...f, directory: f.directory });
-    assert.match(JSON.stringify(restored.manager.getEntries()), /new version/);
-    assert.doesNotMatch(JSON.stringify(restored.manager.getEntries()), /stale version/);
-  } finally {
-    await f.close();
-  }
-});
-
-test('real Pi awaits durable final checkpoints and restores a conversation in a fresh actor directory', async () => {
+test('a reopened local session closes dangling tool calls before the next prompt', async () => {
   const f = await fixture();
   const prompts: string[] = [];
-  let blockFinal = false;
-  let release: (() => void) | undefined;
-  let checkpointStarted: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    checkpointStarted = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const store: PrivateObjectStore = {
-    ...f.store,
-    async write(key, bytes, condition) {
-      if (blockFinal && bytes.toString().includes('Durable final fixture')) {
-        checkpointStarted!();
-        await gate;
-      }
-      return f.store.write(key, bytes, condition);
-    },
-  };
-  const factory: typeof createAgentSession = async (options) => {
-    const result = await createAgentSession(options);
-    result.session.agent.streamFunction = (model, request) => {
-      prompts.push(JSON.stringify(request.messages));
-      const message: AssistantMessage = {
-        role: 'assistant',
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        timestamp: Date.now(),
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Durable final fixture' }],
-        usage: {
-          input: 1,
-          output: 1,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 2,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-      };
-      const stream = createAssistantMessageEventStream();
-      stream.push({ type: 'start', partial: message });
-      stream.push({ type: 'done', reason: 'stop', message });
-      return stream;
-    };
-    return result;
-  };
-  const create = (name: string) =>
-    createPiAgent({
-      provider: 'openai',
-      apiKey: 'fixture',
-      sessionRoot: join(f.directory, name),
-      objectStore: store,
-      createSession: factory,
-    });
-  const first = create('first');
-  const second = create('second');
-  const final: string[] = [];
-  try {
-    const session = await first.open({
-      ...fakeExecution(f.threadId, randomUUID()),
-      systemPrompt: 'fixture',
-      ...sandbox,
-      tools: [],
-      shouldStop: () => false,
-      onEvent(event) {
-        if (event.type === 'final') final.push(event.text);
-      },
-    });
-    blockFinal = true;
-    const prompt = session.prompt('Remember synthetic context', []);
-    await started;
-    assert.deepEqual(final, []);
-    release!();
-    await prompt;
-    assert.deepEqual(final, ['Durable final fixture']);
-    blockFinal = false;
-    await first.dispose();
-    await rm(join(f.directory, 'first'), { recursive: true, force: true });
-    const restored = await second.open({
-      ...fakeExecution(f.threadId, randomUUID()),
-      systemPrompt: 'fixture',
-      ...sandbox,
-      tools: [],
-      shouldStop: () => false,
-      onEvent() {},
-    });
-    assert.equal(restored.resumed, true);
-    await restored.prompt('Continue now', []);
-    assert.match(prompts[1], /Remember synthetic context/);
-    assert.match(prompts[1], /Durable final fixture/);
-  } finally {
-    release!();
-    await first.dispose();
-    await second.dispose();
-    await f.close();
-  }
-});
-
-test('real Pi persists its user message and tool call before a side effect and records the result before continuing', async () => {
-  const f = await fixture();
-  let turns = 0;
-  let executed = 0;
-  const factory: typeof createAgentSession = async (options) => {
-    const result = await createAgentSession(options);
-    result.session.agent.streamFunction = (model) => {
-      const tool = turns++ === 0;
-      const message: AssistantMessage = {
-        role: 'assistant',
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        timestamp: Date.now(),
-        stopReason: tool ? 'toolUse' : 'stop',
-        content: tool
-          ? [{ type: 'toolCall', id: 'effect-one', name: 'effect', arguments: {} }]
-          : [{ type: 'text', text: 'Done' }],
-        usage: {
-          input: 1,
-          output: 1,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 2,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-      };
-      const stream = createAssistantMessageEventStream();
-      stream.push({ type: 'start', partial: message });
-      stream.push({ type: 'done', reason: tool ? 'toolUse' : 'stop', message });
-      return stream;
-    };
-    return result;
-  };
+  const saved = join(f.directory, 'sessions', f.threadId);
+  await mkdir(saved, { recursive: true });
+  dangling(SessionManager.create(saved, saved), ['call-one']);
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture',
-    sessionRoot: join(f.directory, 'cache'),
-    objectStore: f.store,
-    createSession: factory,
-  });
-  try {
-    const session = await agent.open({
-      ...fakeExecution(f.threadId, randomUUID()),
-      systemPrompt: 'fixture',
-      ...sandbox,
-      shouldStop: () => false,
-      onEvent() {},
-      tools: [
-        {
-          name: 'effect',
-          description: 'fixture',
-          parameters: { type: 'object', properties: {} },
-          async execute() {
-            const saved = await savedText(f);
-            assert.match(saved, /synthetic user request/);
-            assert.match(saved, /toolCall/);
-            executed++;
-            return { content: [{ type: 'text', text: 'durable receipt' }] };
-          },
-        },
-      ],
-    });
-    await session.prompt('synthetic user request', []);
-    assert.equal(executed, 1);
-    assert.equal(turns, 2);
-    await agent.dispose();
-    const resumed = await createPiCheckpoint({
-      store: f.store,
-      threadId: f.threadId,
-      directory: join(f.directory, 'replacement'),
-    });
-    assert.equal(
-      resumed.manager
-        .getEntries()
-        .filter((entry) => entry.type === 'message' && entry.message.role === 'toolResult').length,
-      1,
-    );
-    assert.match(JSON.stringify(resumed.manager.buildSessionContext().messages), /durable receipt/);
-  } finally {
-    await agent.dispose();
-    await f.close();
-  }
-});
-
-test('a restored durable session closes dangling tool calls before the next prompt', async () => {
-  const f = await fixture();
-  const prompts: string[] = [];
-  const saved = await createPiCheckpoint({
-    store: f.store,
-    threadId: f.threadId,
-    directory: join(f.directory, 'old'),
-  });
-  dangling(saved.manager, ['call-one']);
-  await saved.checkpoint();
-  await createPiCheckpoint({ ...f, directory: join(f.directory, 'reload') });
-  assert.match(await savedText(f), /outcome is unknown/);
-  const agent = createPiAgent({
-    provider: 'openai',
-    apiKey: 'fixture',
-    sessionRoot: join(f.directory, 'new'),
-    objectStore: f.store,
+    sessionRoot: join(f.directory, 'sessions'),
     createSession: async (options) => {
       const result = await createAgentSession(options);
       result.session.agent.streamFunction = (model, request) => {

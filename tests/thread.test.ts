@@ -28,7 +28,7 @@ import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
-import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
+import { memoryObjectStore } from './fixtures/object-store.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -90,7 +90,6 @@ test(
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
       provider: { capture: (event) => analyticsEvents.push(event), shutdown: async () => {} },
-      deployment: 'local',
       environment: 'development',
       dataRoot: root,
     });
@@ -3079,7 +3078,6 @@ test(
 
 const memoryFixture = async (tables: string[] = []) => {
   const schema = `test_memory_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
-  const root = await mkdtemp(join(tmpdir(), 'memory-test-'));
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const url = new URL(process.env.TEST_DATABASE_URL!);
@@ -3090,7 +3088,7 @@ const memoryFixture = async (tables: string[] = []) => {
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
-  const store = createFilesystemObjectStore(root);
+  const store = memoryObjectStore();
   const memory = createMemoryService({ pool, ownerId, store });
   const post = async (
     text: string,
@@ -3125,14 +3123,12 @@ const memoryFixture = async (tables: string[] = []) => {
     pool,
     ownerId,
     store,
-    root,
     post,
     memory,
     close: async () => {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
-      await rm(root, { recursive: true, force: true });
     },
   };
 };
@@ -3141,7 +3137,7 @@ test(
   'owner memory keeps evidence, replacements and every note across sessions',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
-    const { pool, ownerId, store, root, post, memory, close } = await memoryFixture();
+    const { pool, ownerId, store, post, memory, close } = await memoryFixture();
     try {
       const short = 'Keep progress reports short.';
       const first = await post(short);
@@ -3228,20 +3224,28 @@ test(
       await assert.rejects(memory.forget(saved.path), { statusCode: 404 });
 
       const chess = 'I play chess on Sundays.';
-      const path = join(root, 'memory', 'MEMORY.md');
-      const document = JSON.parse(await readFile(path, 'utf8'));
+      const memoryObject = async () => (await store.read('memory/MEMORY.md', 1_000_000))!;
+      const document = JSON.parse(Buffer.from((await memoryObject()).bytes).toString('utf8'));
       document.entries.push(
         { ...document.entries[0], slug: 'leak', text: 'The store key is sk-fixturefixture1234.' },
         { slug: 'broken' },
       );
-      await writeFile(path, JSON.stringify(document));
+      await store.write('memory/MEMORY.md', Buffer.from(JSON.stringify(document)), {
+        expectedVersion: (await memoryObject()).version,
+      });
       assert.doesNotMatch(await memory.context(), /sk-fixture|broken/);
       await memory.learn({ area: 'about', quote: chess }, await post(chess));
-      assert.doesNotMatch(await readFile(path, 'utf8'), /sk-fixture|broken/);
+      assert.doesNotMatch(
+        Buffer.from((await memoryObject()).bytes).toString('utf8'),
+        /sk-fixture|broken/,
+      );
 
-      await writeFile(
-        path,
-        `# Memory\n\n## ${randomUUID()}\nKind: preference\nUpdated: 2026-01-01T00:00:00.000Z\nSources: ${randomUUID()}\n\nPrefers email updates.\n\n## ${randomUUID()}\nKind: pattern\nUpdated: 2026-01-02T00:00:00.000Z\nSources: ${randomUUID()}\n\nOften asks for a design first.\n\n## not-an-id\nKind: fact\n\nBroken entry.\n`,
+      await store.write(
+        'memory/MEMORY.md',
+        Buffer.from(
+          `# Memory\n\n## ${randomUUID()}\nKind: preference\nUpdated: 2026-01-01T00:00:00.000Z\nSources: ${randomUUID()}\n\nPrefers email updates.\n\n## ${randomUUID()}\nKind: pattern\nUpdated: 2026-01-02T00:00:00.000Z\nSources: ${randomUUID()}\n\nOften asks for a design first.\n\n## not-an-id\nKind: fact\n\nBroken entry.\n`,
+        ),
+        { expectedVersion: (await memoryObject()).version },
       );
       assert.deepEqual(JSON.parse(await memory.context()), {
         preferences: ['prefers-email-updates: Prefers email updates.'],
@@ -3252,7 +3256,7 @@ test(
         'tentative',
       );
       await memory.learn({ area: 'about', quote: chess }, await post(chess));
-      const migrated = await readFile(path, 'utf8');
+      const migrated = Buffer.from((await memoryObject()).bytes).toString('utf8');
       assert.match(migrated, /^\{/);
       assert.doesNotMatch(migrated, /Broken entry/);
       assert.match(migrated, /Often asks for a design first/);
@@ -3918,13 +3922,11 @@ async function conversationAnalyticsFixture(t: TestContext) {
   const ownerId = randomUUID();
   const threadId = randomUUID();
   const events: Parameters<ProductAnalytics['capture']>[0][] = [];
-  let allowed = true;
   const analytics = await createAnalytics({
-    deployment: 'hosted',
     environment: 'development',
     dataRoot: '/unused',
+    installationId: randomUUID(),
     provider: {
-      permitted: async () => allowed,
       capture: (event, signal) => {
         assert.equal(signal.aborted, false);
         events.push(event);
@@ -3947,9 +3949,6 @@ async function conversationAnalyticsFixture(t: TestContext) {
     threadId,
     events,
     analytics,
-    authorize(value: boolean) {
-      allowed = value;
-    },
     async processor(curate: MemoryCurator['curate'], owner = ownerId, secrets: string[] = []) {
       const processor = createConversationAnalytics({
         pool,
@@ -4386,13 +4385,6 @@ test(
     await processor.drain();
     assert.equal(calls, 2);
     assert.equal(f.events.filter((event) => event.event === 'otto_task_started').length, 1);
-    f.authorize(false);
-    const denied = await f.turn({ at: current.at.getTime() + 5_000 });
-    const before = f.events.length;
-    processor.start(denied.id)();
-    await processor.drain();
-    assert.equal(calls, 2);
-    assert.equal(f.events.length, before);
     f.analytics.setUsageData(f.ownerId, false);
     await processor.close();
     assert.equal(

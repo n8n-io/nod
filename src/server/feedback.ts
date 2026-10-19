@@ -22,7 +22,7 @@ const submission = z
     appRelease: z.string().trim().max(200).nullable(),
     platform: z.string().trim().max(100).nullable(),
     development: z.boolean(),
-    source: z.enum(['desktop', 'local-web', 'hosted-web']),
+    source: z.enum(['desktop', 'local-web']),
     appModified: z.boolean().nullable(),
     reportId: uuid.nullable(),
     attachments: z

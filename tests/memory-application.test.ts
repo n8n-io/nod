@@ -9,7 +9,7 @@ import pg from 'pg';
 import type { AgentSessionOptions } from '../src/ports/agent.ts';
 import type { MemoryView } from '../src/shared/memory.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
-import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
+import { memoryObjectStore } from './fixtures/object-store.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { repair } from '../src/server/memory-lint.ts';
 import { applyReflect } from '../src/server/memory-ops.ts';
@@ -42,7 +42,6 @@ test(
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_memory_app_${suffix}`;
     const bossSchema = `test_memory_app_boss_${suffix}`;
-    const objects = await mkdtemp(join(tmpdir(), 'memory-app-'));
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
     t.after(async () => {
@@ -50,7 +49,6 @@ test(
         `DROP SCHEMA IF EXISTS ${bossSchema} CASCADE; DROP SCHEMA ${schema} CASCADE`,
       );
       await admin.end();
-      await rm(objects, { recursive: true, force: true });
     });
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
@@ -127,7 +125,6 @@ test(
         computer: fakeComputer(),
         workspace: fakeWorkspace(),
         integrations: createIntegrationFixture('http://localhost:4320').provider,
-        objectStore: createFilesystemObjectStore(objects),
         memoryCurator: {
           id: 'fixture',
           configured: true,
@@ -206,7 +203,15 @@ test(
     });
     const learn = (area: string, quote: string, rejected = false) =>
       personal('memory_learn', { area, quote }, rejected);
-    const memoryFile = () => readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8').catch(() => '');
+    const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
+    const memoryFile = async () => {
+      const saved = await memoryStore.read('memory/MEMORY.md', 1_000_000);
+      return saved ? Buffer.from(saved.bytes).toString('utf8') : '';
+    };
+    const writeMemory = async (bytes: Uint8Array) =>
+      memoryStore.write('memory/MEMORY.md', bytes, {
+        expectedVersion: (await memoryStore.read('memory/MEMORY.md', 1_000_000))?.version ?? null,
+      });
     const savedEntry = async (text: string) =>
       (
         JSON.parse((await memoryFile()) || '{"entries":[]}').entries as Array<{
@@ -400,7 +405,7 @@ test(
         updated: new Date().toISOString(),
         sources: [foreign],
       });
-      await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(planted));
+      await writeMemory(Buffer.from(JSON.stringify(planted)));
       const guess = (await view()).notes.find((note) => note.path === 'about/planted')!;
       assert.deepEqual([guess.status, guess.sources[0].text], ['tentative', null]);
       assert.deepEqual(await notices(), []);
@@ -424,7 +429,7 @@ test(
           break;
         }
       const kept = full.entries.length;
-      await writeFile(join(objects, 'memory', 'MEMORY.md'), render(full));
+      await writeMemory(render(full));
       const legacy = async () => {
         await pool.query(
           "CREATE TABLE profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}')",
@@ -679,8 +684,6 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
 });
 
 test('the onboarding interview sends answers only as data, caps the reply and saves three stated notes once', async (t) => {
-  const objects = await mkdtemp(join(tmpdir(), 'onboarding-interview-'));
-  t.after(() => rm(objects, { recursive: true, force: true }));
   const requests: Parameters<MemoryCurator['curate']>[0][] = [];
   let reply: unknown = {};
   const curator: MemoryCurator = {
@@ -695,7 +698,7 @@ test('the onboarding interview sends answers only as data, caps the reply and sa
   const memory = createMemoryService({
     pool: {} as pg.Pool,
     ownerId: 'interview-owner',
-    store: createFilesystemObjectStore(objects),
+    store: memoryObjectStore(),
   });
   const interview = createOnboardingInterview({ curator, memory });
   const app = Fastify();
@@ -778,8 +781,6 @@ test('the onboarding interview sends answers only as data, caps the reply and sa
 });
 
 test('style learning sends only the owner’s own sent text and keeps one replaceable entry', async (t) => {
-  const objects = await mkdtemp(join(tmpdir(), 'writing-style-'));
-  t.after(() => rm(objects, { recursive: true, force: true }));
   const requests: Parameters<MemoryCurator['curate']>[0][] = [];
   let reply: unknown = {
     style: 'Short, warm and informal; greets with Hi and signs off with Thanks.',
@@ -796,7 +797,7 @@ test('style learning sends only the owner’s own sent text and keeps one replac
   const memory = createMemoryService({
     pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
     ownerId: 'style-owner',
-    store: createFilesystemObjectStore(objects),
+    store: memoryObjectStore(),
   });
   const sent = [
     {
@@ -920,12 +921,14 @@ test(
       await admin.end();
       await rm(objects, { recursive: true, force: true });
     });
-    const old = createMemoryService({
-      pool,
-      ownerId: 'import-owner',
-      store: createFilesystemObjectStore(objects),
-    });
+    const oldStore = memoryObjectStore();
+    const old = createMemoryService({ pool, ownerId: 'import-owner', store: oldStore });
     await old.add({ area: 'about', text: 'Lives in Lisbon.' });
+    await mkdir(join(objects, 'memory'), { recursive: true });
+    await writeFile(
+      join(objects, 'memory', 'MEMORY.md'),
+      (await oldStore.read('memory/MEMORY.md', 1_000_000))!.bytes,
+    );
     await writeFile(join(objects, 'memory', 'MEMORY.md.lock'), '');
     const store = createPostgresObjectStore({ database: pool, ownerId: 'import-owner' });
     await store.initialize();

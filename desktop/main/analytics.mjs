@@ -120,7 +120,6 @@ export function createDesktopAnalytics(path, { packaged = false, env = process.e
           env.OTTO_ANALYTICS_ENABLED === 'true' ||
           (env.OTTO_ANALYTICS_ENABLED !== 'false' && packaged),
         distinctId: `local:${id.toLowerCase()}`,
-        deployment: 'local',
         environment: packaged ? 'production' : 'development',
       };
     })();

@@ -190,7 +190,6 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
       ...properties,
       analytics_schema: posthogConfig.schemaVersion,
       ...(configuration.appVersion ? { app_version: configuration.appVersion } : {}),
-      deployment: configuration.deployment,
       environment: configuration.environment,
       surface,
       route,

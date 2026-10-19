@@ -3778,7 +3778,7 @@ assert.doesNotMatch(content, /synthetic-private/);
 
 const analytics = await import('./src/web/lib/analytics-client.ts');
 const { posthog: sdk } = await import('posthog-js/no-external');
-analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
+analytics.configureAnalytics({enabled:true, distinctId:'local:11111111-1111-4111-8111-111111111111',environment:'production'},'web');
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
 const { createRoot } = await import('react-dom/client');

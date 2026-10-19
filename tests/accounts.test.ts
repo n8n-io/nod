@@ -84,7 +84,6 @@ describe('account routes', () => {
         provider: available
           ? { capture: (event) => captured.push(event), shutdown: async () => {} }
           : undefined,
-        deployment: 'local',
         environment: 'production',
         dataRoot: '.',
         installationId,
@@ -194,7 +193,6 @@ describe('analytics privacy', () => {
     const installationId = randomUUID();
     const analytics = await createAnalytics({
       provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
-      deployment: 'local',
       environment: 'production',
       dataRoot: '.',
       installationId,
