@@ -234,6 +234,8 @@ GPT-6.1 Sol as Otto's model, the official GPT-4o-2024-08-06 judge prompts, all 5
 
 By question type, `memory` went from 13% to 80% on preferences, 71% to 87% on counting across sessions, 85% to 95% on time questions and 87% to 97% on changed facts. On the 418 questions not looked at while developing the changes, it went from 83.7% to 96.4%.
 
+A second full run of `memory` on the same code scored 91.8%, with the same verdict on 481 of the 500 questions, so expect about a point of run-to-run spread.
+
 ## Test memory poisoning with WhisperBench
 
 The `whisperbench` command runs [WhisperBench](https://arxiv.org/abs/2607.05189), a benchmark where one email tries to plant a false fact or preference in an assistant's memory. Its 108 cases cover contact details, payments, health, security rules and approval rules. Lower is better.
