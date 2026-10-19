@@ -91,9 +91,9 @@
   border: 1px solid transparent;
   border-radius: var(--radius-full);
   padding: 4px;
-  opacity: 0.5;
+  color: var(--muted-foreground);
   transition:
-    opacity 140ms,
+    color 140ms,
     background-color 140ms,
     border-color 140ms;
 }
@@ -102,19 +102,19 @@
 .chat-page .message:has(:focus-visible) .message-actions {
   background: var(--surface);
   border-color: var(--border);
-  opacity: 1;
+  color: var(--text-secondary);
 }
 @media (hover: hover) {
   .chat-page .message:hover .message-actions {
     background: var(--surface);
     border-color: var(--border);
-    opacity: 1;
+    color: var(--text-secondary);
   }
 }
 .chat-page .message-actions .button {
   width: 28px;
   height: 28px;
-  color: var(--text-secondary);
+  color: inherit;
 }
 .chat-page .message-actions .button:hover {
   color: var(--foreground);
@@ -488,8 +488,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-turn-marker > span,
-  .chat-page .message-actions,
-  .chat-page .message-time {
+  .chat-page .message-actions {
     transition: none;
   }
 }
@@ -778,23 +777,6 @@
   line-height: 24px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  opacity: 0.6;
-  transition: opacity 140ms;
-}
-.chat-page .message-selected .message-time,
-.chat-page .message:focus-visible .message-time,
-.chat-page .message:has(:focus-visible) .message-time {
-  opacity: 1;
-}
-@media (hover: hover) {
-  .chat-page .message:hover .message-time {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-page .message-time {
-    transition: none;
-  }
 }
 @media (min-width: 1500px) {
   .chat-page .message .message-text {

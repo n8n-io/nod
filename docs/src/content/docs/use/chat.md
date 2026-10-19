@@ -16,7 +16,7 @@ Otto follows your conversation language, including questions, confirmations and 
 Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 - **Attach files.** Select **Attach files**, paste an image or drop files on the box. Each file can be 90 MB or smaller. Otto gets a copy in its [workspace](/use/workspace/). It sees PNG, JPEG and WebP images directly, up to 3.75 MB each and 16 MB per message, unless the model you chose can't read images.
-- **Reply to a message.** Select **Reply** under a message to point Otto at it. Under each message you'll find its time, any reaction, and **Reply**, **Copy** and **React**. They stay faded until you hover over the message. On a long message they stay at the bottom of the window while you scroll.
+- **Reply to a message.** Select **Reply** under a message to point Otto at it. Under each message you'll find its time, any reaction, and **Reply**, **Copy** and **React**. The controls stay light until you hover over, select or focus the message. On a long message they stay at the bottom of the window while you scroll.
 
 ## Keep talking while Otto works
 
