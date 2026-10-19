@@ -86,7 +86,7 @@ flowchart LR
   broker -- write-only key --> langsmith[LangSmith, EU<br/>deleted after 14 days]
 ```
 
-1. Otto sends each scrubbed trace to n8n's **Otto Traces** service. The service refuses requests without the token in official Otto builds. It checks the trace's shape and size, files it in the `otto` project, and keeps no copy of the request. It forwards at most 600 traces a minute from all senders combined.
+1. Otto sends each scrubbed trace to n8n's **Otto Traces** service. The service refuses requests without the token in official Otto builds. It checks the trace's shape and size, files it in the `otto` project, and keeps no copy of the request. It forwards about 600 traces per clock minute from all senders combined, a best-effort cap that limits the cost of misuse.
 2. The service writes the trace to n8n's LangSmith workspace in the EU with a tracing key that can write traces but can't read them. Otto itself never holds a LangSmith key.
 3. LangSmith deletes each trace 14 days after it arrives. People at n8n with access to that workspace can read traces until then.
 
