@@ -41,6 +41,25 @@ jobs:
           CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
         run: node .github/scripts/ci-scope.mjs
 
+  notes:
+    name: Delete Git notes
+    needs: scope
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete every notes ref on GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/notes/" --jq '.[].ref' |
+            while read -r ref; do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/$ref"
+              echo "Deleted $ref"
+            done
+
   checks:
     name: Checks, tests and build
     needs: scope
