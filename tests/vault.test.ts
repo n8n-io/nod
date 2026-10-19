@@ -614,14 +614,14 @@ async function vaultFixture() {
 }
 
 test(
-  'credential links work only while their turn waits for credentials and no later turn in its session started',
+  'credential links show pending while their turn runs, work only while it waits for credentials and no later turn in its session started',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const f = await vaultFixture();
     try {
       const running = await f.turn();
       const url = await f.link(running);
-      assert.equal(await f.status(url), 'expired');
+      assert.equal(await f.status(url), 'pending');
       assert.equal((await f.submit(url)).statusCode, 409);
       for (const change of [
         "status='waiting',waiting_reason='question',started_at=now()",
