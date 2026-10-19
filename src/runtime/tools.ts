@@ -285,7 +285,7 @@ export const toolDefinitions = {
   ),
   pay: defineTool(
     'pay',
-    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. For another expiry layout, use {selector, format, locale?}: M or MM for the numeric month, MMM or MMMM for its short or full name, and YY or YYYY for the year. For example, format can be YYYY-MM or MMM with locale en. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Otto shows the user the checkout and asks for a yes or the card’s security code, which you never see. Stop and wait. Pass submitSelector for the control that submits the payment. Otto enters and submits in one private operation and keeps the live page. Check the result; do not submit again. Finish all other checkout fields first. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
+    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. For another expiry layout, use {selector, format, locale?}: M or MM for the numeric month, MMM or MMMM for its short or full name, and YY or YYYY for the year. For example, format can be YYYY-MM or MMM with locale en. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Otto shows the user the checkout and asks for the card’s security code, which you never see. Stop and wait. Pass submitSelector for the control that submits the payment. Otto enters and submits in one private operation and keeps the live page. Check the result; do not submit again. Finish all other checkout fields first. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
     Type.Object({
       amount: Type.String(),
       currency: Type.String(),
@@ -302,14 +302,6 @@ export const toolDefinitions = {
           Type.Object({ expiryMonth: cardExpiryField, expiryYear: cardExpiryField }),
         ]),
       ]),
-    }),
-  ),
-  payment_setting: defineTool(
-    'payment_setting',
-    "Turn Do it for me on or off for a Vault card when the user asks. On: Otto keeps the card's security code from the next payment, then the user's yes in the Otto app is enough to pay. Off: Otto deletes the code and asks for it each time. card is the card the user named, by name or last four digits.",
-    Type.Object({
-      card: Type.Optional(Type.String()),
-      doItForMe: Type.Boolean(),
     }),
   ),
   browser_session: defineTool(
@@ -725,18 +717,9 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
     bind(toolDefinitions.pay, async (p) => {
       if (!context.requestPayment) throw new Error('Payments are unavailable.');
       const result = await context.requestPayment(p);
-      if (appConfirmation in result)
-        return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
       await turn.invite(result.url ? actionLink(result.url, result.question) : result.question);
       await pause('credentials', undefined, { post: false });
       return 'Waiting for private payment approval.';
-    }),
-    bind(toolDefinitions.payment_setting, async (p) => {
-      if (!context.paymentSetting) throw new Error('Payments are unavailable.');
-      const result = await context.paymentSetting(p);
-      return typeof result === 'object'
-        ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
-        : result;
     }),
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');

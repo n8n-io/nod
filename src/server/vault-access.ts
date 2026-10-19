@@ -278,26 +278,17 @@ export async function createVaultAccess(
 
   async function ownerUse(
     entry: {
-      action: 'reveal' | 'permission';
+      action: 'reveal';
       origin: string;
       itemId: string;
       itemKind: 'login' | 'card';
-      task?: string;
     },
     database: Pool | PoolClient = pool,
   ) {
     await database.query(
       `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,reason,task)
-      VALUES($1,$2,$3,$4,$5,$6,'owner',$7)`,
-      [
-        randomUUID(),
-        ownerId,
-        entry.action,
-        entry.origin,
-        entry.itemId,
-        entry.itemKind,
-        entry.task ?? '',
-      ],
+      VALUES($1,$2,$3,$4,$5,$6,'owner','')`,
+      [randomUUID(), ownerId, entry.action, entry.origin, entry.itemId, entry.itemKind],
     );
     options.refresh?.();
   }

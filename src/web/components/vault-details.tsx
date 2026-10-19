@@ -5,7 +5,6 @@ import type {
   VaultEntryDetails,
   VaultEntryPassword,
   VaultCardNumber,
-  VaultCardSecurityCode,
   VaultListEntry,
 } from '../../shared/contracts';
 import { api } from '../lib/api';
@@ -31,11 +30,7 @@ import {
 function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
   const data = new FormData(form);
   if (String(data.get('label') ?? '') !== details.label) return true;
-  if (
-    String(data.get('cardNumber') ?? '').trim() ||
-    ['password', 'securityCode', 'removeSecurityCode'].some((name) => Boolean(data.get(name)))
-  )
-    return true;
+  if (String(data.get('cardNumber') ?? '').trim() || Boolean(data.get('password'))) return true;
   if (details.kind === 'login') return String(data.get('username') ?? '') !== details.username;
   const expiry = parseCardExpiry(data.get('expiry'));
   return (
@@ -220,15 +215,6 @@ export function VaultDetails({
     if (isCard && !replacement.trim()) replacement = '';
     const hasPassword =
       details.kind === 'login' && (Boolean(replacement) || details.hasPassword !== false);
-    let securityCode = data.has('removeSecurityCode')
-      ? null
-      : String(data.get('securityCode') ?? '');
-    const hasSecurityCode =
-      details.kind === 'card' &&
-      (securityCode === null ? false : Boolean(securityCode) || details.hasSecurityCode);
-    const doItForMe =
-      details.kind === 'card' &&
-      (securityCode === null ? false : Boolean(securityCode) || details.doItForMe);
     let body = JSON.stringify(
       isCard
         ? {
@@ -237,7 +223,6 @@ export function VaultDetails({
             cardholder,
             ...expiry,
             ...(replacement ? { cardNumber: replacement } : {}),
-            ...(securityCode === null || securityCode ? { securityCode } : {}),
           }
         : {
             label:
@@ -248,10 +233,8 @@ export function VaultDetails({
           },
     );
     replacement = '';
-    securityCode = '';
     data.delete('password');
     data.delete('cardNumber');
-    data.delete('securityCode');
     hideSecrets();
     const request = new AbortController();
     saveRequest.current = request;
@@ -276,7 +259,7 @@ export function VaultDetails({
         throw new Error('Unexpected item');
       setDetails(
         updated.kind === 'card'
-          ? { ...updated, cardholder, hasSecurityCode, doItForMe }
+          ? { ...updated, cardholder }
           : { ...updated, username, hasPassword },
       );
       setFormRevision((value) => value + 1);
@@ -336,12 +319,7 @@ export function VaultDetails({
       generation === actionGeneration.current &&
       !request.signal.aborted &&
       !document.hidden;
-    const secretLabel =
-      name === 'securityCode'
-        ? 'security code'
-        : name === 'cardNumber'
-          ? 'card number'
-          : 'password';
+    const secretLabel = name === 'cardNumber' ? 'card number' : 'password';
     setBusy({ action, name });
     setError('');
     setNotice('');
@@ -351,23 +329,12 @@ export function VaultDetails({
         value = details.kind === 'card' ? details.cardholder : details.username;
       else if (name && secrets[name] !== undefined) value = secrets[name]!;
       else if (name) {
-        const endpoint =
-          name === 'cardNumber'
-            ? 'card-number'
-            : name === 'securityCode'
-              ? 'security-code'
-              : 'password';
-        const result = await api<VaultEntryPassword | VaultCardNumber | VaultCardSecurityCode>(
-          `/api/vault/${encodeURIComponent(entry.id)}/${endpoint}`,
+        const result = await api<VaultEntryPassword | VaultCardNumber>(
+          `/api/vault/${encodeURIComponent(entry.id)}/${name === 'cardNumber' ? 'card-number' : 'password'}`,
           { method: 'POST', body: '{}', cache: 'no-store', signal: request.signal },
         );
         if (!current()) return;
-        value =
-          'password' in result
-            ? result.password
-            : 'cardNumber' in result
-              ? result.cardNumber
-              : result.securityCode;
+        value = 'password' in result ? result.password : result.cardNumber;
       }
       if (!current()) return;
       if (action === 'show' && name) {
@@ -581,16 +548,7 @@ export function VaultDetails({
           className="vault-inset vault-edit-form"
           autoComplete="off"
         >
-          <VaultFields
-            kind={entry.kind}
-            details={details}
-            disabled={saving}
-            hosted={hosted}
-            onSecretChange={() => {
-              hideRevealed();
-              updateDirty();
-            }}
-          />
+          <VaultFields kind={entry.kind} details={details} disabled={saving} />
         </form>
       ) : (
         <div className="vault-inset">
@@ -612,8 +570,6 @@ export function VaultDetails({
                 'Expiry date',
                 editableValue('expiry', formatCardExpiry(details.expiryMonth, details.expiryYear)),
               )}
-              {details.hasSecurityCode &&
-                field('Security code', secretControls('securityCode', 'Security code', '••••'))}
             </>
           ) : (
             field(

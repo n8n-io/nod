@@ -130,10 +130,6 @@ export interface ThreadDependencies {
     input: unknown,
     show: (image: Uint8Array) => Promise<void>,
   ) => ReturnType<NonNullable<RuntimeContext['requestPayment']>>;
-  paymentSetting?: (
-    turn: TurnRef,
-    input: unknown,
-  ) => Promise<string | { [appConfirmation]: string }>;
   integration: (
     turn: TurnRef,
     action: string,
@@ -1300,11 +1296,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
                   await attach(image, 'checkout.jpg', 'image/jpeg', '', true, 'browser_screenshot');
               }),
             ),
-          }
-        : {}),
-      ...(dependencies.paymentSetting
-        ? {
-            paymentSetting: fenced((input: unknown) => dependencies.paymentSetting!(ref, input)),
           }
         : {}),
       integration: fenced(async (action, args, callSignal?: AbortSignal, admit?) => {

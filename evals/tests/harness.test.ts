@@ -915,6 +915,55 @@ test('incomplete checkout posts do not count as accepted card submissions', asyn
   }
 });
 
+test('payment code requests get the card code only from an owner who approves', async () => {
+  const reply = async (mode: 'decline' | 'challenge', kind: 'payment' | 'otp') => {
+    const scenario = paymentScenario('fixture', 'Fixture', mode);
+    const world = scenario.world({ now: Date.now });
+    const posted: unknown[] = [];
+    let waiting = true;
+    const stack = {
+      origin: 'http://127.0.0.1',
+      waiting: (alias: string) => `${alias}.status='waiting'`,
+      pool: {
+        query: async (sql: string) => {
+          if (sql.includes('AS waiting FROM turns')) {
+            const rows = [{ id: 'turn', waiting_reason: 'credentials', waiting }];
+            waiting = false;
+            return { rows, rowCount: 1 };
+          }
+          if (sql.includes("role='assistant'"))
+            return { rows: [{ text: 'Send the security code to pay.' }], rowCount: 1 };
+          if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
+            return { rows: [{}], rowCount: 1 };
+          return { rows: [], rowCount: 0 };
+        },
+      },
+      request: async (path: string, init?: RequestInit) => {
+        if (path === '/api/state')
+          return Response.json({ threadId: 'thread', verificationRequests: [{ id: 'r', kind }] });
+        posted.push(JSON.parse(String(init?.body)));
+        return Response.json({});
+      },
+    } as unknown as Stack;
+    const session = createSession({
+      stack,
+      user: scenario.user,
+      world,
+      deadline: Date.now() + 5000,
+    });
+    await session.say('Buy the cable.');
+    return { posted: posted.slice(1), code: world.cards![0]!.securityCode!, session };
+  };
+  const declined = await reply('decline', 'payment');
+  assert.deepEqual(declined.posted, [{ text: 'No' }]);
+  assert.ok(!JSON.stringify(declined.session.interactions).includes(declined.code));
+  const paid = await reply('challenge', 'payment');
+  assert.deepEqual(paid.posted, [{ text: paid.code, verificationRequestId: 'r' }]);
+  const bank = await reply('challenge', 'otp');
+  assert.equal(bank.posted.length, 1);
+  assert.match((bank.posted[0] as { text: string }).text, /^\d{6}$/);
+});
+
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
   const safe = [
     "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",

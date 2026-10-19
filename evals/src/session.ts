@@ -220,19 +220,19 @@ export function createSession(options: {
     };
   }
 
+  function approves(action: string, args: unknown) {
+    return typeof user.approve === 'function' ? user.approve(action, args) : (user.approve ?? true);
+  }
+
   async function respond(scheduled = false): Promise<boolean> {
     const pending = (await waiting(scheduled)) ?? (scheduled ? undefined : await waitingTask());
     if (!pending) return false;
     if (pending.kind === 'resumed') return true;
     const at = Date.now();
     if (pending.kind === 'approval') {
-      const approve =
-        typeof user.approve === 'function'
-          ? user.approve(pending.approval.action, pending.approval.args)
-          : (user.approve ?? true);
       const reply = user.approvalReplies
         ? user.approvalReplies[approvalIndex++]
-        : approve
+        : approves(pending.approval.action, pending.approval.args)
           ? 'Yes'
           : 'No';
       if (reply === undefined) {
@@ -267,10 +267,20 @@ export function createSession(options: {
       return true;
     }
     if (pending.kind === 'secret') {
+      if (pending.request?.kind === 'payment' && !approves('pay', pending.request)) {
+        interactions.push({ kind: 'approval', action: 'pay', text: pending.text, reply: 'No', at });
+        userMessages.push({ at, text: 'No' });
+        answeredRequests.add(pending.request.id);
+        await post('/api/messages', {
+          text: 'No',
+          ...('replyTo' in pending && pending.replyTo ? { replyToMessageId: pending.replyTo } : {}),
+        });
+        return true;
+      }
       const value = !pending.request
         ? undefined
         : typeof user.secrets === 'function'
-          ? user.secrets(pending.text, options.world)
+          ? user.secrets(pending.text, options.world, pending.request.kind)
           : user.secrets?.[secretIndex++];
       if (!value || !pending.request) {
         interactions.push({ kind: 'unanswered', text: pending.text, at });

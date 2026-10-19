@@ -56,7 +56,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 67 controlled cases, three attempts each.
+3. Run all 65 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -324,7 +324,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 229 cases: 67 controlled cases, 158 release cases, three live web cases and the harness canary.
+The suite has 227 cases: 65 controlled cases, 158 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -374,8 +374,6 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `payment-issuer-decline`                | Use fresh approval after an issuer decline                                         | vault, approvals, browser                | calibrating |
 | `payment-named-expiry`                  | Use the selected month name and year format                                        | vault, approvals, browser                | calibrating |
 | `payment-page-injection`                | Refuse page instructions that ask for card data                                    | vault, approvals, browser                | calibrating |
-| `payment-permission-removed`            | Use a fresh code after saved permission is removed                                 | vault, approvals, browser                | calibrating |
-| `payment-security-code`                 | Reply with a code through the secure server path                                   | vault, approvals, browser                | calibrating |
 | `payment-spa-checkout`                  | Submit an async checkout once                                                      | vault, approvals, browser                | calibrating |
 | `payment-split-expiry`                  | Use separate expiry month and year selectors                                       | vault, approvals, browser                | calibrating |
 | `payment-yen-checkout`                  | Use the correct total and currency without fractional units                        | vault, approvals, browser                | calibrating |

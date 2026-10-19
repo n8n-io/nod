@@ -21,6 +21,8 @@ Otto can complete a checkout with a card saved in Vault, but only after you appr
 
 </Steps>
 
+Otto never saves the card's security code. You enter it for each payment. Codes saved by earlier versions are deleted when Otto starts.
+
 If Otto reaches a checkout and you have no card saved, it points you to this form. Save the card, then tell Otto to continue.
 
 ## Approve one payment
@@ -29,7 +31,7 @@ When Otto has filled in the rest of the checkout, it prepares one payment reques
 
 | Bound to                 | What it means                                                 |
 | ------------------------ | ------------------------------------------------------------- |
-| The card and its version | Editing the card or its permission cancels the request        |
+| The card and its version | Editing the card cancels the request                          |
 | The shop                 | The origin of the checkout page                               |
 | The checkout page        | The exact page Otto prepared                                  |
 | Card-field destinations  | The real origin of every card field, including payment frames |
@@ -39,13 +41,6 @@ When Otto has filled in the rest of the checkout, it prepares one payment reques
 The request stays open while its task waits for you. If Otto can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with Otto never closes its payment request.
 
 In Otto web or desktop, Otto shows the checkout with the card fields hidden and asks, for example "Pay €7.99 at shop.example.com with Visa ••4242?". Reply with the card's security code by itself, such as `123` or `CVV 123`. Otto web sends it privately, so it never reaches the model or the chat history. While the payment waits, any other message with a 3- or 4-digit number, such as "card ending 4242", is refused instead of reaching the model.
-
-### Approve with a yes
-
-Turn on **Do it for me** for a card and a yes is enough. Otto keeps the card's security code, entered in the card form or at your next payment. Each payment still needs your yes to a question that names the shop, amount and card it is bound to.
-
-- Turn it on in the card's form in Vault, or ask Otto. Otto then asks a yes/no question for that exact card. Turning it off takes effect at once.
-- Turning it off deletes the saved code.
 
 ### From Telegram or WhatsApp
 
@@ -59,7 +54,7 @@ sequenceDiagram
   participant Server
   participant Shop
   participant Otto
-  You->>Server: Security code, or yes
+  You->>Server: Security code
   Server->>Server: Check card version, claim one use
   Server->>Shop: Enter card and submit privately
   Shop-->>Otto: Page after submit, card values masked
@@ -75,12 +70,12 @@ sequenceDiagram
 - With an expired, replaced or already-used request.
 
 :::caution[Limits]
-A saved card can't make your card issuer enforce the amount or the shop. Otto binds its own operation, but a website can still change the cart. **Do it for me** stores a security code only with your consent, and this isn't a PCI DSS compliance claim: PCI SSC prohibits storing card verification codes after authorization for entities in scope. See [PCI SSC FAQ 1280](https://www.pcisecuritystandards.org/faqs/1280/).
+A saved card can't make your card issuer enforce the amount or the shop. Otto binds its own operation, but a website can still change the cart. Saving a card in Vault isn't a PCI DSS compliance claim.
 :::
 
 ## Where this is enforced
 
-[`src/server/payments.ts`](https://github.com/n8n-io/otto/blob/main/src/server/payments.ts) (request, approval and Do it for me) · [`src/server/vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) (one use) · [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts) (when payment is allowed)
+[`src/server/payments.ts`](https://github.com/n8n-io/otto/blob/main/src/server/payments.ts) (request and approval) · [`src/server/vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) (one use) · [`src/server/trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts) (when payment is allowed)
 
 ## Related resources
 

@@ -229,7 +229,6 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     >
       <VaultItemForm
         kind={adding}
-        hosted={hosted}
         onCancel={closeAdd}
         onSavingChange={setSavingNew}
         onSaved={(entry) => {

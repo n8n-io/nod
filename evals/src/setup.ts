@@ -57,7 +57,7 @@ export async function prepare(stack: Stack, world: World, timeZone: string) {
     if (!list.some((app) => app.slug === remote.service && app.status === 'connected'))
       throw new Error(`${remote.service} did not connect in the evaluation.`);
   }
-  for (const card of world.cards ?? [])
+  for (const { securityCode: _code, ...card } of world.cards ?? [])
     await call(stack, 'POST', '/api/vault', { kind: 'card', ...card });
   for (const login of world.logins ?? [])
     await call(stack, 'POST', '/api/vault', { kind: 'login', ...login });

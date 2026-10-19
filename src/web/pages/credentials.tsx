@@ -45,7 +45,7 @@ export function Payment({ id }: { id: string }) {
     try {
       await api(path, {
         method: 'POST',
-        body: JSON.stringify(code ? { code } : {}),
+        body: JSON.stringify({ code }),
         signal: controller.signal,
       });
       if (!controller.signal.aborted) setSubmitted(true);
@@ -75,25 +75,20 @@ export function Payment({ id }: { id: string }) {
               {request.amount} at {originLabel(request.origin)} with {request.card}
             </p>
             <p>Card details go to {request.destinations.map(originLabel).join(' and ')}.</p>
-            {request.needsCode && (
-              <Field label="Security code">
-                <Input
-                  name="code"
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  pattern="[0-9]{3,4}"
-                  minLength={3}
-                  maxLength={4}
-                  required
-                  autoFocus
-                  disabled={saving}
-                />
-              </Field>
-            )}
-            {request.keepCode && (
-              <p>Otto will keep the code. Next time you can approve without it.</p>
-            )}
+            <Field label="Security code">
+              <Input
+                name="code"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                pattern="[0-9]{3,4}"
+                minLength={3}
+                maxLength={4}
+                required
+                autoFocus
+                disabled={saving}
+              />
+            </Field>
             <Button type="submit" disabled={saving}>
               {saving ? 'Submitting…' : `Pay ${request.amount}`}
             </Button>

@@ -766,7 +766,7 @@ async function initializeApplication(
     page: computer.currentPage,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
-    securityCodes: runtimeMode === 'local',
+    cards: runtimeMode === 'local',
     onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
     onUse: (use, client) =>
       vaultAccess.used(
@@ -880,58 +880,41 @@ async function initializeApplication(
         ? replayBrowserStep(args, provenance)
         : action === 'OTTO_vault_allow'
           ? vaultAccess.allow(args)
-          : action === 'OTTO_payment_setting'
-            ? payments.setting(provenance, args, true)
-            : action === 'OTTO_payment_approve'
-              ? payments.approve(provenance, args)
-              : action === 'OTTO_limits_update'
-                ? ledger.setLimits(args)
-                : action.startsWith('OTTO_memory_')
-                  ? withTurnLock(provenance.turnId, () =>
-                      personal.manage(action.slice('OTTO_'.length), args, provenance),
-                    )
-                  : action.startsWith('OTTO_')
-                    ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-                    : (async () => {
-                        const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                        const ready = hasWorkspaceFiles(args)
-                          ? await integrations
-                              .prepare(ownerId, action, args, turn)
-                              .catch((error: unknown) => {
-                                throw Object.assign(
-                                  error instanceof Error ? error : new Error(String(error)),
-                                  { notRun: true },
-                                );
-                              })
-                          : args;
-                        const result = await integrations.executeApproved(
-                          ownerId,
-                          action,
-                          ready,
-                          turn,
-                        );
-                        await ledger.action(provenance.turnId, action);
-                        return privateEmailResult(
-                          (
-                            await saveIntegrationFiles(result, async (file) => {
-                              const name = `${randomUUID()}-${basename(file.name)}`;
-                              await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                              return name;
-                            })
-                          ).value,
-                          mailCheck,
-                        );
-                      })(),
+          : action === 'OTTO_limits_update'
+            ? ledger.setLimits(args)
+            : action.startsWith('OTTO_memory_')
+              ? withTurnLock(provenance.turnId, () =>
+                  personal.manage(action.slice('OTTO_'.length), args, provenance),
+                )
+              : action.startsWith('OTTO_')
+                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                : (async () => {
+                    const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                    const ready = hasWorkspaceFiles(args)
+                      ? await integrations
+                          .prepare(ownerId, action, args, turn)
+                          .catch((error: unknown) => {
+                            throw Object.assign(
+                              error instanceof Error ? error : new Error(String(error)),
+                              { notRun: true },
+                            );
+                          })
+                      : args;
+                    const result = await integrations.executeApproved(ownerId, action, ready, turn);
+                    await ledger.action(provenance.turnId, action);
+                    return privateEmailResult(
+                      (
+                        await saveIntegrationFiles(result, async (file) => {
+                          const name = `${randomUUID()}-${basename(file.name)}`;
+                          await workspace.writeArtifact(provenance.threadId, name, file.bytes);
+                          return name;
+                        })
+                      ).value,
+                      mailCheck,
+                    );
+                  })(),
     async (action, args, expectedRevision) => {
-      if (
-        [
-          'OTTO_browser',
-          'OTTO_vault_allow',
-          'OTTO_payment_approve',
-          'OTTO_payment_setting',
-        ].includes(action)
-      )
-        return;
+      if (['OTTO_browser', 'OTTO_vault_allow'].includes(action)) return;
       if (action === 'OTTO_limits_update') limitsInput.parse(args);
       else if (action.startsWith('OTTO_')) {
         if (
@@ -1074,8 +1057,6 @@ async function initializeApplication(
     capture: (threadId) => computer.checkoutImage(threadId),
     cards: () => vault.paymentCards(),
     card: (id, version, client) => vault.paymentCard(id, version, client),
-    remember: vault.setDoItForMe,
-    keepCode: vault.keepSecurityCode,
     fill: (input) => computer.fillCard(input),
     resume: resumeAfterPayment,
     record: (turn, entry, client) => vaultAccess.record(turn, entry, client),
@@ -1292,42 +1273,10 @@ async function initializeApplication(
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
-      paymentSetting: async (turn, input) => {
-        const { args, details } = await payments.requestSetting(turn, input);
-        if (!args.doItForMe) return payments.setting(turn, args, true);
-        const result = await approvals.request(turn, 'OTTO_payment_setting', args, { details });
-        if (result && typeof result === 'object' && 'requiresConfirmation' in result)
-          return { [appConfirmation]: String(result.question) };
-        return String(result);
-      },
       requestPayment: async (turn, input, show) => {
-        const result = await payments.request(turn, input);
-        await show(result.image);
-        if (result.paymentId === undefined) return { question: result.question, url: result.url };
-        const confirmation = await approvals
-          .request(
-            turn,
-            'OTTO_payment_approve',
-            {
-              paymentId: result.paymentId,
-              origin: result.details.origin,
-              amount: result.details.amount,
-              currency: result.details.currency,
-              card: result.details.card,
-            },
-            { details: result.details },
-          )
-          .catch(async (error: unknown) => {
-            await payments.withdraw(result.paymentId!);
-            throw error;
-          });
-        if (
-          confirmation &&
-          typeof confirmation === 'object' &&
-          'requiresConfirmation' in confirmation
-        )
-          return { [appConfirmation]: String(confirmation.question) };
-        throw new Error('This payment needs a fresh approval. Call pay again.');
+        const { image, ...result } = await payments.request(turn, input);
+        await show(image);
+        return result;
       },
       requestCredential: async (turn, input) => {
         const { savedLoginId, ...request } = input;

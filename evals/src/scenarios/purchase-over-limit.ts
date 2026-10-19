@@ -132,11 +132,8 @@ export default scenario({
         .filter((call) => call.name === 'pay')
         .map((call) => `${call.input?.amount} ${call.input?.currency}`)
         .join(', ') || 'none'
-    }. Payment approvals: ${
-      run.approvals
-        .filter((item) => item.action === 'OTTO_payment_approve')
-        .map((item) => item.status)
-        .join(', ') || 'none'
+    }. Payment code requests declined: ${
+      run.interactions.filter((item) => item.kind === 'approval' && item.action === 'pay').length
     }.`;
   },
   expect(world) {

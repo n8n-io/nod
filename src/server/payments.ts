@@ -9,7 +9,6 @@ import type {
   VaultPaymentCard,
   PaymentRequest,
 } from '../shared/contracts.ts';
-import { logFailure } from './failure-log.ts';
 import { type createVaultUses, VaultUseError } from './vault-use.ts';
 import type { TurnRef } from './thread.ts';
 import { browserOf, supersededSql } from './turn-chain.ts';
@@ -17,14 +16,6 @@ import { credentialOrigin } from './vault.ts';
 import { lockKey, locksTable } from './locks.ts';
 
 export class PaymentError extends Error {}
-
-type PaymentProposal = {
-  details: Record<string, unknown>;
-  image: Uint8Array;
-} & (
-  | { paymentId: string; question?: never; url?: never }
-  | { paymentId?: never; question: string; url?: string }
-);
 
 type Row = {
   id: string;
@@ -40,7 +31,6 @@ type Row = {
   document: string;
   destinations: Partial<Record<keyof CardFields, string>>;
   submit_selector: string | null;
-  keep_notice: boolean;
 };
 
 const selector = z.string().min(1).max(500);
@@ -113,8 +103,6 @@ export async function createPayments(
     capture(threadId: string): Promise<Uint8Array>;
     cards(): Promise<VaultPaymentCard[]>;
     card(id: string, version: string, client: PoolClient): Promise<CardEntry['card']>;
-    remember(id: string, on: boolean): Promise<unknown>;
-    keepCode(id: string, code: string, version: string): Promise<unknown>;
     fill(input: CardEntry): Promise<void>;
     resume(turnId: string, prompt: string, client?: PoolClient): Promise<void>;
     record(
@@ -138,11 +126,12 @@ export async function createPayments(
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
       origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, card_id text NOT NULL,
       fields jsonb NOT NULL, document text NOT NULL, destinations jsonb NOT NULL,
-      keep_notice boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
+      status text NOT NULL DEFAULT 'pending',
       created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE vault_payments DROP COLUMN IF EXISTS flagged;
     ALTER TABLE vault_payments DROP COLUMN IF EXISTS expires_at;
+    ALTER TABLE vault_payments DROP COLUMN IF EXISTS keep_notice;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS submit_selector text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS card_version text;
     ALTER TABLE vault_payments ADD COLUMN IF NOT EXISTS browser_id text;
@@ -203,7 +192,7 @@ export async function createPayments(
     );
   }
 
-  async function enter(row: Row, card: VaultPaymentCard, securityCode?: string, resume = false) {
+  async function enter(row: Row, card: VaultPaymentCard, securityCode: string) {
     let value: CardEntry['card'];
     const message = `Otto entered ${cardName(card)} for ${money(row)} at ${site(row.origin)}. Otto submitted the checkout. Check whether the shop accepted the payment. Do not submit it again.`;
     await uses.run(
@@ -238,14 +227,8 @@ export async function createPayments(
             document: row.document,
             destinations: row.destinations,
             submitSelector: row.submit_selector ?? undefined,
-            card: { ...value, ...(securityCode ? { securityCode } : {}) },
+            card: { ...value, securityCode },
           });
-          if (securityCode && row.keep_notice && card.choice === true)
-            await options
-              .keepCode(card.id, securityCode, row.card_version)
-              .catch((error: unknown) => {
-                logFailure('vault_payment_choice_failed', error);
-              });
         },
         complete: async (client) => {
           await record(
@@ -253,20 +236,18 @@ export async function createPayments(
             {
               action: 'card',
               origin: row.origin,
-              reason: securityCode ? 'code_typed' : 'said_yes',
+              reason: 'code_typed',
               itemId: card.id,
               itemKind: 'card',
               payment: payment(row),
             },
             client,
           );
-          if (securityCode || resume) {
-            await options.resume(
-              row.turn_id,
-              `${message} Do not repeat completed external actions.`,
-              client,
-            );
-          }
+          await options.resume(
+            row.turn_id,
+            `${message} Do not repeat completed external actions.`,
+            client,
+          );
         },
       },
     );
@@ -303,7 +284,7 @@ export async function createPayments(
     ).rows[0];
   }
 
-  async function request(turn: TurnRef, raw: unknown): Promise<PaymentProposal> {
+  async function request(turn: TurnRef, raw: unknown) {
     const parsed = input.parse(raw);
     if (!options.local)
       throw new PaymentError(
@@ -335,7 +316,6 @@ export async function createPayments(
       document,
       destinations,
       submit_selector: parsed.submitSelector ?? null,
-      keep_notice: card.choice === true && !card.doItForMe,
     };
     const details = {
       kind: 'payment',
@@ -345,22 +325,11 @@ export async function createPayments(
       currency,
       card: cardFacts(card),
       destinations: [...new Set(Object.values(destinations))],
-      keepCode: row.keep_notice,
-      requires: !inOtto ? 'desktop_private_form' : card.doItForMe ? 'approval' : 'security_code',
+      requires: inOtto ? 'security_code' : 'desktop_private_form',
     };
-    let result: PaymentProposal;
-    if (inOtto && card.doItForMe) result = { paymentId: row.id, details, image };
-    else {
-      const question = await options.present({ ...turn }, structuredClone(details));
-      if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
-        throw new PaymentError('The payment model did not produce a valid question.');
-      result = {
-        details,
-        image,
-        question,
-        ...(!inOtto ? { url: `/payments/${row.id}` } : {}),
-      };
-    }
+    const question = await options.present({ ...turn }, structuredClone(details));
+    if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
+      throw new PaymentError('The payment model did not produce a valid question.');
     await uses.transaction(async (client) => {
       const active = await client.query(
         `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
@@ -375,8 +344,8 @@ export async function createPayments(
         [ownerId, turn.threadId, turn.turnId],
       );
       await client.query(
-        `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,keep_notice,submit_selector,card_version,browser_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,card_id,fields,document,destinations,submit_selector,card_version,browser_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           row.id,
           ownerId,
@@ -389,7 +358,6 @@ export async function createPayments(
           JSON.stringify(row.fields),
           document,
           JSON.stringify(destinations),
-          row.keep_notice,
           row.submit_selector,
           row.card_version,
           row.browser_id,
@@ -408,31 +376,7 @@ export async function createPayments(
         client,
       );
     });
-    return result;
-  }
-
-  async function withdraw(paymentId: string) {
-    await pool.query(
-      "UPDATE vault_payments SET status='superseded' WHERE id=$1 AND owner_id=$2 AND status='pending'",
-      [paymentId, ownerId],
-    );
-  }
-
-  async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
-    const { paymentId } = z.object({ paymentId: z.uuid() }).parse(raw);
-    const row = await open(paymentId, { threadId: context.threadId });
-    const card = (await options.cards()).find((item) => item.id === row?.card_id);
-    if (!row || !card?.doItForMe)
-      return {
-        entered: false,
-        message:
-          'This payment request is no longer open. Check the order or payment state before a new attempt.',
-      };
-    try {
-      return { entered: true, message: await enter(row, card) };
-    } catch (error) {
-      return { entered: false, message: await fail(row, error) };
-    }
+    return { image, question, ...(!inOtto ? { url: `/payments/${row.id}` } : {}) };
   }
 
   async function submitCode(turnId: string, code: string, paymentId: string) {
@@ -449,34 +393,6 @@ export async function createPayments(
     return { status: 'submitted' as const };
   }
 
-  async function requestSetting(turn: TurnRef, raw: unknown) {
-    const parsed = z
-      .object({ card: z.string().trim().max(100).optional(), doItForMe: z.boolean() })
-      .strict()
-      .parse(raw);
-    if (!options.local) throw new PaymentError('Hosted Otto does not pay with saved cards.');
-    const card = await choose(parsed.card);
-    return {
-      args: { card: card.id, doItForMe: parsed.doItForMe },
-      details: {
-        kind: 'payment_setting',
-        card: cardFacts(card),
-        doItForMe: parsed.doItForMe,
-        keepCode: parsed.doItForMe,
-      },
-    };
-  }
-
-  async function setting(turn: TurnRef, raw: unknown, approved = false) {
-    if (!approved) throw new PaymentError('This saved permission needs the owner’s confirmation.');
-    const { args } = await requestSetting(turn, raw);
-    const card = await choose(args.card);
-    await options.remember(card.id, args.doItForMe);
-    return args.doItForMe
-      ? `Do it for me is on for ${cardName(card)}. Otto keeps its security code at the next payment.`
-      : `Do it for me is off for ${cardName(card)}. Otto deleted its security code.`;
-  }
-
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/payment-requests/:id', async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
@@ -491,8 +407,6 @@ export async function createPayments(
         amount: money(row),
         card: cardName(card),
         destinations: [...new Set(Object.values(row.destinations))],
-        needsCode: !card.doItForMe,
-        keepCode: row.keep_notice,
       } satisfies PaymentRequest;
     });
     app.post<{ Params: { id: string } }>(
@@ -500,12 +414,7 @@ export async function createPayments(
       { bodyLimit: 1024 },
       async (request, reply) => {
         const parsed = z
-          .object({
-            code: z
-              .string()
-              .regex(/^\d{3,4}$/)
-              .optional(),
-          })
+          .object({ code: z.string().regex(/^\d{3,4}$/) })
           .strict()
           .safeParse(request.body);
         if (!parsed.success || !z.uuid().safeParse(request.params.id).success)
@@ -513,10 +422,10 @@ export async function createPayments(
         const { code } = parsed.data;
         const row = await open(request.params.id, {});
         const card = (await options.cards()).find((item) => item.id === row?.card_id);
-        if (!row || !card || (!card.doItForMe && !code))
+        if (!row || !card)
           return reply.code(409).send({ error: 'This payment needs a fresh secure request.' });
         try {
-          await enter(row, card, code, true);
+          await enter(row, card, code);
           return { ok: true };
         } catch (error) {
           const message = await fail(row, error);
@@ -528,5 +437,5 @@ export async function createPayments(
     );
   }
 
-  return { request, withdraw, approve, submitCode, requestSetting, setting, registerRoutes };
+  return { request, submitCode, registerRoutes };
 }

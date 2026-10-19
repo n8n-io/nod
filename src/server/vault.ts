@@ -14,7 +14,6 @@ import type {
   VaultListEntry,
   VaultCardEntry,
   VaultCardNumber,
-  VaultCardSecurityCode,
   VaultImportResult,
   VaultPaymentCard,
 } from '../shared/contracts.ts';
@@ -64,34 +63,22 @@ const cardFields = {
   expiryMonth: z.number().int().min(1).max(12),
   expiryYear: z.number().int().min(2000).max(9999),
 };
-const securityCodeInput = z
-  .string()
-  .trim()
-  .regex(/^(?:\d{3,4})?$/);
 const cardInput = z
   .object({
     kind: z.literal('card'),
     ...cardFields,
     cardNumber: z.string().max(40),
-    securityCode: securityCodeInput.optional(),
   })
   .strict();
 const cardUpdateInput = cardInput.extend({
   cardNumber: z.string().max(40).optional(),
-  securityCode: securityCodeInput.nullable().optional(),
 });
-const cardSecret = z
-  .object({
-    cardholder: cardFields.cardholder,
-    cardNumber: z.string().regex(/^\d{12,19}$/),
-    expiryMonth: cardFields.expiryMonth,
-    expiryYear: cardFields.expiryYear,
-    securityCode: z
-      .string()
-      .regex(/^\d{3,4}$/)
-      .optional(),
-  })
-  .strict();
+const cardSecret = z.object({
+  cardholder: cardFields.cardholder,
+  cardNumber: z.string().regex(/^\d{12,19}$/),
+  expiryMonth: cardFields.expiryMonth,
+  expiryYear: cardFields.expiryYear,
+});
 type CardSecret = z.infer<typeof cardSecret>;
 const submissionInput = z
   .object({
@@ -134,15 +121,14 @@ type VaultOptions = {
   onUse?(use: VaultUse, client: PoolClient): Promise<void>;
   onOwnerUse?(
     entry: {
-      action: 'reveal' | 'permission';
+      action: 'reveal';
       origin: string;
       itemId: string;
       itemKind: 'login' | 'card';
-      task?: string;
     },
     client?: PoolClient,
   ): Promise<void>;
-  securityCodes?: boolean;
+  cards?: boolean;
   resume(turnId: string, client: PoolClient): Promise<void>;
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
@@ -170,7 +156,6 @@ type CardRow = {
   expiry_year: number;
   ciphertext: string;
   updated_at: Date;
-  do_it_for_me: boolean | null;
 };
 type RequestRow = {
   id: string;
@@ -478,10 +463,7 @@ function cardMetadata(entry: CardRow): VaultCardEntry {
 }
 
 function cardVersion(entry: CardRow) {
-  return createHash('sha256')
-    .update(entry.ciphertext)
-    .update(String(entry.do_it_for_me))
-    .digest('hex');
+  return createHash('sha256').update(entry.ciphertext).digest('hex');
 }
 
 export async function createVault(pool: Pool, options: VaultOptions) {
@@ -496,7 +478,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       brand text NOT NULL, last4 text NOT NULL, expiry_month integer NOT NULL, expiry_year integer NOT NULL,
       ciphertext text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     );
-    ALTER TABLE vault_cards ADD COLUMN IF NOT EXISTS do_it_for_me boolean;
+    ALTER TABLE vault_cards DROP COLUMN IF EXISTS do_it_for_me;
     CREATE INDEX IF NOT EXISTS vault_cards_owner ON vault_cards(owner_id);
     CREATE TABLE IF NOT EXISTS credential_requests (
       id text PRIMARY KEY, token_hash text NOT NULL UNIQUE, owner_id text NOT NULL,
@@ -565,6 +547,36 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         (error: unknown) => logFailure('vault_hold_cleanup', error),
       );
   await forgetExpiredHolds();
+  async function forgetSecurityCodes() {
+    const { rows } = await pool.query<CardRow>('SELECT * FROM vault_cards WHERE owner_id=$1', [
+      owner,
+    ]);
+    if (!rows.length) return;
+    const credentialKey = await key();
+    await Promise.all(
+      rows.map(async (card) => {
+        let stored: Record<string, unknown>;
+        try {
+          stored = JSON.parse(openVaultValue(credentialKey, cardBinding(card), card.ciphertext));
+        } catch {
+          return;
+        }
+        if (!('securityCode' in stored)) return;
+        await pool.query(
+          'UPDATE vault_cards SET ciphertext=$3 WHERE id=$1 AND owner_id=$2 AND ciphertext=$4',
+          [
+            card.id,
+            owner,
+            sealCard(credentialKey, card, cardSecret.parse(stored)),
+            card.ciphertext,
+          ],
+        );
+      }),
+    );
+  }
+  await forgetSecurityCodes().catch((error: unknown) =>
+    logFailure('vault_security_code_removal', error),
+  );
 
   async function list(ownerId = owner) {
     const { rows } = await pool.query<EntryRow>(
@@ -856,7 +868,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const credentialKey = await key();
     return rows.flatMap((row) => {
       try {
-        const secret = openCard(credentialKey, row);
+        openCard(credentialKey, row);
         return [
           {
             id: row.id,
@@ -864,11 +876,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             label: row.label,
             brand: row.brand,
             last4: row.last4,
-            doItForMe:
-              options.securityCodes !== false &&
-              row.do_it_for_me === true &&
-              Boolean(secret.securityCode),
-            choice: options.securityCodes === false ? false : row.do_it_for_me,
           },
         ];
       } catch {
@@ -881,71 +888,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const { entry, secret } = await readCard(id, client);
     if (version !== undefined && cardVersion(entry) !== version)
       throw new VaultError('This card changed. Request a fresh payment approval.', 409);
-    return {
-      ...secret,
-      securityCode: options.securityCodes === false ? undefined : secret.securityCode,
-    };
+    return secret;
   }
-
-  async function changeCardPermission(
-    rawId: string,
-    change: { on: boolean } | { code: string; version: string },
-  ) {
-    if (options.securityCodes === false)
-      throw new VaultError('Otto never keeps security codes here.', 400);
-    const id = z.uuid().parse(rawId);
-    const credentialKey = await key();
-    let changed = false;
-    const entry = await transaction(async (client) => {
-      const entry = (
-        await client.query<CardRow>(
-          'SELECT * FROM vault_cards WHERE id=$1 AND owner_id=$2 FOR UPDATE',
-          [id, owner],
-        )
-      ).rows[0];
-      if (!entry) throw new VaultError('This saved card could not be found.', 404);
-      if (
-        'code' in change &&
-        (entry.do_it_for_me !== true || cardVersion(entry) !== change.version)
-      ) {
-        return cardMetadata(entry);
-      }
-      const { securityCode: previous, ...secret } = openCard(credentialKey, entry);
-      const on = 'on' in change ? change.on : true;
-      const kept = on ? ('code' in change ? change.code : previous) : undefined;
-      changed = on !== entry.do_it_for_me || kept !== previous;
-      const { rows } = await client.query<CardRow>(
-        'UPDATE vault_cards SET ciphertext=$3,do_it_for_me=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',
-        [
-          id,
-          owner,
-          sealCard(credentialKey, entry, kept ? { ...secret, securityCode: kept } : secret),
-          on,
-        ],
-      );
-      if ('on' in change)
-        await options.onOwnerUse?.(
-          {
-            action: 'permission',
-            origin: 'otto:vault',
-            itemId: id,
-            itemKind: 'card',
-            task: on ? 'Do it for me on' : 'Do it for me off',
-          },
-          client,
-        );
-      return cardMetadata(rows[0]!);
-    }, pool);
-    if (changed) track('card', 'update');
-    return entry;
-  }
-
-  const setDoItForMe = (id: string, on: boolean) => changeCardPermission(id, { on });
-  const keepSecurityCode = (id: string, code: string, version: string) =>
-    changeCardPermission(id, { code, version });
 
   async function saveCard(raw: unknown) {
-    if (options.securityCodes === false)
+    if (options.cards === false)
       throw new VaultError('Hosted Otto does not store card numbers.', 403);
     const input = cardInput.parse(raw);
     validateCardExpiry(input.expiryMonth, input.expiryYear);
@@ -956,10 +903,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       cardNumber: number,
       expiryMonth: input.expiryMonth,
       expiryYear: input.expiryYear,
-      securityCode: input.securityCode || undefined,
     });
     const { rows } = await pool.query<CardRow>(
-      'INSERT INTO vault_cards(id,owner_id,label,brand,last4,expiry_month,expiry_year,ciphertext,do_it_for_me) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
+      'INSERT INTO vault_cards(id,owner_id,label,brand,last4,expiry_month,expiry_year,ciphertext) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
       [
         entry.id,
         owner,
@@ -969,7 +915,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         input.expiryMonth,
         input.expiryYear,
         ciphertext,
-        input.securityCode ? true : null,
       ],
     );
     track('card', 'create', 'user');
@@ -977,7 +922,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function updateCard(rawId: string, raw: unknown) {
-    if (options.securityCodes === false)
+    if (options.cards === false)
       throw new VaultError('Hosted Otto does not store card numbers.', 403);
     const id = z.uuid().parse(rawId);
     const input = cardUpdateInput.parse(raw);
@@ -996,28 +941,21 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       if (!entry) throw new VaultError('This saved card could not be found.', 404);
       const secret = openCard(credentialKey, entry);
       const number = replacement ?? secret.cardNumber;
-      const securityCode =
-        input.securityCode === null ? undefined : input.securityCode || secret.securityCode;
-      const doItForMe =
-        input.securityCode === null ? false : input.securityCode ? true : entry.do_it_for_me;
       changed =
         input.label !== entry.label ||
         input.cardholder !== secret.cardholder ||
         number !== secret.cardNumber ||
         input.expiryMonth !== secret.expiryMonth ||
-        input.expiryYear !== secret.expiryYear ||
-        securityCode !== secret.securityCode ||
-        doItForMe !== entry.do_it_for_me;
+        input.expiryYear !== secret.expiryYear;
       const ciphertext = sealCard(credentialKey, entry, {
         cardholder: input.cardholder,
         cardNumber: number,
         expiryMonth: input.expiryMonth,
         expiryYear: input.expiryYear,
-        securityCode,
       });
       const result = await client.query<CardRow>(
         `UPDATE vault_cards SET label=$3,brand=$4,last4=$5,expiry_month=$6,expiry_year=$7,ciphertext=$8,
-         do_it_for_me=CASE WHEN $9::boolean IS NULL THEN do_it_for_me ELSE $9 END,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *`,
+         updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *`,
         [
           id,
           owner,
@@ -1027,13 +965,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           input.expiryMonth,
           input.expiryYear,
           ciphertext,
-          input.securityCode === undefined
-            ? null
-            : input.securityCode === null
-              ? false
-              : input.securityCode
-                ? true
-                : null,
         ],
       );
       return cardMetadata(result.rows[0]);
@@ -1883,12 +1814,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           ]);
           if (card.rowCount) {
             const { entry, secret } = await readCard(id);
-            return {
-              ...cardMetadata(entry),
-              cardholder: secret.cardholder,
-              hasSecurityCode: options.securityCodes !== false && Boolean(secret.securityCode),
-              doItForMe: options.securityCodes !== false && entry.do_it_for_me === true,
-            };
+            return { ...cardMetadata(entry), cardholder: secret.cardholder };
           }
           const { entry, secret } = await readCredential(request.params.id);
           return {
@@ -1913,33 +1839,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           });
           return { password: secret.password };
         },
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/vault/:id/security-code',
-        async (request): Promise<VaultCardSecurityCode> => {
-          z.object({})
-            .strict()
-            .parse(request.body ?? {});
-          const { secret } = await readCard(request.params.id);
-          if (options.securityCodes === false || !secret.securityCode)
-            throw new VaultError('This card has no saved security code.', 404);
-          await options.onOwnerUse?.({
-            action: 'reveal',
-            origin: 'otto:vault',
-            itemId: request.params.id,
-            itemKind: 'card',
-          });
-          return { securityCode: secret.securityCode };
-        },
-      );
-      scope.put<{ Params: { id: string } }>(
-        '/api/vault/:id/do-it-for-me',
-        { bodyLimit: 1024 },
-        async (request) =>
-          setDoItForMe(
-            request.params.id,
-            z.object({ on: z.boolean() }).strict().parse(request.body).on,
-          ),
       );
       scope.post<{ Params: { id: string } }>(
         '/api/vault/:id/card-number',
@@ -2018,7 +1917,5 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     forgetExpiredHolds,
     paymentCards,
     paymentCard,
-    setDoItForMe,
-    keepSecurityCode,
   };
 }

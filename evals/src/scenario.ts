@@ -50,7 +50,9 @@ export interface UserScript {
   answers?: Answer[];
   approve?: boolean | ((action: string, args: unknown) => boolean);
   approvalReplies?: string[];
-  secrets?: string[] | ((question: string, world: any) => string | undefined);
+  secrets?:
+    | string[]
+    | ((question: string, world: any, kind: 'otp' | 'payment' | 'password') => string | undefined);
   signIn?: { username: string; password: string };
   persona?: string;
 }

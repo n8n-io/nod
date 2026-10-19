@@ -62,11 +62,8 @@ test(
       label: 'Studio card',
       brand: 'Visa',
       last4: '4242',
-      doItForMe: false,
-      choice: null,
     };
     const entered: string[] = [];
-    const kept: Array<[string, boolean, string | undefined]> = [];
     const payments = await createPayments(db.pool, {
       ownerId,
       uses: await createVaultUses(db.pool, ownerId),
@@ -89,12 +86,6 @@ test(
         expiryMonth: 8,
         expiryYear: 2031,
       }),
-      remember: async (id, on) => {
-        kept.push([id, on, undefined]);
-      },
-      keepCode: async (id, code) => {
-        kept.push([id, true, code]);
-      },
       fill: async (input) => {
         entered.push(input.card.securityCode ?? '');
         await duringPayment();
@@ -205,7 +196,6 @@ test(
       );
       ordinary.length = 0;
       entered.length = 0;
-      kept.length = 0;
       injected.length = 0;
       hold = undefined;
       started = undefined;
@@ -410,7 +400,6 @@ test(
           assert.equal(response.statusCode, 200, response.body);
           assert.equal(response.json().verificationStatus, 'submitted');
           assert.deepEqual(entered, ['7395']);
-          assert.deepEqual(kept, []);
           assert.equal((await send('2026')).statusCode, 200);
           assert.deepEqual(ordinary, [...prose, '2026']);
           assert.deepEqual(entered, ['7395']);

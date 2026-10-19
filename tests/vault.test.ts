@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { openVaultValue } from '../src/server/vault-crypto.ts';
+import { openVaultValue, sealVaultValue } from '../src/server/vault-crypto.ts';
 import { securityCodeIn } from '../src/shared/verification-code.ts';
 import test from 'node:test';
 import { act, createElement } from 'react';
@@ -1477,7 +1477,6 @@ test(
           'foreign-owner',
         ]);
         assert.equal((await read(foreign.id, 'card-number')).statusCode, 404);
-        assert.equal((await read(foreign.id, 'security-code')).statusCode, 404);
         assert.equal((await update(foreign.id, input)).statusCode, 404);
         const transplanted = await create({ ...input, label: 'Transplanted card' });
         await pool.query(
@@ -1486,7 +1485,6 @@ test(
         );
         for (const result of [
           await read(transplanted.id, 'card-number'),
-          await read(transplanted.id, 'security-code'),
           await update(transplanted.id, input),
         ]) {
           assert.equal(result.statusCode, 500);
@@ -1498,9 +1496,38 @@ test(
         );
       });
 
-      await t.test('hosted mode never keeps a security code, even one saved before', async () => {
-        const remembered = await create({ ...input, label: 'Remembered', securityCode: '737' });
-        assert.equal((await read(remembered.id, 'details')).json().hasSecurityCode, true);
+      await t.test('Otto never keeps a security code, even one saved before', async () => {
+        for (const response of [
+          await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: { ...input, label: 'With code', securityCode: '737' },
+          }),
+          await update(first.id, { ...input, securityCode: '737' }),
+        ])
+          assert.equal(response.statusCode, 400);
+        const saved = await create({ ...input, label: 'Saved before' });
+        const binding = ['otto-vault-card-v1', owner, saved.id];
+        const sealed = async () =>
+          (
+            await pool.query<{ ciphertext: string }>(
+              'SELECT ciphertext FROM vault_cards WHERE id=$1',
+              [saved.id],
+            )
+          ).rows[0]!.ciphertext;
+        const stored = JSON.parse(openVaultValue(key, binding, await sealed()));
+        await pool.query('UPDATE vault_cards SET ciphertext=$2 WHERE id=$1', [
+          saved.id,
+          sealVaultValue(key, binding, JSON.stringify({ ...stored, securityCode: '737' })),
+        ]);
+        const restarted = await start();
+        try {
+          assert.deepEqual(JSON.parse(openVaultValue(key, binding, await sealed())), stored);
+          assert.deepEqual(await restarted.vault.paymentCard(saved.id), stored);
+        } finally {
+          await restarted.app.close();
+        }
         const hosted = Fastify({ logger: false });
         registerLocalAccess(hosted, 4310, { key: 'synthetic-local-access' });
         (
@@ -1509,27 +1536,22 @@ test(
             inject: async () => assert.fail('Cards must never enter a website login.'),
             resume: async () => assert.fail('Card management must not resume a task.'),
             retry: async () => assert.fail('Card management must not retry a task.'),
-            securityCodes: false,
+            cards: false,
           })
         ).registerRoutes(hosted);
         try {
-          assert.equal(
-            (await read(remembered.id, 'details', hosted)).json().hasSecurityCode,
-            false,
-          );
-          assert.equal((await read(remembered.id, 'security-code', hosted)).statusCode, 404);
           const created = await hosted.inject({
             method: 'POST',
             url: '/api/vault',
             headers,
-            payload: { ...input, label: 'Hosted', securityCode: '123' },
+            payload: { ...input, label: 'Hosted' },
           });
           assert.equal(created.statusCode, 403);
           assert.equal(
             (await pool.query("SELECT id FROM vault_cards WHERE label='Hosted'")).rowCount,
             0,
           );
-          assert.equal((await update(remembered.id, input, hosted)).statusCode, 403);
+          assert.equal((await update(saved.id, input, hosted)).statusCode, 403);
         } finally {
           await hosted.close();
         }
@@ -2134,7 +2156,7 @@ test('site matching uses public suffix boundaries and separates hosted tenants',
 });
 
 test(
-  'a payment enters the card only into the approved merchant after the owner replies with the code or a yes',
+  'a payment enters the card only into the approved merchant after the owner replies with the code',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const schema = `test_vault_pay_${randomUUID().replaceAll('-', '')}`;
@@ -2217,8 +2239,6 @@ test(
           },
           cards: vault.paymentCards,
           card: vault.paymentCard,
-          remember: vault.setDoItForMe,
-          keepCode: vault.keepSecurityCode,
           fill: async (input) => {
             if (failFill) throw new Error('Synthetic stale field.');
             await duringFill();
@@ -2297,7 +2317,6 @@ test(
         ).rows[0]!;
       const reply = async (code: string) =>
         (await payments.submitCode(turn.turnId, code, (await latest()).id)).status;
-      const studio = async () => (await vault.paymentCards()).find((item) => item.id === card.id)!;
       const shop = 'https://shop.fixture.test';
 
       const first = await payments.request(turn, order);
@@ -2309,8 +2328,8 @@ test(
       await pool.query("UPDATE vault_payments SET status='superseded' WHERE turn_id=$1", [
         parallel.turnId,
       ]);
-      assert.equal(first.paymentId, undefined);
-      assert.equal(first.details.amount, '43.20');
+      assert.equal(first.question, 'Synthetic private payment step.');
+      assert.equal(presentations.at(-1)!.input.amount, '43.20');
       assert.equal(
         (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
         'unavailable',
@@ -2327,7 +2346,6 @@ test(
       assert.equal(resumed.length, 1);
       assert.equal(fills.length, 1);
       assert.equal(fills[0].destinations.number, shop);
-      assert.equal((await studio()).choice, null);
       assert.equal(await reply('737'), 'unavailable');
 
       await payments.request(turn, order);
@@ -2340,29 +2358,17 @@ test(
       assert.equal((await latest()).status, 'uncertain');
       assert.equal(fills.length, 1);
 
-      await assert.rejects(payments.setting(turn, { doItForMe: true }));
-      assert.equal((await studio()).doItForMe, false);
-      await payments.setting(turn, { doItForMe: true }, true);
-      const keep = await payments.request(turn, order);
-      assert.equal(keep.details.keepCode, true);
-      assert.equal(await reply('737'), 'submitted');
-      assert.equal((await studio()).doItForMe, true);
-
       elsewhere = 'https://pay.fixture.test';
-      const yes = await payments.request(turn, order);
-      assert.equal(yes.question, undefined);
-      assert.deepEqual(yes.details.destinations, ['https://pay.fixture.test', shop]);
-      assert.equal(yes.details.requires, 'approval');
-      assert.ok(yes.paymentId);
-      assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, true);
+      await payments.request(turn, order);
+      assert.deepEqual(presentations.at(-1)!.input.destinations, [
+        'https://pay.fixture.test',
+        shop,
+      ]);
+      assert.equal(presentations.at(-1)!.input.requires, 'security_code');
+      assert.equal(await reply('737'), 'submitted');
       assert.equal(fills.at(-1)?.card.securityCode, '737');
       assert.equal(fills.at(-1)?.destinations.number, 'https://pay.fixture.test');
-      assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, false);
-      failFill = true;
-      const broken = await payments.request(turn, order);
-      const failed = await payments.approve(turn, { paymentId: broken.paymentId! });
-      failFill = false;
-      assert.equal(failed.entered, false);
+      assert.equal(await reply('737'), 'unavailable');
       elsewhere = 'null';
       await assert.rejects(payments.request(turn, order));
       elsewhere = undefined;
@@ -2381,50 +2387,36 @@ test(
       );
       const described = await app.inject({ method: 'GET', url: securePath, headers });
       assert.equal(described.statusCode, 200);
-      assert.equal(described.json().needsCode, false);
       assert.equal(described.body.includes('4242424242424242'), false);
       const beforeLink = fills.length;
       const replies = await Promise.all([
-        app.inject({ method: 'POST', url: securePath, headers, payload: {} }),
-        app.inject({ method: 'POST', url: securePath, headers, payload: {} }),
+        app.inject({ method: 'POST', url: securePath, headers, payload: { code: '737' } }),
+        app.inject({ method: 'POST', url: securePath, headers, payload: { code: '737' } }),
       ]);
       assert.deepEqual(replies.map((response) => response.statusCode).sort(), [200, 409]);
       assert.equal(fills.length, beforeLink + 1);
       assert.equal((await app.inject({ method: 'GET', url: securePath, headers })).statusCode, 409);
-      await payments.setting(turn, { doItForMe: true }, true);
-      await payments.setting(turn, { doItForMe: false }, true);
-      assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
+      assert.equal('securityCode' in (await vault.paymentCard(card.id)), false);
       inOtto = true;
 
       await save('Travel card', '5555 5555 5555 4444');
       await assert.rejects(payments.request(turn, order));
-      assert.equal(
-        (
-          (await payments.request(turn, { ...order, card: 'travel' })).details.card as {
-            last4: string;
-          }
-        ).last4,
-        '4444',
-      );
-      const yen = await payments.request(turn, {
-        ...order,
-        card: '4242',
-        amount: '1200',
-        currency: 'JPY',
-      });
-      assert.equal(yen.details.amountMinor, 1200);
-      assert.equal(yen.details.amount, '1200');
-      assert.equal(yen.details.currency, 'JPY');
+      await payments.request(turn, { ...order, card: 'travel' });
+      assert.equal((presentations.at(-1)!.input.card as { last4: string }).last4, '4444');
+      await payments.request(turn, { ...order, card: '4242', amount: '1200', currency: 'JPY' });
+      const yen = presentations.at(-1)!.input;
+      assert.equal(yen.amountMinor, 1200);
+      assert.equal(yen.amount, '1200');
+      assert.equal(yen.currency, 'JPY');
       const hosted = await make(false);
       await assert.rejects(hosted.request(turn, { ...order, card: '4242' }));
-      await assert.rejects(hosted.setting(turn, { doItForMe: true }, true));
       inOtto = false;
       const privateCode = await payments.request(turn, { ...order, card: card.id });
       const codeId = privateCode.url!.split('/').at(-1)!;
       const codePath = `/api/payment-requests/${codeId}`;
       assert.equal(
         (await app.inject({ method: 'POST', url: codePath, headers, payload: {} })).statusCode,
-        409,
+        400,
       );
       const invalidCode = await app.inject({
         method: 'POST',
@@ -2477,15 +2469,6 @@ test(
         409,
       );
       assert.equal(fills.length, beforeExpiry);
-      await vault.setDoItForMe(card.id, true);
-      await payments.request(turn, { ...order, card: card.id });
-      duringFill = async () => {
-        await vault.setDoItForMe(card.id, false);
-      };
-      assert.equal(await reply('737'), 'submitted');
-      duringFill = async () => {};
-      assert.equal((await studio()).choice, false);
-      assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
 
       await payments.request(turn, { ...order, card: card.id });
       const changedPayment = (await latest()).id;

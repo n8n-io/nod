@@ -87,8 +87,6 @@ export interface VaultLoginDetails extends VaultLoginEntry {
 }
 interface VaultCardDetails extends VaultCardEntry {
   cardholder: string;
-  hasSecurityCode: boolean;
-  doItForMe: boolean;
 }
 export type VaultEntryDetails = VaultLoginDetails | VaultCardDetails;
 export interface VaultEntryPassword {
@@ -96,9 +94,6 @@ export interface VaultEntryPassword {
 }
 export interface VaultCardNumber {
   cardNumber: string;
-}
-export interface VaultCardSecurityCode {
-  securityCode: string;
 }
 export type VaultActivityReason =
   | 'asked'
@@ -148,8 +143,6 @@ export interface VaultPaymentCard {
   label: string;
   brand: string;
   last4: string;
-  doItForMe: boolean;
-  choice: boolean | null;
 }
 export interface VaultImportResult {
   imported: number;
@@ -353,6 +346,4 @@ export interface PaymentRequest {
   amount: string;
   card: string;
   destinations: string[];
-  needsCode: boolean;
-  keepCode: boolean;
 }

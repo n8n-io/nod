@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { CreditCard, Globe } from 'lucide-react';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { Button, Field, Input, Notice, Switch } from './ui';
+import { Button, Field, Input, Notice } from './ui';
 import { suggestLoginName } from '../lib/vault-name';
 import { VaultTitle } from './vault-surface';
 
@@ -21,13 +21,11 @@ export function parseCardExpiry(value: FormDataEntryValue | null) {
 
 export function clearVaultSecret(form: HTMLFormElement | null) {
   form
-    ?.querySelectorAll<HTMLInputElement>(
-      'input[name="password"], input[name="cardNumber"], input[name="securityCode"]',
-    )
+    ?.querySelectorAll<HTMLInputElement>('input[name="password"], input[name="cardNumber"]')
     .forEach((input) => (input.value = ''));
 }
 
-export type VaultSecretName = 'password' | 'cardNumber' | 'securityCode';
+export type VaultSecretName = 'password' | 'cardNumber';
 
 function VaultSecretField({
   name,
@@ -35,79 +33,26 @@ function VaultSecretField({
   editing,
   saved = true,
   disabled,
-  onChange,
-  required = false,
 }: {
   name: VaultSecretName;
   label: string;
   editing: boolean;
   saved?: boolean;
   disabled: boolean;
-  onChange?(): void;
-  required?: boolean;
 }) {
-  const [removing, setRemoving] = useState(false);
-  const id = useId();
-  const input = useRef<HTMLInputElement>(null);
-  const previous = useRef(removing);
-  const notify = useRef(onChange);
-  notify.current = onChange;
-  useEffect(() => {
-    if (previous.current === removing) return;
-    previous.current = removing;
-    notify.current?.();
-  }, [removing]);
   return (
-    <div className="field vault-secret-field">
-      <div className="vault-field-heading">
-        <label className="field-label" htmlFor={id}>
-          {label}
-          {!required && (name === 'securityCode' || name === 'password') ? ' (optional)' : ''}
-        </label>
-        {editing && name === 'securityCode' && saved && (
-          <div className="vault-field-heading-actions">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={disabled}
-              onClick={() => {
-                if (input.current) input.current.value = '';
-                setRemoving((value) => !value);
-              }}
-            >
-              {removing ? 'Keep saved code' : 'Remove'}
-            </Button>
-          </div>
-        )}
-      </div>
-      {removing ? (
-        <div className="vault-field-box">
-          <span className="vault-secret-empty">Will be removed</span>
-          <input name="removeSecurityCode" type="hidden" value="true" />
-        </div>
-      ) : (
-        <Input
-          ref={input}
-          id={id}
-          name={name}
-          type="password"
-          placeholder={editing ? (saved ? 'Leave blank to keep current' : 'Not saved') : undefined}
-          inputMode={name === 'password' ? undefined : 'numeric'}
-          autoComplete={
-            name === 'cardNumber'
-              ? 'cc-number'
-              : name === 'securityCode'
-                ? 'cc-csc'
-                : 'new-password'
-          }
-          maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
-          pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
-          required={required || (!editing && name === 'cardNumber')}
-          disabled={disabled}
-        />
-      )}
-    </div>
+    <Field label={name === 'password' ? `${label} (optional)` : label}>
+      <Input
+        name={name}
+        type="password"
+        placeholder={editing ? (saved ? 'Leave blank to keep current' : 'Not saved') : undefined}
+        inputMode={name === 'password' ? undefined : 'numeric'}
+        autoComplete={name === 'cardNumber' ? 'cc-number' : 'new-password'}
+        maxLength={name === 'cardNumber' ? 32 : 8192}
+        required={!editing && name === 'cardNumber'}
+        disabled={disabled}
+      />
+    </Field>
   );
 }
 
@@ -115,17 +60,11 @@ export function VaultFields({
   kind,
   details,
   disabled,
-  hosted = false,
-  onSecretChange,
 }: {
   kind: 'login' | 'card';
   details?: VaultEntryDetails;
   disabled: boolean;
-  hosted?: boolean;
-  onSecretChange?(): void;
 }) {
-  const savedCode = details?.kind === 'card' && details.hasSecurityCode;
-  const [remember, setRemember] = useState(savedCode);
   const identityLabel =
     details?.kind === 'login'
       ? (details.identifierLabel ?? 'Username or email')
@@ -177,54 +116,24 @@ export function VaultFields({
         editing={Boolean(details)}
         saved={details?.kind !== 'login' || details.hasPassword !== false}
         disabled={disabled}
-        onChange={onSecretChange}
       />
       {kind === 'card' && (
-        <>
-          <Field label="Expiry date">
-            <Input
-              name="expiry"
-              defaultValue={
-                details?.kind === 'card'
-                  ? formatCardExpiry(details.expiryMonth, details.expiryYear)
-                  : ''
-              }
-              placeholder="MM / YYYY"
-              inputMode="numeric"
-              autoComplete="cc-exp"
-              maxLength={9}
-              required
-              disabled={disabled}
-            />
-          </Field>
-          {!hosted && !savedCode && (
-            <div className="field vault-switch-row">
-              <span>
-                <span className="field-label">Do it for me</span>
-                <small className="payment-hint">
-                  Otto keeps the security code, so your yes is enough to pay.
-                </small>
-              </span>
-              <Switch
-                checked={remember}
-                aria-label="Do it for me"
-                disabled={disabled}
-                onCheckedChange={setRemember}
-              />
-            </div>
-          )}
-          {!hosted && remember && (
-            <VaultSecretField
-              name="securityCode"
-              label="Security code"
-              editing={Boolean(details)}
-              saved={savedCode}
-              required={!savedCode}
-              disabled={disabled}
-              onChange={onSecretChange}
-            />
-          )}
-        </>
+        <Field label="Expiry date">
+          <Input
+            name="expiry"
+            defaultValue={
+              details?.kind === 'card'
+                ? formatCardExpiry(details.expiryMonth, details.expiryYear)
+                : ''
+            }
+            placeholder="MM / YYYY"
+            inputMode="numeric"
+            autoComplete="cc-exp"
+            maxLength={9}
+            required
+            disabled={disabled}
+          />
+        </Field>
       )}
     </>
   );
@@ -232,13 +141,11 @@ export function VaultFields({
 
 export function VaultItemForm({
   kind,
-  hosted = false,
   onSaved,
   onCancel,
   onSavingChange,
 }: {
   kind: 'login' | 'card';
-  hosted?: boolean;
   onSaved(entry: VaultListEntry): void;
   onCancel(): void;
   onSavingChange?(saving: boolean): void;
@@ -295,9 +202,6 @@ export function VaultItemForm({
             label,
             cardholder: String(values.get('cardholder') ?? ''),
             cardNumber: String(values.get('cardNumber') ?? ''),
-            ...(values.get('securityCode')
-              ? { securityCode: String(values.get('securityCode')) }
-              : {}),
             ...expiry,
           }
         : {
@@ -309,7 +213,6 @@ export function VaultItemForm({
     );
     values.delete('password');
     values.delete('cardNumber');
-    values.delete('securityCode');
     clearVaultSecret(form.current);
     const controller = new AbortController();
     request.current = controller;
@@ -371,7 +274,7 @@ export function VaultItemForm({
         className="vault-inset vault-add-form"
         autoComplete="off"
       >
-        <VaultFields kind={kind} disabled={saving} hosted={hosted} />
+        <VaultFields kind={kind} disabled={saving} />
       </form>
       {error && <Notice>{error}</Notice>}
     </>
