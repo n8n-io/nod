@@ -14,7 +14,7 @@ Conversation traces let the Otto team at n8n see how Otto handles real requests,
 1. Open **Settings → Appearance**.
 2. Turn on **Share conversation traces**.
 
-Turn the switch off to stop sending at once. Traces already sent are deleted when they expire, 14 days after they arrive.
+Turn the switch off to stop sending at once. A trace that was already on its way can still arrive. Traces already sent are deleted when they expire, 14 days after they arrive.
 
 The switch is separate from **Share usage data**, and you can turn either on without the other. It appears in the official desktop app. A source install shows it only when an operator sets `OTTO_TRACES_URL` and `OTTO_TRACES_TOKEN` (see [Configuration](/deploy/configuration/#analytics-and-feedback)).
 
@@ -37,19 +37,19 @@ n8n's service sees your IP address when it receives a trace, as it does for upda
 
 Every trace passes through these layers on your computer before it's sent.
 
-| Layer                       | What it removes                                                                                      | How it decides                                      |
-| --------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Known secrets               | Keys you saved, model and app keys, Otto's own tokens, and text shaped like a key, token or password | The exact values Otto knows, plus known key formats |
-| Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data          | The field name                                      |
-| Your name                   | Your name as set in Otto, in full or in part                                                         | An exact match                                      |
-| Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                  | The address format                                  |
-| Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats            | Google's libphonenumber rules                       |
-| Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                               | The issuer prefix and the Luhn checksum             |
-| Bank accounts               | IBANs                                                                                                | The country's length and the IBAN checksum          |
-| Crypto wallets              | Bitcoin and Ethereum addresses                                                                       | The address checksum                                |
-| ID numbers                  | US Social Security, Spanish DNI and NIE, UK National Insurance, Brazilian CPF and Indian Aadhaar     | Each format's check digit or rules                  |
-| Network addresses           | IPv4, IPv6 and MAC addresses                                                                         | Address validation                                  |
-| Personal fields in app data | The value of fields such as `first_name`, `displayName`, `birthday`, `address` or `phone`            | The field name, whatever the value's type           |
+| Layer                       | What it removes                                                                                      | How it decides                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Known secrets               | Keys you saved, model and app keys, Otto's own tokens, and text shaped like a key, token or password | The exact values Otto knows, plus known key formats          |
+| Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data          | The field name                                               |
+| Your name                   | Your name as set in Otto, in full or in part                                                         | An exact match                                               |
+| Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                  | The address format                                           |
+| Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats            | Google's libphonenumber rules                                |
+| Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                               | The issuer prefix and the Luhn checksum                      |
+| Bank accounts               | IBANs                                                                                                | The country's length and the IBAN checksum                   |
+| Crypto wallets              | Bitcoin and Ethereum addresses                                                                       | The Bitcoin address checksum, or the Ethereum address format |
+| ID numbers                  | US Social Security, Spanish DNI and NIE, UK National Insurance, Brazilian CPF and Indian Aadhaar     | Each format's check digit or rules                           |
+| Network addresses           | IPv4, IPv6 and MAC addresses                                                                         | Address validation                                           |
+| Personal fields in app data | The value of fields such as `first_name`, `displayName`, `birthday`, `address` or `phone`            | The field name, whatever the value's type                    |
 
 Here's a synthetic request before and after scrubbing, for an owner called Marta in Spain:
 
@@ -86,7 +86,7 @@ flowchart LR
   broker -- write-only key --> langsmith[LangSmith, EU<br/>deleted after 14 days]
 ```
 
-1. Otto sends each scrubbed trace to n8n's **Otto Traces** service. The service refuses requests without the token in official Otto builds. It checks the trace's shape and size, files it in the `otto` project, and keeps no copy of the request.
+1. Otto sends each scrubbed trace to n8n's **Otto Traces** service. The service refuses requests without the token in official Otto builds. It checks the trace's shape and size, files it in the `otto` project, and keeps no copy of the request. It forwards at most 600 traces a minute from all senders combined.
 2. The service writes the trace to n8n's LangSmith workspace in the EU with a tracing key that can write traces but can't read them. Otto itself never holds a LangSmith key.
 3. LangSmith deletes each trace 14 days after it arrives. People at n8n with access to that workspace can read traces until then.
 

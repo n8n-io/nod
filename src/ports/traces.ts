@@ -24,4 +24,4 @@ export interface ModelTraces {
   record(trace: ModelTrace): void;
 }
 
-export type ModelTraceDelivery = (trace: ModelTrace) => Promise<void>;
+export type ModelTraceDelivery = (trace: ModelTrace, signal: AbortSignal) => Promise<void>;

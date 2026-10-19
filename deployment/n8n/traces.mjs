@@ -8,6 +8,7 @@ export const tracesWorkflow = {
   credentialName: 'Otto LangSmith traces',
   webhookCredentialName: 'Otto traces webhook',
   tokenHeader: 'x-otto-traces-token',
+  perMinute: 600,
 };
 
 export const settings = {
@@ -18,6 +19,16 @@ export const settings = {
   saveDataSuccessExecution: 'none',
   executionTimeout: 60,
 };
+
+export function admitTrace(state, now, limit) {
+  const minute = Math.floor(now / 60_000);
+  if (state.minute !== minute) {
+    state.minute = minute;
+    state.count = 0;
+  }
+  state.count = (state.count ?? 0) + 1;
+  return state.count <= limit;
+}
 
 export function checkTrace(input, project) {
   const data = input?.body ?? input;
@@ -134,7 +145,7 @@ export function tracesWorkflowNodes(credentials = {}) {
       parameters: {
         mode: 'runOnceForAllItems',
         language: 'javaScript',
-        jsCode: `return [{json:(${checkTrace.toString()})($input.first().json,${JSON.stringify(tracesWorkflow.langsmithProject)})}];`,
+        jsCode: `const admitted = (${admitTrace.toString()})($getWorkflowStaticData('global'), $now.toMillis(), ${tracesWorkflow.perMinute});\nreturn [{json: admitted ? (${checkTrace.toString()})($input.first().json,${JSON.stringify(tracesWorkflow.langsmithProject)}) : { ok: false }}];`,
       },
     },
     {

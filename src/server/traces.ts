@@ -24,7 +24,7 @@ function structured(value: string, text: (value: string) => string) {
           ? item.map((entry) => visit(entry))
           : item && typeof item === 'object'
             ? Object.fromEntries(
-                Object.entries(item).map(([name, entry]) => [name, visit(entry, name)]),
+                Object.entries(item).map(([name, entry]) => [text(name), visit(entry, name)]),
               )
             : item;
   return JSON.stringify(visit(withoutSecretKeys(parsed)));
@@ -38,6 +38,7 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
   let loaded: { profile: string; text: (value: string) => string } | undefined;
   let seen = -1;
   const cache = new Map<string, string>();
+  let stopping = new AbortController();
   const salt = randomBytes(32);
   const pseudonym = (value: string) =>
     createHmac('sha256', salt)
@@ -70,6 +71,7 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
   }
 
   async function send(trace: ModelTrace) {
+    const signal = stopping.signal;
     const text = await scrubber();
     const scrub = (value: unknown) =>
       JSON.parse(
@@ -77,19 +79,22 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
           typeof item === 'string' ? text(item) : item,
         ),
       );
-    if (!enabled || !deliver) return;
-    await deliver({
-      ...trace,
-      messages: scrub(trace.messages),
-      output: scrub(trace.output),
-      ...(trace.error ? { error: text(trace.error) } : {}),
-      metadata: Object.fromEntries(
-        Object.entries(trace.metadata).map(([key, value]) => [
-          key,
-          identifiers.has(key) ? pseudonym(value) : value,
-        ]),
-      ),
-    });
+    if (!enabled || !deliver || signal.aborted) return;
+    await deliver(
+      {
+        ...trace,
+        messages: scrub(trace.messages),
+        output: scrub(trace.output),
+        ...(trace.error ? { error: text(trace.error) } : {}),
+        metadata: Object.fromEntries(
+          Object.entries(trace.metadata).map(([key, value]) => [
+            key,
+            identifiers.has(key) ? pseudonym(value) : value,
+          ]),
+        ),
+      },
+      signal,
+    );
   }
 
   return {
@@ -99,7 +104,11 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
       profile?: () => Promise<PersonalProfile>;
     }) {
       if (options.enabled !== undefined) enabled = options.enabled;
-      if (!enabled) cache.clear();
+      if (!enabled) {
+        cache.clear();
+        stopping.abort();
+        stopping = new AbortController();
+      }
       if (options.secrets) {
         secrets = options.secrets;
         secretText = createTextRedactor(secrets);

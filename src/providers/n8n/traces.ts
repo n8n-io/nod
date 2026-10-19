@@ -19,7 +19,7 @@ export function createN8nTraces(options: {
   )
     throw new Error('The traces URL must use HTTPS without credentials, queries or fragments.');
   const request = options.request ?? fetch;
-  return async (trace: ModelTrace) => {
+  return async (trace: ModelTrace, signal: AbortSignal) => {
     const body = JSON.stringify({
       version: 1,
       run: {
@@ -50,7 +50,7 @@ export function createN8nTraces(options: {
       redirect: 'error',
       headers: { 'content-type': 'application/json', 'x-otto-traces-token': token },
       body,
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.any([AbortSignal.timeout(30_000), signal]),
     });
     await response.body?.cancel();
   };

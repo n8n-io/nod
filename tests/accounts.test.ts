@@ -210,7 +210,7 @@ describe('account routes', () => {
     assert.equal(f.record().traces, true);
     traces.record(
       trace(
-        'I am Marta Vidal <marta.vidal@example.com>, cc alice smith <alice@example.com>, card 4111 1111 1111 1111, IBAN ES91 2100 0418 4502 0005 1332, call 612 345 678, DNI 12345678Z, server 2001:db8::1 and 203.0.113.42. Key fixture-model-key-8c41f2, order 123456 on 2026-10-19',
+        'I am Marta Vidal <marta.vidal@example.com>, cc alice smith <alice@example.com>, card 4111 1111 1111 1111, IBAN ES91 2100 0418 4502 0005 1332, call 612 345 678, DNI 12345678Z, server 2001:db8::1 and 203.0.113.42. Host 192.168.1.1.example stays. Key fixture-model-key-8c41f2, order 123456 on 2026-10-19',
       ),
     );
     await settle(1);
@@ -237,6 +237,7 @@ describe('account routes', () => {
     ])
       assert.ok(!sent.includes(value), value);
     assert.match(sent, /order 123456 on 2026-10-19/);
+    assert.match(sent, /192\.168\.1\.1\.example/);
     assert.deepEqual(Object.keys(delivered[0].metadata), ['session_id', 'turn_id']);
     assert.match(delivered[0].metadata.session_id, /^[0-9a-f]{32}$/);
     assert.ok(!sent.includes('fixture-session') && !sent.includes('fixture-turn'));

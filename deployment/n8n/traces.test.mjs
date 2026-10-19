@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkTrace, tracesWorkflow, tracesWorkflowDefinition } from './traces.mjs';
+import { admitTrace, checkTrace, tracesWorkflow, tracesWorkflowDefinition } from './traces.mjs';
 
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const trace = (changes = {}) => ({
@@ -26,13 +26,19 @@ const trace = (changes = {}) => ({
 });
 
 test('valid traces become one llm run pinned to the Otto project with usage for cost tracking', () => {
-  const run = (code) => new Function('$input', code);
+  const run = (code) => new Function('$input', '$getWorkflowStaticData', '$now', code);
   const validate = tracesWorkflowDefinition().nodes.find((node) => node.name === 'Validate trace');
-  const [{ json }] = run(validate.parameters.jsCode)({
-    first: () => ({
-      json: { body: trace({ session_name: 'instance-ai', parent_run_id: id, error: 'Synthetic' }) },
-    }),
-  });
+  const [{ json }] = run(validate.parameters.jsCode)(
+    {
+      first: () => ({
+        json: {
+          body: trace({ session_name: 'instance-ai', parent_run_id: id, error: 'Synthetic' }),
+        },
+      }),
+    },
+    () => ({}),
+    { toMillis: () => Date.UTC(2026, 9, 19, 10, 0) },
+  );
   assert.equal(json.ok, true);
   const sent = trace().run;
   for (const field of ['id', 'name', 'start_time', 'end_time', 'outputs'])
@@ -55,6 +61,26 @@ test('valid traces become one llm run pinned to the Otto project with usage for 
       total_cost: 0.001,
     },
   });
+});
+
+test('the broker forwards at most its per-minute limit across all senders', () => {
+  const state = {};
+  const minute = Date.UTC(2026, 9, 19, 10, 0);
+  for (let index = 0; index < tracesWorkflow.perMinute; index++)
+    assert.equal(admitTrace(state, minute + index, tracesWorkflow.perMinute), true);
+  assert.equal(admitTrace(state, minute + 59_000, tracesWorkflow.perMinute), false);
+  assert.equal(admitTrace(state, minute + 60_000, tracesWorkflow.perMinute), true);
+  const validate = tracesWorkflowDefinition().nodes.find((node) => node.name === 'Validate trace');
+  const full = { minute: Math.floor(minute / 60_000), count: tracesWorkflow.perMinute };
+  const [{ json }] = new Function(
+    '$input',
+    '$getWorkflowStaticData',
+    '$now',
+    validate.parameters.jsCode,
+  )({ first: () => ({ json: { body: trace() } }) }, () => full, {
+    toMillis: () => minute + 30_000,
+  });
+  assert.equal(json.ok, false);
 });
 
 test('malformed or oversized traces never reach LangSmith', () => {

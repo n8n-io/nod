@@ -197,7 +197,7 @@ const detectors: [RegExp, string, ((match: string) => boolean)?][] = [
   ],
   [/\b[2-9]\d{3}[ -]\d{4}[ -]\d{4}\b/g, '[id number]', aadhaar],
   [/\b[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}\b/g, '[mac]'],
-  [/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?!\d|\.\d)/g, '[ip]', ipAddress],
+  [/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?!\d|\.[A-Za-z0-9])/g, '[ip]', ipAddress],
   [/(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])/g, '[ip]', ipAddress],
 ];
 
