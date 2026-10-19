@@ -69,7 +69,7 @@ export interface FeedbackContext {
   appVersion: string | null;
   appRelease: string | null;
   development: boolean;
-  source: 'desktop' | 'local-web' | 'hosted-web';
+  source: 'desktop' | 'local-web';
   appModified: boolean | null;
   computerName: string | null;
   platform: string | null;
@@ -96,7 +96,7 @@ export interface FeedbackSubmission {
   appRelease: string | null;
   platform: string | null;
   development: boolean;
-  source: 'desktop' | 'local-web' | 'hosted-web';
+  source: 'desktop' | 'local-web';
   appModified: boolean | null;
   reportId: string | null;
   attachments: FeedbackAttachment[];

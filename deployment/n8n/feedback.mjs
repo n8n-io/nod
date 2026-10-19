@@ -83,7 +83,7 @@ export function checkFeedback(input, hash) {
     !optional(data.appRelease, 200) ||
     !optional(data.platform, 100) ||
     typeof data.development !== 'boolean' ||
-    !['desktop', 'local-web', 'hosted-web'].includes(data.source) ||
+    !['desktop', 'local-web'].includes(data.source) ||
     (data.appModified !== null && typeof data.appModified !== 'boolean') ||
     !Array.isArray(data.attachments) ||
     data.attachments.length > 3 ||

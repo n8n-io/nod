@@ -21,16 +21,9 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime } from './models.ts';
 import type { ModelAccess } from '../../ports/models.ts';
-import type { Agent, AgentEvent } from '../../ports/agent.ts';
+import type { Agent } from '../../ports/agent.ts';
 import type { WorkspaceSession } from '../../ports/computer.ts';
-import type { PrivateObjectStore } from '../../ports/object-storage.ts';
-import {
-  closeInterruptedCalls,
-  createPiCheckpoint,
-  keptImages,
-  openLocalSession,
-  removedImage,
-} from './checkpoint.ts';
+import { closeInterruptedCalls, keptImages, openLocalSession, removedImage } from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
@@ -175,7 +168,6 @@ export function createPiAgent(options: {
   apiKey?: string;
   sessionRoot: string;
   configRoot?: string;
-  objectStore?: PrivateObjectStore;
   createSession?: typeof createAgentSession;
 }): Agent {
   configureWebAccess(options.configRoot ?? join(tmpdir(), 'otto-pi'));
@@ -254,33 +246,13 @@ export function createPiAgent(options: {
               },
             }
           : selectedModel;
-      const durable =
-        options.objectStore && !ephemeral
-          ? await createPiCheckpoint({
-              store: options.objectStore,
-              threadId: sessionId,
-              directory,
-            })
-          : undefined;
-      const manager =
-        durable?.manager ??
-        (ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory));
+      const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
       closeInterruptedCalls(manager);
-      const completedEvents: AgentEvent[] = [];
-      const checkpoint = async () => {
-        await durable?.checkpoint();
-        for (const event of completedEvents.splice(0)) input.onEvent(event);
-      };
-      const completed = (event: AgentEvent) => {
-        if (durable) completedEvents.push(event);
-        else input.onEvent(event);
-      };
       const sandboxTools = createSandbox(input.workspace, input.timeZone);
       const tools: ToolDefinition[] = [
         ...sandboxTools.map((definition): ToolDefinition => ({
           ...definition,
           execute: async (id, params, signal, onUpdate, context) => {
-            await checkpoint();
             const result = await input.runTool(
               definition.name,
               params,
@@ -298,7 +270,6 @@ export function createPiAgent(options: {
           exposure: 'model-only',
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (_id, args) => {
-            await checkpoint();
             return { ...(await tool.execute(args as Record<string, unknown>)), details: {} };
           },
         })),
@@ -334,7 +305,6 @@ export function createPiAgent(options: {
                   }
                 : {}),
               execute: async (id, params, signal, onUpdate, context) => {
-                await checkpoint();
                 const args = web
                   ? {
                       ...visibleWebParameters(params as Record<string, unknown>),
@@ -434,7 +404,6 @@ export function createPiAgent(options: {
       const finishTurn = session.agent.finishTurn;
       session.agent.finishTurn = async (turn, signal) => {
         const result = await finishTurn?.(turn, signal);
-        await checkpoint();
         if (input.shouldStop()) return { action: 'end' as const };
         if (
           input.nextMessages &&
@@ -445,14 +414,6 @@ export function createPiAgent(options: {
             await session.steer(message.text, message.images);
         return result ?? undefined;
       };
-      if (durable) {
-        const prepareNextTurn = session.agent.prepareNextTurnWithContext;
-        session.agent.prepareNextTurnWithContext = async (...args) => {
-          const result = await prepareNextTurn?.(...args);
-          await checkpoint();
-          return result;
-        };
-      }
       let textBlock: number | undefined;
       let compaction: { id: string; started: number } | undefined;
       const auxiliarySeen = new Set(manager.getEntries().map((entry) => entry.id));
@@ -531,7 +492,7 @@ export function createPiAgent(options: {
           if (event.message.stopReason === 'stop') {
             const blocks = event.message.content.filter((item) => item.type === 'text');
             const finalBlocks = blocks.filter((item) => isFinalAnswer(item.textSignature));
-            completed({
+            input.onEvent({
               type: 'final',
               text: (finalBlocks.length ? finalBlocks : blocks).map((item) => item.text).join('\n'),
             });
@@ -545,35 +506,23 @@ export function createPiAgent(options: {
                 : event.message.stopReason === 'aborted'
                   ? 'cancelled'
                   : undefined;
-          completed({ type: 'message_end', ...(status ? { status } : {}) });
+          input.onEvent({ type: 'message_end', ...(status ? { status } : {}) });
         }
       });
       const dispose = async () => {
-        try {
-          if (durable) await checkpoint();
-        } finally {
-          unsubscribe();
-          session.dispose();
-          active.delete(session);
-        }
+        unsubscribe();
+        session.dispose();
+        active.delete(session);
       };
       active.set(session, dispose);
       return {
         resumed,
         readsImages: model.input.includes('image'),
         async prompt(text, images) {
-          try {
-            await session.prompt(text, { images, expandPromptTemplates: false });
-          } finally {
-            await checkpoint();
-          }
+          await session.prompt(text, { images, expandPromptTemplates: false });
         },
         async abort() {
-          try {
-            await session.abort();
-          } finally {
-            await checkpoint();
-          }
+          await session.abort();
         },
         dispose,
       };

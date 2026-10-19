@@ -37,7 +37,6 @@ import { createDecisionModel } from '../providers/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
-import type { PrivateObjectStore } from '../ports/object-storage.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
 import type { FeedbackDelivery } from '../ports/feedback.ts';
 import { createN8nFeedback } from '../providers/n8n/feedback.ts';
@@ -52,7 +51,6 @@ import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
-import { createFilesystemObjectStore } from '../providers/object-storage/filesystem.ts';
 import {
   createEnvironmentKeyStore,
   parseCredentialKey,
@@ -79,7 +77,7 @@ import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
 import { createCommunication, publicText } from './communication.ts';
 import { createTrust } from './trust.ts';
-import { createArtifactService, localArtifacts } from './artifacts.ts';
+import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
@@ -138,7 +136,6 @@ export interface ApplicationAdapters {
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   integrationAccess?: ReturnType<typeof createIntegrationAccess>;
-  objectStore?: PrivateObjectStore;
   agent: Agent;
   computer: Computer;
   workspace: Workspace;
@@ -302,24 +299,13 @@ export function createDefaultAdapters(
           Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
       })
     : ownIntegrations;
-  const databaseObjects =
-    env.OBJECT_STORAGE_PROVIDER === 'postgres'
-      ? createPostgresObjectStore({ database: pool, ownerId })
-      : undefined;
-  const objectStore =
-    databaseObjects ??
-    (env.OBJECT_STORAGE_PROVIDER === 'filesystem'
-      ? createFilesystemObjectStore(env.OBJECT_STORAGE_ROOT || join(dataRoot, 'objects'))
-      : undefined);
   return {
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     initialize: async () => {
       await models.initialize();
       await integrationProxy?.initialize();
       await integrationKey.initialize();
-      await databaseObjects?.initialize();
     },
-    objectStore,
     models,
     agent: createPiAgent({
       resolve: () => models.resolve(),
@@ -327,7 +313,6 @@ export function createDefaultAdapters(
       model,
       sessionRoot: join(dataRoot, 'sessions'),
       configRoot: join(dataRoot, 'pi'),
-      objectStore,
     }),
     computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
     workspace: createDockerWorkspace({
@@ -387,7 +372,6 @@ async function initializeApplication(
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
-    deployment: 'local',
     environment: analyticsEnvironment(process.env),
     dataRoot,
     installationId: process.env.OTTO_ANALYTICS_ID,
@@ -411,9 +395,7 @@ async function initializeApplication(
   await initializeDatabase();
   await adapters.initialize?.();
   await initializeThreads();
-  const artifacts = adapters.objectStore
-    ? createArtifactService({ database: pool, ownerId, store: adapters.objectStore })
-    : localArtifacts;
+  const artifacts = localArtifacts;
   const secrets = Object.entries(process.env)
     .filter(([key]) =>
       /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN)$/.test(
@@ -509,13 +491,9 @@ async function initializeApplication(
     observe: adapters.observe,
   });
   const speech = createSpeech(adapters.speech);
-  let memoryStore = adapters.objectStore;
-  if (!memoryStore) {
-    const objects = createPostgresObjectStore({ database: pool, ownerId });
-    await objects.initialize();
-    await importMemoryFile(objects, join(dataRoot, 'objects', 'memory'));
-    memoryStore = objects;
-  }
+  const memoryStore = createPostgresObjectStore({ database: pool, ownerId });
+  await memoryStore.initialize();
+  await importMemoryFile(memoryStore, join(dataRoot, 'objects', 'memory'));
   const memory = createMemoryService({ pool, ownerId, store: memoryStore });
   const communication = createCommunication({
     pool,
@@ -1259,7 +1237,6 @@ async function initializeApplication(
       readPiSessionEntries({
         threadId,
         sessionRoot: join(dataRoot, 'sessions'),
-        objectStore: adapters.objectStore,
       }),
   };
   await registerFeedback(app, {

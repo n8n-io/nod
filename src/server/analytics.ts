@@ -64,18 +64,16 @@ async function installationId(root: string, supplied?: string) {
 
 export async function createAnalytics(options: {
   provider?: ProductAnalytics;
-  deployment: AnalyticsConfiguration['deployment'];
   environment: AnalyticsConfiguration['environment'];
   dataRoot: string;
   installationId?: string;
   appVersion?: string;
 }) {
   const appVersion = analyticsVersion.safeParse(options.appVersion).data;
-  const localId =
-    options.provider && options.deployment === 'local'
-      ? await installationId(options.dataRoot, options.installationId).catch(() => null)
-      : null;
-  const available = Boolean(options.provider && (options.deployment === 'hosted' || localId));
+  const localId = options.provider
+    ? await installationId(options.dataRoot, options.installationId).catch(() => null)
+    : null;
+  const available = Boolean(options.provider && localId);
   const states = new Map<
     string,
     { enabled: boolean; version: number; revision?: string; controller: AbortController }
@@ -110,12 +108,7 @@ export async function createAnalytics(options: {
     const enabled = !!owner && consent(owner).enabled;
     return {
       enabled,
-      distinctId: enabled
-        ? options.deployment === 'hosted'
-          ? `hosted:${owner}`
-          : `local:${localId}`
-        : null,
-      deployment: options.deployment,
+      distinctId: enabled ? `local:${localId}` : null,
       environment: options.environment,
       ...(appVersion ? { appVersion } : {}),
     };
@@ -136,11 +129,7 @@ export async function createAnalytics(options: {
     const runId = delivery.runId ?? run?.id;
     if (runId !== undefined && !z.uuid().safeParse(runId).success) return;
     if (run && delivery.runId !== undefined && delivery.runId !== run.id) return;
-    if (
-      (delivery.consentRevision !== undefined && delivery.consentRevision !== current.revision) ||
-      (options.provider?.consentRevision !== undefined &&
-        options.provider.consentRevision !== current.revision)
-    )
+    if (delivery.consentRevision !== undefined && delivery.consentRevision !== current.revision)
       return;
     const parsed = analyticsEvent.safeParse(event);
     if (!parsed.success) return;
@@ -155,7 +144,6 @@ export async function createAnalytics(options: {
           event: parsed.data.event,
           properties: {
             analytics_schema: posthogConfig.schemaVersion,
-            deployment: options.deployment,
             environment: options.environment,
             capture_source: 'server',
             ...(version ? { app_version: version } : {}),
@@ -167,11 +155,7 @@ export async function createAnalytics(options: {
       );
     } catch {}
   }
-  function setUsageData(
-    owner: string,
-    enabled: boolean,
-    revision = options.provider?.consentRevision ?? state(owner).revision,
-  ) {
+  function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {
     const current = state(owner);
     if (current.enabled === enabled && current.revision === revision) return;
     current.controller.abort();
@@ -195,21 +179,7 @@ export async function createAnalytics(options: {
       return run?.owner === owner ? run : undefined;
     },
     async permitted(owner: string) {
-      const current = consent(owner);
-      if (!current.enabled) return false;
-      const permitted = options.provider?.permitted
-        ? await options.provider.permitted().catch(() => false)
-        : true;
-      if (current.signal.aborted || consent(owner).version !== current.version) return false;
-      if (
-        options.provider?.consentRevision !== undefined &&
-        options.provider.consentRevision !== current.revision
-      )
-        setUsageData(owner, current.enabled && permitted, options.provider?.consentRevision);
-      const latest = consent(owner);
-      return (
-        permitted && !current.signal.aborted && latest.enabled && latest.version === current.version
-      );
+      return consent(owner).enabled;
     },
     capture,
     subscribe(owner: string, listener: (enabled: boolean) => void) {

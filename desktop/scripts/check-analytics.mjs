@@ -53,7 +53,7 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   getAnalyticsConfiguration: async () => ({
     enabled: process.argv.includes('--otto-fixture-enabled'),
     distinctId: 'local:11111111-1111-4111-8111-111111111111',
-    deployment: 'local', environment: 'development',
+    environment: 'development',
   }),
   getPreferences: async () => ({ theme: 'light', notifications: false, launchAtLogin: false }),
   status: async () => ({ phase: firstSetup ? 'idle' : 'preparing' }),

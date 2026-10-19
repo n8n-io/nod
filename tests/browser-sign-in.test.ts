@@ -293,9 +293,9 @@ test(
     });
     const events: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
-      deployment: 'hosted',
       environment: 'development',
       dataRoot: '',
+      installationId: randomUUID(),
       provider: { capture: (event) => events.push(event), shutdown: async () => {} },
     });
     try {

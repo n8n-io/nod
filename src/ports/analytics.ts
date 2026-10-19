@@ -1,6 +1,4 @@
 export interface ProductAnalytics {
-  readonly consentRevision?: string;
-  permitted?(): Promise<boolean>;
   capture(
     input: {
       distinctId: string;

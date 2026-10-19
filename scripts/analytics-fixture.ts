@@ -36,7 +36,6 @@ const session = () => ({
   analytics: {
     enabled: usageData,
     distinctId: usageData ? `local:${user}` : null,
-    deployment: 'local',
     environment: 'development',
   },
 });

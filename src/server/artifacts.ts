@@ -9,7 +9,6 @@ import { fileBytes, fileName } from '../shared/files.ts';
 import type { MessagingAttachment } from '../ports/messaging.ts';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import type { PrivateObjectStore } from '../ports/object-storage.ts';
 
 const mimeTypes: Record<string, string> = {
   '.txt': 'text/plain',
@@ -71,13 +70,10 @@ async function readLocal(path: string, size: number) {
 export function createArtifactService(options: {
   database: Pool;
   ownerId: string;
-  store?: PrivateObjectStore;
-  localRoot?: string;
+  localRoot: string;
 }) {
-  if (!options.ownerId || (!options.store && !options.localRoot))
-    throw new Error('Private file storage is unavailable.');
-  const location = (id: string) =>
-    options.localRoot ? join(options.localRoot, 'artifacts', id) : `object:artifacts/${id}`;
+  if (!options.ownerId) throw new Error('Private file storage is unavailable.');
+  const location = (id: string) => join(options.localRoot, 'artifacts', id);
   function checkRow(row: Record<string, any>) {
     z.uuid().parse(row.id);
     if (
@@ -90,12 +86,7 @@ export function createArtifactService(options: {
   }
   async function readRow(row: Record<string, any>) {
     checkRow(row);
-    const object = options.store
-      ? await options.store.read(`artifacts/${row.id}`, row.size)
-      : { bytes: await readLocal(location(row.id), row.size) };
-    if (!object || object.bytes.byteLength !== row.size)
-      throw new Error('An attachment is unavailable.');
-    return Buffer.from(object.bytes);
+    return readLocal(location(row.id), row.size);
   }
   async function readArtifact(id: string) {
     z.uuid().parse(id);
@@ -131,15 +122,8 @@ export function createArtifactService(options: {
     )
       throw new Error('The conversation is unavailable.');
     const id = randomUUID();
-    const key = `artifacts/${id}`;
-    const version = options.store
-      ? await options.store.write(key, bytes, { expectedVersion: null })
-      : undefined;
-    if (!options.store) {
-      if (!options.localRoot) throw new Error('Private file storage is unavailable.');
-      await mkdir(join(options.localRoot, 'artifacts'), { recursive: true, mode: 0o700 });
-      await writeFile(location(id), bytes, { mode: 0o600, flag: 'wx' });
-    }
+    await mkdir(join(options.localRoot, 'artifacts'), { recursive: true, mode: 0o700 });
+    await writeFile(location(id), bytes, { mode: 0o600, flag: 'wx' });
     const safeName = fileName(basename(name).replace(/[\r\n\x00-\x1f]/g, '')) || 'file';
     try {
       const result = await database.query(
@@ -148,9 +132,7 @@ export function createArtifactService(options: {
       );
       return artifactView(result.rows[0]);
     } catch (error) {
-      if (options.store)
-        await options.store.remove(key, { expectedVersion: version }).catch(() => {});
-      else await rm(location(id), { force: true }).catch(() => {});
+      await rm(location(id), { force: true }).catch(() => {});
       throw error;
     }
   }
