@@ -74,7 +74,7 @@ The release suite adds 159 cases of everyday work across every connected app, th
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 226 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 224 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run.
 
