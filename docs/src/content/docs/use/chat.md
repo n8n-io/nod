@@ -48,7 +48,7 @@ The model picker above the message box shows the model Otto uses. Select it to c
 
 ## React to messages
 
-To react to one of Otto's replies, double-click it to add 👍, or select **React** beside it and pick an emoji. Your reaction sits on the reply's bottom corner. Select it to remove it. Otto takes a reaction as feedback on that reply, never as an answer to a question or an approval.
+To react to one of Otto's replies, double-click it to add 👍, or select **React** beside it and pick an emoji. In a narrow window, open **Message options** beside it to find the emoji, **Reply** and **Copy**. Your reaction sits on the reply's bottom corner. Select it to remove it. Otto takes a reaction as feedback on that reply, never as an answer to a question or an approval.
 
 Otto sometimes reacts to your messages too, such as ✅ when you say yes to something it offered or ❤️ when you thank it. It reacts only now and then, and a reaction never replaces its reply.
 
