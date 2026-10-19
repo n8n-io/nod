@@ -58,7 +58,7 @@ function TaskActivity({ id }: { id: string }) {
     const last = rows.at(-1);
     if (
       last &&
-      event.type === 'tool_start' &&
+      event.type !== 'message' &&
       last.type === event.type &&
       last.summary === event.summary &&
       last.site === event.site &&
@@ -68,7 +68,7 @@ function TaskActivity({ id }: { id: string }) {
     else rows.push({ ...event, count: 1 });
   }
   return (
-    <ol className="task-activity">
+    <ol className="task-activity" role="list">
       {rows.map((event) => (
         <li
           key={event.id}
@@ -81,6 +81,9 @@ function TaskActivity({ id }: { id: string }) {
             </Markdown>
           ) : (
             <span>
+              {event.type === 'tool_failed' && (
+                <CircleAlert size={14} aria-label="Failed" className="task-activity-failed" />
+              )}
               {event.parentRunId ? 'Helper · ' : ''}
               {event.summary}
               {event.site ? ` · ${event.site}` : ''}

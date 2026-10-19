@@ -306,6 +306,11 @@
   padding-left: 0.75rem;
   color: var(--text-secondary);
 }
+.task-activity-failed {
+  margin-right: 4px;
+  vertical-align: -2px;
+  color: var(--error);
+}
 .task-activity [data-helper='true'] {
   padding-left: 1.5rem;
 }

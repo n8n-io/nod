@@ -542,7 +542,7 @@ export function createTasks(options: {
         await pool.query(
           `SELECT e.id,e.type,e.summary,e.site,e.run_id AS "runId",e.parent_run_id AS "parentRunId",e.created_at AS "createdAt"
          FROM turn_events e JOIN turns u ON u.id=e.turn_id
-         WHERE u.task_id=$1 AND u.owner_id=$2 AND e.type IN ('tool_start','failed')
+         WHERE u.task_id=$1 AND u.owner_id=$2 AND e.type IN ('tool_complete','tool_failed')
          UNION ALL
          SELECT m.id,'message',m.text,NULL,NULL,NULL,m.created_at
          FROM messages m JOIN turns u ON u.id=m.turn_id
