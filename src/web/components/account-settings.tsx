@@ -627,9 +627,9 @@ export function AccountSettings({
                         data-analytics-public
                       >
                         Send Otto’s conversations, including what it reads and does, to the Otto
-                        team at n8n to improve Otto. Your name, emails, phone numbers and card, bank
-                        and ID numbers are removed first. Kept for 14 days and never used to train
-                        AI models.
+                        team at n8n to improve Otto. Your name, email addresses, phone numbers, card
+                        numbers and IBANs are removed first. Kept for 14 days and never used to
+                        train AI models.
                       </p>
                     </>
                   )}

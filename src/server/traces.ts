@@ -3,21 +3,22 @@ import { createPersonalDataRedactor, type PersonalProfile } from './personal-dat
 import { createTextRedactor, withoutSecretKeys } from './redaction.ts';
 
 const cacheLimit = 4096;
-const profileAge = 60_000;
 
 export function createModelTraces(deliver?: ModelTraceDelivery) {
   let enabled = false;
   let secrets: string[] = [];
   let secretText = createTextRedactor(secrets);
   let profile: () => Promise<PersonalProfile> = async () => ({ names: [] });
-  let loaded: { at: number; text: (value: string) => string } | undefined;
+  let loaded: { profile: string; text: (value: string) => string } | undefined;
   let seen = -1;
   const cache = new Map<string, string>();
 
   async function scrubber() {
-    if (!loaded || Date.now() - loaded.at > profileAge) {
-      const personal = createPersonalDataRedactor(await profile());
-      loaded = { at: Date.now(), text: (value) => personal(secretText(value)) };
+    const current = await profile();
+    const key = JSON.stringify(current);
+    if (loaded?.profile !== key) {
+      const personal = createPersonalDataRedactor(current);
+      loaded = { profile: key, text: (value) => personal(secretText(value)) };
       cache.clear();
     }
     if (seen !== secrets.length) {

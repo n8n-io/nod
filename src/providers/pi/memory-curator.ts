@@ -96,7 +96,7 @@ export function createPiMemoryCurator(options: {
           maxTokens: task === 'analytics' ? 2048 : 8192,
           reasoning: effort === 'off' ? undefined : effort,
         });
-        if (options.traces?.active())
+        if (task !== 'access' && options.traces?.active())
           options.traces.record(
             piModelTrace(
               { model, context, message: reply, startedAt },

@@ -32,6 +32,15 @@ export function checkTrace(input, project) {
   const usage = run?.usage;
   const details = usage?.input_token_details;
   const metadata = run?.metadata;
+  const bytes = (value) => {
+    let total = 0;
+    for (let index = 0; index < value.length; index++) {
+      const code = value.charCodeAt(index);
+      total += code < 0x80 ? 1 : code < 0x800 ? 2 : code >= 0xd800 && code < 0xdc00 ? 4 : 3;
+      if (code >= 0xd800 && code < 0xdc00) index++;
+    }
+    return total;
+  };
   const valid =
     record(data) &&
     data.version === 1 &&
@@ -62,7 +71,7 @@ export function checkTrace(input, project) {
     Object.entries(metadata).every(
       ([key, value]) => /^[a-z_]{1,40}$/.test(key) && text(value, 200),
     ) &&
-    JSON.stringify(data).length <= 8 * 1024 * 1024;
+    bytes(JSON.stringify(data)) <= 8 * 1024 * 1024;
   if (!valid) return { ok: false };
   return {
     ok: true,

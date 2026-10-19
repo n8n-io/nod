@@ -168,7 +168,7 @@ function bitcoinSegwit(candidate: string) {
 function ipAddress(candidate: string) {
   const version = isIP(candidate);
   if (version === 4) return !/^(?:127\.|0\.0\.0\.0$)/.test(candidate);
-  return version === 6 && candidate.split(':').filter(Boolean).length >= 4;
+  return version === 6 && !['::', '::1'].includes(candidate);
 }
 
 const word = String.raw`[\p{L}\p{M}\p{N}]`;
@@ -177,7 +177,7 @@ const emailPattern = String.raw`[\p{L}\p{N}._%+-]{1,64}@(?:[\p{L}\p{N}](?:[\p{L}
 const detectors: [RegExp, string, ((match: string) => boolean)?][] = [
   [
     new RegExp(
-      String.raw`(?:"[^"\n]{1,100}"|\p{Lu}[\p{L}\p{M}'’.-]{0,40}(?:[ \t]+[\p{L}\p{M}'’.-]{1,40}){0,4})[ \t]*<[ \t]*${emailPattern}[ \t]*>`,
+      String.raw`(?:"[^"\n]{1,100}"|\p{L}[\p{L}\p{M}'’.-]{0,40}(?:[ \t]+[\p{L}\p{M}'’.-]{1,40}){0,4})[ \t]*<[ \t]*${emailPattern}[ \t]*>`,
       'gu',
     ),
     '[name] <[email]>',
@@ -201,14 +201,47 @@ const detectors: [RegExp, string, ((match: string) => boolean)?][] = [
   [/(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])/g, '[ip]', ipAddress],
 ];
 
+function valueEnd(text: string, start: number) {
+  const first = text[start];
+  if (first === '"') {
+    for (let index = start + 1; index < text.length; index++) {
+      if (text[index] === '\\') index++;
+      else if (text[index] === '"') return index + 1;
+    }
+    return -1;
+  }
+  if (first === '{' || first === '[') {
+    let depth = 0;
+    let quoted = false;
+    for (let index = start; index < text.length; index++) {
+      const char = text[index];
+      if (quoted) {
+        if (char === '\\') index++;
+        else if (char === '"') quoted = false;
+      } else if (char === '"') quoted = true;
+      else if (char === '{' || char === '[') depth++;
+      else if ((char === '}' || char === ']') && --depth === 0) return index + 1;
+    }
+    return -1;
+  }
+  const primitive = /^[^,}\]\s]{1,100}/.exec(text.slice(start, start + 100));
+  return primitive ? start + primitive[0].length : -1;
+}
+
 function personalValues(text: string) {
-  return text.replace(
-    /("((?:[^"\\]|\\.){1,60})"\s*:\s*)"((?:[^"\\]|\\.)*)"/g,
-    (match, prefix: string, key: string, value: string) =>
-      value && personalKeys.has(key.replace(/[^a-z0-9]/gi, '').toLowerCase())
-        ? `${prefix}"[personal]"`
-        : match,
-  );
+  const key = /"((?:[^"\\]|\\.){1,60})"\s*:\s*/g;
+  let result = '';
+  let offset = 0;
+  for (let match = key.exec(text); match; match = key.exec(text)) {
+    if (!personalKeys.has(match[1].replace(/[^a-z0-9]/gi, '').toLowerCase())) continue;
+    const start = match.index + match[0].length;
+    const end = valueEnd(text, start);
+    if (end < 0 || ['null', '""', '[]', '{}'].includes(text.slice(start, end))) continue;
+    result += text.slice(offset, start) + '"[personal]"';
+    offset = end;
+    key.lastIndex = end;
+  }
+  return result + text.slice(offset);
 }
 
 function phones(text: string, region?: string) {

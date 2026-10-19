@@ -63,6 +63,7 @@ test('malformed or oversized traces never reach LangSmith', () => {
     { metadata: { 'Session-Id': 'fixture-session' } },
     { metadata: { session_id: { nested: true } } },
     { inputs: { messages: ['x'.repeat(8 * 1024 * 1024)], tools: [] } },
+    { inputs: { messages: ['界'.repeat(3 * 1024 * 1024)], tools: [] } },
   ])
     assert.equal(
       checkTrace(trace(changes), 'otto').ok,
