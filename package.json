@@ -65,7 +65,7 @@
     "parse5": "8.0.1",
     "pdfjs-dist": "6.4.299",
     "pg": "^8.23.1",
-    "pg-boss": "12.37.1",
+    "pg-boss": "12.38.0",
     "pi-web-access": "0.41.0",
     "posthog-js": "1.438.5",
     "posthog-node": "5.55.1",
