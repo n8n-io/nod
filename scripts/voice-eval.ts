@@ -363,9 +363,6 @@ async function runScenario(
     reply: async (text, id) => {
       timeline.push({ kind: 'message', at: (id ? visible.get(id) : undefined) ?? at(), text });
     },
-    waitForUser: async (question) => {
-      timeline.push({ kind: 'message', at: at(), text: question, question: true });
-    },
     reactToMessage: async () => ({ status: 'updated' }),
     publish: async (path, name) => ({
       id: randomUUID(),
@@ -462,7 +459,15 @@ async function runScenario(
   let error: string | undefined;
   let status: RuntimeResult['status'] | undefined;
   try {
-    status = (await runtime.runTurn(context)).status;
+    const result = await runtime.runTurn(context);
+    status = result.status;
+    if (result.message)
+      timeline.push({
+        kind: 'message',
+        at: at(),
+        text: result.message,
+        question: status === 'waiting_user',
+      });
   } catch (caught) {
     error = caught instanceof Error ? caught.message : String(caught);
   } finally {
