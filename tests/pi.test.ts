@@ -2369,6 +2369,94 @@ test('OpenRouter requests in both formats make one provider attempt', async () =
   assert.equal(apis.size, 2);
 });
 
+test('each model call yields one chat-format trace without image data', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const { piModelTrace } = await import('../src/providers/pi/traces.ts');
+  const backend = createPiModelBackend({
+    fetch: async (input) => {
+      if (String(input) === 'https://openrouter.ai/api/v1/key')
+        return Response.json({ data: { is_management_key: false } });
+      return Response.json({
+        data: [
+          {
+            id: 'openai/gpt-6.1-sol',
+            name: 'openai/gpt-6.1-sol',
+            context_length: 100000,
+            supported_parameters: ['tools', 'reasoning'],
+            reasoning: { supported_efforts: ['low', 'medium', 'high'] },
+            architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+            pricing: { prompt: '0.000002', completion: '0.00001' },
+          },
+        ],
+      });
+    },
+  });
+  const [definition] = await backend.catalog('openrouter', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-router-key',
+  });
+  const calls: import('../src/providers/pi/traces.ts').PiModelCall[] = [];
+  const { runtime, model } = await createPiModelRuntime(
+    {
+      provider: 'openrouter',
+      method: 'api_key',
+      definition,
+      effort: 'low',
+      read: async () => ({ type: 'api_key', key: 'fixture-router-key' }),
+    },
+    (call) => calls.push(call),
+  );
+  const image = Buffer.from('synthetic-image-bytes').toString('base64');
+  const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
+  const reply = await runtime.completeSimple(
+    model,
+    {
+      systemPrompt: 'Synthetic instructions',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe this' },
+            { type: 'image', data: image, mimeType: 'image/png' },
+          ],
+          timestamp: 1,
+        },
+      ],
+      tools: [{ name: 'fixture_tool', description: 'Fixture', parameters: Type.Object({}) }],
+    },
+    {
+      fetch: async () =>
+        new Response(
+          chunk({
+            id: 'fixture',
+            choices: [{ index: 0, delta: { role: 'assistant', content: 'Synthetic answer' } }],
+          }) +
+            chunk({
+              id: 'fixture',
+              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15 },
+            }) +
+            'data: [DONE]\n\n',
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    },
+  );
+  assert.equal(reply.stopReason, 'stop', reply.errorMessage);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  const trace = piModelTrace(calls[0], { source: 'agent', session_id: 'fixture-session' });
+  assert.deepEqual(trace.messages, [
+    { role: 'system', content: 'Synthetic instructions' },
+    { role: 'user', content: 'Describe this\n[image]' },
+  ]);
+  assert.deepEqual(trace.output, { role: 'assistant', content: 'Synthetic answer' });
+  assert.deepEqual(trace.tools, ['fixture_tool']);
+  assert.equal(trace.usage.outputTokens, 3);
+  assert.equal(trace.metadata.session_id, 'fixture-session');
+  assert.ok(!JSON.stringify(trace).includes(image));
+});
+
 test('OpenAI-compatible servers get tool models, a system message and one attempt without the key', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend, createPiModelRuntime } =

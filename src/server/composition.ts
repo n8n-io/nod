@@ -40,6 +40,7 @@ import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
 import type { FeedbackDelivery } from '../ports/feedback.ts';
 import { createN8nFeedback } from '../providers/n8n/feedback.ts';
+import { createN8nTraces } from '../providers/n8n/traces.ts';
 import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
@@ -83,6 +84,7 @@ import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
 import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
+import { createModelTraces, type ModelTraceGate } from './traces.ts';
 import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
@@ -121,7 +123,7 @@ import {
 } from './thread.ts';
 import { browserOf } from './turn-chain.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
-import { createTriage } from './triage.ts';
+import { createTriage, getPreferences } from './triage.ts';
 import { createTasks } from './tasks.ts';
 import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
@@ -150,6 +152,7 @@ export interface ApplicationAdapters {
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
+  traces?: ModelTraceGate;
   messagingSetup?: {
     verifier: ChannelSetupVerifier;
     create(environment: Record<string, string>): MessagingTransport;
@@ -223,12 +226,19 @@ export function createDefaultAdapters(
     },
     changed: refresh,
   });
+  const traces = createModelTraces(
+    createN8nTraces({
+      url: env.OTTO_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/traces',
+      token: env.OTTO_TRACES_TOKEN,
+    }),
+  );
   const modelCurator = createPiMemoryCurator({
     get provider() {
       return models.current.provider;
     },
     resolve: () => models.resolve(true),
     configured: () => models.configured,
+    traces,
   });
   const selectedCurator = createPiMemoryCurator({
     get provider() {
@@ -239,6 +249,7 @@ export function createDefaultAdapters(
       return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
     },
     configured: () => models.configured,
+    traces,
   });
   const decisions = createDecisionModel({
     resolve: async () => {
@@ -313,6 +324,7 @@ export function createDefaultAdapters(
       model,
       sessionRoot: join(dataRoot, 'sessions'),
       configRoot: join(dataRoot, 'pi'),
+      traces,
     }),
     computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
     workspace: createDockerWorkspace({
@@ -346,6 +358,7 @@ export function createDefaultAdapters(
         feedbackUrl === defaultFeedbackUrl ? undefined : env.OTTO_FEEDBACK_RECEIPT_URL_PREFIX,
       recipient: feedbackUrl === defaultFeedbackUrl ? 'n8n' : undefined,
     }),
+    traces,
     get model() {
       return models.current;
     },
@@ -398,7 +411,7 @@ async function initializeApplication(
   const artifacts = localArtifacts;
   const secrets = Object.entries(process.env)
     .filter(([key]) =>
-      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN)$/.test(
+      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN|TRACES_TOKEN)$/.test(
         key,
       ),
     )
@@ -806,6 +819,22 @@ async function initializeApplication(
   });
   const localConsent = await localAccounts.readConsent(ownerId);
   analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
+  adapters.traces?.configure({
+    enabled: (await localAccounts.read(ownerId)).traces,
+    secrets,
+    profile: async () => {
+      const [account, preferences] = await Promise.all([
+        localAccounts.read(ownerId),
+        getPreferences(),
+      ]);
+      return {
+        names: account.displayName ? [account.displayName] : [],
+        region: preferences.locale
+          ? new Intl.Locale(preferences.locale).maximize().region
+          : undefined,
+      };
+    },
+  });
   let pendingInventory = Promise.resolve();
   observeConnections = () =>
     (pendingInventory = pendingInventory
@@ -1259,6 +1288,8 @@ async function initializeApplication(
     localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
     developerIds: desktopMode ? new Set() : new Set([ownerId]),
     start: (_owner, name) => welcome(name),
+    traces: adapters.traces?.available ?? false,
+    onTraces: (enabled) => adapters.traces?.configure({ enabled }),
   }).register(app);
   ledger.registerRoutes(app);
   if (adapters.linkPreviews) {

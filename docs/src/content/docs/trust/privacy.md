@@ -9,7 +9,7 @@ This page explains where Otto keeps your data, what leaves your computer and to 
 
 Desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
 
-The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback and usage analytics are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
+The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback, usage analytics and conversation traces are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
@@ -36,6 +36,7 @@ flowchart LR
   otto -- searches --> search[Web search]
   otto -- update checks and downloads --> n8n[n8n]:::muted
   otto -. opt-in analytics .-> n8n[n8n]:::muted
+  otto -. opt-in traces .-> n8n[n8n]:::muted
   otto -. feedback you send .-> feedback[Configured feedback recipient]:::muted
 ```
 
@@ -48,7 +49,7 @@ flowchart LR
 | Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Exa, for web search                       | Otto's search queries. With a ChatGPT plan, OpenAI runs the search instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| n8n                                       | App requests and results when you use Easy Connect. Desktop update checks and downloads, which show your IP address, app version and platform. Masked usage analytics if you opt in, and feedback when using the default collector                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| n8n                                       | App requests and results when you use Easy Connect. Desktop update checks and downloads, which show your IP address, app version and platform. Masked usage analytics and scrubbed conversation traces if you opt in, and feedback when using the default collector                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Your configured feedback recipient        | Feedback and attachments you choose to send, including an optional diagnostic report                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 OpenAI API connections use GPT Decisions at OpenAI. OpenRouter sends decision checks to TypeSafe. An optional `TYPESAFE_API_KEY` selects TypeSafe directly, regardless of your chat connection. See [Decision checks](/connect/models/#decision-checks) for routing and billing.
@@ -64,6 +65,24 @@ Usage analytics are off until you turn on **Share usage data** in onboarding or 
 The recipient is the Otto team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `OTTO_ANALYTICS_ENABLED=false`.
 
 Analytics have no fields for raw messages, Vault values, full page addresses, names or email addresses. Recordings block credential-entry and model-key forms, the remote browser view and images. Events can include normalized public domains for connections and Vault logins, Vault item types, task categories, inferred outcomes, timing and signs of friction. Your selected model analyzes bounded chat text using your model account. Only allowed generic task type, action and subject labels can leave Otto as task categories; raw text and invented labels are rejected. These classifications can still be wrong. Measurements are associated with a pseudonymous installation ID. See [Analytics](/deploy/analytics/) for the full list, limitations and deployment switch.
+
+## Conversation traces
+
+Conversation traces are off until you turn on **Share conversation traces** in **Settings**. The switch appears in the official desktop app, or when an operator sets `OTTO_TRACES_URL` and `OTTO_TRACES_TOKEN`. While it's on, every request Otto makes to your model, from chats, tasks, helpers and background checks, is sent with the model's reply to the Otto team at n8n. A trace holds the messages and tool results the model saw, the names of the tools it could use, its reply, token counts, cost and Otto's internal session IDs. Traces go through n8n's Otto Traces service to n8n's LangSmith project in the EU and are deleted after 14 days. n8n uses them to find and fix problems in Otto and doesn't use them to train AI models.
+
+Before a trace leaves your computer, Otto removes:
+
+- known keys and secrets, and text shaped like a key, token or password
+- your name as set in Otto
+- email addresses, and the name written beside one
+- phone numbers, checked against each country's numbering plan
+- payment card numbers, IBANs and crypto wallet addresses, each with its checksum
+- US, Spanish, UK, Brazilian and Indian ID numbers
+- IP and MAC addresses
+- names, birthdays, addresses and phone numbers in the fields of app data
+- images
+
+Removal is automatic and can miss personal details written in other forms, such as other people's names or a street address in plain text. Turning the switch off stops new traces at once; traces already sent are deleted when they expire. Operators can turn traces off for everyone by setting `OTTO_TRACES_URL` to an empty value.
 
 ## Feedback
 
@@ -89,7 +108,7 @@ Released builds don't have a button to clear your chat history yet. To remove it
 
 ## Where this is enforced
 
-[`src/server/memory-learning.ts`](https://github.com/n8n-io/otto/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/otto/blob/main/src/server/bug-report.ts) (report redaction)
+[`src/server/memory-learning.ts`](https://github.com/n8n-io/otto/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/server/traces.ts`](https://github.com/n8n-io/otto/blob/main/src/server/traces.ts) and [`src/server/personal-data.ts`](https://github.com/n8n-io/otto/blob/main/src/server/personal-data.ts) (trace opt-in and scrubbing) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/otto/blob/main/src/server/bug-report.ts) (report redaction)
 
 ## Related resources
 

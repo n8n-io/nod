@@ -657,6 +657,8 @@ function baseEnvironment() {
       'OTTO_FEEDBACK_URL',
       'OTTO_FEEDBACK_TOKEN',
       'OTTO_FEEDBACK_RECEIPT_URL_PREFIX',
+      'OTTO_TRACES_URL',
+      'OTTO_TRACES_TOKEN',
     ]
       .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),
@@ -963,6 +965,12 @@ async function startEngine({ runtime, signal }) {
   if (providerEnvironment.OTTO_VAULT_KEY) knownSecrets.add(providerEnvironment.OTTO_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   if (process.env.OTTO_FEEDBACK_TOKEN) knownSecrets.add(process.env.OTTO_FEEDBACK_TOKEN);
+  const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+  const tracesToken =
+    typeof ottoBuild?.tracesToken === 'string'
+      ? ottoBuild.tracesToken
+      : process.env.OTTO_TRACES_TOKEN;
+  if (tracesToken) knownSecrets.add(tracesToken);
   const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
   const environment = {
     ...baseEnvironment(),
@@ -981,6 +989,7 @@ async function startEngine({ runtime, signal }) {
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
     ...(process.env.OTTO_FEEDBACK_URL === '' ? { OTTO_FEEDBACK_ENABLED: 'false' } : {}),
+    ...(tracesToken ? { OTTO_TRACES_TOKEN: tracesToken } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
   };
   if (quitting || signal.aborted) throw new Error('Otto is closing.');

@@ -20,17 +20,24 @@ export function createAccountStore(database: Pool): AccountStore & {
 } {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
     const result = await connection.query<StoredAccount>(
-      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision)
-       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,false),CASE WHEN $4 THEN 1 ELSE 0 END)
+      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision,traces)
+       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,false),CASE WHEN $4 THEN 1 ELSE 0 END,COALESCE($5,false))
        ON CONFLICT (owner_id) DO UPDATE SET
          theme=COALESCE($2,account_settings.theme),
          onboarding_completed=COALESCE($3,account_settings.onboarding_completed),
          usage_data=COALESCE($4,account_settings.usage_data),
          usage_data_revision=account_settings.usage_data_revision +
            CASE WHEN $4 IS NOT NULL AND $4 IS DISTINCT FROM account_settings.usage_data THEN 1 ELSE 0 END,
+         traces=COALESCE($5,account_settings.traces),
          updated_at=now()
-       RETURNING theme,onboarding_completed AS "onboardingCompleted",display_name AS "displayName",usage_data AS "usageData"`,
-      [ownerId, input.theme ?? null, input.onboardingCompleted ?? null, input.usageData ?? null],
+       RETURNING theme,onboarding_completed AS "onboardingCompleted",display_name AS "displayName",usage_data AS "usageData",traces`,
+      [
+        ownerId,
+        input.theme ?? null,
+        input.onboardingCompleted ?? null,
+        input.usageData ?? null,
+        input.traces ?? null,
+      ],
     );
     return result.rows[0];
   }
@@ -44,7 +51,8 @@ export function createAccountStore(database: Pool): AccountStore & {
         updated_at timestamptz NOT NULL DEFAULT now()
       );
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false;
-      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0`);
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0;
+      ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS traces boolean NOT NULL DEFAULT false`);
     },
     async readConsent(ownerId) {
       const result = await database.query<{ enabled: boolean; revision: string }>(
@@ -57,7 +65,7 @@ export function createAccountStore(database: Pool): AccountStore & {
     async read(ownerId) {
       const result = await database.query<StoredAccount>(
         `SELECT theme, onboarding_completed AS "onboardingCompleted", display_name AS "displayName",
-           usage_data AS "usageData"
+           usage_data AS "usageData",traces
          FROM account_settings WHERE owner_id=$1`,
         [ownerId],
       );
@@ -67,6 +75,7 @@ export function createAccountStore(database: Pool): AccountStore & {
           onboardingCompleted: false,
           displayName: null,
           usageData: false,
+          traces: false,
         }
       );
     },

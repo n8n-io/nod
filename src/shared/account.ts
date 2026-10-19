@@ -14,19 +14,21 @@ export interface AccountSettings {
   theme: AccountTheme;
   onboardingCompleted: boolean;
   usageData: boolean;
+  traces: boolean;
 }
 
 export interface SessionResponse {
   analytics?: AnalyticsConfiguration;
   user: AccountUser | null;
   settings: AccountSettings | null;
-  capabilities: { developer: boolean };
+  capabilities: { developer: boolean; traces: boolean };
 }
 
 export interface AccountUpdate {
   theme?: AccountTheme;
   onboardingCompleted?: boolean;
   usageData?: boolean;
+  traces?: boolean;
 }
 
 export interface AccountPreparationResponse {

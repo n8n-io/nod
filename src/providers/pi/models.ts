@@ -20,6 +20,7 @@ import type {
 } from '../../ports/models.ts';
 import type { ModelProvider, ModelMethod } from '../../shared/models.ts';
 import { signInPage } from '../../shared/sign-in-page.ts';
+import type { PiModelCall } from './traces.ts';
 
 const resource = 'https://api.openai.com/v1';
 const random = () => randomBytes(32).toString('base64url');
@@ -682,7 +683,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
   };
 }
 
-export async function createPiModelRuntime(access: ModelAccess) {
+export async function createPiModelRuntime(
+  access: ModelAccess,
+  trace?: (call: PiModelCall) => void,
+) {
   const subscription = access.method === 'subscription';
   const provider = subscription ? 'openai-codex' : access.provider;
   if (
@@ -775,6 +779,13 @@ export async function createPiModelRuntime(access: ModelAccess) {
         );
       push(event);
     };
+    if (trace) {
+      const startedAt = new Date().toISOString();
+      void events
+        .result()
+        .then((message) => trace({ model, context, message, startedAt }))
+        .catch(() => {});
+    }
     return events;
   };
   const model = runtime.getModel(provider, access.definition.choice.id);

@@ -80,6 +80,9 @@ configuration.version = version;
 const repository = process.env.GITHUB_REPOSITORY || 'n8n-io/otto';
 if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
   throw new Error('The desktop release repository is invalid.');
+const tracesToken = process.env.OTTO_TRACES_TOKEN;
+if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
+  throw new Error('OTTO_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
 const updateSourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
 if (updateSourceUrl) {
   if (!URL.canParse(updateSourceUrl))
@@ -169,6 +172,7 @@ configuration.ottoBuild = {
   modified: Boolean(await run('/usr/bin/git', ['-C', root, 'status', '--porcelain'])),
   ...(release ? { runtime: release.id } : {}),
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
+  ...(tracesToken ? { tracesToken } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;

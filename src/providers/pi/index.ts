@@ -20,6 +20,8 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime } from './models.ts';
+import { piModelTrace } from './traces.ts';
+import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
 import type { Agent } from '../../ports/agent.ts';
 import type { WorkspaceSession } from '../../ports/computer.ts';
@@ -169,6 +171,7 @@ export function createPiAgent(options: {
   sessionRoot: string;
   configRoot?: string;
   createSession?: typeof createAgentSession;
+  traces?: ModelTraces;
 }): Agent {
   configureWebAccess(options.configRoot ?? join(tmpdir(), 'otto-pi'));
   const active = new Map<
@@ -213,7 +216,25 @@ export function createPiAgent(options: {
       const ephemeral = input.ephemeral === true;
       const directory = resolve(options.sessionRoot, threadIdentity(sessionId));
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const connection = access ? await createPiModelRuntime(access) : undefined;
+      const traces = options.traces;
+      const connection = access
+        ? await createPiModelRuntime(
+            access,
+            traces &&
+              ((call) => {
+                if (traces.active())
+                  traces.record(
+                    piModelTrace(call, {
+                      source: 'agent',
+                      session_id: input.sessionId,
+                      turn_id: input.turnId,
+                      run_id: input.runId,
+                      ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
+                    }),
+                  );
+              }),
+          )
+        : undefined;
       const runtime = connection
         ? connection.runtime
         : await ModelRuntime.create({
