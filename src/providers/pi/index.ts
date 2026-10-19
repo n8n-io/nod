@@ -224,13 +224,17 @@ export function createPiAgent(options: {
               ((call) => {
                 if (traces.active())
                   traces.record(
-                    piModelTrace(call, {
-                      source: 'agent',
-                      session_id: input.sessionId,
-                      turn_id: input.turnId,
-                      run_id: input.runId,
-                      ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
-                    }),
+                    piModelTrace(
+                      call,
+                      {
+                        source: 'agent',
+                        session_id: input.sessionId,
+                        turn_id: input.turnId,
+                        run_id: input.runId,
+                        ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
+                      },
+                      input.systemContext,
+                    ),
                   );
               }),
           )

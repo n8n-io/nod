@@ -29,9 +29,16 @@ test('valid traces become one llm run pinned to the Otto project with usage for 
   const run = (code) => new Function('$input', code);
   const validate = tracesWorkflowDefinition().nodes.find((node) => node.name === 'Validate trace');
   const [{ json }] = run(validate.parameters.jsCode)({
-    first: () => ({ json: { body: trace({ session_name: 'instance-ai', parent_run_id: id }) } }),
+    first: () => ({
+      json: { body: trace({ session_name: 'instance-ai', parent_run_id: id, error: 'Synthetic' }) },
+    }),
   });
   assert.equal(json.ok, true);
+  const sent = trace().run;
+  for (const field of ['id', 'name', 'start_time', 'end_time', 'outputs'])
+    assert.deepEqual(json.run[field], sent[field], field);
+  assert.deepEqual(json.run.inputs, sent.inputs);
+  assert.equal(json.run.error, 'Synthetic');
   assert.equal(json.run.session_name, tracesWorkflow.langsmithProject);
   assert.equal(json.run.run_type, 'llm');
   assert.equal(json.run.parent_run_id, undefined);
@@ -86,7 +93,12 @@ test('the broker requires the Otto token, keeps no execution data and sends only
   assert.equal(definition.settings.saveDataSuccessExecution, 'none');
   assert.equal(definition.settings.saveDataErrorExecution, 'none');
   assert.equal(definition.settings.saveManualExecutions, false);
+  assert.deepEqual(definition.connections['Valid trace?'].main, [
+    [{ node: 'Send to LangSmith', type: 'main', index: 0 }],
+    [],
+  ]);
   const send = definition.nodes.find((node) => node.name === 'Send to LangSmith');
+  assert.equal(send.parameters.jsonBody, '={{ $json.run }}');
   assert.equal(send.parameters.url, 'https://eu.api.smith.langchain.com/runs');
   assert.equal(send.parameters.genericAuthType, 'httpHeaderAuth');
   assert.deepEqual(send.credentials, {

@@ -120,7 +120,7 @@ Set up Telegram and WhatsApp in **Channels** instead. The app checks the account
 | `OTTO_FEEDBACK_URL`                | The HTTPS address that receives **Send feedback** reports. An empty value turns submission off.                                    | The Otto team at n8n                                |
 | `OTTO_FEEDBACK_RECEIPT_URL_PREFIX` | Required with a custom collector. An HTTPS issue collection URL ending in `/`; receipts must belong to that origin and path.       | n8n's Linear `LAB` issues for the default collector |
 | `OTTO_TRACES_URL`                  | The HTTPS address that receives conversation traces from owners who opt in. An empty value turns traces off for everyone.          | The Otto team at n8n                                |
-| `OTTO_TRACES_TOKEN`                | The token sent as `x-otto-traces-token` with each trace. Without it, Otto sends no traces and hides the switch.                    | Set in official desktop builds                      |
+| `OTTO_TRACES_TOKEN`                | The token sent as `x-otto-traces-token` with each trace. Without it, Otto sends no traces and hides the switch.                    | Empty; official desktop builds include one          |
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
 

@@ -1,8 +1,20 @@
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { ModelTrace, ModelTraceDelivery, ModelTraces } from '../ports/traces.ts';
 import { createPersonalDataRedactor, type PersonalProfile } from './personal-data.ts';
 import { createTextRedactor, withoutSecretKeys } from './redaction.ts';
 
 const cacheLimit = 4096;
+const identifiers = new Set(['session_id', 'turn_id', 'run_id', 'parent_run_id']);
+
+function structured(value: string) {
+  const trimmed = value.trim();
+  if (!/^[[{]/.test(trimmed)) return value;
+  try {
+    return JSON.stringify(withoutSecretKeys(JSON.parse(trimmed)));
+  } catch {
+    return value;
+  }
+}
 
 export function createModelTraces(deliver?: ModelTraceDelivery) {
   let enabled = false;
@@ -12,6 +24,12 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
   let loaded: { profile: string; text: (value: string) => string } | undefined;
   let seen = -1;
   const cache = new Map<string, string>();
+  const salt = randomBytes(32);
+  const pseudonym = (value: string) =>
+    createHmac('sha256', salt)
+      .update(`${new Date().toISOString().slice(0, 10)}:${value}`)
+      .digest('hex')
+      .slice(0, 32);
 
   async function scrubber() {
     const current = await profile();
@@ -27,10 +45,11 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
     }
     const text = loaded.text;
     return (value: string) => {
-      let safe = cache.get(value);
+      const key = createHash('sha256').update(value).digest('base64');
+      let safe = cache.get(key);
       if (safe === undefined) {
         if (cache.size >= cacheLimit) cache.clear();
-        cache.set(value, (safe = text(value)));
+        cache.set(key, (safe = text(structured(value))));
       }
       return safe;
     };
@@ -50,6 +69,12 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
       messages: scrub(trace.messages),
       output: scrub(trace.output),
       ...(trace.error ? { error: text(trace.error) } : {}),
+      metadata: Object.fromEntries(
+        Object.entries(trace.metadata).map(([key, value]) => [
+          key,
+          identifiers.has(key) ? pseudonym(value) : value,
+        ]),
+      ),
     });
   }
 
@@ -60,6 +85,7 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
       profile?: () => Promise<PersonalProfile>;
     }) {
       if (options.enabled !== undefined) enabled = options.enabled;
+      if (!enabled) cache.clear();
       if (options.secrets) {
         secrets = options.secrets;
         secretText = createTextRedactor(secrets);

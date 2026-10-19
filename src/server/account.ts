@@ -115,6 +115,8 @@ export function createAccountSession(options: {
     app.patch('/api/account', async (request, reply) => {
       if (!guard(request, reply)) return;
       const input = accountUpdate.parse(request.body);
+      if (input.traces === true && options.traces !== true)
+        return reply.code(400).send({ error: 'Conversation traces are not available here.' });
       let onboardingCompletedNow = false;
       if (input.onboardingCompleted) {
         if (

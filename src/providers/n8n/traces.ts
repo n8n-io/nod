@@ -45,12 +45,13 @@ export function createN8nTraces(options: {
       },
     });
     if (Buffer.byteLength(body) > traceBytes) return;
-    await request(endpoint, {
+    const response = await request(endpoint, {
       method: 'POST',
       redirect: 'error',
       headers: { 'content-type': 'application/json', 'x-otto-traces-token': token },
       body,
       signal: AbortSignal.timeout(30_000),
     });
+    await response.body?.cancel();
   };
 }

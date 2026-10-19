@@ -109,6 +109,7 @@ describe('account routes', () => {
         });
       const initial = await request();
       assert.equal(initial.json().settings.usageData, false);
+      assert.equal(initial.json().capabilities.traces, false);
       assert.deepEqual(
         [initial.json().analytics.enabled, initial.json().analytics.distinctId],
         [false, null],
@@ -177,7 +178,7 @@ describe('account routes', () => {
               function: {
                 name: 'send_email',
                 arguments:
-                  '{"first_name":"Jordi","to":"jordi@example.com","address":{"line1":"12 Main St"}}',
+                  '{"first_name":"Jordi","to":"jordi@example.com","address":{"line1":"12 Main St"},"password":"fixture-tool-secret-77","fields":[["password","fixture-pair-secret-88"]]}',
               },
             },
           ],
@@ -230,17 +231,21 @@ describe('account routes', () => {
       '7946',
       '12345678Z',
       'fixture-model-key-8c41f2',
+      'fixture-tool-secret-77',
+      'fixture-pair-secret-88',
     ])
       assert.ok(!sent.includes(value), value);
     assert.match(sent, /order 123456 on 2026-10-19/);
-    assert.deepEqual(delivered[0].metadata, {
-      session_id: 'fixture-session',
-      turn_id: 'fixture-turn',
-    });
+    assert.deepEqual(Object.keys(delivered[0].metadata), ['session_id', 'turn_id']);
+    assert.match(delivered[0].metadata.session_id, /^[0-9a-f]{32}$/);
+    assert.ok(!sent.includes('fixture-session') && !sent.includes('fixture-turn'));
+    traces.record(trace('A second request in the same conversation'));
+    await settle(2);
+    assert.equal(delivered[1].metadata.session_id, delivered[0].metadata.session_id);
     await request({ traces: false });
     traces.record(trace('After opting out'));
-    await settle(2);
-    assert.equal(delivered.length, 1);
+    await settle(3);
+    assert.equal(delivered.length, 2);
   });
 
   test('account changes require the same origin and owner and never accept provider or owner input', async (t) => {
@@ -271,6 +276,7 @@ describe('account routes', () => {
       [{}, { email: 'other@example.test' }, 400],
       [{}, { developer: true }, 400],
       [{}, { avatarUrl: 'https://example.test/pixel' }, 400],
+      [{}, { traces: true }, 400],
     ] as const) {
       const response = await f.app.inject({
         method: 'PATCH',

@@ -57,7 +57,11 @@ function chat(message: Message) {
   };
 }
 
-export function piModelTrace(call: PiModelCall, metadata: Record<string, string>): ModelTrace {
+export function piModelTrace(
+  call: PiModelCall,
+  metadata: Record<string, string>,
+  omitted?: string,
+): ModelTrace {
   const { message } = call;
   const usage = piUsageMetrics(message.usage);
   const cacheReadTokens = usage.cacheReadTokens ?? 0;
@@ -75,7 +79,11 @@ export function piModelTrace(call: PiModelCall, metadata: Record<string, string>
         ? [{ role: 'system', content: call.context.systemPrompt }]
         : []),
       ...call.context.messages.map(chat),
-    ],
+    ].map((message) =>
+      omitted && message.role === 'system' && typeof message.content === 'string'
+        ? { ...message, content: message.content.replaceAll(omitted, '[owner context omitted]') }
+        : message,
+    ),
     tools: (call.context.tools ?? []).map((tool) => tool.name),
     output: chat(message),
     usage: {

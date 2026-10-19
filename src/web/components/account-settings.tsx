@@ -628,8 +628,8 @@ export function AccountSettings({
                       >
                         Send Otto’s conversations, including what it reads and does, to the Otto
                         team at n8n to improve Otto. Your name, email addresses, phone numbers, card
-                        numbers and IBANs are removed first. Kept for 14 days and never used to
-                        train AI models.
+                        numbers and IBANs are removed first, and traces carry no account or device
+                        ID. Kept for 14 days and never used to train AI models.
                       </p>
                     </>
                   )}

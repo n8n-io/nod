@@ -31,8 +31,8 @@ const configuration = {
 const messages: unknown[] = [];
 const session = () => ({
   user: { id: user, name: privateText, email: `${privateText}@example.test`, avatarUrl: null },
-  settings: { theme: 'system', onboardingCompleted: completed, usageData },
-  capabilities: { developer: true },
+  settings: { theme: 'system', onboardingCompleted: completed, usageData, traces: false },
+  capabilities: { developer: true, traces: false },
   analytics: {
     enabled: usageData,
     distinctId: usageData ? `local:${user}` : null,
