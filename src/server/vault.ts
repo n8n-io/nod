@@ -517,6 +517,31 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     "UPDATE credential_requests SET status='consumed' WHERE owner_id=$1 AND status IN ('filled','entering','uncertain')",
     [owner],
   );
+  async function forgetSecurityCodes(credentialKey: Buffer) {
+    const { rows } = await pool.query<CardRow>('SELECT * FROM vault_cards WHERE owner_id=$1', [
+      owner,
+    ]);
+    await Promise.all(
+      rows.map(async (card) => {
+        let stored: Record<string, unknown>;
+        try {
+          stored = JSON.parse(openVaultValue(credentialKey, cardBinding(card), card.ciphertext));
+        } catch {
+          return;
+        }
+        if (!('securityCode' in stored)) return;
+        await pool.query(
+          'UPDATE vault_cards SET ciphertext=$3 WHERE id=$1 AND owner_id=$2 AND ciphertext=$4',
+          [
+            card.id,
+            owner,
+            sealCard(credentialKey, card, cardSecret.parse(stored)),
+            card.ciphertext,
+          ],
+        );
+      }),
+    );
+  }
   let keyPromise: Promise<Buffer> | undefined;
   const key = () => {
     keyPromise ??= options.keyStore
@@ -524,6 +549,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .then(async (value) => {
         if (!Buffer.isBuffer(value) || value.length !== 32)
           throw new Error('Invalid credential key.');
+        await forgetSecurityCodes(value);
         return value;
       })
       .catch(() => {
@@ -547,36 +573,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         (error: unknown) => logFailure('vault_hold_cleanup', error),
       );
   await forgetExpiredHolds();
-  async function forgetSecurityCodes() {
-    const { rows } = await pool.query<CardRow>('SELECT * FROM vault_cards WHERE owner_id=$1', [
-      owner,
-    ]);
-    if (!rows.length) return;
-    const credentialKey = await key();
-    await Promise.all(
-      rows.map(async (card) => {
-        let stored: Record<string, unknown>;
-        try {
-          stored = JSON.parse(openVaultValue(credentialKey, cardBinding(card), card.ciphertext));
-        } catch {
-          return;
-        }
-        if (!('securityCode' in stored)) return;
-        await pool.query(
-          'UPDATE vault_cards SET ciphertext=$3 WHERE id=$1 AND owner_id=$2 AND ciphertext=$4',
-          [
-            card.id,
-            owner,
-            sealCard(credentialKey, card, cardSecret.parse(stored)),
-            card.ciphertext,
-          ],
-        );
-      }),
-    );
-  }
-  await forgetSecurityCodes().catch((error: unknown) =>
-    logFailure('vault_security_code_removal', error),
-  );
+  if ((await pool.query('SELECT 1 FROM vault_cards WHERE owner_id=$1 LIMIT 1', [owner])).rowCount)
+    await key().catch((error: unknown) => logFailure('vault_security_code_removal', error));
 
   async function list(ownerId = owner) {
     const { rows } = await pool.query<EntryRow>(

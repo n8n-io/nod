@@ -960,8 +960,7 @@ test('payment code requests get the card code only from an owner who approves', 
   const paid = await reply('challenge', 'payment');
   assert.deepEqual(paid.posted, [{ text: paid.code, verificationRequestId: 'r' }]);
   const bank = await reply('challenge', 'otp');
-  assert.equal(bank.posted.length, 1);
-  assert.match((bank.posted[0] as { text: string }).text, /^\d{6}$/);
+  assert.deepEqual(bank.posted, [{ text: '824631', verificationRequestId: 'r' }]);
 });
 
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
