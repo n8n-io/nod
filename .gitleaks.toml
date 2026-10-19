@@ -10,6 +10,13 @@ regex = '''\bu?ak_[A-Za-z0-9_-]{16,}'''
 entropy = 3
 keywords = ["ak_"]
 
+[[rules]]
+id = "e2b-api-key"
+description = "E2B API key."
+regex = '''\be2b_[A-Za-z0-9]{20,}'''
+entropy = 3
+keywords = ["e2b_"]
+
 [[allowlists]]
 description = "This exact SQL match captures the waiting_reason field name, not a credential."
 targetRules = ["generic-api-key"]

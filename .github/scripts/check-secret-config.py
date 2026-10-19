@@ -117,6 +117,7 @@ for content, filename in [
 provider_keys = {
     "github-pat": "ghp_" + candidate[:36],
     "composio-api-key": "ak_" + candidate[:24],
+    "e2b-api-key": "e2b_" + digest[:40],
 }
 for rule, key in provider_keys.items():
     for filename in ["tests/app.test.ts", "docs/testing/run.json", "src/app.ts"]:
