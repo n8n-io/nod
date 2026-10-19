@@ -83,7 +83,7 @@ Leave out tautological tests, mocks that return what they were told, and tests o
 
 ## RTK workspace check
 
-The workspace image includes [RTK](https://github.com/rtk-ai/rtk), which shortens command output for the model. This check measures its savings and confirms that exports stay unfiltered. It runs 15 synthetic cases in disposable containers with networking off. It doesn't call a model or a connected account.
+The workspace image includes [RTK](https://github.com/rtk-ai/rtk), which shortens command output for the model. This check measures its savings and confirms that exports and file searches stay unfiltered. It runs 15 synthetic cases in disposable containers with networking off. It doesn't call a model or a connected account.
 
 ```sh title="Terminal"
 docker build -f Dockerfile.workspace -t otto-eval-workspace:latest .

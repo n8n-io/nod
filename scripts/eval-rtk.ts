@@ -20,7 +20,7 @@ const output = resolve(option('--output', join(root, '.local', 'rtk-eval', phase
 const baseline = option('--baseline', '437687bb17a3944ce9aa01ac37239e5163515365');
 const sourceRef = option('--source-ref', phase === 'baseline' ? baseline : '');
 const repeatCount = options.includes('--smoke') ? 1 : 3;
-const caseVersion = Number(option('--case-version', '6'));
+const caseVersion = Number(option('--case-version', '7'));
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const harnessSha256 = hash(await readFile(fileURLToPath(import.meta.url)));
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -196,14 +196,23 @@ const definitions = [
           ],
           compact: true,
         },
-        {
-          id: 'RTK-H4.v1',
-          split: 'holdout',
-          prompt: 'Find the source files in this project.',
-          command: 'find src -type f',
-          semantic: ['alpha.ts', 'beta.ts', 'export.ts'],
-          compact: true,
-        },
+        caseVersion >= 7
+          ? {
+              id: 'RTK-H4.v2',
+              split: 'holdout',
+              prompt: 'Find the JSON files in this project, including the saved run plan.',
+              command: "find . -name '*.json'",
+              semantic: ['config.json', '.otto/plan.json'],
+              compact: false,
+            }
+          : {
+              id: 'RTK-H4.v1',
+              split: 'holdout',
+              prompt: 'Find the source files in this project.',
+              command: 'find src -type f',
+              semantic: ['alpha.ts', 'beta.ts', 'export.ts'],
+              compact: true,
+            },
       ]
     : []),
 ];
@@ -222,10 +231,10 @@ const manifest = {
   checks: {
     'C1-installed': 'RTK 0.51.0 executes successfully in the workspace; applies to every case.',
     'C2-exit': 'The Pi result reports the expected success or failure; applies to every case.',
-    'C3-semantic': `Every independent expected filename, changed value or commit subject occurs in the visible result; applies to compact cases and explicit failure${caseVersion >= 5 ? ' and R7 merge history' : ''}.`,
+    'C3-semantic': `Every independent expected filename, changed value or commit subject occurs in the visible result; applies to compact cases and explicit failure${caseVersion >= 5 ? ' and R7 merge history' : ''}${caseVersion >= 7 ? ' and H4.v2 files in a hidden, ignored folder' : ''}.`,
     'C4-compact':
       caseVersion >= 6
-        ? 'In each repetition, the sum of visible characters across the nine equally used display commands is lower than the matching raw sum. Applies to the display cases as one shared aggregate gate; individual outputs may grow.'
+        ? 'In each repetition, the sum of visible characters across the equally used display commands is lower than the matching raw sum. Applies to the display cases as one shared aggregate gate; individual outputs may grow.'
         : 'Visible output contains fewer characters than the equivalent raw shell command; applies only to the four compact cases.',
     'C5-exact': `Machine status is byte-identical to raw output, exported CSV bytes match the independent input, and patch bytes match raw Git output; applies to R1, R2 and R3${caseVersion >= 2 ? ' and R5' : ''}${caseVersion >= 3 && caseVersion < 6 ? ' and R6 (ordinary listing)' : ''}${caseVersion >= 5 ? ' and R7 (complete merge history)' : ''}.`,
     ...(caseVersion >= 3
@@ -243,7 +252,7 @@ const manifest = {
     ...(caseVersion >= 6
       ? {
           'C8-rtk-used':
-            'The execution trace records a real RTK command invocation beyond rewrite probing. A disposable PATH shim logs arguments then execs the installed binary without changing output; applies to the nine display cases.',
+            'The execution trace records a real RTK command invocation beyond rewrite probing. A disposable PATH shim logs arguments then execs the installed binary without changing output; applies to the display cases.',
         }
       : {}),
   },
@@ -257,6 +266,7 @@ const inputFiles = (variant: string) => {
     'ledger.csv': `id,description,amount,currency\n${Array.from({ length: 120 }, (_, index) => `${index + 1},${variant} record ${index + 1},${((index + 1) * 1.37).toFixed(2)},${variant === 'invoice' ? 'EUR' : 'USD'}`).join('\n')}\n`,
     'obsolete.txt': `Unused ${variant} export path\n`,
     'audit.txt': '',
+    ...(caseVersion >= 7 ? { '.otto/plan.json': `{"project": "${variant}", "step": 1}\n` } : {}),
   };
   for (const [name, value] of [
     ['alpha', 'invoiceRate = 0.15'],
@@ -345,8 +355,10 @@ try {
     const files = inputFiles(variant);
     const directory = join(hostRoot, variant);
     await mkdir(join(directory, 'src'), { recursive: true });
+    await mkdir(join(directory, '.otto'));
     await chmod(directory, 0o777);
     await chmod(join(directory, 'src'), 0o777);
+    await chmod(join(directory, '.otto'), 0o777);
     for (const [path, contents] of Object.entries(files)) {
       await writeFile(join(directory, path), contents);
       await chmod(join(directory, path), 0o666);

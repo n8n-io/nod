@@ -718,11 +718,17 @@ async function finishTurn(
   client: PoolClient,
   turnId: string,
   status: string,
-  fields: { waitingReason?: string; error?: string } = {},
+  fields: { waitingReason?: string; error?: string; handoffBrowserId?: string } = {},
 ) {
   const updated = await client.query(
-    "UPDATE turns SET status=$2,waiting_reason=$3,error=$4,finished_at=now() WHERE id=$1 AND status='running' RETURNING id",
-    [turnId, status, fields.waitingReason ?? null, fields.error ?? null],
+    "UPDATE turns SET status=$2,waiting_reason=$3,error=$4,handoff_browser_id=$5,finished_at=now() WHERE id=$1 AND status='running' RETURNING id",
+    [
+      turnId,
+      status,
+      fields.waitingReason ?? null,
+      fields.error ?? null,
+      fields.handoffBrowserId ?? null,
+    ],
   );
   if (updated.rowCount)
     await insertEvent(
@@ -735,6 +741,7 @@ async function finishTurn(
           ? 'Waiting for your input.'
           : (fields.error ?? status),
     );
+  return Boolean(updated.rowCount);
 }
 
 function describeFailure(error: unknown) {
@@ -1237,16 +1244,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       attachments,
       emit,
       reply: (text, streamId, replyToMessageId) => post(text, [], streamId, replyToMessageId),
-      waitForUser: async (question, browserId) => {
-        await current(async (client) => {
-          await insertAssistantMessage(client, ref, question);
-          await client.query('UPDATE turns SET handoff_browser_id=$2 WHERE id=$1', [
-            turnId,
-            browserId ?? null,
-          ]);
-        });
-        refresh();
-      },
       delta: (text, streamId, done) => {
         if (!signal.aborted && !turn.background && turn.channel === 'web')
           delta({ ownerId, channel: turn.channel, threadId, turnId, text, streamId, done });
@@ -1383,16 +1380,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
     if (taskContext && result.status === 'succeeded' && result.result) await post(result.result);
-    await current((client) =>
-      result.status === 'succeeded'
-        ? finishTurn(client, turnId, 'succeeded')
-        : finishTurn(client, turnId, 'waiting', {
-            waitingReason:
-              result.status === 'waiting_credentials'
-                ? 'credentials'
-                : (result.waitingFor ?? 'question'),
-          }),
-    ).catch((error) => {
+    await current(async (client) => {
+      if (result.status === 'succeeded') return finishTurn(client, turnId, 'succeeded');
+      const waiting = await finishTurn(client, turnId, 'waiting', {
+        waitingReason:
+          result.status === 'waiting_credentials'
+            ? 'credentials'
+            : (result.waitingFor ?? 'question'),
+        handoffBrowserId: result.handoffBrowserId,
+      });
+      if (waiting && result.message) await insertAssistantMessage(client, ref, result.message);
+    }).catch((error) => {
       if (!signal.aborted) throw error;
     });
     outcome = signal.aborted ? 'cancelled' : result.status;

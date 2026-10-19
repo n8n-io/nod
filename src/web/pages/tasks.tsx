@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import Markdown from 'react-markdown';
 import {
   CalendarClock,
   ChevronDown,
@@ -126,7 +127,11 @@ export function TaskCard({
             </span>
             {!steps.length && chevron}
           </span>
-          <span className="task-preview-line">{line}</span>
+          <span className="task-preview-line">
+            <Markdown allowedElements={[]} unwrapDisallowed>
+              {line}
+            </Markdown>
+          </span>
           {steps.length > 0 && (
             <span className="task-preview-foot">
               <span className="task-steps-bar" aria-hidden="true">

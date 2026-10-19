@@ -4563,8 +4563,8 @@ test(
     });
     assert.equal(result.status, 'waiting_user');
     assert.equal(f.callbacks.length, 2);
-    assert.equal(replies.length, 1);
-    assert.ok(replies[0].includes('https://consent.example.com/connect'));
+    assert.deepEqual(replies, []);
+    assert.ok(result.message?.includes('https://consent.example.com/connect'));
     const pending = (
       await f.pool.query('SELECT * FROM app_connections WHERE owner_id=$1 AND turn_id=$2', [
         'local-development',

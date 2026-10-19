@@ -345,8 +345,10 @@ test(
           );
           await context.publish(file.workspaceFile, 'finished.txt');
           await context.reply('The synthetic research summary is ready.');
-          await context.waitForUser!('Connect the synthetic source to finish the research.');
-          return { status: 'waiting_user' };
+          return {
+            status: 'waiting_user',
+            message: 'Connect the synthetic source to finish the research.',
+          };
         }
         if (quietBackgroundWork && context.background) return quietRuntime.runTurn(context);
         if (context.prompt === 'remote-attachment-fixture') {
@@ -416,14 +418,16 @@ test(
           });
         }
         if (context.prompt === 'release-retry') failRelease = 1;
-        if (context.prompt === 'ask-question') {
-          await context.waitForUser!('Which account should I use?');
-          return { status: 'waiting_user' };
-        }
+        if (context.prompt === 'ask-question')
+          return { status: 'waiting_user', message: 'Which account should I use?' };
         if (context.prompt === 'ask-approval')
           return { status: 'waiting_user', waitingFor: 'approval' };
         if (context.prompt === 'ask-credentials')
-          return { status: 'waiting_credentials', waitingFor: 'credentials' };
+          return {
+            status: 'waiting_credentials',
+            waitingFor: 'credentials',
+            message: 'Enter the synthetic password. [Sign in](/vault/fixture)',
+          };
         await context.reply(`done: ${context.prompt}`);
         return { status: 'succeeded' };
       },
@@ -1156,50 +1160,58 @@ test(
         assert.equal(JSON.stringify([...fileContexts.values()]).includes(foreignArtifact), false);
       });
 
-      await t.test('a waiting question does not block the next user message', async () => {
-        await waitFor(settledThread);
-        const question = await thread.submitUserMessage('ask-question', [], { channel: 'web' });
-        await waitFor(settled(question.turnId));
-        const row = (
-          await db.pool.query('SELECT status,waiting_reason FROM turns WHERE id=$1', [
-            question.turnId,
-          ])
-        ).rows[0];
-        assert.deepEqual(row, { status: 'waiting', waiting_reason: 'question' });
-        assert.equal(
-          (
-            await db.pool.query(
-              "SELECT count(*)::int AS count FROM messages WHERE turn_id=$1 AND role='assistant' AND text='Which account should I use?'",
-              [question.turnId],
-            )
-          ).rows[0].count,
-          1,
-        );
-        for (const reason of ['approval', 'credentials'] as const) {
-          await waitFor(settledThread);
-          const waiting = await thread.submitUserMessage(`ask-${reason}`, [], { channel: 'web' });
-          await waitFor(settled(waiting.turnId));
-          assert.deepEqual(
+      await t.test(
+        'a waiting turn posts its question with its waiting state and does not block the next user message',
+        async () => {
+          const postedWithWaitingState = async (turnId: string) =>
             (
-              await db.pool.query('SELECT status,waiting_reason FROM turns WHERE id=$1', [
-                waiting.turnId,
-              ])
-            ).rows[0],
-            { status: 'waiting', waiting_reason: reason },
+              await db.pool.query(
+                "SELECT m.text,m.xmin=u.xmin AS together FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.turn_id=$1 AND m.role='assistant'",
+                [turnId],
+              )
+            ).rows;
+          await waitFor(settledThread);
+          const question = await thread.submitUserMessage('ask-question', [], { channel: 'web' });
+          await waitFor(settled(question.turnId));
+          const row = (
+            await db.pool.query('SELECT status,waiting_reason FROM turns WHERE id=$1', [
+              question.turnId,
+            ])
+          ).rows[0];
+          assert.deepEqual(row, { status: 'waiting', waiting_reason: 'question' });
+          assert.deepEqual(await postedWithWaitingState(question.turnId), [
+            { text: 'Which account should I use?', together: true },
+          ]);
+          for (const reason of ['approval', 'credentials'] as const) {
+            await waitFor(settledThread);
+            const waiting = await thread.submitUserMessage(`ask-${reason}`, [], { channel: 'web' });
+            await waitFor(settled(waiting.turnId));
+            assert.deepEqual(
+              (
+                await db.pool.query('SELECT status,waiting_reason FROM turns WHERE id=$1', [
+                  waiting.turnId,
+                ])
+              ).rows[0],
+              { status: 'waiting', waiting_reason: reason },
+            );
+            if (reason === 'credentials')
+              assert.deepEqual(await postedWithWaitingState(waiting.turnId), [
+                { text: 'Enter the synthetic password. [Sign in](/vault/fixture)', together: true },
+              ]);
+          }
+          await waitFor(settledThread);
+          const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
+          await waitFor(settled(answer.turnId));
+          assert.equal(await turnStatus(answer.turnId), 'succeeded');
+          assert.equal(ran(answer.turnId)?.threadId, question.threadId);
+          assert.ok(
+            ran(answer.turnId)?.history.some(
+              (message) =>
+                message.role === 'assistant' && message.text === 'Which account should I use?',
+            ),
           );
-        }
-        await waitFor(settledThread);
-        const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
-        await waitFor(settled(answer.turnId));
-        assert.equal(await turnStatus(answer.turnId), 'succeeded');
-        assert.equal(ran(answer.turnId)?.threadId, question.threadId);
-        assert.ok(
-          ran(answer.turnId)?.history.some(
-            (message) =>
-              message.role === 'assistant' && message.text === 'Which account should I use?',
-          ),
-        );
-      });
+        },
+      );
 
       await t.test(
         'a reply resumes the background session that asked and unrelated chat does not answer its task',

@@ -710,15 +710,16 @@ export function ottoTools(turn: Turn, skills?: SkillLibrary): OttoTool[] {
         return request.kind === 'otp'
           ? 'Verification code entered privately.'
           : 'Saved login entered.';
-      await turn.invite(vaultInvitation(request.origin, result.url, message, action));
-      await pause('credentials', undefined, { post: false });
+      await pause('credentials', vaultInvitation(request.origin, result.url, message, action));
       return 'Waiting for secure input.';
     }),
     bind(toolDefinitions.pay, async (p) => {
       if (!context.requestPayment) throw new Error('Payments are unavailable.');
       const result = await context.requestPayment(p);
-      await turn.invite(result.url ? actionLink(result.url, result.question) : result.question);
-      await pause('credentials', undefined, { post: false });
+      await pause(
+        'credentials',
+        result.url ? actionLink(result.url, result.question) : result.question,
+      );
       return 'Waiting for private payment approval.';
     }),
     bind(toolDefinitions.browser_session, async (p) => {

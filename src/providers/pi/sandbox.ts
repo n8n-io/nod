@@ -228,7 +228,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
       'export RTK_TELEMETRY_DISABLED=1',
       `otto_command=${quote(command)}`,
-      ...(!rawCommand.test(command) && !/^\s*git\s+log\s*$/.test(command)
+      ...(!rawCommand.test(command) && !/^\s*(?:git\s+log\s*$|find(?:\s|$))/.test(command)
         ? [
             'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
             'otto_rewrite_code=$?',
@@ -356,7 +356,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     ...definition,
     ...(definition.name === 'bash'
       ? {
-          description: `${definition.description}\nSupported simple commands automatically use RTK for compact output. Prefer bash with rtk ls, rtk read, rtk grep and rtk find for exploration; use native read for exact edit context. Use rtk test or rtk err around scripts to compact their output, and rtk proxy for unfiltered output. Shell data flows and explicit machine-output formats stay raw.`,
+          description: `${definition.description}\nSupported simple commands automatically use RTK for compact output. Prefer bash with rtk ls, rtk read and rtk grep for exploration; use native read for exact edit context. Use rtk test or rtk err around scripts to compact their output, and rtk proxy for unfiltered output. Shell data flows and explicit machine-output formats stay raw.`,
         }
       : {}),
     execute: (id, params, signal, onUpdate, context) =>

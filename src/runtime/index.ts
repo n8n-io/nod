@@ -56,9 +56,10 @@ const admissions = new AsyncLocalStorage<{
   admit(asks: boolean): Promise<void>;
 }>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
+const browserLink = /\]\(\/browser\)/;
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
-  /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
+  browserLink.test(String((params as { question?: unknown } | null)?.question));
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file', 'task']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
@@ -134,7 +135,7 @@ export function createAgentRuntime(dependencies: {
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingForUser = false;
     let waitingFor: RuntimeResult['waitingFor'];
-    let question: string | undefined;
+    let waitingMessage: string | undefined;
     let stopped = false;
     let modelFailed = false;
     let modelIncomplete = false;
@@ -193,32 +194,21 @@ export function createAgentRuntime(dependencies: {
       lastReply = trimmed;
     };
     const reply = deliverReply;
-    const pause = async (
-      reason: 'question' | 'approval' | 'credentials',
-      text?: string,
-      { post = true } = {},
-    ) => {
+    const pause = async (reason: 'question' | 'approval' | 'credentials', message?: string) => {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason;
-      if (text && reason !== 'credentials') question = text;
+      waitingMessage = message;
       if (browsed) await computer.hold(browserId, true).catch(() => {});
       stopped = true;
-      if (post && text) {
-        if (context.waitForUser)
-          await context.waitForUser(text, /\]\(\/browser\)/.test(text) ? browserId : undefined);
-        else await deliverReply(text);
-      }
       abortSession();
     };
     const confirm = async (result: unknown) => {
       if (!(result && typeof result === 'object' && 'requiresConfirmation' in result))
         return result;
       if (!result.requiresConfirmation) return result;
-      const text =
-        'question' in result && typeof result.question === 'string' ? result.question : undefined;
       const gate = admissions.getStore();
       if (gate) gate.asked = true;
-      await pause('approval', text, { post: false });
+      await pause('approval');
       return confirmationNotice;
     };
 
@@ -451,7 +441,6 @@ export function createAgentRuntime(dependencies: {
         },
         computer: browser,
         reply,
-        invite: (text: string) => deliverReply(text),
         pause,
         confirm,
       };
@@ -683,7 +672,10 @@ export function createAgentRuntime(dependencies: {
         status,
         ...(result ? { result } : {}),
         ...(waitingFor ? { waitingFor } : {}),
-        ...(question ? { question } : {}),
+        ...(waitingMessage ? { message: waitingMessage } : {}),
+        ...(waitingMessage && browserLink.test(waitingMessage)
+          ? { handoffBrowserId: browserId }
+          : {}),
       };
     } finally {
       stopped = true;
