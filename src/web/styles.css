@@ -154,7 +154,7 @@ body {
   background: transparent;
   box-shadow: none;
 }
-:root[data-desktop='true'] :is(.sign-in-page, .privacy-page, .browser-window, .credential-page) {
+:root[data-desktop='true'] :is(.privacy-page, .browser-window, .credential-page) {
   min-height: calc(100dvh - var(--desktop-titlebar-height));
 }
 button,
@@ -1838,11 +1838,6 @@ input[type='range']:disabled {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .mobile-menu-trigger[aria-expanded='true'] .account-avatar {
-    box-shadow:
-      0 0 0 2px var(--background),
-      0 0 0 4px var(--accent);
-  }
   .mobile-sheet {
     width: 100%;
     max-width: none;
@@ -1935,20 +1930,6 @@ input[type='range']:disabled {
   .mobile-sheet-actions > button:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
-  }
-  .mobile-sheet-actions .account-menu-identity {
-    padding: 12px 12px 8px;
-  }
-  .mobile-sheet-actions .account-menu-identity strong {
-    font-size: var(--text-body);
-  }
-  .mobile-sheet-actions .account-menu-identity span:not(.account-avatar) {
-    font-size: var(--text-control);
-  }
-  .mobile-sheet-actions .account-menu-identity .account-avatar {
-    width: 40px;
-    height: 40px;
-    font-size: var(--text-control);
   }
   .mobile-sheet-actions .account-menu-themes {
     min-height: 52px;

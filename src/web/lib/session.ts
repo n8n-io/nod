@@ -6,7 +6,6 @@ import { applyAccountTheme } from './theme';
 export interface SessionSnapshot {
   session: SessionResponse | null;
   loading: boolean;
-  signingOut: boolean;
   mutating: boolean;
   locked: boolean;
   error: string;
@@ -18,13 +17,7 @@ type SessionRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 function validSession(value: unknown): value is SessionResponse {
   if (!value || typeof value !== 'object') return false;
   const session = value as Partial<SessionResponse>;
-  if (
-    !session.auth ||
-    !['local', 'google'].includes(session.auth.mode) ||
-    typeof session.auth.googleAvailable !== 'boolean' ||
-    typeof session.capabilities?.developer !== 'boolean'
-  )
-    return false;
+  if (typeof session.capabilities?.developer !== 'boolean') return false;
   if (session.user === null) return session.settings === null && !session.capabilities.developer;
   const user = session.user;
   return (
@@ -49,7 +42,6 @@ export function createSessionStore(
   let snapshot: SessionSnapshot = {
     session: null,
     loading: true,
-    signingOut: false,
     mutating: false,
     locked: false,
     error: '',
@@ -59,7 +51,6 @@ export function createSessionStore(
   let version = 0;
   let read: AbortController | undefined;
   let mutation: AbortController | undefined;
-  let logoutAccount: string | undefined;
   const usageRevoked = new Set<string>();
   const usageLocallyRevoked = new Set<string>();
   const usageVersions = new Map<string, number>();
@@ -106,7 +97,6 @@ export function createSessionStore(
     publish({
       session,
       loading: false,
-      signingOut: false,
       mutating: false,
       locked,
       error,
@@ -128,7 +118,6 @@ export function createSessionStore(
     conceal = false,
     grantUsageData,
   }: { conceal?: boolean; grantUsageData?: string } = {}) {
-    if (snapshot.signingOut) return;
     if (conceal) invalidate();
     read?.abort();
     const controller = new AbortController();
@@ -165,7 +154,7 @@ export function createSessionStore(
   }
   async function update(change: AccountUpdate) {
     const user = snapshot.session?.user;
-    if (!user || snapshot.signingOut) throw new Error('Sign in again to save your changes.');
+    if (!user) throw new Error('Sign in again to save your changes.');
     if (mutation) throw new Error('Wait for your changes to finish saving.');
     if (change.usageData === false) revokeUsageData(user.id);
     const controller = new AbortController();
@@ -206,27 +195,6 @@ export function createSessionStore(
       }
     }
   }
-  async function logout() {
-    if (snapshot.signingOut && !snapshot.error) return;
-    logoutAccount = snapshot.session?.user?.id ?? logoutAccount;
-    invalidate();
-    publish({ signingOut: true, error: '' });
-    const current = version;
-    try {
-      await request('/api/logout', {
-        method: 'POST',
-        body: '{}',
-        cache: 'no-store',
-        headers: logoutAccount ? { 'X-Otto-Account': logoutAccount } : undefined,
-      });
-      if (current === version) {
-        logoutAccount = undefined;
-        publish({ signingOut: false });
-      }
-    } catch {
-      if (current === version) publish({ error: 'Sign-out could not be completed. Try again.' });
-    }
-  }
   return {
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -238,7 +206,6 @@ export function createSessionStore(
     refresh,
     revokeUsageData,
     update,
-    logout,
     invalidate,
   };
 }

@@ -20,7 +20,6 @@ function decode(value: unknown): unknown {
 let completed = false;
 let usageData = false;
 let user = 'fixture-owner-one';
-let deployment: 'local' | 'hosted' = 'hosted';
 const configuration = {
   provider: 'fixture',
   model: 'Fixture model',
@@ -31,17 +30,13 @@ const configuration = {
 };
 const messages: unknown[] = [];
 const session = () => ({
-  auth: {
-    mode: deployment === 'local' ? 'local' : 'google',
-    googleAvailable: deployment === 'hosted',
-  },
   user: { id: user, name: privateText, email: `${privateText}@example.test`, avatarUrl: null },
   settings: { theme: 'system', onboardingCompleted: completed, usageData },
   capabilities: { developer: true },
   analytics: {
     enabled: usageData,
-    distinctId: usageData ? `${deployment}:${user}` : null,
-    deployment,
+    distinctId: usageData ? `local:${user}` : null,
+    deployment: 'local',
     environment: 'development',
   },
 });
@@ -149,7 +144,6 @@ const server = createServer(async (request, response) => {
   }
   if (url.pathname === '/__fixture__/switch') {
     user = 'fixture-owner-two';
-    deployment = 'local';
     usageData = false;
     json({ ok: true });
     return;

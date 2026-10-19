@@ -1,23 +1,18 @@
 import { useState } from 'react';
-import { ChevronUp, KeyRound, LogOut, Monitor, Moon, Settings, Sun, UserRound } from 'lucide-react';
+import { KeyRound, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import type { AccountTheme, AccountUser } from '../../shared/account';
-import { AccountAvatar, accountInitials } from './account-avatar';
-import { ConnectionMenu } from './connection-menu';
 import { desktopSettingsAvailable } from '../lib/desktop';
 
 export type AccountTab =
-  'Profile' | 'General' | 'Appearance' | 'Preferences' | 'Models' | 'App connections' | 'Memory';
+  'General' | 'Appearance' | 'Preferences' | 'Models' | 'App connections' | 'Memory';
 export interface AccountControls {
   user: AccountUser;
-  local: boolean;
   theme: AccountTheme;
   usageData: boolean;
   saving: boolean;
-  canLogout: boolean;
   onSettings(tab: AccountTab, trigger?: HTMLElement): void;
   onTheme(theme: AccountTheme): Promise<void>;
   onUsageData(usageData: boolean): Promise<void>;
-  onLogout(): void;
 }
 
 export function AccountMenuItems({
@@ -39,36 +34,12 @@ export function AccountMenuItems({
   };
   return (
     <>
-      {!account.local && (
-        <>
-          <div className="account-menu-identity" role="group" aria-label="Signed-in account">
-            <AccountAvatar user={account.user} />
-            <div>
-              <strong>{account.user.name}</strong>
-              {account.user.email && <span>{account.user.email}</span>}
-            </div>
-          </div>
-          <button
-            type="button"
-            role={menu ? 'menuitem' : undefined}
-            onClick={(event) => openSettings('Profile', event.currentTarget)}
-          >
-            <UserRound size={16} aria-hidden="true" />
-            Profile
-          </button>
-        </>
-      )}
       <button
         type="button"
         role={menu ? 'menuitem' : undefined}
         aria-keyshortcuts={shortcuts ? 'Meta+, Control+,' : undefined}
         data-analytics-public
-        onClick={(event) =>
-          openSettings(
-            desktop ? 'General' : account.local ? 'Appearance' : 'Preferences',
-            event.currentTarget,
-          )
-        }
+        onClick={(event) => openSettings(desktop ? 'General' : 'Appearance', event.currentTarget)}
       >
         <Settings size={16} aria-hidden="true" />
         Settings
@@ -122,45 +93,6 @@ export function AccountMenuItems({
           {error}
         </p>
       )}
-      {account.canLogout && (
-        <>
-          <div className="mobile-menu-separator" role="separator" />
-          <button
-            type="button"
-            role={menu ? 'menuitem' : undefined}
-            onClick={() => {
-              close();
-              account.onLogout();
-            }}
-          >
-            <LogOut size={16} aria-hidden="true" />
-            Sign out
-          </button>
-        </>
-      )}
     </>
-  );
-}
-
-export function AccountMenu({ account }: { account: AccountControls }) {
-  return (
-    <div className="sidebar-account-menu">
-      <ConnectionMenu
-        label={`Account menu: ${accountInitials(account.user)} ${account.user.name}`}
-        compact
-        triggerClassName="nav-link account-menu-trigger"
-        trigger={
-          <>
-            <AccountAvatar user={account.user} />{' '}
-            <span className="nav-label">{account.user.name}</span>
-            <span className="account-menu-chevron" aria-hidden="true">
-              <ChevronUp size={16} />
-            </span>
-          </>
-        }
-      >
-        {(close) => <AccountMenuItems account={account} close={close} />}
-      </ConnectionMenu>
-    </div>
   );
 }

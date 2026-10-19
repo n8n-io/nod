@@ -244,7 +244,6 @@ function signInUrl(value: unknown) {
 export function createComposioProvider(options: {
   apiKey?: string;
   webhookSecret?: string;
-  webhooksVerified?: boolean;
   webhookUrl?: string;
   authConfigs?: Partial<Record<IntegrationService, string>>;
   client?: Composio;
@@ -848,7 +847,7 @@ export function createComposioProvider(options: {
     supportedServices: legacyServices().map((service) => service.slug),
     listServices,
     get webhooksConfigured() {
-      return Boolean(client && (options.webhookSecret || options.webhooksVerified));
+      return Boolean(client && options.webhookSecret);
     },
     supportsSubscriptions: options.proxy ? [] : ['gmail', 'googlecalendar', 'slack'],
     authorize: options.proxy
@@ -1304,11 +1303,10 @@ export function createComposioProvider(options: {
       );
     },
     async verifyWebhook(body, headers) {
-      if (!options.webhookSecret && !options.webhooksVerified)
-        throw new Error('The webhook is not configured.');
+      if (!options.webhookSecret) throw new Error('The webhook is not configured.');
       const result = await required().triggers.parse(
         { body, headers },
-        options.webhooksVerified ? undefined : { verifySecret: options.webhookSecret },
+        { verifySecret: options.webhookSecret },
       );
       const event = result.payload;
       const id = String('id' in result.rawPayload ? result.rawPayload.id : headers['webhook-id']);

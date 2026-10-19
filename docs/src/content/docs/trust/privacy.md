@@ -7,18 +7,18 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
+Desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to your model and decision providers, and the apps you choose. With Easy Connect, app requests and results pass through n8n's hosted connection service and Composio. If you use your own Composio key instead, they go through your Composio project.
 
 The desktop app checks n8n's update service for new versions, which sees your IP address, app version and platform. Feedback and usage analytics are optional. An operator can configure a different feedback collector; the feedback dialog names its recipient before you send.
 
 ## Where your data lives
 
-|                              | Desktop app                                                                                                                          | From source                                     | Hosted                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- | ----------------------------------------- |
-| Otto server                  | Your computer                                                                                                                        | Your computer                                   | The operator's infrastructure             |
-| Database, workspace, browser | A private virtual machine on your computer                                                                                           | Docker containers on your computer              | A separate runtime and storage per user   |
-| Data folder                  | `~/Library/Application Support/Otto/` and `~/.otto-desktop/` on a Mac. `%APPDATA%\Otto\` and the `Otto-` WSL distribution on Windows | `.local/` (`OTTO_DATA_ROOT`) and Docker volumes | The operator's database and storage       |
-| Who can read it              | You                                                                                                                                  | You                                             | You, and the operator, who holds the keys |
+|                              | Desktop app                                                                                                                          | From source                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| Otto server                  | Your computer                                                                                                                        | Your computer                                   |
+| Database, workspace, browser | A private virtual machine on your computer                                                                                           | Docker containers on your computer              |
+| Data folder                  | `~/Library/Application Support/Otto/` and `~/.otto-desktop/` on a Mac. `%APPDATA%\Otto\` and the `Otto-` WSL distribution on Windows | `.local/` (`OTTO_DATA_ROOT`) and Docker volumes |
+| Who can read it              | You                                                                                                                                  | You                                             |
 
 For what Otto stores and how long it keeps it, see the [Security review guide](/trust/security-review/#what-otto-stores).
 
@@ -61,9 +61,9 @@ Your model keys and your Composio key, if you use one, stay on your installation
 
 Usage analytics are off until you turn on **Share usage data** in onboarding or in **Settings**. They record which screens you open, how you move through them, and product events such as a task starting or a setting changing.
 
-The recipient is the Otto team at n8n, through its EU PostHog project. This also applies to self-hosted installations. Operators can disable collection for everyone with `OTTO_ANALYTICS_ENABLED=false`.
+The recipient is the Otto team at n8n, through its EU PostHog project. This also applies to source installations. Operators can disable collection for everyone with `OTTO_ANALYTICS_ENABLED=false`.
 
-Analytics have no fields for raw messages, Vault values, full page addresses, names or email addresses. Recordings block credential-entry and model-key forms, the remote browser view and images. Events can include normalized public domains for connections and Vault logins, Vault item types, task categories, inferred outcomes, timing and signs of friction. Your selected model analyzes bounded chat text using your model account. Only allowed generic task type, action and subject labels can leave Otto as task categories; raw text and invented labels are rejected. These classifications can still be wrong. Measurements are associated with a pseudonymous installation or account ID. See [Analytics](/deploy/analytics/) for the full list, limitations and deployment switch.
+Analytics have no fields for raw messages, Vault values, full page addresses, names or email addresses. Recordings block credential-entry and model-key forms, the remote browser view and images. Events can include normalized public domains for connections and Vault logins, Vault item types, task categories, inferred outcomes, timing and signs of friction. Your selected model analyzes bounded chat text using your model account. Only allowed generic task type, action and subject labels can leave Otto as task categories; raw text and invented labels are rejected. These classifications can still be wrong. Measurements are associated with a pseudonymous installation ID. See [Analytics](/deploy/analytics/) for the full list, limitations and deployment switch.
 
 ## Feedback
 
@@ -73,7 +73,7 @@ Operators can disable submission and status checks with `OTTO_FEEDBACK_ENABLED=f
 
 ## What memory learns from
 
-Memory notes come only from your own messages, never from Otto's replies, tool results or web pages. Otto also writes learned skills, the steps of a flow it did, from what it did and read; your model is told to replace names, contact details, account and order numbers, amounts and message content with placeholders, and Otto removes known secrets and refuses card numbers, keys and links with logins before it saves one. When you connect Gmail, your model also reads your recent sent email and writes one short note on your writing style. During setup on desktop and personal web installs, it can also summarise the latest-message text from up to 40 recent inbox conversations to suggest first tasks. That summary is never saved to memory and is deleted once the cards are posted. When no summary is available, and in hosted mode, task suggestions use recent subjects and snippets instead. The model is told to leave out facts, names and quotes, and Otto drops a note with an email address or link. See [Memory](/use/memory/).
+Memory notes come only from your own messages, never from Otto's replies, tool results or web pages. Otto also writes learned skills, the steps of a flow it did, from what it did and read; your model is told to replace names, contact details, account and order numbers, amounts and message content with placeholders, and Otto removes known secrets and refuses card numbers, keys and links with logins before it saves one. When you connect Gmail, your model also reads your recent sent email and writes one short note on your writing style. During setup, it can also summarise the latest-message text from up to 40 recent inbox conversations to suggest first tasks. That summary is never saved to memory and is deleted once the cards are posted. When no summary is available, task suggestions use recent subjects and snippets instead. The model is told to leave out facts, names and quotes, and Otto drops a note with an email address or link. See [Memory](/use/memory/).
 
 ## Delete your data
 
@@ -81,7 +81,7 @@ Memory notes come only from your own messages, never from Otto's replies, tool r
 - **Vault items.** Open the item in **Trust → Saved** and delete it. For a saved browser session, select **Sign out**.
 - **Apps.** Disconnect an app in **Apps**.
 - **Composio key.** Sign in to Easy Connect and confirm the switch in **Settings → App connections**. This deletes your saved key and disconnects the apps you connected through your project.
-- **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. In hosted mode, ask your operator, who can remove your account and its data with one command. Unfinished uploads expire within seven days, and Cloudflare keeps only identity and checkpoint references, no content. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.
+- **Everything.** Quit Otto and delete its data folders from the table above. Uninstalling the app alone keeps your data. A service you signed in to through Otto may still list Otto as a connected app until you remove it there.
 
 :::caution
 Released builds don't have a button to clear your chat history yet. To remove it, delete Otto's data folders.

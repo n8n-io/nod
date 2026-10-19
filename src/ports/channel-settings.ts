@@ -19,21 +19,8 @@ export class ChannelSetupFailure extends Error {
       | 'existing_webhook'
       | 'webhook_failed'
       | 'activation_pending'
-      | 'account_in_use'
       | 'pairing_unavailable',
   ) {
     super(reason);
   }
-}
-
-export interface ChannelAccountIdentity {
-  ownerId: string;
-  provider: ChannelProvider;
-  accountId: string;
-  revision: string;
-}
-
-export interface ChannelAccountRegistry {
-  claim(input: ChannelAccountIdentity): Promise<boolean>;
-  release(input: ChannelAccountIdentity): Promise<void>;
 }

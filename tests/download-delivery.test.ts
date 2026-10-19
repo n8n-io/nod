@@ -61,7 +61,6 @@ test(
     process.env.DATABASE_POOL_MAX = '4';
     process.env.PGBOSS_SCHEMA = bossSchema;
     process.env.OTTO_DATA_ROOT = dataRoot;
-    process.env.OTTO_MODE = 'local';
     const db = await import('../src/server/db.ts');
     cleanup.push(() => db.pool.end());
     const threads = await import('../src/server/thread.ts');

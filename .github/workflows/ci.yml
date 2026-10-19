@@ -22,11 +22,9 @@ jobs:
       core: ${{ steps.scope.outputs.core }}
       desktop: ${{ steps.scope.outputs.desktop }}
       n8n: ${{ steps.scope.outputs.n8n }}
-      cloudflare: ${{ steps.scope.outputs.cloudflare }}
       evals: ${{ steps.scope.outputs.evals }}
       images: ${{ steps.scope.outputs.images }}
       network: ${{ steps.scope.outputs.network }}
-      e2b: ${{ steps.scope.outputs.e2b }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -136,44 +134,27 @@ jobs:
         if: needs.scope.outputs.core != 'true'
         run: pnpm run format:check
       - name: Build the client
-        if: needs.scope.outputs.core == 'true' || needs.scope.outputs.cloudflare == 'true' || needs.scope.outputs.images == 'true'
+        if: needs.scope.outputs.images == 'true'
         run: pnpm run build
-      - name: Install Cloudflare adapter dependencies
-        if: needs.scope.outputs.cloudflare == 'true'
-        run: pnpm --dir deployment/cloudflare install --frozen-lockfile
-      - name: Check Cloudflare adapter types and fixtures
-        if: needs.scope.outputs.cloudflare == 'true'
-        run: |
-          pnpm --dir deployment/cloudflare run check
-          pnpm --dir deployment/cloudflare test
       - name: Check the capability eval harness
         if: needs.scope.outputs.evals == 'true'
         run: |
           pnpm --dir evals run check
           pnpm --dir evals test
-      - name: Validate both Cloudflare deployment bundles
-        if: needs.scope.outputs.cloudflare == 'true'
-        working-directory: deployment/cloudflare
-        env:
-          WRANGLER_SEND_METRICS: 'false'
-        run: |
-          pnpm exec wrangler deploy --env development --dry-run --containers-rollout=none
-          pnpm exec wrangler deploy --env production --dry-run --containers-rollout=none
       - name: Set up the Docker layer cache
         if: needs.scope.outputs.images == 'true'
         uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
         with:
           cache-key: n8n-io/otto/ci
-      - name: Build the runtime and separate computer images
+      - name: Build the computer and integration images
         if: needs.scope.outputs.images == 'true'
         run: |
-          docker buildx build --load --platform linux/amd64 --file deployment/cloudflare/Dockerfile --tag otto-ci .
-          docker buildx build --load --platform linux/amd64 --file deployment/cloudflare/Dockerfile.browser --tag otto-ci-browser .
-          docker buildx build --load --platform linux/amd64 --file deployment/cloudflare/Dockerfile.workspace --tag otto-ci-workspace .
-          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-local-browser .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-browser .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.workspace --tag otto-ci-workspace .
+          docker buildx build --load --platform linux/amd64 --file scripts/Dockerfile.integration --tag otto-ci-integration .
       - name: Verify the shared local and desktop browser image
         if: needs.scope.outputs.images == 'true'
-        run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-local-browser
+        run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-browser
       - name: Verify automatic RTK savings and unfiltered exports
         if: needs.scope.outputs.images == 'true'
         run: node --import tsx scripts/eval-rtk.ts --smoke --image otto-ci-workspace
@@ -188,129 +169,12 @@ jobs:
           --volume "$PWD/tests:/app/tests:ro"
           --volume "$PWD/scripts:/app/scripts:ro"
           --volume "$PWD/public:/app/public:ro"
-          --volume "$PWD/deployment/e2b:/app/deployment/e2b:ro"
           --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
           --tmpfs /app/.local:uid=1000,gid=1000
-          --entrypoint /usr/bin/tini otto-ci-browser
-          -- node scripts/test-integration.mjs --run
-      - name: Verify the runtime filesystem and user
-        if: needs.scope.outputs.images == 'true'
-        run: >-
-          docker run --rm --network none --entrypoint node otto-ci
-          -e 'const fs=require("node:fs");if(process.getuid()===0||fs.existsSync("/app/.env")||fs.existsSync("/app/.local")||!fs.existsSync("/app/dist/web/index.html"))process.exit(1)'
-      - name: Verify computer image boundaries, readiness and graceful shutdown
-        if: needs.scope.outputs.images == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          for role in browser workspace; do
-            docker run --rm --interactive --network none --entrypoint node "otto-ci-$role" --input-type=module - "$role" <<'JS'
-          import assert from 'node:assert/strict';
-          import { spawnSync } from 'node:child_process';
-          import { constants, existsSync, accessSync, lstatSync, readlinkSync, writeFileSync, unlinkSync } from 'node:fs';
-          const role = process.argv[2];
-          assert.equal(process.getuid(), 1000);
-          assert.equal(process.arch, 'x64');
-          assert.deepEqual(Object.keys(process.env).filter((key) => /OTTO_|OPENAI|ANTHROPIC|COMPOSIO|DATABASE|SECRET|TOKEN|API_KEY|E2B|GOOGLE|BETTER_AUTH|GATEWAY_ENV/.test(key)), []);
-          for (const path of ['/app/.env', '/app/.local', '/app/src/server', '/data/control.sock', '/var/run/docker.sock']) assert.equal(existsSync(path), false);
-          const helpers = ['entrypoint.mjs', 'checkpoint.py', ...(role === 'workspace' ? ['workspace-command.py'] : [])];
-          for (const name of helpers) {
-            const path = `/opt/otto/${name}`;
-            const stat = lstatSync(path);
-            assert.equal(stat.isFile(), true);
-            assert.equal(stat.uid, 0);
-            assert.equal(stat.mode & 0o222, 0);
-            assert.throws(() => accessSync(path, constants.W_OK));
-          }
-          assert.equal(lstatSync('/opt/otto').mode & 0o222, 0);
-          accessSync('/usr/bin/tini', constants.X_OK);
-          accessSync('/usr/bin/python3', constants.X_OK);
-          const python = spawnSync('/usr/bin/python3', ['-c', 'import ast,sys; [ast.parse(open(path).read()) for path in sys.argv[1:]]', ...helpers.filter((name) => name.endsWith('.py')).map((name) => `/opt/otto/${name}`)], { stdio: 'ignore' });
-          assert.equal(python.status, 0);
-          if (role === 'browser') {
-            accessSync('/usr/bin/chromium', constants.X_OK);
-            accessSync('/app/node_modules/agent-browser/bin/agent-browser-linux-x64', constants.X_OK);
-            accessSync('/app/src/providers/container-browser/worker.ts', constants.R_OK);
-            accessSync('/app/src/providers/container-browser/bridge.ts', constants.R_OK);
-          } else {
-            const command = spawnSync('python', ['-c', 'assert 123456 * 789 == 97406784'], { stdio: 'ignore' });
-            assert.equal(command.status, 0);
-            assert.equal(existsSync('/usr/bin/chromium'), false);
-            assert.equal(existsSync('/app'), false);
-            assert.equal(existsSync('/home/node/state'), false);
-            assert.equal(readlinkSync('/workspace'), '/home/node/state/workspace');
-            assert.equal(readlinkSync('/home/node/.local'), '/home/node/state/tools');
-          }
-          for (const directory of role === 'browser' ? ['/data'] : ['/home/node']) {
-            const path = `${directory}/synthetic-ci-check`;
-            writeFileSync(path, 'synthetic');
-            unlinkSync(path);
-          }
-          JS
-            container="otto-ci-$role-health"
-            trap 'docker rm --force "$container" >/dev/null 2>&1 || true' EXIT
-            docker run --detach --name "$container" --network none "otto-ci-$role"
-            docker exec "$container" node --input-type=module -e '
-              import assert from "node:assert/strict";
-              import { existsSync, readFileSync } from "node:fs";
-              import { setTimeout } from "node:timers/promises";
-              assert.equal(readFileSync("/proc/1/comm", "utf8").trim(), "tini");
-              let ready = false;
-              for (let attempt = 0; attempt < 60; attempt++) {
-                ready = await fetch("http://127.0.0.1:4311/health", { signal: AbortSignal.timeout(1000) }).then((response) => response.status === 200).catch(() => false);
-                if (ready) break;
-                await setTimeout(500);
-              }
-              assert.equal(ready, true);
-              if (!existsSync("/app")) assert.equal(existsSync("/home/node/state"), false);
-              assert.equal((await fetch("http://127.0.0.1:4311/")).status, 404);
-              assert.equal((await fetch("http://127.0.0.1:4311/health", { method: "POST" })).status, 404);
-            '
-            docker stop -t 15 "$container"
-            test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
-            test -z "$(docker logs "$container" 2>&1)"
-            docker rm "$container"
-            trap - EXIT
-          done
-
-  e2b-computer:
-    name: Combined E2B computer isolation
-    needs: scope
-    if: needs.scope.outputs.e2b == 'true'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 25
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - name: Set up Node.js 24.21.0
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: '24.21.0'
-          cache: pnpm
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Set up the Docker layer cache
-        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
-        with:
-          cache-key: n8n-io/otto/ci-e2b
-      - name: Build and verify the combined computer image
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --import tsx deployment/e2b/build-local.ts | tee "$RUNNER_TEMP/otto-e2b-build.log"
-          image="$(tail -n 1 "$RUNNER_TEMP/otto-e2b-build.log" | node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            const { image } = JSON.parse(readFileSync(0, "utf8"));
-            if (typeof image !== "string" || !/^otto-e2b-computer:[a-f0-9]{12}$/.test(image)) throw new Error("The combined computer image is invalid.");
-            process.stdout.write(image);
-          ')"
-          node deployment/e2b/validate-computer.mjs "$image"
+          --init --entrypoint node otto-ci-integration
+          scripts/test-integration.mjs --run
 
   secrets:
     name: Secret scanning

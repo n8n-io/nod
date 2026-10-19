@@ -65,13 +65,11 @@ Require **Conventional PR title** in the status checks for `main`. In the merge 
 
 ## From merge to release
 
-When CI passes on `main`, the **Deploy production** workflow deploys that revision to the hosted service, unless a newer commit has already landed. See [Cloudflare](/deploy/cloudflare/).
-
 Merged changes reach desktop users in the next desktop release. A maintainer runs **Release desktop**, merges its version pull request, and CI publishes one GitHub release. Installed Mac apps then update on their own. See [Desktop releases](/contribute/desktop-releases/). Source installs pick up changes with `git pull`.
 
 ## Dependency updates
 
-[Dependabot](https://github.com/n8n-io/otto/blob/main/.github/dependabot.yml) checks for updates every Monday at 06:00 Europe/Lisbon. It covers npm packages in the app, the desktop app, the Cloudflare adapter and the docs site, GitHub Actions, Dockerfiles and Compose images.
+[Dependabot](https://github.com/n8n-io/otto/blob/main/.github/dependabot.yml) checks for updates every Monday at 06:00 Europe/Lisbon. It covers npm packages in the app, the desktop app and the docs site, GitHub Actions, Dockerfiles and Compose images.
 
 | Rule       | What it does                                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

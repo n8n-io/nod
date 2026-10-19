@@ -40,7 +40,6 @@ export function TelegramSetup({
   fields,
   busy,
   error,
-  hosted,
   unavailable = false,
   allowWebhook = false,
   onField,
@@ -56,7 +55,6 @@ export function TelegramSetup({
   fields: Record<string, string>;
   busy: boolean;
   error: string;
-  hosted: boolean;
   unavailable?: boolean;
   allowWebhook?: boolean;
   onField(name: string, value: string): void;
@@ -77,9 +75,7 @@ export function TelegramSetup({
   const setupError =
     error ||
     (unavailable && !state.paired
-      ? hosted
-        ? 'Telegram setup is unavailable. Try again later.'
-        : 'Set up the secure key store on this computer to connect Telegram.'
+      ? 'Set up the secure key store on this computer to connect Telegram.'
       : '');
 
   function verify(event: React.FormEvent) {
@@ -108,11 +104,7 @@ export function TelegramSetup({
               {telegramIdentity(setup!.allowedUserId!, setup?.pairedUser, setup?.pairedUsername)}{' '}
               can message Otto.
             </p>
-            <p>
-              {hosted
-                ? 'Send your bot a message anytime.'
-                : 'Keep Otto running to receive messages.'}
-            </p>
+            <p>Keep Otto running to receive messages.</p>
           </div>
         </div>
       ) : (
@@ -195,7 +187,7 @@ export function TelegramSetup({
                           }}
                         />
                       </Field>
-                      {allowWebhook && !hosted && (
+                      {allowWebhook && (
                         <details className="telegram-setup-advanced">
                           <summary>Advanced: use a webhook</summary>
                           <Field

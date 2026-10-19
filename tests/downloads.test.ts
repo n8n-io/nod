@@ -37,7 +37,6 @@ import {
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
-import { createHttpObjectStore } from '../src/providers/object-storage/http.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
@@ -330,40 +329,6 @@ test('private filesystem objects survive factory restart and preserve conditiona
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
   }
-});
-
-test('HTTP storage bounds responses, uses version conditions and never forwards owner or credentials', async () => {
-  const requests: Array<{ url: string; init: RequestInit }> = [];
-  let status = 200;
-  const store = createHttpObjectStore({
-    fetch: async (url, init) => {
-      requests.push({ url: String(url), init: init! });
-      if (init?.method === 'PUT')
-        return new Response(null, { status: 204, headers: { etag: '"next"' } });
-      if (status === 500) throw new Error('secret upstream URL?token=private');
-      return new Response('payload', { status, headers: { etag: '"current"' } });
-    },
-  });
-  assert.equal((await store.read(key, 100))?.version, '"current"');
-  assert.equal(
-    await store.write(key, Buffer.from('bytes'), { expectedVersion: '"current"' }),
-    '"next"',
-  );
-  assert.equal(new Headers(requests[1].init.headers).get('if-match'), '"current"');
-  assert.equal(new Headers(requests[1].init.headers).get('authorization'), null);
-  assert.equal(new Headers(requests[1].init.headers).get('x-owner-id'), null);
-  assert.equal(new Headers(requests[1].init.headers).get('x-otto-generation'), null);
-  assert.equal(requests[0].init.redirect, 'manual');
-  await assert.rejects(store.read(key, 3), /unavailable/);
-  status = 412;
-  await assert.rejects(store.read(key, 100), ObjectStoreConflict);
-  status = 404;
-  assert.equal(await store.read(key, 100), undefined);
-  status = 500;
-  await assert.rejects(
-    store.read(key, 100),
-    (error: Error) => !/secret|private.*URL|token/.test(error.message),
-  );
 });
 
 async function fixture() {

@@ -37,12 +37,11 @@ Secret scanning skips its generic keyword check in tests and fixtures. Known key
 
 ## Extra checks for some areas
 
-| If you change            | Also run                                                                                                                                                 |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `desktop/`               | `pnpm run desktop:test`                                                                                                                                  |
-| `evals/`                 | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                                 |
-| `deployment/cloudflare/` | `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](/deploy/cloudflare/)) |
-| `docs/`                  | `pnpm --dir docs build`                                                                                                                                  |
+| If you change | Also run                                                 |
+| ------------- | -------------------------------------------------------- |
+| `desktop/`    | `pnpm run desktop:test`                                  |
+| `evals/`      | `pnpm --dir evals run check` and `pnpm --dir evals test` |
+| `docs/`       | `pnpm --dir docs build`                                  |
 
 The [capability evals](/contribute/evals/) call live models, so they aren't part of these checks. They run nightly and on request.
 
@@ -64,13 +63,13 @@ The network has no internet access, and your source folders are mounted read-onl
 
 Add a test only when it would catch a real regression in one of these areas. Extend the existing file for that area instead of adding a new one.
 
-| Area                       | For example                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------- |
-| Core harness               | One thread and Pi session per owner, turns one at a time, stop, interruption, reset, session rebase |
-| Sandbox isolation          | Nothing on the host, no keys in the sandbox, contained paths                                        |
-| Safety                     | Approvals, uncertain actions, Vault and sign-in fencing, onboarding task cards                      |
-| Owner and tenant isolation | Gateway, signed envelopes, owner scoping, URL guards, redaction                                     |
-| Integration contracts      | Channel delivery, schedule firing, downloads, OAuth completion                                      |
+| Area                  | For example                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| Core harness          | One thread and Pi session per owner, turns one at a time, stop, interruption, reset, session rebase |
+| Sandbox isolation     | Nothing on the host, no keys in the sandbox, contained paths                                        |
+| Safety                | Approvals, uncertain actions, Vault and sign-in fencing, onboarding task cards                      |
+| Owner isolation       | Owner scoping, local access, URL guards, redaction                                                  |
+| Integration contracts | Channel delivery, schedule firing, downloads, OAuth completion                                      |
 
 Leave out tautological tests, mocks that return what they were told, and tests of UI copy, wording, CSS, constants or configuration. For a change in `src/web`, check it in the running app instead.
 
@@ -108,17 +107,15 @@ flowchart TD
   scope -- unknown file type --> all[Every check]:::go
 ```
 
-| You change                                                         | CI also runs                                                                                                                                 |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs/`, Markdown files, `LICENSE` or `NOTICE`                     | Nothing more. This is the light path. A `docs/` change also runs the **Docs** workflow, which builds the site and checks its internal links. |
-| Only a release's version, manifest and changelog                   | The release metadata and source check. Installers are built after merge.                                                                     |
-| `src/`, `public/` or `tests/`                                      | `pnpm run check`, the build, integration tests, image checks, and the desktop, Cloudflare and eval checks                                    |
-| Root package files, lockfile or Dockerfiles                        | All of the above, plus the E2B computer isolation and n8n delivery checks                                                                    |
-| Computer providers, `src/ports`, `src/shared` or `deployment/e2b/` | The `src/` checks plus the E2B computer isolation check                                                                                      |
-| `desktop/`                                                         | Desktop tests                                                                                                                                |
-| `evals/`                                                           | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                     |
-| `deployment/cloudflare/`                                           | Adapter checks, both Wrangler dry runs and the image builds                                                                                  |
-| `deployment/n8n/`                                                  | The n8n delivery contract tests                                                                                                              |
+| You change                                       | CI also runs                                                                                                                                 |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/`, Markdown files, `LICENSE` or `NOTICE`   | Nothing more. This is the light path. A `docs/` change also runs the **Docs** workflow, which builds the site and checks its internal links. |
+| Only a release's version, manifest and changelog | The release metadata and source check. Installers are built after merge.                                                                     |
+| `src/`, `public/` or `tests/`                    | `pnpm run check`, the build, integration tests, image checks, and the desktop and eval checks                                                |
+| Root package files, lockfile or Dockerfiles      | All of the above, plus the n8n delivery checks                                                                                               |
+| `desktop/`                                       | Desktop tests                                                                                                                                |
+| `evals/`                                         | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                     |
+| `deployment/n8n/`                                | The n8n delivery contract tests                                                                                                              |
 
 A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/otto/blob/main/.github/scripts/ci-scope.mjs).
 

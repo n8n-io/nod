@@ -69,7 +69,6 @@ export function createModelService(options: {
   keyStore: CredentialKeyStore;
   backend: ModelBackend;
   origin: string;
-  local: boolean;
   bootstrap?: {
     provider: ModelProvider;
     model?: string;
@@ -466,10 +465,6 @@ export function createModelService(options: {
       throw new ConnectionError(
         'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
       );
-    if (provider === 'openai' && !options.local)
-      throw new ConnectionError(
-        'ChatGPT plan use is available in local Otto. Hosted use needs OpenAI access.',
-      );
     await reload();
     const row = connectionId
       ? rows.find(
@@ -573,7 +568,6 @@ export function createModelService(options: {
           models: models.map((model) => model.choice),
         })),
         selection,
-        local: options.local,
       };
     },
     async initialize() {
@@ -611,8 +605,6 @@ export function createModelService(options: {
       );
       for (const [provider, value] of sources) {
         if (!value) continue;
-        if (provider === 'compatible' && !options.local)
-          throw new Error('OPENAI_COMPATIBLE_BASE_URL works only in local Otto.');
         const existing = rows.find((row) => row.provider === provider && row.managed);
         let definitions: ModelDefinition[] | undefined;
         try {
@@ -639,8 +631,6 @@ export function createModelService(options: {
       return save(provider, 'api_key', value, await catalog(provider, 'api_key', value));
     },
     async addEndpoint(address: string, key?: string) {
-      if (!options.local)
-        throw new ConnectionError('OpenAI-compatible servers are available in local Otto.');
       if (!options.keyStore.configured)
         throw new ConnectionError(
           'Configure OTTO_VAULT_KEY in server settings before saving a connection.',

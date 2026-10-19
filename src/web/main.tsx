@@ -21,7 +21,6 @@ import './components/attachment-images.css';
 import './components/attachment-card.css';
 import './components/vault-details.css';
 import './pages/browser.css';
-import './pages/sign-in.css';
 import './pages/privacy.css';
 import './pages/onboarding/onboarding.css';
 import './pages/onboarding/steps/welcome.css';
@@ -68,11 +67,9 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
 
 initializeTheme();
 sessionStore.subscribe(() => {
-  const { session, signingOut } = sessionStore.getSnapshot();
+  const { session } = sessionStore.getSnapshot();
   configureAnalytics(
-    !signingOut && (session?.user || session?.analytics?.distinctId === null)
-      ? session?.analytics
-      : undefined,
+    session?.user || session?.analytics?.distinctId === null ? session?.analytics : undefined,
   );
 });
 

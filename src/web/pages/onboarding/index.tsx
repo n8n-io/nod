@@ -40,16 +40,12 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
 
 export function Onboarding({
   user,
-  canLogout,
-  onLogout,
   onComplete,
   onFeedback,
   usageData = false,
   onUsageData,
 }: {
   user: AccountUser;
-  canLogout: boolean;
-  onLogout(): void;
   onComplete(): Promise<void>;
   onFeedback(): void;
   usageData?: boolean;
@@ -208,11 +204,6 @@ export function Onboarding({
             >
               <MessageSquare size={16} aria-hidden="true" />
               <span className="ob-header-label">Feedback</span>
-            </Button>
-          )}
-          {canLogout && (
-            <Button variant="ghost" size="sm" onClick={onLogout}>
-              Sign out
             </Button>
           )}
         </div>

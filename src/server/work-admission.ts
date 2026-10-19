@@ -1,3 +1,5 @@
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+
 const unavailable = () =>
   Object.assign(new Error('Work admission is paused.'), { statusCode: 503 });
 
@@ -137,3 +139,67 @@ export function createWorkConsumers() {
 }
 
 export type WorkConsumers = ReturnType<typeof createWorkConsumers>;
+
+export function registerWorkAdmission(app: FastifyInstance, admission: WorkAdmission) {
+  type Admitted = {
+    release(): void;
+    started: boolean;
+    finished: boolean;
+    responded: boolean;
+    disconnected: boolean;
+    cleanup(): void;
+  };
+  const accepted = new WeakMap<FastifyRequest, Admitted>();
+  function release(request: FastifyRequest) {
+    const state = accepted.get(request);
+    if (!state || (state.started && !state.finished) || (!state.responded && !state.disconnected))
+      return;
+    state.release();
+    state.cleanup();
+    accepted.delete(request);
+  }
+  app.addHook('onRequest', async (request, reply) => {
+    const path = request.url.split('?')[0];
+    if (path === '/api/events' && !admission.paused && !admission.closed) return;
+    const releaseAdmission = admission.enter();
+    if (!releaseAdmission)
+      return reply.code(503).send({ error: 'The account runtime is preparing an update.' });
+    const disconnected = () => {
+      const state = accepted.get(request);
+      if (state) state.disconnected = true;
+      releaseRequest();
+    };
+    const releaseRequest = () => release(request);
+    accepted.set(request, {
+      release: releaseAdmission,
+      started: false,
+      finished: false,
+      responded: false,
+      disconnected: false,
+      cleanup: () => {
+        reply.raw.off('close', disconnected);
+      },
+    });
+    reply.raw.once('close', disconnected);
+    if (reply.raw.destroyed) disconnected();
+  });
+  app.addHook('onResponse', async (request) => {
+    const state = accepted.get(request);
+    if (state) state.responded = true;
+    release(request);
+  });
+  app.addHook('onRoute', (route) => {
+    const handler = route.handler;
+    route.handler = async function (request, reply) {
+      if (reply.raw.destroyed) return;
+      const state = accepted.get(request);
+      if (state) state.started = true;
+      try {
+        return await handler.call(this, request, reply);
+      } finally {
+        if (state) state.finished = true;
+        release(request);
+      }
+    };
+  });
+}

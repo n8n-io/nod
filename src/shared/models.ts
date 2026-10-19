@@ -33,7 +33,6 @@ export interface ModelConnection {
 export interface ModelsResponse {
   connections: ModelConnection[];
   selection: ModelSelection | null;
-  local: boolean;
 }
 
 export const modelProviderNames = {

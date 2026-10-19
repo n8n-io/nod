@@ -42,7 +42,7 @@ function subtitle(item: Item) {
   return item.username || originLabel(item.origin);
 }
 
-export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text: string): void }) {
+export function Trust({ onAsk }: { onAsk?(text: string): void }) {
   const {
     data: entries,
     error: loadError,
@@ -60,7 +60,7 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     ? null
     : window.location.search === '?add=login'
       ? 'login'
-      : window.location.search === '?add=card' && !hosted
+      : window.location.search === '?add=card'
         ? 'card'
         : null;
   const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
@@ -253,7 +253,6 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
       key={`${selected.id}-${revision}`}
       entry={selected}
       visible={view === 'saved'}
-      hosted={hosted}
       autoFocus={chosen && selectedId === selected.id}
       onClose={closeDetail}
       onSaved={(entry) => {
@@ -357,12 +356,10 @@ export function Trust({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
                       <Globe size={16} aria-hidden="true" />
                       New login
                     </button>
-                    {!hosted && (
-                      <button type="button" className="menu-item" onClick={() => start('card')}>
-                        <CreditCard size={16} aria-hidden="true" />
-                        New payment card
-                      </button>
-                    )}
+                    <button type="button" className="menu-item" onClick={() => start('card')}>
+                      <CreditCard size={16} aria-hidden="true" />
+                      New payment card
+                    </button>
                     {onAsk && (
                       <button
                         type="button"

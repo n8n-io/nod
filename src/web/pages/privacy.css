@@ -8,17 +8,21 @@
   justify-content: space-between;
   gap: 24px;
 }
-.privacy-back,
-.sign-in-privacy {
+.privacy-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--foreground);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.privacy-back {
   color: var(--muted-foreground);
   font-size: var(--text-control);
 }
-.privacy-back:hover,
-.sign-in-privacy:hover {
+.privacy-back:hover {
   color: var(--foreground);
-}
-.sign-in-privacy {
-  align-self: flex-start;
 }
 .privacy-document {
   width: 100%;
@@ -95,7 +99,7 @@
   .privacy-header {
     gap: 16px;
   }
-  .privacy-header .sign-in-brand {
+  .privacy-header .privacy-brand {
     font-size: 24px;
   }
   .privacy-back {

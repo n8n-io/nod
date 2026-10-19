@@ -11,7 +11,7 @@ The short version: memory notes hold only the owner's own words: what they said 
 
 ## Where memory lives
 
-Memory is one JSON document, `memory/MEMORY.md`, in Otto's private object store: the database in local mode, private object storage in hosted mode. It sits outside the thread workspace, so it survives a thread reset. It holds up to 256 KiB.
+Memory is one JSON document, `memory/MEMORY.md`, in Otto's private object store in the database. It sits outside the thread workspace, so it survives a thread reset. It holds up to 256 KiB.
 
 Each entry has an address, `area/slug`, a text of up to 4,000 characters and an optional one-line abstract. There are five areas:
 

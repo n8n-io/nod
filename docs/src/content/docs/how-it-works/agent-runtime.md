@@ -38,16 +38,7 @@ All totals come from these ledger rows. Missing prices stay unknown.
 | Attached images    | PNG, JPEG and WebP images of up to 3.75 MiB each, and 16 MiB together per message, reach the model with the message. Others, and every image for a model that can't read images, stay workspace files marked as not shown. |
 | Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                                                  |
 
-## Hosted transcript checkpoints
-
-In hosted mode, each session transcript lives in private object storage. The details are in [`src/providers/pi/checkpoint.ts`](https://github.com/n8n-io/otto/blob/main/src/providers/pi/checkpoint.ts).
-
-- **When:** before each tool, at turn boundaries and before completion.
-- **How:** each checkpoint uploads only new entries as an immutable part. A small manifest lists the parts and is written with compare-and-swap, so a stale writer can't overwrite a newer session.
-- **Size:** every 64 parts, or when the next part would pass 64 MiB, the session is rewritten as chunks of at most 8 MiB with only the newest four screenshots. 64 MiB is the most a session can hold.
-- **Rebase:** a restored session over 8 MiB is rebased to what the model sees: the latest compaction, later messages and only the newest screenshots.
-
-In both modes, when a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."
+When a loaded session ends with tool calls that have no result, each call gets the result "This action was interrupted. Its outcome is unknown; check before doing it again."
 
 ## Tools
 

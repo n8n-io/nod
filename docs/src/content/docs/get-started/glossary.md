@@ -52,10 +52,9 @@ This page explains the words you'll meet in these docs. Select a term to read th
 
 ## Running Otto
 
-| Term                                                  | What it means                                                                                                                        |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| [Owner access key](/get-started/install-from-source/) | The secret that opens a source install of Otto. The access link Otto prints when it starts saves it in your browser.                 |
-| [Hosted mode](/how-it-works/hosted-mode/)             | Otto run on Cloudflare by an operator for several people. Each person signs in with Google and gets their own separate copy of Otto. |
+| Term                                                  | What it means                                                                                                        |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [Owner access key](/get-started/install-from-source/) | The secret that opens a source install of Otto. The access link Otto prints when it starts saves it in your browser. |
 
 ## Related resources
 

@@ -67,9 +67,5 @@ export function useSession() {
           }),
         );
     },
-    logout: async () => {
-      await sessionStore.logout();
-      window.dispatchEvent(new Event('otto:session-changed'));
-    },
   };
 }

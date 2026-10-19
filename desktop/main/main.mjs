@@ -970,7 +970,6 @@ async function startEngine({ runtime, signal }) {
     ...providerEnvironment,
     NODE_ENV: 'production',
     PORT: String(port),
-    OTTO_MODE: 'local',
     OTTO_DESKTOP: 'true',
     OTTO_APP_VERSION: app.getVersion(),
     OTTO_DESKTOP_OWNER_ID: await profileOwner(),
@@ -979,12 +978,10 @@ async function startEngine({ runtime, signal }) {
     ...(analytics.distinctId ? { OTTO_ANALYTICS_ID: analytics.distinctId.slice(6) } : {}),
     OTTO_ANALYTICS_ENVIRONMENT: app.isPackaged ? 'production' : 'development',
     OTTO_PUBLIC_URL: engineOrigin,
-    OTTO_BIND_HOST: '127.0.0.1',
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
     ...(process.env.OTTO_FEEDBACK_URL === '' ? { OTTO_FEEDBACK_ENABLED: 'false' } : {}),
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
-    COMPUTER_PROVIDER: 'docker',
   };
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
   update({

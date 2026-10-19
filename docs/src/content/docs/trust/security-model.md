@@ -67,11 +67,9 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A connected command-line tool's token reaches only a sealed install of its declared source, run as its own user with a clean environment, apart from other tools.
 - Every query and route is scoped to one owner.
 
-### Local access and hosted mode
+### Local access
 
 - Loopback isn't treated as identity. Every local `/api` request needs the owner key from `OTTO_DATA_ROOT/access-key`, or the desktop app's per-launch token. Only verified webhooks, OAuth callbacks, the key exchange and the privacy notice go without it.
-- Hosted mode runs one runtime per user with a fixed owner, its own database role and schemas. The gateway signs each request with an HMAC envelope bound to owner, environment, generation, method, target, body, nonce and expiry, and rejects replays.
-- The hosted master key stays in the gateway. Each runtime gets only keys derived for its own user.
 
 ## Limits
 
@@ -87,7 +85,6 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - A standing instruction runs for any new email or update that matches it, including one that only claims to come from the sender you named.
 - Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
-- In hosted mode, the operator can decrypt stored data.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.
 
 :::
@@ -105,7 +102,7 @@ The team aims to acknowledge your report within 3 business days and to share a f
 | Authority and confirmations | [`trust.ts`](https://github.com/n8n-io/otto/blob/main/src/server/trust.ts), [`approvals.ts`](https://github.com/n8n-io/otto/blob/main/src/server/approvals.ts)               |
 | Vault and one use           | [`vault-access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-access.ts), [`vault-use.ts`](https://github.com/n8n-io/otto/blob/main/src/server/vault-use.ts) |
 | Browser entry and proxy     | [`agent-browser`](https://github.com/n8n-io/otto/tree/main/src/providers/agent-browser)                                                                                      |
-| Local access and hosting    | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts), [`gateway.ts`](https://github.com/n8n-io/otto/blob/main/src/server/gateway.ts)                 |
+| Local access                | [`access.ts`](https://github.com/n8n-io/otto/blob/main/src/server/access.ts)                                                                                                 |
 
 ## Related resources
 

@@ -59,14 +59,12 @@ export function ChannelSetupStep({
   onField,
   policy,
   onPolicy,
-  hosted = false,
 }: {
   step: number;
   fields: Record<string, string>;
   onField(name: string, value: string): void;
   policy: boolean;
   onPolicy(value: boolean): void;
-  hosted?: boolean;
 }) {
   const field = (name: string) => ({
     value: fields[name] ?? '',
@@ -82,7 +80,7 @@ export function ChannelSetupStep({
         <ul className="channel-requirements">
           <li>A Meta app with WhatsApp enabled</li>
           <li>A business sender number and its credentials</li>
-          {!hosted && <li>A public HTTPS callback for messages</li>}
+          <li>A public HTTPS callback for messages</li>
         </ul>
         <p>
           Replies are available for 24 hours after your message. Delayed proactive messages are not
@@ -148,24 +146,21 @@ export function ChannelSetupStep({
   return (
     <>
       <p>
-        {hosted
-          ? 'After connecting, copy the callback URL into Meta and subscribe to messages.'
-          : 'Use these same callback settings in Meta, then subscribe the app to messages. Expose only this route; keep the rest of Otto private.'}
+        Use these same callback settings in Meta, then subscribe the app to messages. Expose only
+        this route; keep the rest of Otto private.
       </p>
-      {!hosted && (
-        <Field
-          label="Public HTTPS callback"
-          hint="You can leave this blank and finish delivery setup later."
-        >
-          <Input
-            type="url"
-            pattern="https://.*"
-            placeholder="https://your-domain.example/api/webhooks/whatsapp"
-            autoFocus
-            {...field('webhookUrl')}
-          />
-        </Field>
-      )}
+      <Field
+        label="Public HTTPS callback"
+        hint="You can leave this blank and finish delivery setup later."
+      >
+        <Input
+          type="url"
+          pattern="https://.*"
+          placeholder="https://your-domain.example/api/webhooks/whatsapp"
+          autoFocus
+          {...field('webhookUrl')}
+        />
+      </Field>
       <Field
         label="Webhook verification token"
         hint="Choose 16–256 letters, digits, underscores or hyphens. Use the same token in Meta; it will not be shown again."
@@ -190,7 +185,6 @@ function ChannelCard({
   configured,
   connected,
   busy,
-  hosted,
   onConnect,
   onDisconnect,
   onPair,
@@ -200,7 +194,6 @@ function ChannelCard({
   configured: boolean;
   connected: boolean;
   busy: boolean;
-  hosted: boolean;
   onConnect(): void;
   onDisconnect(trigger: HTMLButtonElement): void;
   onPair(): void;
@@ -274,12 +267,10 @@ function ChannelCard({
                 <DialogTitle>Finish {provider.name} setup</DialogTitle>
                 <DialogDescription>
                   {setup?.webhookStatus === 'registration_pending'
-                    ? hosted
-                      ? 'Delivery setup could not finish. Contact the person who hosts Otto.'
-                      : 'Restart Otto to retry the saved setup.'
+                    ? 'Restart Otto to retry the saved setup.'
                     : 'Finish the callback in Meta and subscribe to messages.'}
                 </DialogDescription>
-                {setup?.webhookUrl && (!hosted || provider.id === 'whatsapp') && (
+                {setup?.webhookUrl && (
                   <div className="channel-delivery-address">
                     <span>Callback URL</span>
                     <code>{setup.webhookUrl}</code>
@@ -330,7 +321,7 @@ function ChannelCard({
   );
 }
 
-export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
+export function Channels() {
   const [editing, setEditing] = useState<ChannelProvider | null>(null);
   const {
     data,
@@ -455,7 +446,6 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
           <ChannelCard
             key={channel.provider.id}
             {...channel}
-            hosted={hosted}
             busy={busy || resuming || !settings?.ready}
             onConnect={() => open(channel.provider.id)}
             onDisconnect={(trigger) => {
@@ -486,11 +476,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
       )}
       {data?.error && <Notice>{data.error}</Notice>}
       {settings && !settings.ready && (
-        <Notice>
-          {hosted
-            ? 'Channel setup is temporarily unavailable.'
-            : 'The secure key store needs local setup before you can save a channel.'}
-        </Notice>
+        <Notice>The secure key store needs local setup before you can save a channel.</Notice>
       )}
       {!data || !settings ? (
         loading ? (
@@ -589,7 +575,6 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
                 fields={fields}
                 busy={busy || resuming}
                 error={error || loadError}
-                hosted={hosted}
                 unavailable={!settings?.ready}
                 allowWebhook
                 onField={(name, value) => setFields((current) => ({ ...current, [name]: value }))}
@@ -660,7 +645,6 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
                     }
                     policy={policy}
                     onPolicy={setPolicy}
-                    hosted={hosted}
                   />
                 </div>
                 <div className="channel-wizard-actions">

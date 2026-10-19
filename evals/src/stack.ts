@@ -138,7 +138,6 @@ export async function startStack(options: {
   const port = await freePort();
   process.env.PORT = String(port);
   process.env.OTTO_PUBLIC_URL = `http://localhost:${port}`;
-  process.env.OTTO_MODE = 'local';
   process.env.OTTO_DATA_ROOT = join(directory, '.local');
   process.env.NODE_ENV = 'production';
   process.env.DEV_INSPECTOR = 'true';

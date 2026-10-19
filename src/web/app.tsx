@@ -9,7 +9,7 @@ import { Tasks } from './pages/tasks';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
-import { Button, Loading, Notice } from './components/ui';
+import { Button, Notice } from './components/ui';
 import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
@@ -21,7 +21,6 @@ import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
 import { useSession } from './hooks/use-session';
-import { SignIn } from './pages/sign-in';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
@@ -231,9 +230,7 @@ function Workspace({
                   </div>
                 )}
               </div>
-              {currentPath === '/trust' && (
-                <Trust hosted={session.auth.mode === 'google'} onAsk={askInChat} />
-              )}
+              {currentPath === '/trust' && <Trust onAsk={askInChat} />}
               {currentPath === '/apps' && (
                 <Apps
                   configuration={state?.configuration}
@@ -241,7 +238,7 @@ function Workspace({
                   onManageConnection={(trigger) => account.onSettings('App connections', trigger)}
                 />
               )}
-              {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
+              {currentPath === '/channels' && <Channels />}
               {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
               {!sidebarItems.some((item) => item.path === currentPath) && (
                 <div className="empty-state">
@@ -269,7 +266,6 @@ function AuthenticatedApp({
   session,
   saving,
   onAccountUpdate,
-  onLogout,
   feedbackRequest,
   onFeedbackHandled,
 }: {
@@ -277,7 +273,6 @@ function AuthenticatedApp({
   session: SessionResponse;
   saving: boolean;
   onAccountUpdate(change: AccountUpdate): Promise<void>;
-  onLogout(): void;
   feedbackRequest: number;
   onFeedbackHandled(): void;
 }) {
@@ -312,11 +307,7 @@ function AuthenticatedApp({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const [settingsTab, setSettingsTab] = useState<AccountTab>(
-    desktopSettingsAvailable()
-      ? 'General'
-      : session.auth.mode === 'local'
-        ? 'Appearance'
-        : 'Profile',
+    desktopSettingsAvailable() ? 'General' : 'Appearance',
   );
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const lastPath = useRef('/');
@@ -325,13 +316,7 @@ function AuthenticatedApp({
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     setSettingsRequest((current) => current + 1);
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(
-      desktopSettingsAvailable() && (tab === 'Appearance' || tab === 'Profile')
-        ? 'General'
-        : tab === 'Profile' && session.auth.mode === 'local'
-          ? 'Appearance'
-          : tab,
-    );
+    setSettingsTab(desktopSettingsAvailable() && tab === 'Appearance' ? 'General' : tab);
     setSettingsOpen(true);
   };
   useEffect(
@@ -341,7 +326,7 @@ function AuthenticatedApp({
           section === 'models' ? 'Models' : section === 'preferences' ? 'Preferences' : 'General',
         ),
       ),
-    [session.auth.mode],
+    [],
   );
   useEffect(() => {
     if (!settingsPath || !session.settings!.onboardingCompleted) return;
@@ -382,22 +367,19 @@ function AuthenticatedApp({
       )
         return;
       event.preventDefault();
-      if (!settingsOpen) openSettings(session.auth.mode === 'local' ? 'Appearance' : 'Profile');
+      if (!settingsOpen) openSettings('Appearance');
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
-  }, [settingsOpen, session.auth.mode]);
+  }, [settingsOpen]);
   const account: AccountControls = {
     user: session.user!,
-    local: session.auth.mode === 'local',
     theme: session.settings!.theme,
     usageData: session.settings!.usageData,
     saving,
-    canLogout: session.auth.mode === 'google',
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
-    onLogout,
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
@@ -422,8 +404,6 @@ function AuthenticatedApp({
       ) : onboarding ? (
         <Onboarding
           user={session.user!}
-          canLogout={account.canLogout}
-          onLogout={onLogout}
           onFeedback={openFeedback}
           usageData={account.usageData}
           onUsageData={account.onUsageData}
@@ -459,7 +439,6 @@ function AuthenticatedApp({
         initialTab={settingsTab}
         openRequest={settingsRequest}
         onOpenChange={setSettingsOpen}
-        onName={(name) => onAccountUpdate({ name })}
         onReplayOnboarding={
           import.meta.env?.DEV === true && !desktopSettingsAvailable()
             ? () => {
@@ -472,11 +451,7 @@ function AuthenticatedApp({
           settingsTrigger.current?.isConnected
             ? settingsTrigger.current
             : document.querySelector<HTMLElement>(
-                window.innerWidth <= 640
-                  ? '.mobile-menu-trigger'
-                  : account.local
-                    ? '[aria-label="Settings"]'
-                    : '.account-menu-trigger',
+                window.innerWidth <= 640 ? '.mobile-menu-trigger' : '[aria-label="Settings"]',
               )
         }
       />
@@ -498,25 +473,18 @@ function AccountApp({
   const { session } = sessionState;
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
   useEffect(() => {
-    if (
-      sessionState.loading ||
-      sessionState.signingOut ||
-      (!session?.user && session?.auth.mode !== 'google')
-    )
-      return;
+    if (sessionState.loading || !session?.user) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
     capturePageview(
-      !session?.user
-        ? '/login'
-        : !session.settings?.onboardingCompleted && !secure
-          ? '/onboarding'
-          : legacyBrowserLink
-            ? '/apps'
-            : path === '/login' || path === '/onboarding'
-              ? '/'
-              : path,
+      !session.settings?.onboardingCompleted && !secure
+        ? '/onboarding'
+        : legacyBrowserLink
+          ? '/apps'
+          : path === '/onboarding'
+            ? '/'
+            : path,
     );
-  }, [path, sessionState.loading, sessionState.signingOut, session, legacyBrowserLink]);
+  }, [path, sessionState.loading, session, legacyBrowserLink]);
   useEffect(() => {
     if (sessionState.loading || !session?.user || !session.settings) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
@@ -525,7 +493,7 @@ function AccountApp({
         ? '/onboarding'
         : legacyBrowserLink
           ? '/apps'
-          : path === '/login' || (path === '/onboarding' && !replayingOnboarding(path))
+          : path === '/onboarding' && !replayingOnboarding(path)
             ? '/'
             : null;
     if (next && next !== path) {
@@ -539,21 +507,6 @@ function AccountApp({
     path,
     legacyBrowserLink,
   ]);
-  if (sessionState.signingOut)
-    return (
-      <main className="initial-loading">
-        {sessionState.error ? (
-          <>
-            <Notice>{sessionState.error}</Notice>
-            <Button variant="outline" onClick={() => void sessionState.logout()}>
-              Try again
-            </Button>
-          </>
-        ) : (
-          <Loading label="Signing out…" />
-        )}
-      </main>
-    );
   if (sessionState.locked)
     return (
       <main className="empty-state">
@@ -565,19 +518,6 @@ function AccountApp({
       </main>
     );
   if (sessionState.loading) return <Splash />;
-  if (!session?.user && session?.auth.mode === 'google')
-    return (
-      <SignIn
-        available={session?.auth.googleAvailable ?? false}
-        error={
-          sessionState.error ||
-          (new URLSearchParams(window.location.search).has('error')
-            ? 'Sign-in did not finish. Try again.'
-            : '')
-        }
-        onRetry={() => void sessionState.refresh()}
-      />
-    );
   if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">
@@ -588,26 +528,19 @@ function AccountApp({
       </main>
     );
   const key = `${session.user.id}:${sessionState.epoch}`;
-  const logout = () => {
-    void sessionState.logout().then(() => {
-      window.history.replaceState(null, '', '/login');
-      setPath('/login');
-    });
-  };
   return (
     <AuthenticatedApp
       key={key}
       path={
         legacyBrowserLink
           ? '/apps'
-          : path === '/login' || (path === '/onboarding' && !replayingOnboarding(path))
+          : path === '/onboarding' && !replayingOnboarding(path)
             ? '/'
             : path
       }
       session={session}
       saving={sessionState.mutating}
       onAccountUpdate={sessionState.update}
-      onLogout={logout}
       feedbackRequest={feedbackRequest}
       onFeedbackHandled={onFeedbackHandled}
     />

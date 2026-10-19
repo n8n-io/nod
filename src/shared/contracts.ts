@@ -210,7 +210,6 @@ export interface Configuration {
   model: string;
   llmReady: boolean;
   integrationsReady: boolean;
-  localOnly: boolean;
   conversationResetEnabled: boolean;
 }
 export interface AppState {

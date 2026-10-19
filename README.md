@@ -43,7 +43,7 @@
 - **Authority comes from you.** A web page or an email can never give Otto permission. The server checks every app action against what you asked, and asks you when it isn't sure.
 - **Your secrets never reach the model.** Vault fills saved logins and cards into the exact website, privately.
 - **What matters is on the record.** Every sign-in, every change or message sent through your apps, and every model cost, with a monthly spending limit.
-- **Runs where you choose.** On your computer with the desktop app or from source, or hosted on the operator's infrastructure. You pick the model provider, and the code is open.
+- **Runs on your computer.** With the desktop app or from source. You pick the model provider, and the code is open.
 
 [Our trust principles](docs/src/content/docs/trust/principles.mdx) · [How Otto compares](docs/src/content/docs/trust/compare.mdx) · [Security review guide](docs/src/content/docs/trust/security-review.mdx)
 
@@ -78,7 +78,7 @@ The docs are a site in [`docs/`](docs/README.md). Run them with `pnpm --dir docs
 | [Get started](docs/src/content/docs/get-started/what-is-otto.mdx)     | What Otto is, installing it and your first task       |
 | [Use Otto](docs/src/content/docs/use/chat.md)                         | Chat, tasks, schedules, files, the browser and memory |
 | [Trust and Vault](docs/src/content/docs/trust/index.mdx)              | Approvals, saved logins, payments and your data       |
-| [How Otto works](docs/src/content/docs/how-it-works/architecture.mdx) | Threads, turns, the sandbox and hosted mode           |
+| [How Otto works](docs/src/content/docs/how-it-works/architecture.mdx) | Threads, turns, the sandbox and memory                |
 | [Contribute](docs/src/content/docs/contribute/index.mdx)              | Development setup, checks, evals and writing docs     |
 
 ## Community

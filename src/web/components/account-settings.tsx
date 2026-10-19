@@ -8,17 +8,14 @@ import {
   Globe,
   MapPin,
   Plug,
-  LogOut,
   Monitor,
   Moon,
   SlidersHorizontal,
   Sun,
-  UserRound,
 } from 'lucide-react';
 import type { AccountPreferences, AccountTheme } from '../../shared/account';
 import type { HourCycle } from '../../shared/contracts';
 import type { AccountControls, AccountTab } from './account-menu';
-import { AccountAvatar, GoogleMark } from './account-avatar';
 import {
   Button,
   Dialog,
@@ -344,7 +341,6 @@ export function AccountSettings({
   initialTab,
   openRequest,
   onOpenChange,
-  onName,
   onReplayOnboarding,
   returnFocus,
 }: {
@@ -353,7 +349,6 @@ export function AccountSettings({
   initialTab: AccountTab;
   openRequest: number;
   onOpenChange(open: boolean): void;
-  onName(name: string): Promise<void>;
   onReplayOnboarding?(): void;
   returnFocus(): HTMLElement | null;
 }) {
@@ -361,23 +356,15 @@ export function AccountSettings({
   const native = useDesktopSettings(desktop && open);
   const tabs: AccountTab[] = desktop
     ? ['General', 'Models', 'App connections', 'Preferences', 'Memory']
-    : account.local
-      ? ['Models', 'App connections', 'Appearance', 'Preferences', 'Memory']
-      : ['Profile', 'Models', 'App connections', 'Appearance', 'Preferences', 'Memory'];
+    : ['Models', 'App connections', 'Appearance', 'Preferences', 'Memory'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
   const [connectionDirty, setConnectionDirty] = useState(false);
-  const [name, setName] = useState(account.user.name);
   const pending = useRef(false);
   pending.current =
-    modelDirty ||
-    preferencesDirty ||
-    connectionDirty ||
-    native.busy ||
-    account.saving ||
-    name.trim() !== account.user.name;
+    modelDirty || preferencesDirty || connectionDirty || native.busy || account.saving;
   const [error, setError] = useState('');
   const active = useRef(false);
   const recordedTab = useRef<string | null>(null);
@@ -404,21 +391,9 @@ export function AccountSettings({
       }
       setTab(selectedTab);
       recordTab(selectedTab);
-      setName(account.user.name);
       setError('');
     }
   }, [open, selectedTab, openRequest, account.user.id]);
-  useEffect(() => setName(account.user.name), [account.user.name]);
-  async function saveName(event: React.FormEvent) {
-    event.preventDefault();
-    if (!name.trim() || account.saving) return;
-    setError('');
-    try {
-      await onName(name.trim());
-    } catch (cause) {
-      if (active.current) setError(errorMessage(cause));
-    }
-  }
   function changeTab(value: AccountTab) {
     if (pending.current) {
       setError('Save or cancel your changes first.');
@@ -479,13 +454,11 @@ export function AccountSettings({
                   ? KeyRound
                   : value === 'App connections'
                     ? Plug
-                    : value === 'Profile'
-                      ? UserRound
-                      : value === 'Memory'
-                        ? Brain
-                        : value === 'Appearance' || value === 'General'
-                          ? Sun
-                          : SlidersHorizontal;
+                    : value === 'Memory'
+                      ? Brain
+                      : value === 'Appearance' || value === 'General'
+                        ? Sun
+                        : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -536,51 +509,6 @@ export function AccountSettings({
               <h3>{tab}</h3>
             </header>
             <div key={tab} className="account-settings-body" tabIndex={0}>
-              {!account.local && tab === 'Profile' && (
-                <form className="account-profile-form" onSubmit={(event) => void saveName(event)}>
-                  <div className="account-profile-identity">
-                    <AccountAvatar user={account.user} large />
-                    <Field label="Display name">
-                      <Input
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                        required
-                        maxLength={80}
-                        autoComplete="name"
-                        disabled={account.saving}
-                      />
-                    </Field>
-                  </div>
-                  {account.user.email && (
-                    <div className="account-profile-email">
-                      <span>Email</span>
-                      <div>
-                        <GoogleMark />
-                        <span>{account.user.email}</span>
-                      </div>
-                    </div>
-                  )}
-                  {error && <Notice>{error}</Notice>}
-                  {name.trim() !== account.user.name && (
-                    <div className="account-settings-actions">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={account.saving}
-                        onClick={() => {
-                          setName(account.user.name);
-                          setError('');
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={account.saving || !name.trim()}>
-                        {account.saving ? 'Saving…' : 'Save changes'}
-                      </Button>
-                    </div>
-                  )}
-                </form>
-              )}
               {(tab === 'Appearance' || tab === 'General') && (
                 <>
                   {desktop && native.error && (
@@ -689,22 +617,9 @@ export function AccountSettings({
                   Replay onboarding
                 </Button>
               )}
-              {error && tab !== 'Profile' && <Notice>{error}</Notice>}
+              {error && <Notice>{error}</Notice>}
             </div>
           </div>
-          {account.canLogout && (
-            <div className="account-settings-signout">
-              <button
-                type="button"
-                aria-label="Sign out"
-                title="Sign out"
-                onClick={account.onLogout}
-              >
-                <LogOut size={16} aria-hidden="true" />
-                <span>Sign out</span>
-              </button>
-            </div>
-          )}
         </div>
       </DialogContent>
     </Dialog>

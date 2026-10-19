@@ -1553,33 +1553,6 @@ test(
         } finally {
           await restarted.app.close();
         }
-        const hosted = Fastify({ logger: false });
-        registerLocalAccess(hosted, 4310, { key: 'synthetic-local-access' });
-        (
-          await createVault(pool, {
-            keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
-            inject: async () => assert.fail('Cards must never enter a website login.'),
-            resume: async () => assert.fail('Card management must not resume a task.'),
-            retry: async () => assert.fail('Card management must not retry a task.'),
-            cards: false,
-          })
-        ).registerRoutes(hosted);
-        try {
-          const created = await hosted.inject({
-            method: 'POST',
-            url: '/api/vault',
-            headers,
-            payload: { ...input, label: 'Hosted' },
-          });
-          assert.equal(created.statusCode, 403);
-          assert.equal(
-            (await pool.query("SELECT id FROM vault_cards WHERE label='Hosted'")).rowCount,
-            0,
-          );
-          assert.equal((await update(saved.id, input, hosted)).statusCode, 403);
-        } finally {
-          await hosted.close();
-        }
       });
     } finally {
       await app.close();
@@ -2232,11 +2205,10 @@ test(
         input: Record<string, unknown>;
       }> = [];
       let duringFill = async () => {};
-      const make = (local: boolean) =>
+      const make = () =>
         createPayments(pool, {
           ownerId: 'local-development',
           uses: vault.uses,
-          local,
           inOtto: async () => inOtto,
           present: async (turn, input) => {
             if (presentationFailure) throw new Error('Synthetic payment presentation failure.');
@@ -2274,7 +2246,7 @@ test(
           },
           record: async () => {},
         });
-      const payments = await make(true);
+      const payments = await make();
       payments.registerRoutes(app);
       const expiryYear = new Date().getUTCFullYear() + 3;
       const save = async (label: string, cardNumber: string) => {
@@ -2433,8 +2405,6 @@ test(
       assert.equal(yen.amountMinor, 1200);
       assert.equal(yen.amount, '1200');
       assert.equal(yen.currency, 'JPY');
-      const hosted = await make(false);
-      await assert.rejects(hosted.request(turn, { ...order, card: '4242' }));
       inOtto = false;
       const privateCode = await payments.request(turn, { ...order, card: card.id });
       const codeId = privateCode.url!.split('/').at(-1)!;
@@ -3766,7 +3736,7 @@ const { TelegramSetup } = await import('./src/web/components/telegram-setup.tsx'
 document.body.insertAdjacentHTML('beforeend', renderToStaticMarkup(createElement(TelegramSetup, {
   setup: { provider: 'telegram', enabled: true, mode: 'polling', pairingExpiresAt: new Date(Date.now() + 900000).toISOString() },
   pairingUrl: 'https://t.me/synthetic_private_bot?start=synthetic-private-pairing-code',
-  manual: false, fields: {}, busy: false, error: '', hosted: true,
+  manual: false, fields: {}, busy: false, error: '',
   onField() {}, onVerify() {}, onConfirm() {}, onNewLink() {}, onManual() {}, onSaveId() {},
 })));
 const pairingPaths = [...document.querySelectorAll('.telegram-setup-qr path')].map(path => path.getAttribute('d'));

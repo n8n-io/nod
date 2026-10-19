@@ -78,8 +78,6 @@ synthetic = f'api_key = "{candidate}"'
 for filename in [
     "tests/app.test.ts",
     "desktop/test/app.test.mjs",
-    "deployment/cloudflare/tests/app.ts",
-    "deployment/e2b/live_boundary_test.py",
     "deployment/n8n/app.test.mjs",
     "tests/fixtures/app.json",
     "evals/src/world/app.ts",
@@ -119,7 +117,6 @@ for content, filename in [
 provider_keys = {
     "github-pat": "ghp_" + candidate[:36],
     "composio-api-key": "ak_" + candidate[:24],
-    "e2b-api-key": "e2b_" + digest[:40],
 }
 for rule, key in provider_keys.items():
     for filename in ["tests/app.test.ts", "docs/testing/run.json", "src/app.ts"]:

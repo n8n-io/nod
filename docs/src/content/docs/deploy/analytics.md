@@ -7,7 +7,7 @@ sidebar:
 
 This page explains what usage data Otto collects, how to turn it on or off, and what session recordings never show.
 
-Usage data is opt-in for each owner and off by default. Otto sends product events and masked session recordings to the Otto team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source and hosted installations. The ingestion project identifier is public; there is no runtime override for another analytics project. Raw conversation and form content are excluded. Connected services are identified by normalized public domains.
+Usage data is opt-in for each owner and off by default. Otto sends product events and masked session recordings to the Otto team's n8n-owned PostHog project in the EU (`eu.i.posthog.com`), including from independent source installations. The ingestion project identifier is public; there is no runtime override for another analytics project. Raw conversation and form content are excluded. Connected services are identified by normalized public domains.
 
 ## Turn usage data on or off
 
@@ -28,26 +28,24 @@ flowchart LR
 | `OTTO_ANALYTICS_ENABLED`     | `false` turns off events and recordings. `true` turns them on, even in development.       |
 | `OTTO_ANALYTICS_ENVIRONMENT` | Sets the event label to `production` or `development` without turning anything on or off. |
 
-Restart Otto after you change either one. Hosted operators set them in `GATEWAY_ENV` and roll out a new release. See [Hosted on Cloudflare](/deploy/cloudflare/).
+Restart Otto after you change either one.
 
-To disable both upstream analytics and feedback, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false` in the environment used to start Otto. In the desktop app, quit it completely and launch it with those variables. Hosted operators set both in `GATEWAY_ENV`; they apply to tenant runtimes too. This stops those two collectors, including feedback status checks. Model providers, connected services and software updates have separate network access; this is not an offline mode.
+To disable both upstream analytics and feedback, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false` in the environment used to start Otto. In the desktop app, quit it completely and launch it with those variables. This stops those two collectors, including feedback status checks. Model providers, connected services and software updates have separate network access; this is not an offline mode.
 
 ## Identity
 
-Otto counts installations and hosted accounts, not people. Two installations count as two, and a shared one counts as one.
+Otto counts installations, not people. Two installations count as two, and a shared one counts as one.
 
-| Runtime                | Identity                                                       | Available by default                               |
-| ---------------------- | -------------------------------------------------------------- | -------------------------------------------------- |
-| Source install         | `local:<installation UUID>` in `<OTTO_DATA_ROOT>/analytics-id` | With `pnpm start`, not with `pnpm run dev`         |
-| Desktop app            | `local:<installation UUID>` in the desktop profile             | In packaged apps, not in development               |
-| Hosted                 | `hosted:<owner UUID>` from the signed-in account               | When `OTTO_ENVIRONMENT=production`, not in staging |
-| Hosted, before sign-in | None                                                           | Never                                              |
+| Runtime        | Identity                                                       | Available by default                       |
+| -------------- | -------------------------------------------------------------- | ------------------------------------------ |
+| Source install | `local:<installation UUID>` in `<OTTO_DATA_ROOT>/analytics-id` | With `pnpm start`, not with `pnpm run dev` |
+| Desktop app    | `local:<installation UUID>` in the desktop profile             | In packaged apps, not in development       |
 
-"Available" still needs the owner's opt-in. A hosted identity always comes from the signed-in account, never from a header the client sends. Recording stops and the identity resets when the account changes or signs out.
+"Available" still needs the owner's opt-in.
 
 ## Events
 
-Every event carries `analytics_schema=otto_v3`, `deployment` (`local` or `hosted`) and `environment`. UI events and recordings add `surface` (`web` or `desktop`) and a normalized `route`. Server events add `capture_source=server`. Events within a turn also carry a random `run_id`, separate from Otto's private turn and conversation IDs. Packaged releases also include `app_version`. Properties use an explicit schema: allowed generic task labels, bounded execution states, booleans, counts, durations, opaque analytics IDs and normalized service domains. Unknown properties are rejected.
+Every event carries `analytics_schema=otto_v3`, `deployment=local` and `environment`. UI events and recordings add `surface` (`web` or `desktop`) and a normalized `route`. Server events add `capture_source=server`. Events within a turn also carry a random `run_id`, separate from Otto's private turn and conversation IDs. Packaged releases also include `app_version`. Properties use an explicit schema: allowed generic task labels, bounded execution states, booleans, counts, durations, opaque analytics IDs and normalized service domains. Unknown properties are rejected.
 
 | Event                            | When                                                                                    | Properties                                                                                                                                                                                                                         |
 | -------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -118,11 +116,11 @@ Service failures include account/session/token preparation and actual execution.
 
 Connection observations run after opt-in, at startup and after connection changes. They include existing connections using only app, domain and method. Count distinct opted-in identities reporting each connection in the selected period. These are observations, not a live account inventory or an exact connection-attempt conversion funnel. HTTP and MCP access to the same service appear as separate methods.
 
-Vault imports batch domain entries so a 5,000-login import emits at most 50 events instead of overflowing the hosted capture limit. Repeated domains represent multiple imported logins. Count entries in `domains`, not import events; skipped and existing logins do not appear.
+Vault imports batch domain entries so a 5,000-login import emits at most 50 events instead of overflowing the capture limit. Repeated domains represent multiple imported logins. Count entries in `domains`, not import events; skipped and existing logins do not appear.
 
-Opt-out cancels pending analysis and drops unsent events and recordings. Hosted server events pass through the authenticated gateway, which checks the current stored preference and consent period again before dispatch. Turning sharing back on cannot revive queued server events or task associations from an earlier consent period. A failed hosted consent sync is reported instead of acknowledging that every client has updated. Browser tabs revoke capture when notified of a preference change and refresh their session. A local opt-out stays latched until an explicit opt-in in that tab; a delayed peer opt-in cannot clear it. If saving opt-out fails, a full reload can restore the previously saved setting; retry the failed save to persist revocation. This cannot recall an event already transmitted or instantly stop another device before its session refreshes. Historical data in PostHog is not deleted by the switch.
+Opt-out cancels pending analysis and drops unsent events and recordings. Turning sharing back on cannot revive queued server events or task associations from an earlier consent period. Browser tabs revoke capture when notified of a preference change and refresh their session. A local opt-out stays latched until an explicit opt-in in that tab; a delayed peer opt-in cannot clear it. If saving opt-out fails, a full reload can restore the previously saved setting; retry the failed save to persist revocation. This cannot recall an event already transmitted or instantly stop another device before its session refreshes. Historical data in PostHog is not deleted by the switch.
 
-These are pseudonymous, opt-in measurements. Installation/account IDs and service domains are not anonymous, and opted-in users may not represent the whole user base.
+These are pseudonymous, opt-in measurements. Installation IDs and service domains are not anonymous, and opted-in users may not represent the whole user base.
 
 ## What recordings show
 
@@ -169,6 +167,5 @@ This walkthrough exercises the browser SDK with synthetic APIs. The integration 
 ## Related resources
 
 - [Configuration reference](/deploy/configuration/)
-- [Hosted on Cloudflare](/deploy/cloudflare/)
 - [Your data and privacy](/trust/privacy/)
 - [Desktop app internals](/deploy/desktop-app/)

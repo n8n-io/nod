@@ -27,7 +27,6 @@ test(
     process.env.DATABASE_URL = databaseUrl.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
     process.env.OTTO_DATA_ROOT = dataRoot;
-    process.env.OTTO_MODE = 'local';
     const db = await import('../src/server/db.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');

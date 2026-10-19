@@ -5,7 +5,6 @@ updates:
     directories:
       - /
       - /desktop
-      - /deployment/cloudflare
       - /docs
     schedule:
       interval: weekly
@@ -63,8 +62,7 @@ updates:
   - package-ecosystem: docker
     directories:
       - /
-      - /deployment/cloudflare
-      - /deployment/e2b
+      - /scripts
     schedule:
       interval: weekly
       day: monday

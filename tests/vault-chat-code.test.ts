@@ -67,7 +67,6 @@ test(
     const payments = await createPayments(db.pool, {
       ownerId,
       uses: await createVaultUses(db.pool, ownerId),
-      local: true,
       inOtto: async () => true,
       present: async () => 'Synthetic private payment step.',
       page: async () => ({

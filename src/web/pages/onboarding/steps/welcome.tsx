@@ -1,14 +1,6 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type CSSProperties,
-} from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { OttoGlyph, Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
-import { sessionStore } from '../../../lib/session';
 import type { StepProps } from '..';
 import { Bubble, Messages, useReveal, type RevealStep } from '../motion';
 
@@ -23,10 +15,6 @@ const sequence: RevealStep[] = [
 ];
 
 export function Welcome({ arrived, onNext }: StepProps) {
-  const hosted = useSyncExternalStore(
-    sessionStore.subscribe,
-    () => sessionStore.getSnapshot().session?.auth.mode === 'google',
-  );
   const section = useRef<HTMLElement>(null);
   const slot = useRef<HTMLSpanElement>(null);
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
@@ -117,15 +105,9 @@ export function Welcome({ arrived, onNext }: StepProps) {
             </span>
           </Bubble>,
           <Bubble>
-            {hosted ? (
-              'I work'
-            ) : (
-              <>
-                I run on <strong>your computer</strong> and work
-              </>
-            )}{' '}
-            in <strong>the apps you already use</strong>. Let’s get to know each other a bit first,
-            so I can really help.
+            I run on <strong>your computer</strong> and work in{' '}
+            <strong>the apps you already use</strong>. Let’s get to know each other a bit first, so
+            I can really help.
           </Bubble>,
           <Bubble>
             I <strong>check with you before I send, post or delete</strong> anything you didn’t ask

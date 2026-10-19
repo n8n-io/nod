@@ -28,11 +28,7 @@ async function request<T>(
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData))
     headers.set('Content-Type', 'application/json');
-  const expectedAccount = !['/api/session', '/api/login', '/api/logout', '/api/access'].includes(
-    path,
-  )
-    ? requestAccount
-    : null;
+  const expectedAccount = !['/api/session', '/api/access'].includes(path) ? requestAccount : null;
   const generation = accountGeneration;
   const controller = expectedAccount ? new AbortController() : null;
   if (expectedAccount) {

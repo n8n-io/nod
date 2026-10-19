@@ -25,13 +25,15 @@ flowchart LR
 
 ## Server and data
 
-| Variable                 | What it does                                                                                                                                            | Default         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `PORT`                   | The local port for the app and API.                                                                                                                     | `4310`          |
-| `OTTO_DATA_ROOT`         | The folder for local data: sessions, workspace files and the access key.                                                                                | `.local`        |
-| `OTTO_POSTGRES_PASSWORD` | The password of the local PostgreSQL container. `pnpm start` generates one and saves it. A value you set needs at least 43 letters, digits, `_` or `-`. | Generated       |
-| `DATABASE_URL`           | The PostgreSQL connection. `pnpm start` fills it in for the local container on `127.0.0.1:54329`. Set another URL to use your own database.             | Local container |
-| `DATABASE_POOL_MAX`      | The most database connections the server opens.                                                                                                         | `12`            |
+| Variable                   | What it does                                                                                                                                            | Default                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `PORT`                     | The local port for the app and API.                                                                                                                     | `4310`                    |
+| `OTTO_DATA_ROOT`           | The folder for local data: sessions, workspace files and the access key.                                                                                | `.local`                  |
+| `OTTO_POSTGRES_PASSWORD`   | The password of the local PostgreSQL container. `pnpm start` generates one and saves it. A value you set needs at least 43 letters, digits, `_` or `-`. | Generated                 |
+| `DATABASE_URL`             | The PostgreSQL connection. `pnpm start` fills it in for the local container on `127.0.0.1:54329`. Set another URL to use your own database.             | Local container           |
+| `DATABASE_POOL_MAX`        | The most database connections the server opens.                                                                                                         | `12`                      |
+| `OTTO_PUBLIC_URL`          | The address you open Otto at.                                                                                                                           | `http://localhost:<PORT>` |
+| `OTTO_PRIVACY_NOTICE_FILE` | A Markdown privacy notice served at `/privacy`.                                                                                                         | No notice                 |
 
 ## Models
 
@@ -58,17 +60,17 @@ Desktop and source/server installs offer Easy Connect with Google sign-in or a p
 
 Setting `COMPOSIO_API_KEY` pins a source/server install to its own project, and the app no longer offers the choice. The desktop app ignores `COMPOSIO_API_KEY`. Packaged and ordinary source desktop launches also ignore `OTTO_COMPOSIO_PROXY_URL`; [isolated desktop development](/deploy/desktop-app/) can override it.
 
-| Variable                           | What it does                                                                                                                                                | Default           |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                                                     | Empty             |
-| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom connection service in place of Otto's when `COMPOSIO_API_KEY` is absent.                                                                      | Otto's connection |
-| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. In hosted mode only the gateway holds it. The key also needs **Triggers → Read and write**. | Empty             |
-| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                                                         | Automatic         |
-| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                                                               | Automatic         |
-| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                                                                  | Automatic         |
-| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                                                                 | Automatic         |
-| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                                                                   | Automatic         |
-| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                                                         | Automatic         |
+| Variable                           | What it does                                                                                                      | Default           |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.           | Empty             |
+| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom connection service in place of Otto's when `COMPOSIO_API_KEY` is absent.                            | Otto's connection |
+| `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key also needs **Triggers → Read and write**. | Empty             |
+| `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                               | Automatic         |
+| `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                     | Automatic         |
+| `COMPOSIO_DRIVE_AUTH_CONFIG_ID`    | The same for Google Drive.                                                                                        | Automatic         |
+| `COMPOSIO_SHEETS_AUTH_CONFIG_ID`   | The same for Google Sheets.                                                                                       | Automatic         |
+| `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                         | Automatic         |
+| `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                               | Automatic         |
 
 For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
 
@@ -82,7 +84,7 @@ Easy Connect's operator selects its configurations on the connection service. Ot
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved credentials and overrides automatic local storage. Local macOS uses Keychain; local Linux web uses a private profile file. Other server modes require a configured key. | Empty   |
 
-For an explicitly managed server key, create it with `openssl rand -base64 32`. Local Linux web installs keep their generated key at `OTTO_DATA_ROOT/vault/master-key`, outside the sandbox. The directory and key must be owned by the server user and private. Desktop uses its existing OS-protected key; hosted tenant keys remain operator-managed.
+For an explicitly managed server key, create it with `openssl rand -base64 32`. Local Linux web installs keep their generated key at `OTTO_DATA_ROOT/vault/master-key`, outside the sandbox. The directory and key must be owned by the server user and private. Desktop uses its existing OS-protected key.
 
 Otto never generates a replacement when encrypted data already exists. Restore the original key if it is missing. Back up the private key separately alongside the encrypted database; a database backup alone cannot recover saved credentials.
 
@@ -120,38 +122,19 @@ Set up Telegram and WhatsApp in **Channels** instead. The app checks the account
 
 See [Analytics and recordings](/deploy/analytics/) for what's collected.
 
-Analytics go to the Otto team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/otto/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false`, then restart Otto. These settings apply to source installs, the desktop process environment and hosted `GATEWAY_ENV` (including tenant runtimes). They do not disable model, app or update traffic.
+Analytics go to the Otto team's n8n-owned EU PostHog project, even in independent installations. There is no runtime override for that project. Feedback defaults to `https://internal.users.n8n.cloud/webhook/otto/feedback`; the dialog identifies the configured recipient before submission. To disable both collectors, set `OTTO_ANALYTICS_ENABLED=false` and `OTTO_FEEDBACK_ENABLED=false`, then restart Otto. These settings apply to source installs and the desktop process environment. They do not disable model, app or update traffic.
 
 For an operator-owned collector, set `OTTO_FEEDBACK_URL=https://feedback.example.com/intake` and `OTTO_FEEDBACK_RECEIPT_URL_PREFIX=https://issues.example.com/projects/otto/issues/`. A submitted receipt can then link to `https://issues.example.com/projects/otto/issues/123`, but not another project or origin. Receipt URLs cannot contain credentials, queries, fragments or encoded path separators. The collector uses Otto's existing feedback envelope and receipt contract; setting an endpoint alone does not create a compatible service. `OTTO_FEEDBACK_TOKEN`, when set, supplies the server-only `x-otto-feedback-token` header. It never goes to the browser or sandbox.
 
 ## Computers
 
-| Variable              | What it does                                                                                                    | Default          |
-| --------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `COMPUTER_PROVIDER`   | Where the workspace and browser run: `docker` on your computer, `e2b`, or `cloudflare` for hosted tenants only. | `docker`         |
-| `WORKSPACE_CONTAINER` | The Docker container for the workspace.                                                                         | `otto-workspace` |
-| `BROWSER_CONTAINER`   | The Docker container for the browser.                                                                           | `otto-browser`   |
-
-## Hosted only
-
-A hosted deployment sets these in its `GATEWAY_ENV` secret. A source install leaves them unset. See [Hosted on Cloudflare](/deploy/cloudflare/).
-
-| Variable                                                         | What it does                                                               | Default                   |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------- |
-| `OTTO_MODE`                                                      | `local`, `gateway` or `tenant`.                                            | `local`                   |
-| `OTTO_ENVIRONMENT`                                               | `development` or `production`.                                             | `development`             |
-| `OTTO_PUBLIC_URL`                                                | The public HTTPS origin.                                                   | `http://localhost:<PORT>` |
-| `OTTO_MASTER_KEY`                                                | The key Otto derives each user's keys from. Treat it as recovery material. | None                      |
-| `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in.                                                            | None                      |
-| `OTTO_MAX_USERS`                                                 | The most accounts the deployment admits.                                   | `8`                       |
-| `OTTO_DEVELOPER_IDS`                                             | Comma-separated account IDs that can use the developer browser routes.     | Empty                     |
-| `OTTO_PRIVACY_NOTICE_FILE`                                       | A Markdown privacy notice served at `/privacy`.                            | No notice                 |
-| `OBJECT_STORAGE_PROVIDER`, `OBJECT_STORAGE_ENDPOINT`             | Where files and checkpoints are stored.                                    | None                      |
-| `E2B_API_KEY`, `E2B_COMPUTER_TEMPLATE`                           | Required when `COMPUTER_PROVIDER=e2b`.                                     | None                      |
+| Variable              | What it does                            | Default          |
+| --------------------- | --------------------------------------- | ---------------- |
+| `WORKSPACE_CONTAINER` | The Docker container for the workspace. | `otto-workspace` |
+| `BROWSER_CONTAINER`   | The Docker container for the browser.   | `otto-browser`   |
 
 ## Related resources
 
 - [Install from source](/get-started/install-from-source/)
 - [Desktop app internals](/deploy/desktop-app/)
-- [Hosted on Cloudflare](/deploy/cloudflare/)
 - [Troubleshooting](/deploy/troubleshooting/)

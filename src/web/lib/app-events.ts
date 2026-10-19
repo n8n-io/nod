@@ -18,11 +18,7 @@ export function subscribeAppEvents(
   function current() {
     const session = sessionStore.getSnapshot();
     return (
-      !disposed &&
-      Boolean(owner) &&
-      session.session?.user?.id === owner &&
-      session.epoch === epoch &&
-      !session.signingOut
+      !disposed && Boolean(owner) && session.session?.user?.id === owner && session.epoch === epoch
     );
   }
   function clearRetry() {

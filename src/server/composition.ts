@@ -36,7 +36,7 @@ import type { DecisionModel, DecisionQuestion, ModelReview } from '../ports/deci
 import { createDecisionModel } from '../providers/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
-import type { ChannelAccountRegistry, ChannelSetupVerifier } from '../ports/channel-settings.ts';
+import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
 import type { PrivateObjectStore } from '../ports/object-storage.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
 import type { FeedbackDelivery } from '../ports/feedback.ts';
@@ -52,18 +52,11 @@ import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
-import { createE2BAdapters } from '../providers/e2b/index.ts';
-import { createCloudflareAdapters } from '../providers/cloudflare-computer/index.ts';
 import { createFilesystemObjectStore } from '../providers/object-storage/filesystem.ts';
-import { createHttpObjectStore } from '../providers/object-storage/http.ts';
 import {
   createEnvironmentKeyStore,
   parseCredentialKey,
 } from '../providers/environment/key-store.ts';
-import { createGoogleAuthentication } from '../providers/better-auth/index.ts';
-import { createCloudflareRuntimeTransport } from '../providers/runtime-host/cloudflare.ts';
-import { createLocalRuntimeTransport } from '../providers/runtime-host/local.ts';
-import { createComputerShutdownConfirmation } from '../providers/runtime-host/computer-shutdown.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
@@ -81,7 +74,6 @@ import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { learnWritingStyle } from './writing-style.ts';
-import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals, turnOrigin } from './approvals.ts';
@@ -91,30 +83,11 @@ import { createArtifactService, localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
-import {
-  configuration,
-  dataRoot,
-  desktopMode,
-  ownerId,
-  publicOrigin,
-  runtimeGeneration,
-  runtimeMode,
-} from './config.ts';
+import { configuration, dataRoot, desktopMode, ownerId, publicOrigin } from './config.ts';
 import { createAccountStore } from './account-store.ts';
-import { createAccountProfileStore, runtimeAccount } from './account-profile.ts';
+import { runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
-import { createComputerAllocationStore } from './computer-allocations.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
-import { createGateway } from './gateway.ts';
-import { createTenantStore } from './tenants.ts';
-import { createTenantRuntimeHost } from './runtime-host.ts';
-import { createChannelAccountRegistry } from './channel-account-registry.ts';
-import {
-  createTenantControl,
-  createTenantChannelRegistry,
-  createTenantAnalytics,
-} from './tenant-control.ts';
-import { createHostedWebhooks } from './hosted-webhooks.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
 import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
@@ -165,11 +138,7 @@ export interface ApplicationAdapters {
   models?: ReturnType<typeof createModelService>;
   integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   integrationAccess?: ReturnType<typeof createIntegrationAccess>;
-  prepareComputer?(): Promise<void>;
-  computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
-  confirmComputerShutdown?(): Promise<void>;
   objectStore?: PrivateObjectStore;
-  channelAccounts?: ChannelAccountRegistry;
   agent: Agent;
   computer: Computer;
   workspace: Workspace;
@@ -218,7 +187,7 @@ export function createDefaultAdapters(
     pool,
     env.OTTO_VAULT_KEY
       ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-      : runtimeMode !== 'local' || desktopMode
+      : desktopMode
         ? createEnvironmentKeyStore()
         : process.platform === 'darwin'
           ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
@@ -235,7 +204,6 @@ export function createDefaultAdapters(
     keyStore,
     backend: createPiModelBackend(),
     origin: publicOrigin,
-    local: runtimeMode === 'local',
     bootstrap: {
       provider: provider as ModelProvider,
       model,
@@ -306,30 +274,25 @@ export function createDefaultAdapters(
         dataRoot,
         ownerId,
         url: !desktopMode || env.OTTO_DESKTOP_USER_DATA ? env.OTTO_COMPOSIO_PROXY_URL : undefined,
-        ...(runtimeMode === 'tenant'
-          ? { identitySecret: parseCredentialKey(env.OTTO_VAULT_KEY || '') }
-          : {}),
       });
   const ownIntegrations = createComposioProvider({
     apiKey: environmentKey,
     webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
-    webhooksVerified: runtimeMode === 'tenant' && env.OTTO_COMPOSIO_WEBHOOKS === 'gateway',
     webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
     authConfigs,
   });
-  const integrationAccess =
-    integrationProxy && runtimeMode !== 'tenant'
-      ? createIntegrationAccess({
-          proxy: integrationProxy,
-          origin: publicOrigin,
-          desktop: desktopMode,
-        })
-      : undefined;
+  const integrationAccess = integrationProxy
+    ? createIntegrationAccess({
+        proxy: integrationProxy,
+        origin: publicOrigin,
+        desktop: desktopMode,
+      })
+    : undefined;
   const integrationKey = createIntegrationKeyService({
     ownerId,
     keyStore,
     provider: ownIntegrations,
-    fixed: environmentKey ? 'own' : runtimeMode === 'tenant' ? 'otto' : undefined,
+    fixed: environmentKey ? 'own' : undefined,
     managed: integrationAccess,
   });
   const ottoIntegrations = integrationProxy && createComposioProvider({ proxy: integrationProxy });
@@ -339,104 +302,24 @@ export function createDefaultAdapters(
           Reflect.get(integrationKey.mode === 'own' ? ownIntegrations : ottoIntegrations, key),
       })
     : ownIntegrations;
-  const computerProvider = env.COMPUTER_PROVIDER || 'docker';
-  if (
-    !['docker', 'e2b', 'cloudflare'].includes(computerProvider) ||
-    (runtimeMode === 'tenant' && computerProvider === 'docker') ||
-    (computerProvider === 'cloudflare' && runtimeMode !== 'tenant')
-  )
-    throw new Error('Configure a supported, isolated computer provider.');
-  const allocations =
-    computerProvider === 'e2b'
-      ? createComputerAllocationStore({ database: pool, ownerId })
-      : undefined;
-  if (computerProvider === 'e2b' && (!env.E2B_API_KEY || !env.E2B_COMPUTER_TEMPLATE))
-    throw new Error('The remote computer configuration is incomplete.');
-  const e2b = allocations
-    ? createE2BAdapters({
-        apiKey: env.E2B_API_KEY!,
-        ownerId,
-        allocations,
-        templateId: env.E2B_COMPUTER_TEMPLATE!,
-        workspaceRoot: join(dataRoot, 'workspaces'),
-        ...(env.E2B_SANDBOX_TIMEOUT_MS
-          ? { sandboxTimeoutMs: Number(env.E2B_SANDBOX_TIMEOUT_MS) }
-          : {}),
-      })
-    : undefined;
-  const cloudflare =
-    computerProvider === 'cloudflare'
-      ? createCloudflareAdapters({
-          ownerId,
-          generation: runtimeGeneration,
-          workspaceRoot: join(dataRoot, 'workspaces'),
-        })
-      : undefined;
-  const remote = cloudflare ?? e2b;
   const databaseObjects =
     env.OBJECT_STORAGE_PROVIDER === 'postgres'
       ? createPostgresObjectStore({ database: pool, ownerId })
       : undefined;
   const objectStore =
     databaseObjects ??
-    (env.OBJECT_STORAGE_PROVIDER === 'http'
-      ? createHttpObjectStore({
-          endpoint: env.OBJECT_STORAGE_ENDPOINT,
-          ...(runtimeMode === 'tenant' ? { generation: runtimeGeneration } : {}),
-        })
-      : env.OBJECT_STORAGE_PROVIDER === 'filesystem'
-        ? createFilesystemObjectStore(env.OBJECT_STORAGE_ROOT || join(dataRoot, 'objects'))
-        : undefined);
-  if (runtimeMode === 'tenant' && !objectStore)
-    throw new Error('Private durable storage is required.');
+    (env.OBJECT_STORAGE_PROVIDER === 'filesystem'
+      ? createFilesystemObjectStore(env.OBJECT_STORAGE_ROOT || join(dataRoot, 'objects'))
+      : undefined);
   return {
-    ...(analyticsEnabled(env)
-      ? {
-          analytics:
-            runtimeMode === 'tenant'
-              ? createTenantAnalytics({
-                  origin: env.OTTO_CONTROL_URL!,
-                  ownerId,
-                  environment: env.OTTO_ENVIRONMENT!,
-                  generation: env.OTTO_RUNTIME_GENERATION!,
-                  secret: env.OTTO_RUNTIME_SECRET!,
-                })
-              : createPostHogAnalytics(),
-        }
-      : {}),
+    ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     initialize: async () => {
       await models.initialize();
       await integrationProxy?.initialize();
       await integrationKey.initialize();
-      await allocations?.initialize();
       await databaseObjects?.initialize();
     },
-    ...(e2b
-      ? {
-          prepareComputer: e2b.prepare,
-          computerLifecycle: { pause: e2b.pause, resume: e2b.resume },
-        }
-      : {}),
-    ...(e2b && runtimeMode === 'tenant' && env.OTTO_COMPUTER_CONTROL_URL
-      ? {
-          confirmComputerShutdown: createComputerShutdownConfirmation({
-            endpoint: env.OTTO_COMPUTER_CONTROL_URL,
-            generation: runtimeGeneration,
-          }),
-        }
-      : {}),
     objectStore,
-    ...(runtimeMode === 'tenant'
-      ? {
-          channelAccounts: createTenantChannelRegistry({
-            origin: env.OTTO_CONTROL_URL!,
-            ownerId,
-            environment: env.OTTO_ENVIRONMENT!,
-            generation: env.OTTO_RUNTIME_GENERATION!,
-            secret: env.OTTO_RUNTIME_SECRET!,
-          }),
-        }
-      : {}),
     models,
     agent: createPiAgent({
       resolve: () => models.resolve(),
@@ -446,15 +329,11 @@ export function createDefaultAdapters(
       configRoot: join(dataRoot, 'pi'),
       objectStore,
     }),
-    computer:
-      remote?.computer ??
-      createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
-    workspace:
-      remote?.workspace ??
-      createDockerWorkspace({
-        container: env.WORKSPACE_CONTAINER || 'otto-workspace',
-        workspaceRoot: join(dataRoot, 'workspaces'),
-      }),
+    computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
+    workspace: createDockerWorkspace({
+      container: env.WORKSPACE_CONTAINER || 'otto-workspace',
+      workspaceRoot: join(dataRoot, 'workspaces'),
+    }),
     speech: createOpenAISpeechProvider({
       apiKey: env.OPENAI_API_KEY,
       speechModel: env.TTS_MODEL,
@@ -470,13 +349,7 @@ export function createDefaultAdapters(
     onboardingCurator: selectedCurator,
     decisions,
     messagingSetup: {
-      verifier: createChatSdkSetupVerifier(
-        runtimeMode === 'tenant'
-          ? {
-              webhookUrl: (provider) => env[`OTTO_${provider.toUpperCase()}_WEBHOOK_URL`]!,
-            }
-          : undefined,
-      ),
+      verifier: createChatSdkSetupVerifier(),
       create: (environment) => createChatSdkTransport(pool, { ...env, ...environment }),
     },
     linkPreviews: createPublicLinkPreviewProvider(),
@@ -514,7 +387,7 @@ async function initializeApplication(
 ) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
-    deployment: runtimeMode === 'local' ? 'local' : 'hosted',
+    deployment: 'local',
     environment: analyticsEnvironment(process.env),
     dataRoot,
     installationId: process.env.OTTO_ANALYTICS_ID,
@@ -533,15 +406,7 @@ async function initializeApplication(
   const analyticsConsent = () => analytics.consent(ownerId);
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
-  const deploymentDrain = createTenantDrain({
-    admission,
-    consumers,
-    computer: adapters.computerLifecycle,
-  });
-  const privacyNotice =
-    runtimeMode === 'local'
-      ? await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE)
-      : undefined;
+  const privacyNotice = await loadPrivacyNoticeFile(process.env.OTTO_PRIVACY_NOTICE_FILE);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   await initializeDatabase();
   await adapters.initialize?.();
@@ -742,10 +607,7 @@ async function initializeApplication(
       workspace.readArtifact(turn.threadId, path, maxBytes, 'attachment'),
     resumeConnection: resumeAfterConnection,
     learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
-    briefInbox:
-      runtimeMode === 'tenant'
-        ? undefined
-        : (read, stop) => onboardingSuggestions.briefInbox(read, stop),
+    briefInbox: (read, stop) => onboardingSuggestions.briefInbox(read, stop),
     standbyProviders: adapters.standbyIntegrations,
     wake: triage.triageEvent,
     refresh,
@@ -766,7 +628,6 @@ async function initializeApplication(
     page: computer.currentPage,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
-    cards: runtimeMode === 'local',
     onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
     onUse: (use, client) =>
       vaultAccess.used(
@@ -938,9 +799,8 @@ async function initializeApplication(
     deliver: async (messageId, reaction, signal) =>
       channels ? channels.react(messageId, reaction, signal) : 'absent',
   });
-  const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
-  const accountProfiles = createAccountProfileStore(pool, ownerId);
-  await (localAccounts ?? accountProfiles).initialize();
+  const localAccounts = createAccountStore(pool);
+  await localAccounts.initialize();
   const onboardingSuggestions = createOnboardingSuggestions({
     ownerId,
     curator: onboardingCurator,
@@ -966,19 +826,8 @@ async function initializeApplication(
         .map((app) => app.name),
     present: communication.present,
   });
-  const localConsent = await localAccounts?.readConsent(ownerId);
-  analytics.setUsageData(
-    ownerId,
-    runtimeMode === 'tenant'
-      ? Boolean(
-          (await accountProfiles.read())?.usageData &&
-          (await adapters.analytics?.permitted?.().catch(() => false)),
-        )
-      : localConsent
-        ? localConsent.enabled
-        : ((await accountProfiles.read())?.usageData ?? false),
-    localConsent?.revision,
-  );
+  const localConsent = await localAccounts.readConsent(ownerId);
+  analytics.setUsageData(ownerId, localConsent?.enabled ?? false, localConsent?.revision);
   let pendingInventory = Promise.resolve();
   observeConnections = () =>
     (pendingInventory = pendingInventory
@@ -1007,16 +856,12 @@ async function initializeApplication(
   });
   await conversationAnalytics.initialize();
   const accountProfile = async () =>
-    runtimeAccount(
-      localAccounts
-        ? {
-            name: null,
-            givenName: null,
-            email: null,
-            preferredName: (await localAccounts.read(ownerId)).displayName,
-          }
-        : await accountProfiles.read(),
-    );
+    runtimeAccount({
+      name: null,
+      givenName: null,
+      email: null,
+      preferredName: (await localAccounts.read(ownerId)).displayName,
+    });
   async function permitVault(
     turn: TurnRef,
     target: {
@@ -1050,7 +895,6 @@ async function initializeApplication(
     ownerId,
     present: (turn, input) => communication.present(turn.threadId, input),
     uses: vault.uses,
-    local: runtimeMode === 'local',
     inOtto: trust.inOtto,
     page: (threadId) => computer.currentPage(threadId),
     destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
@@ -1379,15 +1223,6 @@ async function initializeApplication(
   const app = await createApp({
     analytics: captureAnalytics,
     admission,
-    deploymentDrain,
-    release: async () => {
-      await integrations.changeProvider(true, async () => {});
-      for (const channel of (await channelSettings?.status())?.channels ?? [])
-        if (channel.enabled) await channelSettings!.disable(channel.provider);
-      for (const connection of await discovered.list())
-        if (connection.connectionId)
-          await discovered.disconnect(connection.connectionId, connection.slug);
-    },
     artifacts,
     submitMessage: userMessages.submit,
     verification: chatVerification,
@@ -1430,7 +1265,7 @@ async function initializeApplication(
   await registerFeedback(app, {
     pool,
     ownerId,
-    context: await feedbackContext({ runtimeMode, environment: process.env }),
+    context: await feedbackContext({ environment: process.env }),
     delivery: adapters.feedback ?? {
       configured: false,
       recipient: null,
@@ -1439,30 +1274,15 @@ async function initializeApplication(
     },
     buildReport: () => buildFeedbackReport(feedbackReportOptions),
   });
-  if (localAccounts) {
-    registerPrivacyNotice(app, privacyNotice);
-    createAccountSession({
-      analytics,
-      accounts: localAccounts,
-      origin: publicOrigin,
-      localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
-      developerIds: desktopMode ? new Set() : new Set([ownerId]),
-      prepare: async () => adapters.prepareComputer?.(),
-      start: (_owner, name) => welcome(name),
-    }).register(app);
-  } else {
-    app.post('/api/account/prepare', async (request) => {
-      z.object({})
-        .strict()
-        .parse(request.body ?? {});
-      await adapters.prepareComputer?.();
-      return { ok: true };
-    });
-    app.put('/api/account/profile', async (request) => {
-      analytics.setUsageData(ownerId, (await accountProfiles.save(request.body)).usageData);
-      return { ok: true };
-    });
-  }
+  registerPrivacyNotice(app, privacyNotice);
+  createAccountSession({
+    analytics,
+    accounts: localAccounts,
+    origin: publicOrigin,
+    localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
+    developerIds: desktopMode ? new Set() : new Set([ownerId]),
+    start: (_owner, name) => welcome(name),
+  }).register(app);
   ledger.registerRoutes(app);
   if (adapters.linkPreviews) {
     const previews = adapters.linkPreviews;
@@ -1487,7 +1307,6 @@ async function initializeApplication(
     if (setup) {
       channelSettings = await createChannelSettings(pool, {
         ownerId,
-        accounts: adapters.channelAccounts,
         keyStore: adapters.keyStore,
         verifier: setup.verifier,
         apply: async (environment) => {
@@ -1508,7 +1327,6 @@ async function initializeApplication(
       admission,
       ownerId,
       present: communication.present,
-      appOrigin: runtimeMode === 'tenant' ? publicOrigin : undefined,
       resolveAttachments: artifacts.readThreadArtifacts,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
@@ -1616,10 +1434,7 @@ async function initializeApplication(
       () => stopThreadWorkers(),
       () => conversationAnalytics.close(),
       finishWork,
-      async () => {
-        await runtime.dispose();
-        await adapters.confirmComputerShutdown?.();
-      },
+      () => runtime.dispose(),
       () => analytics.shutdown(),
     ]) {
       try {
@@ -1640,178 +1455,5 @@ async function initializeApplication(
     vault,
     channels,
     channelSettings,
-    deploymentDrain,
   };
-}
-
-export async function createGatewayApplication(
-  env: Record<string, string | undefined> = process.env,
-) {
-  const privacyNotice = await loadPrivacyNoticeFile(env.OTTO_PRIVACY_NOTICE_FILE);
-  const databaseUrl = z.string().min(1).parse(env.DATABASE_URL);
-  const environment = z
-    .string()
-    .regex(/^[a-z][a-z0-9-]{0,31}$/)
-    .parse(env.OTTO_ENVIRONMENT || 'development');
-  const origin = z.url().parse(env.OTTO_PUBLIC_URL);
-  const masterKey = parseCredentialKey(env.OTTO_MASTER_KEY || '');
-  const tenants = createTenantStore({
-    admin: pool,
-    databaseUrl,
-    environment,
-    getSecret: () => masterKey,
-    maxTenants: env.OTTO_MAX_USERS ? Number(env.OTTO_MAX_USERS) : 8,
-  });
-  await tenants.initialize();
-  await pool.query(
-    'CREATE SCHEMA IF NOT EXISTS otto_auth; REVOKE ALL ON SCHEMA otto_auth FROM PUBLIC',
-  );
-  const authenticationDatabase = createPool({
-    connectionString: databaseUrl,
-    max: 4,
-    options: '-c search_path=otto_auth',
-  });
-  let runtimes: ReturnType<typeof createTenantRuntimeHost> | undefined;
-  const accounts = createAccountStore(authenticationDatabase);
-  const analytics = await createAnalytics({
-    provider: analyticsEnabled(env)
-      ? createPostHogAnalytics({
-          permitted: async (distinctId, revision) => {
-            if (!distinctId.startsWith('hosted:') || revision === undefined) return false;
-            const current = await accounts.readConsent(distinctId.slice(7));
-            return current.enabled && current.revision === revision;
-          },
-        })
-      : undefined,
-    deployment: 'hosted',
-    environment: analyticsEnvironment(env),
-    dataRoot,
-  });
-  try {
-    const authentication = createGoogleAuthentication({
-      database: authenticationDatabase,
-      origin,
-      environment,
-      secret: env.BETTER_AUTH_SECRET || '',
-      clientId: env.GOOGLE_CLIENT_ID || '',
-      clientSecret: env.GOOGLE_CLIENT_SECRET || '',
-    });
-    await authentication.initialize();
-    await accounts.initialize();
-    const channelAccounts = createChannelAccountRegistry({ admin: pool, environment });
-    await channelAccounts.initialize();
-    const developerIds = new Set(
-      (env.OTTO_DEVELOPER_IDS || '')
-        .split(',')
-        .filter(Boolean)
-        .map((id) => z.uuid().parse(id.trim()).toLowerCase()),
-    );
-    const transport =
-      env.OTTO_RUNTIME_URL === 'http://otto.runtime'
-        ? createCloudflareRuntimeTransport()
-        : createLocalRuntimeTransport({
-            root: join(dataRoot, 'tenants'),
-            entrypoint: 'src/server/index.ts',
-            cwd: process.cwd(),
-          });
-    runtimes = createTenantRuntimeHost({
-      tenants,
-      transport,
-      masterKey,
-      environment,
-      operatorEnvironment: { ...env, OTTO_PUBLIC_URL: origin },
-      forgetAccount: async (owner, dryRun) => {
-        if (!authentication.forget || !accounts.forget)
-          throw new Error('Account removal is unavailable.');
-        return {
-          ...(await authentication.forget(owner, dryRun)),
-          settings: await accounts.forget(owner, dryRun),
-        };
-      },
-    });
-    const app = await createGateway({
-      analytics,
-      origin,
-      authentication,
-      accounts,
-      runtimes,
-      privacyNotice,
-      release: env.OTTO_IMAGE_RELEASE || env.OTTO_RELEASE,
-      ...(env.OTTO_RUNTIME_URL === 'http://otto.runtime' && {
-        deployment: {
-          masterKey,
-          environment,
-          release: env.OTTO_IMAGE_RELEASE || env.OTTO_RELEASE,
-        },
-      }),
-      developerIds,
-      internal: createTenantControl({
-        masterKey,
-        environment,
-        accounts: channelAccounts,
-        currentLease: tenants.currentLease,
-        analytics: {
-          consent: async (owner) => {
-            const current = await accounts.readConsent(owner);
-            return { ...current, enabled: analyticsEnabled(env) && current.enabled };
-          },
-          capture: (owner, event, delivery) => {
-            analytics.setUsageData(owner, true, delivery?.consentRevision);
-            analytics.capture(owner, event, delivery);
-          },
-        },
-      }),
-      webhook: createHostedWebhooks({
-        runtimes,
-        masterKey,
-        environment,
-        listOwners: tenants.listOwners,
-        hasOwner: async (owner) => Boolean(await tenants.get(owner)),
-        integrations: createComposioProvider({
-          apiKey: env.COMPOSIO_API_KEY?.trim() || undefined,
-          webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
-        }),
-      }),
-    });
-    let restoring = false;
-    let closing = false;
-    async function restore() {
-      if (restoring || closing) return;
-      restoring = true;
-      try {
-        for (const owner of await tenants.listOwners()) {
-          if (closing) break;
-          try {
-            const result = await runtimes!.fetch(
-              owner,
-              new Request('http://otto.runtime/api/runtime/wake', { method: 'POST' }),
-              { developer: false, kind: 'wake' },
-            );
-            await result.body?.cancel();
-          } catch {}
-        }
-      } finally {
-        restoring = false;
-      }
-    }
-    const timer = setInterval(() => {
-      void restore().catch(() => {});
-    }, 30_000);
-    timer.unref();
-    app.addHook('onListen', async () => {
-      void restore().catch(() => {});
-    });
-    app.addHook('preClose', async () => {
-      closing = true;
-      clearInterval(timer);
-    });
-    app.addHook('onClose', async () => authenticationDatabase.end());
-    app.addHook('onClose', async () => analytics.shutdown());
-    return { app };
-  } catch {
-    await analytics.shutdown();
-    await runtimes?.close().catch(() => {});
-    await authenticationDatabase.end().catch(() => {});
-    throw new Error('The hosted application configuration could not be initialized.');
-  }
 }

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { LayoutGrid, Moon, Settings, Sun } from 'lucide-react';
 import { BrandMark } from './brand';
-import { AccountAvatar, accountInitials } from './account-avatar';
-import { AccountMenu, AccountMenuItems, type AccountControls } from './account-menu';
+import { AccountMenuItems, type AccountControls } from './account-menu';
 import { currentTheme, setTheme, subscribeTheme } from '../lib/theme';
 import {
   isEditingTarget,
@@ -274,20 +273,12 @@ export function Sidebar({
           type="button"
           ref={mobileTrigger}
           className="mobile-menu-trigger"
-          aria-label={
-            account && !account.local
-              ? `Navigation menu: ${accountInitials(account.user)} ${account.user.name}`
-              : 'Navigation menu'
-          }
+          aria-label="Navigation menu"
           aria-haspopup="dialog"
           aria-expanded={mobileMenuOpen}
           onClick={() => setMobileMenuOpen(true)}
         >
-          {account && !account.local ? (
-            <AccountAvatar user={account.user} />
-          ) : (
-            <LayoutGrid size={24} aria-hidden="true" />
-          )}
+          <LayoutGrid size={24} aria-hidden="true" />
         </button>
         <dialog
           ref={mobileSheet}
@@ -364,24 +355,21 @@ export function Sidebar({
             <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
           </button>
         )}
-        {account &&
-          (account.canLogout ? (
-            <AccountMenu account={account} />
-          ) : (
-            <button
-              type="button"
-              className="nav-link"
-              aria-label="Settings"
-              aria-keyshortcuts="Meta+, Control+,"
-              title="Settings"
-              onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
-            >
-              <Settings size={24} aria-hidden="true" />
-              <span className="nav-label" data-analytics-public>
-                Settings
-              </span>
-            </button>
-          ))}
+        {account && (
+          <button
+            type="button"
+            className="nav-link"
+            aria-label="Settings"
+            aria-keyshortcuts="Meta+, Control+,"
+            title="Settings"
+            onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
+          >
+            <Settings size={24} aria-hidden="true" />
+            <span className="nav-label" data-analytics-public>
+              Settings
+            </span>
+          </button>
+        )}
       </div>
     </aside>
   );

@@ -20,9 +20,7 @@ export interface AnalyticsDelivery {
 export type CaptureAnalytics = (event: AnalyticsEvent, delivery?: AnalyticsDelivery) => void;
 
 export function analyticsEnabled(env: Record<string, string | undefined>) {
-  const production = ['gateway', 'tenant'].includes(env.OTTO_MODE ?? '')
-    ? env.OTTO_ENVIRONMENT === 'production'
-    : env.NODE_ENV === 'production';
+  const production = env.NODE_ENV === 'production';
   return (
     env.OTTO_ANALYTICS_ENABLED === 'true' || (env.OTTO_ANALYTICS_ENABLED !== 'false' && production)
   );
@@ -33,8 +31,6 @@ export function analyticsEnvironment(
 ): AnalyticsConfiguration['environment'] {
   const explicit = z.enum(['development', 'production']).safeParse(env.OTTO_ANALYTICS_ENVIRONMENT);
   if (explicit.success) return explicit.data;
-  if (['gateway', 'tenant'].includes(env.OTTO_MODE ?? ''))
-    return env.OTTO_ENVIRONMENT === 'production' ? 'production' : 'development';
   return env.NODE_ENV === 'production' ? 'production' : 'development';
 }
 

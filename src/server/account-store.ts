@@ -13,7 +13,6 @@ export interface AccountStore {
     ownerId: string,
     input: AccountUpdate,
   ): Promise<StoredAccount & { onboardingCompletedNow?: boolean }>;
-  forget?(ownerId: string, dryRun: boolean): Promise<number>;
 }
 
 export function createAccountStore(database: Pool): AccountStore & {
@@ -21,24 +20,17 @@ export function createAccountStore(database: Pool): AccountStore & {
 } {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
     const result = await connection.query<StoredAccount>(
-      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,display_name,usage_data,usage_data_revision)
-       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),$4,COALESCE($5,false),CASE WHEN $5 THEN 1 ELSE 0 END)
+      `INSERT INTO account_settings (owner_id,theme,onboarding_completed,usage_data,usage_data_revision)
+       VALUES ($1,COALESCE($2,'system'),COALESCE($3,false),COALESCE($4,false),CASE WHEN $4 THEN 1 ELSE 0 END)
        ON CONFLICT (owner_id) DO UPDATE SET
          theme=COALESCE($2,account_settings.theme),
          onboarding_completed=COALESCE($3,account_settings.onboarding_completed),
-         display_name=COALESCE($4,account_settings.display_name),
-         usage_data=COALESCE($5,account_settings.usage_data),
+         usage_data=COALESCE($4,account_settings.usage_data),
          usage_data_revision=account_settings.usage_data_revision +
-           CASE WHEN $5 IS NOT NULL AND $5 IS DISTINCT FROM account_settings.usage_data THEN 1 ELSE 0 END,
+           CASE WHEN $4 IS NOT NULL AND $4 IS DISTINCT FROM account_settings.usage_data THEN 1 ELSE 0 END,
          updated_at=now()
        RETURNING theme,onboarding_completed AS "onboardingCompleted",display_name AS "displayName",usage_data AS "usageData"`,
-      [
-        ownerId,
-        input.theme ?? null,
-        input.onboardingCompleted ?? null,
-        input.name ?? null,
-        input.usageData ?? null,
-      ],
+      [ownerId, input.theme ?? null, input.onboardingCompleted ?? null, input.usageData ?? null],
     );
     return result.rows[0];
   }
@@ -53,15 +45,6 @@ export function createAccountStore(database: Pool): AccountStore & {
       );
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data boolean NOT NULL DEFAULT false;
       ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS usage_data_revision bigint NOT NULL DEFAULT 0`);
-    },
-    async forget(ownerId, dryRun) {
-      const result = await database.query(
-        dryRun
-          ? 'SELECT 1 FROM account_settings WHERE owner_id=$1'
-          : 'DELETE FROM account_settings WHERE owner_id=$1',
-        [ownerId],
-      );
-      return result.rowCount ?? 0;
     },
     async readConsent(ownerId) {
       const result = await database.query<{ enabled: boolean; revision: string }>(

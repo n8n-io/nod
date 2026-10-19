@@ -117,14 +117,13 @@ sequenceDiagram
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.
 
 :::caution[Limits]
-In a source install, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app blocks workspace traffic to private and reserved address ranges. In hosted mode, plain HTTP and HTTPS from a computer to private, shared (CGNAT), link-local and metadata ranges is refused, but other ports to those ranges aren't filtered. The browser reaches only public addresses in every mode. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
+In a source install, the workspace has internet access through normal Docker routing. There is no egress firewall, so a command can reach any address the host network can. The desktop app blocks workspace traffic to private and reserved address ranges. The browser reaches only public addresses. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
 :::
 
 ## Related resources
 
 - [Architecture](/how-it-works/architecture/)
 - [The agent runtime](/how-it-works/agent-runtime/)
-- [Hosted mode](/how-it-works/hosted-mode/)
 - [Otto's workspace](/use/workspace/)
 - [The browser](/use/browser/)
 - [Security model and limits](/trust/security-model/)

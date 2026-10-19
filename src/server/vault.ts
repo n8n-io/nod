@@ -128,7 +128,6 @@ type VaultOptions = {
     },
     client?: PoolClient,
   ): Promise<void>;
-  cards?: boolean;
   resume(turnId: string, client: PoolClient): Promise<void>;
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
@@ -890,8 +889,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function saveCard(raw: unknown) {
-    if (options.cards === false)
-      throw new VaultError('Hosted Otto does not store card numbers.', 403);
     const input = cardInput.parse(raw);
     validateCardExpiry(input.expiryMonth, input.expiryYear);
     const number = normalizedCardNumber(input.cardNumber);
@@ -920,8 +917,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function updateCard(rawId: string, raw: unknown) {
-    if (options.cards === false)
-      throw new VaultError('Hosted Otto does not store card numbers.', 403);
     const id = z.uuid().parse(rawId);
     const input = cardUpdateInput.parse(raw);
     validateCardExpiry(input.expiryMonth, input.expiryYear);

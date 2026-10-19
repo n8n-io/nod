@@ -9,7 +9,7 @@ import { api, errorMessage } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
 import { startIntegrationAccess, type IntegrationAccessAttempt } from '../lib/integration-access';
 import { cn } from '../lib/utils';
-import { GoogleMark } from './account-avatar';
+import { GoogleMark } from './google-mark';
 import { OttoGlyph } from './motion';
 import { Button, Input } from './ui';
 

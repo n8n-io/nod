@@ -92,7 +92,6 @@ export async function createPayments(
   options: {
     ownerId: string;
     uses: Awaited<ReturnType<typeof createVaultUses>>;
-    local: boolean;
     inOtto(turn: TurnRef): Promise<boolean>;
     present(turn: TurnRef, input: { kind: string; [key: string]: unknown }): Promise<string>;
     page(threadId: string): Promise<BrowserPage>;
@@ -286,10 +285,6 @@ export async function createPayments(
 
   async function request(turn: TurnRef, raw: unknown) {
     const parsed = input.parse(raw);
-    if (!options.local)
-      throw new PaymentError(
-        'Hosted Otto does not pay with saved cards. Tell the owner to pay on the site themselves.',
-      );
     const inOtto = await options.inOtto(turn);
     const origin = credentialOrigin((await options.page(browserOf(turn))).origin);
     const currency = parsed.currency.toUpperCase();

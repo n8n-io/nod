@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, LoaderCircle } from 'lucide-react';
 import type { ModelConnection, ModelProvider, ModelsResponse } from '../../../../shared/models';
 import { modelProviderNames, modelSource } from '../../../../shared/models';
@@ -13,7 +13,6 @@ import {
   useModels,
 } from '../../../hooks/use-models';
 import { api, ApiError, errorMessage } from '../../../lib/api';
-import { sessionStore } from '../../../lib/session';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
 import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
@@ -58,10 +57,6 @@ const providers: Record<
 
 const invalidKey = 'That key didn’t work. Check it and try again.';
 
-function oauthFor(provider: ModelProvider, data: ModelsResponse | null | undefined) {
-  return provider === 'openai' && !data?.local ? undefined : providers[provider].oauth;
-}
-
 function recommended(source: ModelConnection) {
   const subscription = source.method === 'subscription';
   return (
@@ -92,10 +87,6 @@ function Problem({ children }: { children: string }) {
 }
 
 export function Brain({ arrived, onNext, onBack }: StepProps) {
-  const hosted = useSyncExternalStore(
-    sessionStore.subscribe,
-    () => sessionStore.getSnapshot().session?.auth.mode === 'google',
-  );
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
   const models = useModels();
   const flow = useModelSignIn(models);
@@ -109,18 +100,13 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
   const [callback, setCallback] = useState('');
   const keyField = useRef<HTMLInputElement>(null);
   const connections = data?.connections ?? [];
-  const order: ModelProvider[] = [
-    'openai',
-    'anthropic',
-    'openrouter',
-    ...(data?.local ? (['compatible'] as const) : []),
-  ];
+  const order: ModelProvider[] = ['openai', 'anthropic', 'openrouter', 'compatible'];
   const selected = connections.find((item) => item.id === data?.selection?.connectionId);
   const usable = (provider: ModelProvider) =>
     connections.filter((item) => item.provider === provider && item.status !== 'reconnect');
   const provider =
     choice ?? selected?.provider ?? order.find((item) => usable(item).length) ?? 'openai';
-  const oauth = oauthFor(provider, data);
+  const oauth = providers[provider].oauth;
   const here = usable(provider);
   const source = here.find((item) => item.status === 'connected' && recommended(item));
   const selectedReady = modelReady(data);
@@ -446,10 +432,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
           <a href={`https://${providers[provider].hint}`} target="_blank" rel="noreferrer">
             {providers[provider].hint}
           </a>
-          .{' '}
-          {hosted
-            ? 'It’s encrypted and never shown to the AI.'
-            : 'It’s encrypted, stays on this computer and is never shown to the AI.'}
+          . It’s encrypted, stays on this computer and is never shown to the AI.
         </p>
         {oauth && (
           <button
@@ -490,9 +473,7 @@ export function Brain({ arrived, onNext, onBack }: StepProps) {
               <Logo provider={item} />
               <span className="ob-brain-card-text">
                 <span className="ob-brain-card-name">{modelProviderNames[item]}</span>
-                <span className="ob-brain-card-sub">
-                  {item === 'openai' && !oauthFor(item, data) ? 'API key' : providers[item].sub}
-                </span>
+                <span className="ob-brain-card-sub">{providers[item].sub}</span>
               </span>
               {usable(item).length > 0 && (
                 <span className="ob-brain-badge" role="img" aria-label="Connected">

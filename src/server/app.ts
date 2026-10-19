@@ -4,17 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
-import {
-  configuration,
-  dataRoot,
-  desktopAccess,
-  ownerId,
-  port,
-  runtimeMode,
-  runtimeSecret,
-  runtimeEnvironment,
-  runtimeGeneration,
-} from './config.ts';
+import { configuration, dataRoot, desktopAccess, ownerId, port } from './config.ts';
 import { events, type ServerEvent } from './events.ts';
 import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
@@ -29,8 +19,7 @@ import {
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
 import { logFailure } from './failure-log.ts';
-import { registerRuntimeAccess } from './runtime-auth.ts';
-import { createMultipartReader } from './multipart.ts';
+import { fileBytes } from '../shared/files.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { browserHandoffInputs } from '../shared/browser-handoff.ts';
@@ -42,9 +31,7 @@ import type {
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
-import { registerTenantDrain, registerWorkAdmission } from './tenant-drain.ts';
-import type { WorkAdmission } from './work-admission.ts';
-import type { TenantDrain } from '../ports/deployment.ts';
+import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
 const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
@@ -67,8 +54,6 @@ function messageView(
 export interface AppDependencies {
   analytics?: CaptureAnalytics;
   admission?: WorkAdmission;
-  deploymentDrain?: TenantDrain;
-  release?: () => Promise<void>;
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
@@ -100,38 +85,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.addHook('preClose', async () => {
     for (const stream of streams) stream.end();
   });
-  const runtimeAccess =
-    runtimeMode === 'tenant'
-      ? registerRuntimeAccess(app, {
-          secret: runtimeSecret,
-          ownerId,
-          environment: runtimeEnvironment,
-          generation: runtimeGeneration,
-        })
-      : undefined;
-  if (!runtimeAccess)
-    registerLocalAccess(
-      app,
-      port,
-      desktopAccess
-        ? { key: desktopAccess.token, desktop: true }
-        : { key: await accessKey(dataRoot) },
-    );
-  if (runtimeAccess && dependencies.admission && dependencies.deploymentDrain)
-    registerTenantDrain(app, {
-      admission: dependencies.admission,
-      drain: dependencies.deploymentDrain,
-      generation: runtimeGeneration,
-    });
-  else if (desktopAccess && dependencies.admission)
-    registerWorkAdmission(app, dependencies.admission);
-  const release = dependencies.release;
-  if (runtimeAccess && release)
-    app.post('/api/runtime/release', async () => {
-      await release();
-      return { ok: true };
-    });
-  const uploads = createMultipartReader({ verifiedBody: runtimeAccess?.takeBody });
+  registerLocalAccess(
+    app,
+    port,
+    desktopAccess
+      ? { key: desktopAccess.token, desktop: true }
+      : { key: await accessKey(dataRoot) },
+  );
+  if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
   app.setErrorHandler((error, _request, reply) => {
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
@@ -145,7 +106,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
             : 'This request could not be completed. Check the local service and try again.',
     });
   });
-  await app.register(multipart, { limits: uploads.limits });
+  await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
     const release = process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE;
@@ -372,9 +333,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
     });
   });
   app.post('/api/uploads', async (request) => {
-    const file = await uploads.readFile(request);
+    const file = await request.file();
     if (!file) throw Object.assign(new Error('Choose a file to upload.'), { statusCode: 400 });
-    return artifacts.storeArtifact(file.bytes, file.filename, file.mimetype);
+    return artifacts.storeArtifact(await file.toBuffer(), file.filename, file.mimetype);
   });
   app.get<{ Params: { id: string } }>('/api/artifacts/:id', async (request, reply) => {
     const result = await pool.query('SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2', [

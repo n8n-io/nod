@@ -18,14 +18,12 @@ export interface AccountSettings {
 
 export interface SessionResponse {
   analytics?: AnalyticsConfiguration;
-  auth: { mode: 'local' | 'google'; googleAvailable: boolean };
   user: AccountUser | null;
   settings: AccountSettings | null;
   capabilities: { developer: boolean };
 }
 
 export interface AccountUpdate {
-  name?: string;
   theme?: AccountTheme;
   onboardingCompleted?: boolean;
   usageData?: boolean;

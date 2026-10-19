@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 import type { StepProps } from '..';
 import { Rise } from '../../../components/motion';
@@ -6,17 +6,12 @@ import { TelegramSetup } from '../../../components/telegram-setup';
 import { Button } from '../../../components/ui';
 import { telegramState, useChannelSettings } from '../../../hooks/use-channel-settings';
 import { channelSetupBody } from '../../../lib/secondary-pages';
-import { sessionStore } from '../../../lib/session';
 import { Bubble, Footer, Messages, useReveal } from '../motion';
 
 const sequence = [{ typing: 450 }, { wait: 300, typing: 550 }, { wait: 200 }, { wait: 300 }];
 
 export function Telegram({ arrived, onNext, onBack }: StepProps) {
   const { revealed, typing } = useReveal(sequence, { enabled: arrived === 'forward' });
-  const hosted = useSyncExternalStore(
-    sessionStore.subscribe,
-    () => sessionStore.getSnapshot().session?.auth.mode === 'google',
-  );
   const {
     settings,
     telegram,
@@ -89,7 +84,6 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
           fields={fields}
           busy={busy}
           error={error || loadError}
-          hosted={hosted}
           unavailable={!settings?.ready}
           onField={(name, value) => {
             setFields((current) => ({ ...current, [name]: value }));

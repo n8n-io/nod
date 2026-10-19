@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: How Otto's parts fit together in local and hosted mode, and where each part lives in the code.
+description: How Otto's parts fit together and where each part lives in the code.
 sidebar:
   order: 1
 ---
@@ -9,7 +9,7 @@ import { Card, CardGrid, FileTree } from '@astrojs/starlight/components';
 
 This page shows how Otto's parts fit together and where each one lives in the code. Start here before you change Otto or evaluate how it works.
 
-The short version: in local mode, Otto is one Node process plus a few Docker containers. Hosted mode runs the same code once per user, behind a gateway.
+The short version: Otto is one Node process plus a few Docker containers on your computer.
 
 ## One conversation, independent tasks
 
@@ -21,7 +21,7 @@ See [Task sessions](/how-it-works/task-sessions/) for the architecture diagram, 
 
 ## One process and a few containers
 
-In local mode, one Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
+One Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
 
 ```mermaid
 flowchart TD
@@ -36,16 +36,6 @@ flowchart TD
 ```
 
 Every message, schedule fire and event becomes a row in PostgreSQL plus a `thread-drain` job. The worker picks up the job and asks the runtime to run a turn. The runtime opens a Pi agent session, and Pi calls tools that act in the workspace, the browser and your connected apps.
-
-`OTTO_MODE` selects which role the process plays:
-
-| `OTTO_MODE`       | What the process does                                                  |
-| ----------------- | ---------------------------------------------------------------------- |
-| `local` (default) | Runs everything for one owner on your computer.                        |
-| `gateway`         | Hosted front door: Google sign-in, tenant setup and signed forwarding. |
-| `tenant`          | Runs one user's Otto in hosted mode. Its owner never changes.          |
-
-See [Hosted mode](/how-it-works/hosted-mode/) for how `gateway` and `tenant` work together.
 
 ## Main ideas
 
@@ -96,18 +86,6 @@ See [Hosted mode](/how-it-works/hosted-mode/) for how `gateway` and `tenant` wor
 
 The same check keeps vendor packages (Pi, Composio, chat adapters and agent-browser) inside `providers`. It also stops `runtime`, `ports`, `shared` and `web` from reading `process.env`. Configuration belongs in [`src/server/composition.ts`](https://github.com/n8n-io/otto/blob/main/src/server/composition.ts).
 
-## Computer providers
-
-The workspace and the browser are "the computer". `COMPUTER_PROVIDER` picks who runs it:
-
-| Provider           | Mode        | What runs                                                                                                |
-| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------- |
-| `docker` (default) | Local only  | Separate workspace and browser containers on your computer.                                              |
-| `cloudflare`       | Hosted only | Separate browser and workspace containers per owner, checkpointed to private R2.                         |
-| `e2b`              | Optional    | One combined E2B sandbox per owner, with separate Linux users for browser, workspace and connected CLIs. |
-
-Cloudflare is the selected hosted provider. E2B must pass its live acceptance check before you turn it on anywhere. See the [E2B notes](https://github.com/n8n-io/otto/blob/main/deployment/e2b/README.md).
-
 ## In this section
 
 - [Threads and turns](/how-it-works/threads-and-turns/): how messages, schedules and events become turns, and how they share one thread.
@@ -115,4 +93,3 @@ Cloudflare is the selected hosted provider. E2B must pass its live acceptance ch
 - [Sandbox and browser isolation](/how-it-works/sandbox-and-browser/): what the workspace and browser containers can and can't reach.
 - [Memory](/how-it-works/memory/): how Otto learns and keeps what it knows about you.
 - [Skills](/how-it-works/skills/): the trusted task guides Otto reads before it works.
-- [Hosted mode](/how-it-works/hosted-mode/): the gateway, per-user tenants and signed requests.

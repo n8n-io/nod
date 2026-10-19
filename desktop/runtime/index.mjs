@@ -599,7 +599,6 @@ exec "$docker" "$@"
     DOCKER_CONFIG: dockerEnvironment.DOCKER_CONFIG,
     DOCKER_CONTEXT: '',
     OTTO_DATA_ROOT: dataRoot,
-    COMPUTER_PROVIDER: 'docker',
     BROWSER_CONTAINER: names.browser,
     WORKSPACE_CONTAINER: names.workspace,
     DATABASE_URL: databaseUrl,

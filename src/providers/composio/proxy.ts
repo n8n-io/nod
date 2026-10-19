@@ -4,7 +4,6 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
-  hkdfSync,
   randomBytes,
   randomUUID,
   sign,
@@ -39,7 +38,6 @@ const browserKeySchema = z
 export function createComposioProxy(options: {
   dataRoot: string;
   ownerId: string;
-  identitySecret?: Uint8Array;
   url?: string;
   request?: typeof fetch;
 }) {
@@ -64,81 +62,61 @@ export function createComposioProxy(options: {
     if (identity) return;
     initializing ??= (async () => {
       let key: KeyObject;
-      if (options.identitySecret) {
-        if (options.identitySecret.byteLength !== 32)
-          throw new Error('The integration identity secret is invalid.');
-        const seed = hkdfSync(
-          'sha256',
-          options.identitySecret,
-          Buffer.from('otto-composio-installation-v1'),
-          Buffer.from(options.ownerId),
-          32,
-        );
-        key = createPrivateKey({
-          key: Buffer.concat([
-            Buffer.from('302e020100300506032b657004220420', 'hex'),
-            Buffer.from(seed),
-          ]),
-          format: 'der',
-          type: 'pkcs8',
-        });
-      } else {
-        await mkdir(options.dataRoot, { recursive: true, mode: 0o700 });
-        const dataRoot = await realpath(options.dataRoot);
-        const directory = join(dataRoot, 'integration-identity');
-        for (const [path, mask] of [
-          [dataRoot, 0o022],
-          [directory, 0o077],
-        ] as const) {
-          await mkdir(path, { recursive: true, mode: 0o700 });
-          const metadata = await lstat(path);
-          if (
-            !metadata.isDirectory() ||
-            (process.getuid && metadata.uid !== process.getuid()) ||
-            (process.platform !== 'win32' && (metadata.mode & mask) !== 0)
-          )
-            throw new Error('The integration identity directory permissions are unsafe.');
-        }
-        const path = join(
-          directory,
-          `${createHash('sha256').update(options.ownerId).digest('hex')}.pem`,
-        );
-        const temporary = `${path}.${randomUUID()}.tmp`;
+      await mkdir(options.dataRoot, { recursive: true, mode: 0o700 });
+      const dataRoot = await realpath(options.dataRoot);
+      const directory = join(dataRoot, 'integration-identity');
+      for (const [path, mask] of [
+        [dataRoot, 0o022],
+        [directory, 0o077],
+      ] as const) {
+        await mkdir(path, { recursive: true, mode: 0o700 });
+        const metadata = await lstat(path);
+        if (
+          !metadata.isDirectory() ||
+          (process.getuid && metadata.uid !== process.getuid()) ||
+          (process.platform !== 'win32' && (metadata.mode & mask) !== 0)
+        )
+          throw new Error('The integration identity directory permissions are unsafe.');
+      }
+      const path = join(
+        directory,
+        `${createHash('sha256').update(options.ownerId).digest('hex')}.pem`,
+      );
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      try {
+        const file = await open(temporary, 'wx', 0o600);
         try {
-          const file = await open(temporary, 'wx', 0o600);
-          try {
-            const generated = generateKeyPairSync('ed25519');
-            await file.writeFile(generated.privateKey.export({ type: 'pkcs8', format: 'pem' }));
-            await file.sync();
-          } finally {
-            await file.close();
-          }
-          await link(temporary, path);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        } finally {
-          await rm(temporary, { force: true });
-        }
-        const file = await open(
-          path,
-          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-        );
-        try {
-          const metadata = await file.stat();
-          const current = await lstat(path);
-          if (
-            !metadata.isFile() ||
-            !current.isFile() ||
-            metadata.dev !== current.dev ||
-            metadata.ino !== current.ino ||
-            (process.getuid && metadata.uid !== process.getuid()) ||
-            (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)
-          )
-            throw new Error('The integration identity file permissions are unsafe.');
-          key = createPrivateKey(await file.readFile());
+          const generated = generateKeyPairSync('ed25519');
+          await file.writeFile(generated.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+          await file.sync();
         } finally {
           await file.close();
         }
+        await link(temporary, path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      const file = await open(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const metadata = await file.stat();
+        const current = await lstat(path);
+        if (
+          !metadata.isFile() ||
+          !current.isFile() ||
+          metadata.dev !== current.dev ||
+          metadata.ino !== current.ino ||
+          (process.getuid && metadata.uid !== process.getuid()) ||
+          (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)
+        )
+          throw new Error('The integration identity file permissions are unsafe.');
+        key = createPrivateKey(await file.readFile());
+      } finally {
+        await file.close();
       }
       if (key.asymmetricKeyType !== 'ed25519')
         throw new Error('The integration identity is invalid.');

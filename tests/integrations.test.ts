@@ -1328,6 +1328,8 @@ for (const [scenario, name, restart] of [
 }
 
 test('managed authorization bounds streamed response bytes before parsing and cancels oversized bodies', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-integration-limit-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   for (const variant of ['streamed', 'declared', 'misreported', 'utf8-overflow', 'utf8-split']) {
     await t.test(variant, async () => {
       let pulled = 0;
@@ -1335,9 +1337,8 @@ test('managed authorization bounds streamed response bytes before parsing and ca
       let calls = 0;
       let total = 0;
       const proxy = createComposioProxy({
-        dataRoot: '/unused-synthetic-identity',
+        dataRoot: root,
         ownerId: 'response-limit-owner',
-        identitySecret: randomBytes(32),
         url: 'https://proxy.example.test',
         request: async (_input, init) => {
           calls++;
@@ -1399,43 +1400,6 @@ test('managed authorization bounds streamed response bytes before parsing and ca
       assert.equal(calls, 1);
     });
   }
-});
-
-test('hosted integration identities survive runtime replacement and remain separated by owner', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-integration-hosted-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const identitySecret = randomBytes(32);
-  const first = createComposioProxy({
-    dataRoot: join(root, 'first'),
-    ownerId: 'owner-a',
-    identitySecret,
-  });
-  const restarted = createComposioProxy({
-    dataRoot: join(root, 'replacement'),
-    ownerId: 'owner-a',
-    identitySecret,
-  });
-  const other = createComposioProxy({
-    dataRoot: join(root, 'other'),
-    ownerId: 'owner-b',
-    identitySecret,
-  });
-  const changed = createComposioProxy({
-    dataRoot: join(root, 'changed'),
-    ownerId: 'owner-a',
-    identitySecret: randomBytes(32),
-  });
-  await Promise.all([first, restarted, other, changed].map((proxy) => proxy.initialize()));
-  assert.equal(first.userId, restarted.userId);
-  assert.equal(first.configurationId, restarted.configurationId);
-  assert.notEqual(first.userId, other.userId);
-  assert.notEqual(first.userId, changed.userId);
-  assert.deepEqual(await readdir(root), []);
-  const local = createComposioProxy({ dataRoot: join(root, 'local'), ownerId: 'owner-a' });
-  const separate = createComposioProxy({ dataRoot: join(root, 'separate'), ownerId: 'owner-a' });
-  await Promise.all([local.initialize(), separate.initialize()]);
-  assert.notEqual(local.userId, separate.userId);
-  assert.notEqual(local.userId, first.userId);
 });
 
 test(
@@ -7838,10 +7802,11 @@ test('Composio key changes bind configuration identity to the active SDK and fen
     calls.filter((call) => call.path.endsWith('/auth_configs')).map((call) => call.key),
     [keys[0], keys[1], keys[1], keys[0]],
   );
+  const root = await mkdtemp(join(tmpdir(), 'otto-integration-key-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const proxy = createComposioProxy({
     ownerId: 'fixture-owner',
-    dataRoot: tmpdir(),
-    identitySecret: Buffer.alloc(32, 7),
+    dataRoot: root,
     url: 'https://proxy.example.test',
     request: async () => assert.fail('Managed key changes must not make a request.'),
   });
@@ -8274,11 +8239,6 @@ test('Composio adapter normalizes sessions without exposing SDK metadata and aut
   const unconfigured = createComposioProvider({ client });
   assert.equal(unconfigured.webhooksConfigured, false);
   await assert.rejects(unconfigured.verifyWebhook(body, signed()));
-  const tenant = createComposioProvider({ client, webhooksVerified: true });
-  assert.equal(tenant.webhooksConfigured, true);
-  const forwarded = await tenant.verifyWebhook(body, { 'webhook-id': 'delivery-fixture' });
-  assert.equal(forwarded.ownerId, 'local-development');
-  assert.equal(forwarded.subscriptionId, 'ti-fixture');
 });
 
 async function hostedDatabase(options: pg.PoolConfig = {}) {
@@ -8823,12 +8783,13 @@ test(
   },
 );
 
-test('managed uploads retain the selected account across separate operation sessions', async () => {
+test('managed uploads retain the selected account across separate operation sessions', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-integration-uploads-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const uploads: Array<Record<string, unknown>> = [];
   const proxy = createComposioProxy({
-    dataRoot: '/unused',
+    dataRoot: root,
     ownerId: 'owner',
-    identitySecret: randomBytes(32),
     url: 'https://proxy.example.test',
     request: async (input, init) => {
       const request = new Request(input, init);

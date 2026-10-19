@@ -4,7 +4,7 @@ import type { IntegrationKeyStatus } from '../../shared/integrations';
 import { errorMessage } from '../lib/api';
 import { startIntegrationAccess, type IntegrationAccessAttempt } from '../lib/integration-access';
 import { pageDataCache } from '../lib/page-data-cache';
-import { GoogleMark } from './account-avatar';
+import { GoogleMark } from './google-mark';
 import { OttoGlyph } from './motion';
 import { ServiceLogo } from './service-logo';
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Notice } from './ui';

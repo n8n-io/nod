@@ -4,17 +4,14 @@ import { isDeepStrictEqual } from 'node:util';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const scope = Object.fromEntries(
-  ['core', 'desktop', 'n8n', 'cloudflare', 'evals', 'images', 'network', 'e2b'].map((name) => [
-    name,
-    false,
-  ]),
+  ['core', 'desktop', 'n8n', 'evals', 'images', 'network'].map((name) => [name, false]),
 );
 const full = () =>
   Object.keys(scope).forEach((name) => {
     scope[name] = true;
   });
 const core = () =>
-  ['core', 'desktop', 'cloudflare', 'evals', 'images'].forEach((name) => {
+  ['core', 'desktop', 'evals', 'images'].forEach((name) => {
     scope[name] = true;
   });
 let base = process.env.CI_DIFF_BASE;
@@ -55,18 +52,11 @@ else {
       )
     ) {
       core();
-      scope.e2b = true;
       scope.n8n = true;
       continue;
     }
     if (/^(src|public|tests)\//.test(path)) {
       core();
-      if (
-        /^src\/(providers\/(e2b|agent-browser|container-browser|docker)\/|providers\/process\.ts$|ports\/|shared\/)|^tests\/(computers|sandbox)\.test\.ts$/.test(
-          path,
-        )
-      )
-        scope.e2b = true;
       continue;
     }
     if (path.startsWith('desktop/')) {
@@ -79,16 +69,6 @@ else {
     }
     if (path.startsWith('deployment/n8n/')) {
       scope.n8n = true;
-      continue;
-    }
-    if (path.startsWith('deployment/cloudflare/')) {
-      scope.cloudflare = true;
-      scope.images = true;
-      continue;
-    }
-    if (path.startsWith('deployment/e2b/')) {
-      core();
-      scope.e2b = true;
       continue;
     }
     if (path.startsWith('evals/')) {

@@ -101,236 +101,232 @@ export function ModelSettings({
         Connect as many services as you want. All their models appear in one list.
       </p>
       <div className="model-services">
-        {(
-          [
-            'openai',
-            'anthropic',
-            'openrouter',
-            ...(data.local ? ['compatible'] : []),
-          ] as ModelProvider[]
-        ).map((provider) => (
-          <section
-            className="model-service"
-            key={provider}
-            aria-label={modelProviderNames[provider]}
-          >
-            <div className="model-service-heading" data-analytics-public>
-              <div className="model-service-identity">
-                <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
-                <div>
-                  <h4>{modelProviderNames[provider]}</h4>
-                  <p>
-                    {provider === 'openai'
-                      ? data.local
+        {(['openai', 'anthropic', 'openrouter', 'compatible'] as ModelProvider[]).map(
+          (provider) => (
+            <section
+              className="model-service"
+              key={provider}
+              aria-label={modelProviderNames[provider]}
+            >
+              <div className="model-service-heading" data-analytics-public>
+                <div className="model-service-identity">
+                  <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
+                  <div>
+                    <h4>{modelProviderNames[provider]}</h4>
+                    <p>
+                      {provider === 'openai'
                         ? 'API key or ChatGPT plan'
-                        : 'API key'
-                      : provider === 'anthropic'
-                        ? 'API key for Claude models'
-                        : provider === 'openrouter'
-                          ? 'Many models with one connection'
-                          : 'Ollama, LM Studio, vLLM or any other server'}
-                  </p>
+                        : provider === 'anthropic'
+                          ? 'API key for Claude models'
+                          : provider === 'openrouter'
+                            ? 'Many models with one connection'
+                            : 'Ollama, LM Studio, vLLM or any other server'}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="model-service-actions">
-                {(provider === 'openrouter' || (provider === 'openai' && data.local)) && (
-                  <Button
-                    type="button"
-                    className="model-connect-button"
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => void connect(provider as 'openai' | 'openrouter')}
-                  >
-                    <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
-                    {provider === 'openai' ? 'Connect ChatGPT' : 'Connect account'}
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => {
-                    setKey('');
-                    setUrl(localServerAddress);
-                    setKeyProvider(keyProvider === provider ? null : provider);
-                  }}
-                >
-                  {provider === 'compatible' ? <Plus size={16} /> : <KeyRound size={16} />}
-                  {provider === 'compatible' ? 'Add server' : 'Add API key'}
-                </Button>
-              </div>
-            </div>
-            {keyProvider === provider && (
-              <form
-                className="model-key-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const value = key;
-                  setKey('');
-                  void models
-                    .change(
-                      provider === 'compatible' ? '/api/models/endpoints' : '/api/models/keys',
-                      'POST',
-                      provider === 'compatible'
-                        ? { url: url.trim(), key: value }
-                        : { provider, key: value },
-                    )
-                    .then((saved) => {
-                      if (saved) {
-                        setUrl('');
-                        setKeyProvider(null);
-                      }
-                    });
-                }}
-              >
-                {provider === 'compatible' && (
-                  <Field label="Server address">
-                    <Input
-                      inputMode="url"
-                      value={url}
-                      required
-                      maxLength={2000}
-                      placeholder={localServerAddress}
-                      autoComplete="off"
-                      spellCheck={false}
-                      autoFocus
+                <div className="model-service-actions">
+                  {(provider === 'openrouter' || provider === 'openai') && (
+                    <Button
+                      type="button"
+                      className="model-connect-button"
+                      variant="outline"
+                      size="sm"
                       disabled={busy}
-                      onChange={(event) => setUrl(event.target.value)}
-                    />
-                  </Field>
-                )}
-                <Field
-                  label={
-                    provider === 'compatible'
-                      ? 'API key (optional)'
-                      : `${modelProviderNames[provider]} API key`
-                  }
-                  hint={provider === 'compatible' ? undefined : 'Your saved key stays private.'}
-                >
-                  <Input
-                    type="password"
-                    value={key}
-                    required={provider !== 'compatible'}
-                    minLength={provider === 'compatible' ? undefined : 8}
-                    maxLength={32000}
-                    autoComplete="off"
-                    spellCheck={false}
-                    autoFocus={provider !== 'compatible'}
-                    disabled={busy}
-                    onChange={(event) => setKey(event.target.value)}
-                  />
-                </Field>
-                {provider === 'compatible' && (
-                  <p className="model-key-note">
-                    Otto also uses this model to decide when to ask you before acting. Smaller
-                    models decide less reliably.
-                  </p>
-                )}
-                <div>
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={busy || !(provider === 'compatible' ? url.trim() : key.trim())}
-                  >
-                    {busy ? 'Connecting…' : 'Save connection'}
-                  </Button>
+                      onClick={() => void connect(provider as 'openai' | 'openrouter')}
+                    >
+                      <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
+                      {provider === 'openai' ? 'Connect ChatGPT' : 'Connect account'}
+                    </Button>
+                  )}
                   <Button
                     type="button"
-                    size="sm"
                     variant="ghost"
+                    size="sm"
                     disabled={busy}
                     onClick={() => {
                       setKey('');
-                      setUrl('');
-                      setKeyProvider(null);
+                      setUrl(localServerAddress);
+                      setKeyProvider(keyProvider === provider ? null : provider);
                     }}
                   >
-                    Cancel
+                    {provider === 'compatible' ? <Plus size={16} /> : <KeyRound size={16} />}
+                    {provider === 'compatible' ? 'Add server' : 'Add API key'}
                   </Button>
                 </div>
-              </form>
-            )}
-            {data.connections
-              .filter((connection) => connection.provider === provider)
-              .map((connection) => (
-                <div className="model-connection" key={connection.id}>
-                  <div className="model-connection-label">
-                    <ModelConnectionAvatar connection={connection} />
-                    <div className="model-connection-identity">
-                      <strong>{connection.label}</strong>
-                      <span className={`model-connection-meta ${connection.status}`}>
-                        {connection.status === 'reconnect'
-                          ? connection.provider !== 'compatible'
-                            ? 'Reconnect to continue'
-                            : connection.managed
-                              ? 'Can’t load its models · Refresh to retry'
-                              : 'Remove it and add the server again'
-                          : connection.status === 'loading'
-                            ? 'Connected · Load models to continue'
-                            : `${modelSource(connection)} · ${connection.models.length} ${connection.models.length === 1 ? 'model' : 'models'}`}
-                        {connection.managed && ' · Server settings'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="model-connection-controls">
-                    {data.selection?.connectionId === connection.id && (
-                      <span className="model-connection-selected">
-                        <Check size={16} aria-hidden="true" />
-                        Selected
-                      </span>
-                    )}
-                    <div className="model-service-actions">
-                      {connection.method !== 'api_key' && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void connect(provider as 'openai' | 'openrouter', connection.id)
-                          }
-                        >
-                          Reconnect
-                        </Button>
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size={connection.status === 'loading' ? 'sm' : 'icon'}
-                        aria-label={`Refresh ${connection.label} models`}
-                        disabled={busy}
-                        onClick={() =>
-                          void models.change(
-                            `/api/models/connections/${connection.id}/refresh`,
-                            'POST',
-                          )
+              </div>
+              {keyProvider === provider && (
+                <form
+                  className="model-key-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const value = key;
+                    setKey('');
+                    void models
+                      .change(
+                        provider === 'compatible' ? '/api/models/endpoints' : '/api/models/keys',
+                        'POST',
+                        provider === 'compatible'
+                          ? { url: url.trim(), key: value }
+                          : { provider, key: value },
+                      )
+                      .then((saved) => {
+                        if (saved) {
+                          setUrl('');
+                          setKeyProvider(null);
                         }
-                      >
-                        <RefreshCw size={16} />
-                        {connection.status === 'loading' && 'Load models'}
-                      </Button>
-                      {!connection.managed && (
+                      });
+                  }}
+                >
+                  {provider === 'compatible' && (
+                    <Field label="Server address">
+                      <Input
+                        inputMode="url"
+                        value={url}
+                        required
+                        maxLength={2000}
+                        placeholder={localServerAddress}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoFocus
+                        disabled={busy}
+                        onChange={(event) => setUrl(event.target.value)}
+                      />
+                    </Field>
+                  )}
+                  <Field
+                    label={
+                      provider === 'compatible'
+                        ? 'API key (optional)'
+                        : `${modelProviderNames[provider]} API key`
+                    }
+                    hint={provider === 'compatible' ? undefined : 'Your saved key stays private.'}
+                  >
+                    <Input
+                      type="password"
+                      value={key}
+                      required={provider !== 'compatible'}
+                      minLength={provider === 'compatible' ? undefined : 8}
+                      maxLength={32000}
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoFocus={provider !== 'compatible'}
+                      disabled={busy}
+                      onChange={(event) => setKey(event.target.value)}
+                    />
+                  </Field>
+                  {provider === 'compatible' && (
+                    <p className="model-key-note">
+                      Otto also uses this model to decide when to ask you before acting. Smaller
+                      models decide less reliably.
+                    </p>
+                  )}
+                  <div>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={busy || !(provider === 'compatible' ? url.trim() : key.trim())}
+                    >
+                      {busy ? 'Connecting…' : 'Save connection'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setKey('');
+                        setUrl('');
+                        setKeyProvider(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
+              {data.connections
+                .filter((connection) => connection.provider === provider)
+                .map((connection) => (
+                  <div className="model-connection" key={connection.id}>
+                    <div className="model-connection-label">
+                      <ModelConnectionAvatar connection={connection} />
+                      <div className="model-connection-identity">
+                        <strong>{connection.label}</strong>
+                        <span className={`model-connection-meta ${connection.status}`}>
+                          {connection.status === 'reconnect'
+                            ? connection.provider !== 'compatible'
+                              ? 'Reconnect to continue'
+                              : connection.managed
+                                ? 'Can’t load its models · Refresh to retry'
+                                : 'Remove it and add the server again'
+                            : connection.status === 'loading'
+                              ? 'Connected · Load models to continue'
+                              : `${modelSource(connection)} · ${connection.models.length} ${connection.models.length === 1 ? 'model' : 'models'}`}
+                          {connection.managed && ' · Server settings'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="model-connection-controls">
+                      {data.selection?.connectionId === connection.id && (
+                        <span className="model-connection-selected">
+                          <Check size={16} aria-hidden="true" />
+                          Selected
+                        </span>
+                      )}
+                      <div className="model-service-actions">
+                        {connection.method !== 'api_key' && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() =>
+                              void connect(provider as 'openai' | 'openrouter', connection.id)
+                            }
+                          >
+                            Reconnect
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="ghost"
-                          size="icon"
-                          aria-label={`Remove ${connection.label}`}
+                          size={connection.status === 'loading' ? 'sm' : 'icon'}
+                          aria-label={`Refresh ${connection.label} models`}
                           disabled={busy}
                           onClick={() =>
-                            void models.change(`/api/models/connections/${connection.id}`, 'DELETE')
+                            void models.change(
+                              `/api/models/connections/${connection.id}/refresh`,
+                              'POST',
+                            )
                           }
                         >
-                          <X size={16} />
+                          <RefreshCw size={16} />
+                          {connection.status === 'loading' && 'Load models'}
                         </Button>
-                      )}
+                        {!connection.managed && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Remove ${connection.label}`}
+                            disabled={busy}
+                            onClick={() =>
+                              void models.change(
+                                `/api/models/connections/${connection.id}`,
+                                'DELETE',
+                              )
+                            }
+                          >
+                            <X size={16} />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-          </section>
-        ))}
+                ))}
+            </section>
+          ),
+        )}
       </div>
       {signIn && (
         <div className="model-sign-in">
@@ -387,11 +383,6 @@ export function ModelSettings({
             Provider conditions
           </a>
         </p>
-        {!data.local && (
-          <p className="model-footnote">
-            ChatGPT plan sign-in and OpenAI-compatible servers are available in local Otto.
-          </p>
-        )}
         <p className="model-footnote">Voice needs an OpenAI API key in server settings.</p>
       </details>
     </div>

@@ -25,7 +25,7 @@ export type ChannelPresentation =
   | {
       kind: 'delivery';
       text: string;
-      attachments: 'none' | 'pending' | 'linked' | 'in_otto';
+      attachments: 'none' | 'pending' | 'in_otto';
       secureAction: boolean;
       files?: string[];
     }
@@ -36,7 +36,7 @@ export type ChannelPresentation =
       kind: 'command';
       command: 'memory' | 'usage' | 'tasks' | 'status' | 'stop';
       data: object;
-      attachments?: 'none' | 'pending' | 'linked' | 'in_otto';
+      attachments?: 'none' | 'pending' | 'in_otto';
     };
 
 interface ChannelOptions {
@@ -81,14 +81,12 @@ interface ChannelOptions {
   refresh?: () => void;
   intervalMs?: number;
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
-  appOrigin?: string;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
   commandReply?: (
     command: 'memory' | 'usage',
     client: PoolClient,
     threadId: string | null,
-    link: string | null,
   ) => Promise<{ text: string; attachments: Artifact[]; presentation?: ChannelPresentation }>;
   taskCommand?: (
     client: PoolClient,
@@ -158,7 +156,7 @@ function inboundMessageId(ownerId: string, sourceId: string) {
   return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
 }
 
-function channelText(text: string, appOrigin?: string) {
+function channelText(text: string) {
   let secureAction = false;
   let artifact = false;
   const privateUrl = (value: string) => {
@@ -172,7 +170,7 @@ function channelText(text: string, appOrigin?: string) {
       artifact = true;
       return true;
     }
-    if (loopbackHost(url.hostname) || (appOrigin && url.host === new URL(appOrigin).host)) {
+    if (loopbackHost(url.hostname)) {
       secureAction = true;
       return true;
     }
@@ -203,7 +201,6 @@ async function presentChannelText(
   threadId: string | null,
   input: ChannelPresentation,
   present: ChannelOptions['present'],
-  appOrigin?: string,
 ) {
   if (!present) throw new Error('Channel presentation is unavailable.');
   const text = z
@@ -211,7 +208,7 @@ async function presentChannelText(
     .trim()
     .min(1)
     .parse(await present(threadId, input));
-  if (channelText(text, appOrigin).text !== text)
+  if (channelText(text).text !== text)
     throw new Error('Channel presentation contains a private link.');
   return text;
 }
@@ -222,52 +219,31 @@ export async function channelReply(
     threadId: string | null;
     hasAttachments?: boolean;
     deliversAttachments?: boolean;
-    privateLinks?: { name: string; url: string }[];
-    appOrigin?: string;
     present?: ChannelOptions['present'];
   },
 ) {
-  const safe = channelText(text, options.appOrigin);
-  const privateLinks = options.privateLinks ?? [];
+  const safe = channelText(text);
   const attachments = options.deliversAttachments
     ? 'pending'
-    : privateLinks.length
-      ? 'linked'
-      : options.hasAttachments || safe.artifact
-        ? 'in_otto'
-        : 'none';
+    : options.hasAttachments || safe.artifact
+      ? 'in_otto'
+      : 'none';
   const needsPresentation =
     safe.secureAction ||
     attachments === 'in_otto' ||
     (attachments === 'pending' && Boolean(safe.text)) ||
     (!safe.text && attachments === 'none');
-  const reply = needsPresentation
+  return needsPresentation
     ? await presentChannelText(
         options.threadId,
         { kind: 'delivery', text: safe.text, attachments, secureAction: safe.secureAction },
         options.present,
-        options.appOrigin,
       )
     : safe.text;
-  const files = privateLinks
-    .map(
-      ({ name, url }) =>
-        `${channelText(name.replace(/[\r\n]/g, ' '), options.appOrigin).text}: ${url}`,
-    )
-    .join('\n');
-  return [reply, files].filter(Boolean).join('\n\n');
 }
 
 export async function createChannels(pool: Pool, options: ChannelOptions) {
   const { ownerId } = options;
-  const appOrigin = (() => {
-    try {
-      const url = new URL(options.appOrigin ?? '');
-      return url.protocol === 'https:' ? url.origin : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
   let transport = options.transport;
   let channels = transport.channels.map((channel) => ({
     ...channel,
@@ -515,12 +491,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         await transaction(
           (client) =>
             replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, (thread) =>
-              commandReply(
-                name,
-                client,
-                thread,
-                appOrigin ? `${appOrigin}/${name === 'usage' ? 'trust' : 'memory'}` : null,
-              ),
+              commandReply(name, client, thread),
             ),
           pool,
         );
@@ -842,7 +813,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       return true;
     }
     let attachments: MessagingAttachment[] | undefined;
-    let privateLinks: { name: string; url: string }[] = [];
     const canDeliverAttachments = channels.find(
       (channel) => channel.id === row.provider,
     )?.supportsAttachments;
@@ -862,15 +832,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (resolved.length !== unique.length)
           throw new Error('Attachment delivery is unavailable.');
         if (canDeliverAttachments) attachments = resolved;
-        else if (appOrigin)
-          privateLinks = unique.map(({ id }, index) => ({
-            name: resolved[index].name,
-            url: `${appOrigin}/api/artifacts/${id}`,
-          }));
       } catch (cause) {
         logFailure('channel_attachment_unavailable', cause);
         attachments = undefined;
-        privateLinks = [];
       }
     }
     let text: string;
@@ -883,26 +847,17 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                 ...row.presentation,
                 attachments: attachments
                   ? ('pending' as const)
-                  : privateLinks.length
-                    ? ('linked' as const)
-                    : row.attachments?.length
-                      ? ('in_otto' as const)
-                      : ('none' as const),
+                  : row.attachments?.length
+                    ? ('in_otto' as const)
+                    : ('none' as const),
               }
             : row.presentation;
-        generated = await presentChannelText(
-          row.message_thread_id,
-          input,
-          options.present,
-          options.appOrigin,
-        );
+        generated = await presentChannelText(row.message_thread_id, input, options.present);
       }
       text = await channelReply(generated ?? row.text, {
         threadId: row.message_thread_id,
         hasAttachments: !row.presentation && Boolean(row.attachments?.length),
         deliversAttachments: !row.presentation && Boolean(attachments),
-        privateLinks,
-        appOrigin: options.appOrigin,
         present: options.present,
       });
     } catch (cause) {
@@ -1000,10 +955,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                     text: '',
                     attachments: 'in_otto',
                     secureAction: false,
-                    files: names.map((name) => channelText(name, options.appOrigin).text),
+                    files: names.map((name) => channelText(name).text),
                   },
                   options.present,
-                  options.appOrigin,
                 );
                 if (
                   !(await currentMessage(row, claimId, 'sending')) ||

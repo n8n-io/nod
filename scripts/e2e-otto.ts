@@ -105,7 +105,6 @@ database.searchParams.set('options', `-c search_path=${schema}`);
 process.env.DATABASE_URL = database.href;
 process.env.PGBOSS_SCHEMA = bossSchema;
 process.env.PORT = String(port);
-process.env.OTTO_MODE = 'local';
 process.env.OTTO_DATA_ROOT = join(directory, '.local');
 const access = await accessKey(process.env.OTTO_DATA_ROOT);
 process.env.OTTO_PUBLIC_URL = baseUrl;

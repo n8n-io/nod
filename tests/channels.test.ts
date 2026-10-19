@@ -361,7 +361,7 @@ test('channel presentation isolates private links from the model and rejects uns
   };
   await channelReply(
     'Continua [em segurança](/credentials/secret-id?token=secret-token) ou [aprova](http://localhost:4310/payments/private-id). Consulta https://example.com/docs.',
-    { threadId: 'owned-thread', present, appOrigin: 'https://otto.example' },
+    { threadId: 'owned-thread', present },
   );
   assert.equal(presentation.length, 1);
   assert.doesNotMatch(JSON.stringify(presentation), /secret-id|secret-token|private-id/);
@@ -371,25 +371,15 @@ test('channel presentation isolates private links from the model and rejects uns
   assert.equal(presentation.length, 1);
   await channelReply('Save it in Otto: /trust?add=login', { threadId: 'owned-thread', present });
   assert.doesNotMatch(JSON.stringify(presentation), /trust\?add/);
-  await channelReply('[Memória](https://otto.example/memory) e https://otto.example/usage.', {
-    threadId: 'owned-thread',
-    present,
-    appOrigin: 'https://otto.example',
-  });
-  assert.equal(presentation.length, 3);
-  assert.doesNotMatch(JSON.stringify(presentation), /otto\.example/);
   for (const generated of [
     '',
-    'https://otto.example/credentials/secret-id',
-    '[Memória](https://otto.example/memory)',
-    'https://otto.example/usage',
+    'http://localhost:4310/credentials/secret-id',
     '[Continua](/payments/private-id)',
     '[Ficheiro](/api/artifacts/private-id)',
   ]) {
     await assert.rejects(
       channelReply('/credentials/request-id', {
         threadId: 'owned-thread',
-        appOrigin: 'https://otto.example',
         present: async () => generated,
       }),
     );
@@ -580,7 +570,6 @@ test(
     const app = Fastify();
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
-      appOrigin: 'https://otto.example',
       present: async (_thread, input) => {
         assert.doesNotMatch(JSON.stringify(input), /private-token|api\/artifacts/);
         return 'Continua na aplicação Otto.';
@@ -738,9 +727,7 @@ test(
       await channels.drain();
       assert.equal(sent.length, 3);
       const fileText = JSON.stringify(sent[2].body);
-      assert.match(fileText, /https:\/\/otto\.example\/api\/artifacts\//);
-      assert.match(fileText, /research\.csv/);
-      assert.equal((fileText.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
+      assert.doesNotMatch(fileText, /api\/artifacts/);
       assert.equal(
         (await pool.query('SELECT state FROM channel_outbox WHERE message_id=$1', [fileReply]))
           .rows[0].state,

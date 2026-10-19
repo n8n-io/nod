@@ -43,7 +43,7 @@ export function Privacy() {
   return (
     <main className="privacy-page">
       <header className="privacy-header">
-        <a className="sign-in-brand" href="/" aria-label="Otto home">
+        <a className="privacy-brand" href="/" aria-label="Otto home">
           <BrandMark />
           <span>otto</span>
         </a>

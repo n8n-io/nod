@@ -547,7 +547,6 @@ test('scenario API calls use authenticated local transport and refuse outside ta
       async update(owner, input) {
         assert.equal(owner, 'synthetic-owner');
         writes++;
-        account.displayName = input.name ?? account.displayName;
         account.onboardingCompleted = input.onboardingCompleted ?? account.onboardingCompleted;
         return account;
       },
@@ -558,7 +557,7 @@ test('scenario API calls use authenticated local transport and refuse outside ta
     },
   }).register(app);
   await app.listen({ host: '127.0.0.1', port });
-  const body = { name: 'Synthetic', onboardingCompleted: true };
+  const body = { onboardingCompleted: true };
   let calls = 0;
   const request = createStackRequest(origin, cookie);
   const stack = {
@@ -571,16 +570,14 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   const session = createSession({ stack, user: {}, deadline: Date.now() + 1000 });
   const updated = await session.api('PATCH', '/api/account', body);
   assert.equal(updated.status, 200);
-  assert.equal(updated.body.user.name, 'Synthetic');
   assert.equal(updated.body.settings.onboardingCompleted, true);
-  assert.equal(account.displayName, 'Synthetic');
   assert.equal(account.onboardingCompleted, true);
   assert.equal(writes, 1);
   assert.equal(started, 1);
   for (const path of ['api/session', `${origin}/api/session`]) {
     const state = await session.api('GET', path);
     assert.equal(state.status, 200);
-    assert.equal(state.body.user.name, 'Synthetic');
+    assert.equal(state.body.user.name, 'Fixture');
   }
   for (const path of [
     'https://outside.example.test/api',

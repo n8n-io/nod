@@ -7,7 +7,7 @@ import type { Pool, PoolClient } from 'pg';
 import { pool } from './db.ts';
 import { transaction } from './transaction.ts';
 import { turnChainSql } from './turn-chain.ts';
-import { dataRoot, databaseUrl, ownerId, runtimeMode } from './config.ts';
+import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh } from './events.ts';
 import { localArtifacts, type ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
@@ -36,8 +36,7 @@ const queue = 'thread-drain';
 export const boss = new PgBoss({
   connectionString: databaseUrl,
   schema: process.env.PGBOSS_SCHEMA || 'pgboss',
-  createSchema: runtimeMode !== 'tenant',
-  max: runtimeMode === 'tenant' ? 2 : 10,
+  max: 10,
 });
 const running = new Map<string, AbortController>();
 const inflight = new Set<Promise<void>>();

@@ -46,12 +46,10 @@ export function VaultDetails({
   onClose,
   onSaved,
   onDeleted,
-  hosted = false,
   visible = true,
   children,
 }: {
   entry: VaultEntry;
-  hosted?: boolean;
   visible?: boolean;
   autoFocus?: boolean;
   onClose(): void;
@@ -429,7 +427,6 @@ export function VaultDetails({
   }
 
   function editableValue(field: string, value: React.ReactNode) {
-    if (hosted && entry.kind === 'card') return <span className="vault-detail-value">{value}</span>;
     const label = `Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field}`;
     return (
       <button
@@ -491,18 +488,16 @@ export function VaultDetails({
               </Button>
             </>
           ) : (
-            !(hosted && entry.kind === 'card') && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-vault-edit
-                disabled={!details || saving}
-                onClick={() => startEditing()}
-              >
-                Edit
-              </Button>
-            )
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-vault-edit
+              disabled={!details || saving}
+              onClick={() => startEditing()}
+            >
+              Edit
+            </Button>
           )}
         </div>
       </div>
