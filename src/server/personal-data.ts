@@ -177,7 +177,7 @@ const emailPattern = String.raw`[\p{L}\p{N}._%+-]{1,64}@(?:[\p{L}\p{N}](?:[\p{L}
 const detectors: [RegExp, string, ((match: string) => boolean)?][] = [
   [
     new RegExp(
-      String.raw`(?:"[^"\n]{1,100}"|\p{Lu}[\p{L}\p{M}'’.-]*(?:[ \t]+[\p{L}\p{M}'’.-]+){0,4})[ \t]*<[ \t]*${emailPattern}[ \t]*>`,
+      String.raw`(?:"[^"\n]{1,100}"|\p{Lu}[\p{L}\p{M}'’.-]{0,40}(?:[ \t]+[\p{L}\p{M}'’.-]{1,40}){0,4})[ \t]*<[ \t]*${emailPattern}[ \t]*>`,
       'gu',
     ),
     '[name] <[email]>',
