@@ -1,6 +1,6 @@
 ---
 title: Conversation traces
-description: What Otto sends to the Otto team when you turn on conversation traces, what it removes on your computer first, and how traces stay anonymous.
+description: What Otto sends to the Otto team when you turn on conversation traces, what it removes on your computer first, and how traces avoid identifying you.
 sidebar:
   order: 12
 ---
@@ -69,12 +69,14 @@ The invoice number stays, because it isn't personal. Checks that need a valid nu
 Otto removes what it can recognize. A trace can still contain personal details written in other forms, such as another person's name in a sentence or a street address in plain text. Turn traces on only if you're comfortable with that.
 :::
 
-## How traces stay anonymous
+## How traces avoid identifying you
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
-- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Otto restarts, so traces can't be matched to you, to each other across days, or to other Otto data such as feedback reports.
+- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Otto restarts. It can't be used to link traces to you, to other days or to other Otto data such as feedback reports.
 - **No owner context.** Otto leaves your saved memory, learned skills and format preferences out of the instructions it sends.
 - **No images.** Images are replaced with `[image]`.
+
+These steps remove the direct links to you. What a conversation says can still identify you, for example a detail the scrubber doesn't recognize, so treat traces as private data rather than anonymous data.
 
 ## Where traces go
 
