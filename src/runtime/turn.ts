@@ -7,12 +7,7 @@ export interface Turn {
   computer: Computer;
   execution: ExecutionScope;
   reply(text: string, id?: string, replyToMessageId?: string): Promise<unknown>;
-  invite(text: string): Promise<unknown>;
-  pause(
-    reason: 'question' | 'approval' | 'credentials',
-    text?: string,
-    options?: { post?: boolean },
-  ): Promise<void>;
+  pause(reason: 'question' | 'approval' | 'credentials', message?: string): Promise<void>;
   confirm(result: unknown): Promise<unknown>;
   delegate?(title: string, instruction: string): Promise<string>;
   followUp?(text: string): string;

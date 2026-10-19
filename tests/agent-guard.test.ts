@@ -543,7 +543,8 @@ test('an app sign-in pauses only at a valid link', async () => {
       },
     );
     assert.equal(result.result.status, 'waiting_user');
-    const invitation = unified().use(remarkParse).parse(result.replies[0]!);
+    assert.deepEqual(result.replies, []);
+    const invitation = unified().use(remarkParse).parse(result.result.message!);
     assert.equal(
       invitation.children
         .find((node) => node.type === 'paragraph')
@@ -568,6 +569,7 @@ test('an app sign-in pauses only at a valid link', async () => {
       { connections: async () => ({ name: 'Gmail', url, message: 'Continue to Gmail.' }) },
     );
     assert.deepEqual(result.replies, []);
+    assert.equal(result.result.message, undefined);
   }
 });
 

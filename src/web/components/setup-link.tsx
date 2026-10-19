@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Check, Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
-import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
+import { Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
+import type { AppSetupStatus } from '../../shared/contracts';
 import { api } from '../lib/api';
 import type { SetupKind } from '../lib/message-links';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -10,7 +10,7 @@ import { ServiceLogo } from './service-logo';
 import { Notice } from './ui';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
-const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
+const vaultLink = /^\/(?:vault|credentials)\/[A-Za-z0-9_-]+\/?$/;
 const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;
 
 async function readAppLinks(links: string[], signal: AbortSignal, pairingUrl?: string) {
@@ -82,33 +82,6 @@ function useAppLinks(hrefs: string[]) {
   return { completed, apps, complete };
 }
 
-function useRequestStatus(href: string) {
-  const token = vaultLink.exec(href)?.[1];
-  const [status, setStatus] = useState<CredentialRequest['status']>('pending');
-  useEffect(() => {
-    if (!token || status !== 'pending') return;
-    const controller = new AbortController();
-    const check = () => {
-      if (document.visibilityState !== 'visible') return;
-      void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(token)}`, {
-        signal: controller.signal,
-        cache: 'no-store',
-      })
-        .then((request) => setStatus(request.status))
-        .catch(() => {});
-    };
-    check();
-    window.addEventListener('focus', check);
-    document.addEventListener('visibilitychange', check);
-    return () => {
-      controller.abort();
-      window.removeEventListener('focus', check);
-      document.removeEventListener('visibilitychange', check);
-    };
-  }, [token, status]);
-  return status;
-}
-
 function SetupAction({
   href,
   setup,
@@ -122,19 +95,7 @@ function SetupAction({
   app?: AppSetupStatus['apps'][number];
   onConnect(href: string, trigger: HTMLButtonElement): void;
 }) {
-  const status = useRequestStatus(href);
   const Icon = icons[setup];
-  if (status !== 'pending')
-    return (
-      <button type="button" data-setup={setup} data-status={status} disabled>
-        {status === 'filled' ? (
-          <Check size={16} aria-hidden="true" />
-        ) : (
-          <Icon size={16} aria-hidden="true" />
-        )}
-        {label}
-      </button>
-    );
   if (setup === 'app')
     return (
       <button

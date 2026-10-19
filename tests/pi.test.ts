@@ -165,7 +165,13 @@ test('real Pi sessions persist a credential pause and resume without replaying c
         workspace: fakeWorkspace(),
       });
       try {
-        assert.equal((await runtime.runTurn(context)).status, 'waiting_credentials');
+        const paused = await runtime.runTurn(context);
+        assert.equal(paused.status, 'waiting_credentials');
+        assert.equal(
+          paused.message,
+          'Example needs your password. [Add password](/credentials/fixture)',
+        );
+        assert.deepEqual(replies, []);
         assert.equal(managed, 0);
         phase = 1;
         assert.equal(
@@ -191,7 +197,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
           1,
         );
         assert.equal(prompts[1].includes('runtime-fixture-key'), false);
-        assert.equal(replies.length, background ? 1 : 2);
+        assert.equal(replies.length, background ? 0 : 1);
       } finally {
         await runtime.dispose();
         await rm(directory, { recursive: true, force: true });
@@ -262,9 +268,6 @@ test('messages taken after a Pi turn reach the next request together and not aft
     reply: async (text) => {
       replies.push(text);
     },
-    waitForUser: async (text) => {
-      replies.push(text);
-    },
     delta: () => {},
     publish: async () => {
       throw new Error('Not used');
@@ -303,13 +306,12 @@ test('messages taken after a Pi turn reach the next request together and not aft
 
     question = true;
     batches.push([{ id: randomUUID(), text: 'Sent while asking', attachments: [] }]);
-    assert.equal(
-      (await runtime.runTurn({ ...context, turnId: randomUUID(), prompt: 'Ask me' })).status,
-      'waiting_user',
-    );
+    const asked = await runtime.runTurn({ ...context, turnId: randomUUID(), prompt: 'Ask me' });
+    assert.equal(asked.status, 'waiting_user');
+    assert.equal(asked.message, 'Which fixture?');
+    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.']);
     assert.equal(takes, 2);
     assert.equal(batches.length, 1);
-    assert.equal(replies.at(-1), 'Which fixture?');
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });

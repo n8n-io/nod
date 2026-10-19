@@ -71,7 +71,7 @@ A message from another channel stops the take. It and every message after it sta
 
 ## Waiting and resuming
 
-A question, an approval, or a credential request ends the turn as `waiting`. A reply to any task message continues its saved session. This includes a question, a file or a completed result. A reply to another waiting question continues the session that asked. Unrelated messages continue the chat. A reply to a background question returns to that background session.
+A question, an approval, or a credential request ends the turn as `waiting`. The message that asks, with any link to a secure form, payment, app connection or browser handoff, is saved in the same transaction that marks the turn `waiting`, so you never see a link before its step is open. A reply to any task message continues its saved session. This includes a question, a file or a completed result. A reply to another waiting question continues the session that asked. Unrelated messages continue the chat. A reply to a background question returns to that background session.
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
 

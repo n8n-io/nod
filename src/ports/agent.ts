@@ -129,7 +129,6 @@ export interface RuntimeContext {
   browserStep?(
     request: BrowserStep,
   ): Promise<'run' | 'refused' | { [appConfirmation]: string } | { result: unknown }>;
-  waitForUser?(question: string, browserId?: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
   readWorkspaceFile?(path: string, maxBytes: number): Promise<Uint8Array>;
@@ -177,7 +176,8 @@ export interface RuntimeContext {
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
   waitingFor?: 'question' | 'approval' | 'credentials';
-  question?: string;
+  message?: string;
+  handoffBrowserId?: string;
   result?: string;
 }
 export interface AgentImage {
