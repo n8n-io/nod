@@ -7,7 +7,7 @@ import {
   type CredentialStore,
 } from '@earendil-works/pi-ai';
 import { ModelRuntime, type ProviderModelConfig } from '@earendil-works/pi-coding-agent';
-import { Agent } from 'undici';
+import { Agent, Dispatcher1Wrapper } from 'undici';
 import { z } from 'zod';
 import { decodeJwt } from 'jose';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
@@ -89,7 +89,7 @@ async function modelListRestricted(response: Response) {
 }
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
-let endpointConnections: Agent | undefined;
+let endpointConnections: Dispatcher1Wrapper | undefined;
 const keyless = 'otto-no-key';
 const ollamaShowSchema = z.object({
   capabilities: z.array(z.string()).catch([]),
@@ -744,10 +744,9 @@ export async function createPiModelRuntime(access: ModelAccess) {
                 ...init,
                 headers,
                 redirect: 'error',
-                dispatcher: (endpointConnections ??= new Agent({
-                  headersTimeout: 0,
-                  bodyTimeout: 0,
-                })),
+                dispatcher: (endpointConnections ??= new Dispatcher1Wrapper(
+                  new Agent({ headersTimeout: 0, bodyTimeout: 0 }),
+                )),
               } as RequestInit);
             },
           }

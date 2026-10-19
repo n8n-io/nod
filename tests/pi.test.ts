@@ -438,10 +438,13 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     const validate = dns.promises.lookup;
     const connect = dns.lookup;
     dns.promises.lookup = (async () => [{ address: '93.184.216.34', family: 4 }]) as never;
-    dns.lookup = ((_host: string, options: unknown, callback: (...args: unknown[]) => void) =>
-      typeof options === 'object' && (options as { all?: boolean }).all
+    const connected: string[] = [];
+    dns.lookup = ((host: string, options: unknown, callback: (...args: unknown[]) => void) => {
+      connected.push(host);
+      return typeof options === 'object' && (options as { all?: boolean }).all
         ? callback(null, [{ address: '127.0.0.1', family: 4 }])
-        : callback(null, '127.0.0.1', 4)) as never;
+        : callback(null, '127.0.0.1', 4);
+    }) as never;
     syncBuiltinESMExports();
     try {
       for (const args of [
@@ -462,6 +465,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
       syncBuiltinESMExports();
     }
     assert.deepEqual(reached, []);
+    assert.ok(connected.includes('rebind.test'));
     await session.dispose();
   } finally {
     await agent?.dispose();

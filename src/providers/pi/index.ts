@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
-import { Agent as Connections, buildConnector } from 'undici';
+import { Agent as Connections, Dispatcher1Wrapper, buildConnector } from 'undici';
 import {
   createAgentSession,
   createCodemodeExtension,
@@ -69,20 +69,22 @@ function resources(
 
 const webExtension = fileURLToPath(import.meta.resolve('pi-web-access/dist/index.js'));
 const hiddenWebParameters = new Set(['workflow', 'proxy']);
-const webRequests = new AsyncLocalStorage<Connections>();
-let webConnections: Connections | undefined;
+const webRequests = new AsyncLocalStorage<Dispatcher1Wrapper>();
+let webConnections: Dispatcher1Wrapper | undefined;
 
 function publicWebRequests() {
   if (webConnections) return webConnections;
   const connect = buildConnector({ lookup: publicLookup() });
-  webConnections = new Connections({
-    connect: (options, callback) => {
-      const host = options.hostname.replace(/^\[|\]$/g, '');
-      if (isIP(host) && !isPublicAddress(host))
-        return callback(new Error('Private network destinations are blocked.'), null);
-      connect(options, callback);
-    },
-  });
+  webConnections = new Dispatcher1Wrapper(
+    new Connections({
+      connect: (options, callback) => {
+        const host = options.hostname.replace(/^\[|\]$/g, '');
+        if (isIP(host) && !isPublicAddress(host))
+          return callback(new Error('Private network destinations are blocked.'), null);
+        connect(options, callback);
+      },
+    }),
+  );
   const send = globalThis.fetch;
   globalThis.fetch = ((input, init) => {
     const dispatcher = webRequests.getStore();
