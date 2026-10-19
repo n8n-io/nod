@@ -234,7 +234,7 @@ const manifest = {
     'C3-semantic': `Every independent expected filename, changed value or commit subject occurs in the visible result; applies to compact cases and explicit failure${caseVersion >= 5 ? ' and R7 merge history' : ''}${caseVersion >= 7 ? ' and H4.v2 files in a hidden, ignored folder' : ''}.`,
     'C4-compact':
       caseVersion >= 6
-        ? 'In each repetition, the sum of visible characters across the nine equally used display commands is lower than the matching raw sum. Applies to the display cases as one shared aggregate gate; individual outputs may grow.'
+        ? 'In each repetition, the sum of visible characters across the equally used display commands is lower than the matching raw sum. Applies to the display cases as one shared aggregate gate; individual outputs may grow.'
         : 'Visible output contains fewer characters than the equivalent raw shell command; applies only to the four compact cases.',
     'C5-exact': `Machine status is byte-identical to raw output, exported CSV bytes match the independent input, and patch bytes match raw Git output; applies to R1, R2 and R3${caseVersion >= 2 ? ' and R5' : ''}${caseVersion >= 3 && caseVersion < 6 ? ' and R6 (ordinary listing)' : ''}${caseVersion >= 5 ? ' and R7 (complete merge history)' : ''}.`,
     ...(caseVersion >= 3
@@ -252,7 +252,7 @@ const manifest = {
     ...(caseVersion >= 6
       ? {
           'C8-rtk-used':
-            'The execution trace records a real RTK command invocation beyond rewrite probing. A disposable PATH shim logs arguments then execs the installed binary without changing output; applies to the nine display cases.',
+            'The execution trace records a real RTK command invocation beyond rewrite probing. A disposable PATH shim logs arguments then execs the installed binary without changing output; applies to the display cases.',
         }
       : {}),
   },
