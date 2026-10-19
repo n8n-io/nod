@@ -20,7 +20,13 @@ export interface ApprovalDescription {
   action: string;
   args: Record<string, unknown>;
   details?: Record<string, unknown>;
+  startedBy?: StartedBy;
 }
+
+export type StartedBy =
+  | { kind: 'schedule'; instruction?: string }
+  | { kind: 'app_event' | 'activity_check'; app?: string }
+  | { kind: 'reaction' | 'background' };
 
 export interface ChatConfirmationInput {
   text: string;
@@ -44,6 +50,7 @@ type TurnRow = {
   thread_id: string;
   task_id: string | null;
   source: string;
+  source_id: string | null;
   parent_turn_id: string | null;
   message_id: string | null;
   prompt: string;
@@ -61,7 +68,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      "SELECT id,thread_id,to_jsonb(turns)->>'task_id' AS task_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2",
+      "SELECT id,thread_id,to_jsonb(turns)->>'task_id' AS task_id,source,source_id,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2",
       [turnId, ownerId],
     )
   ).rows[0];
@@ -95,6 +102,35 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
       [turnId, ownerId],
     )
   ).rows[0];
+}
+
+async function appSlug(client: PoolClient, table: string, id: string) {
+  if (!(await client.query('SELECT to_regclass($1) AS name', [table])).rows[0]?.name)
+    return undefined;
+  const slug = (
+    await client.query<{ slug: string | null }>(
+      `SELECT slug FROM ${table} WHERE id::text=$1 AND owner_id=$2`,
+      [id, ownerId],
+    )
+  ).rows[0]?.slug;
+  return slug ? { app: slug } : {};
+}
+
+async function startedBy(client: PoolClient, origin: TurnRow): Promise<StartedBy> {
+  if (origin.source === 'schedule') {
+    const instruction = (await scheduleAuthority(client, origin.id))?.authority_instruction;
+    return { kind: 'schedule', ...(instruction ? { instruction } : {}) };
+  }
+  const [kind, id = ''] = (origin.source_id ?? '').split(':');
+  if (kind === 'notification')
+    return {
+      kind: 'app_event',
+      ...(await appSlug(client, 'integration_events', origin.source_id!.slice(kind.length + 1))),
+    };
+  if (kind === 'activity-check')
+    return { kind: 'activity_check', ...(await appSlug(client, 'app_connections', id)) };
+  if (kind === 'reaction') return { kind: 'reaction' };
+  return { kind: 'background' };
 }
 
 export async function turnOrigin(turnId: string) {
@@ -339,7 +375,10 @@ export async function createApprovals(
             question: pending.question as string,
           };
       }
-      return { authorMessageId };
+      return {
+        authorMessageId,
+        ...(background ? { startedBy: await startedBy(client, origin) } : {}),
+      };
     };
     let question: string | undefined;
     if (!allowed) {
@@ -355,6 +394,7 @@ export async function createApprovals(
           action,
           args: JSON.parse(encoded),
           ...(details ? { details: JSON.parse(details) } : {}),
+          ...(existing.startedBy ? { startedBy: existing.startedBy } : {}),
         },
         options.signal,
       );

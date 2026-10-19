@@ -844,6 +844,48 @@ test(
         },
       );
 
+      await t.test('a confirmation from background work names what started it', async () => {
+        await db.pool.query(
+          'CREATE TABLE IF NOT EXISTS integration_events (id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, slug text)',
+        );
+        const eventId = `fixture:googledrive:${randomUUID()}`;
+        await db.pool.query(
+          "INSERT INTO integration_events(id,owner_id,summary,slug) VALUES($1,$2,'Synthetic','googledrive')",
+          [eventId, ownerId],
+        );
+        const seen: ApprovalDescription[] = [];
+        describe = async (input) => {
+          seen.push(input);
+          return 'Synthetic approval question.';
+        };
+        try {
+          const event = await running(
+            await thread.enqueueTurn('Synthetic Drive event', {
+              source: 'event',
+              sourceId: `notification:${eventId}`,
+              background: true,
+            }),
+          );
+          await approved.request(event, 'GOOGLEDRIVE_PARSE_FILE', { file_id: 'synthetic-a' });
+          assert.deepEqual(seen.at(-1)?.startedBy, { kind: 'app_event', app: 'googledrive' });
+          const instruction = 'Every Monday, summarise the synthetic planning doc.';
+          const scheduled = await begin('Synthetic scheduled work', { source: 'schedule' });
+          await db.pool.query(
+            `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+             VALUES($1,$2,$3,1,$4,'Synthetic planning',$5,'2026-10-19T07:00:00Z','Europe/Madrid',$6)`,
+            [randomUUID(), ownerId, randomUUID(), randomUUID(), scheduled.turnId, instruction],
+          );
+          await approved.request(scheduled, 'GOOGLEDRIVE_PARSE_FILE', { file_id: 'synthetic-b' });
+          assert.deepEqual(seen.at(-1)?.startedBy, { kind: 'schedule', instruction });
+          const requested = await begin('Read the synthetic planning doc.');
+          await approved.request(requested, 'GOOGLEDRIVE_PARSE_FILE', { file_id: 'synthetic-c' });
+          assert.equal(seen.at(-1)?.startedBy, undefined);
+        } finally {
+          describe = defaultDescription;
+          await thread.stopThread();
+        }
+      });
+
       await t.test(
         'sign-in authority comes from the checker or an owned yes bound to the exact site and item',
         async () => {
