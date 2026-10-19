@@ -87,7 +87,7 @@
     "undici": "^7.30.0",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",
-    "zod": "^4.1.12"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@napi-rs/canvas": "1.0.10",
