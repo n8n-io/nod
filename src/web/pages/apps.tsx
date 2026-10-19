@@ -305,6 +305,7 @@ export function Apps({
   const {
     data: catalog,
     error: catalogError,
+    status: catalogStatus,
     loading: catalogLoading,
     refreshing: catalogRefreshing,
     refresh: refreshCatalog,
@@ -318,9 +319,9 @@ export function Apps({
     setView(next);
   };
   useEffect(() => {
-    if (loadError || catalogError)
+    if (loadError || (catalogError && catalogStatus !== 403))
       captureAnalytics('otto_ui_error', { area: 'apps', action: 'load' });
-  }, [loadError, catalogError]);
+  }, [loadError, catalogError, catalogStatus]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categoryQuery, setCategoryQuery] = useState('');

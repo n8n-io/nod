@@ -1,8 +1,9 @@
-import { api, errorMessage } from './api';
+import { api, ApiError, errorMessage } from './api';
 
 export interface PageDataSnapshot<T> {
   data: T | null;
   error: string;
+  status?: number;
   loading: boolean;
   refreshing: boolean;
 }
@@ -82,6 +83,7 @@ export function createPageDataCache(
         publish(value, {
           ...value.snapshot,
           error: errorMessage(cause),
+          status: cause instanceof ApiError ? cause.status : undefined,
           loading: false,
           refreshing: false,
         });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Chat } from './pages/chat';
 import { Trust } from './pages/trust';
@@ -477,7 +477,7 @@ function AccountApp({
   const sessionState = useSession();
   const { session } = sessionState;
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;
     const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
     if (path === '/memory' && session.settings?.onboardingCompleted) return;
