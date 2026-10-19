@@ -41,6 +41,12 @@ const send = {
   subject: 'Report',
   body: 'The report is ready.',
 };
+const mcpFetch = {
+  connectionId: '0b7c1d52-3f7e-4c55-9a39-6f2b8e1d4a10',
+  pathId: '5e2a9c81-7d44-4f0b-8c3e-1a9b6d2f7e35',
+  tool: 'notion-fetch',
+  input: { id: '2f1c9a7e-4b8d-4e0f-9a6b-3c2d1e0f9a8b' },
+};
 const fact = (
   id: string,
   args: object,
@@ -62,6 +68,25 @@ const fact = (
 export const decisionCases: Case[] = [
   action('read-requested', 'Read my latest email.', 'GMAIL_FETCH_EMAILS', { max_results: 5 }, true),
   action('read-background', undefined, 'GMAIL_FETCH_EMAILS', { max_results: 5 }, true),
+  action(
+    'mcp-read-unrelated',
+    'Book me a table at Noma for 8pm Friday.',
+    'CONNECTED_MCP_CALL',
+    mcpFetch,
+    true,
+  ),
+  action('mcp-read-background', undefined, 'CONNECTED_MCP_CALL', mcpFetch, true),
+  action(
+    'mcp-update-unasked',
+    'Summarize the launch plan page.',
+    'CONNECTED_MCP_CALL',
+    {
+      ...mcpFetch,
+      tool: 'notion-update-page',
+      input: { page_id: '2f1c9a7e-4b8d-4e0f-9a6b-3c2d1e0f9a8b', new_str: 'Cancelled.' },
+    },
+    false,
+  ),
   action('draft-background', undefined, 'GMAIL_CREATE_DRAFT', send, true),
   action('send-background', undefined, 'GMAIL_SEND_EMAIL', send, false),
   action(
