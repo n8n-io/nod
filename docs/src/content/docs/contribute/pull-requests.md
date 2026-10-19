@@ -60,7 +60,7 @@ flowchart LR
 - Keep the pull request title as the commit title when you merge.
 
 :::note[For maintainers]
-Require **Conventional PR title** in the status checks for `main`. In the merge settings, use the pull request title and a blank body for both squash merges and merge commits.
+Require **Conventional PR title** in the status checks for `main`. In the merge settings, use the pull request title and a blank body for both squash merges and merge commits. In the Actions settings, keep the default workflow permissions read-only; every workflow declares the permissions it needs.
 :::
 
 ## From merge to release
